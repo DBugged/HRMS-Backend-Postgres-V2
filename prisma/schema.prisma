@@ -23,6 +23,22 @@ enum Role {
   // Future: SUPER_ADMIN. See RolesGuard for exactly how it plugs in.
 }
 
+// Mirrors the old MySQL backend's employmentStatus ENUM on User exactly
+// (see employeeController.js ground truth) so the lifecycle vocabulary
+// carries over unchanged even though the storage model doesn't.
+enum EmploymentStatus {
+  ONBOARDING
+  PROBATION
+  EXTENDED_PROBATION
+  CONFIRMED
+  NOTICE_PERIOD
+  RESIGNED
+  RELEASED
+  TERMINATED
+  ABSCONDED
+  ON_HOLD
+}
+
 model Organization {
   id        String   @id @default(uuid())
   name      String
@@ -31,10 +47,46 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Row-locked counter for employeeId generation (SELECT ... FOR UPDATE in
+  // EmployeeIdService) — deliberately simpler than the old system's
+  // generalized documentNumbering JSON (which covers many document types);
+  // this phase only needs the one counter. See the Phase 2 plan for why a
+  // per-document-type config system isn't ported yet.
+  employeeIdPrefix  String @default("EMP")
+  employeeIdCounter Int    @default(0)
+
   users         User[]
+  departments   Department[]
   refreshTokens RefreshToken[]
 
   @@map("organizations")
+}
+
+model Department {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name        String
+  // Uppercased in DepartmentsService.create() — Prisma has no model-level
+  // hooks like Sequelize's beforeValidate, so this is an explicit service
+  // call rather than a DB-level guarantee.
+  code        String
+  description String  @default("")
+  isActive    Boolean @default(true)
+
+  departmentHeadId String?
+  departmentHead    User?   @relation("DepartmentHead", fields: [departmentHeadId], references: [id])
+
+  employees User[] @relation("EmployeeDepartment")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("departments")
 }
 
 model User {
@@ -55,12 +107,34 @@ model User {
   emailVerified      Boolean   @default(true)
   lastLoginAt        DateTime?
 
+  // Employee fields — Employee IS the User row, same as the old system
+  // (no separate Employee entity). Unique per-org (not globally, unlike
+  // email) via the composite unique index below, matching the old system's
+  // users_org_employee_id_unique index exactly.
+  employeeId       String
+  designation      String           @default("")
+  contactNumber    String           @default("")
+  joiningDate      DateTime         @default(now())
+  employeeType     String           @default("permanent")
+  employmentStatus EmploymentStatus @default(ONBOARDING)
+
+  departmentId String?
+  department   Department? @relation("EmployeeDepartment", fields: [departmentId], references: [id])
+
+  reportingManagerId String?
+  reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
+  subordinates       User[]  @relation("ReportingManager")
+
+  managedDepartments Department[] @relation("DepartmentHead")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   refreshTokens RefreshToken[]
 
+  @@unique([organizationId, employeeId])
   @@index([organizationId])
+  @@index([departmentId])
   @@map("users")
 }
 

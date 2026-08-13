@@ -13,96 +13,114 @@ describe('evaluateTenantScope', () => {
     });
   });
 
-  describe.each(['User', 'RefreshToken'])('%s (tenant-scoped)', (model) => {
-    describe.each([
-      'findMany',
-      'findFirst',
-      'count',
-      'updateMany',
-      'deleteMany',
-    ])('%s', (operation) => {
-      it('throws when organizationId is missing from where', () => {
-        expect(() =>
-          evaluateTenantScope(model, operation, { where: { id: 'x' } }),
-        ).toThrow(/missing organizationId scope/);
-      });
-
-      it('throws when where is entirely absent', () => {
-        expect(() => evaluateTenantScope(model, operation, {})).toThrow(
-          /missing organizationId scope/,
-        );
-      });
-
-      it('allows the query through when organizationId is present', () => {
-        const args = { where: { id: 'x', organizationId: 'org-1' } };
-        expect(evaluateTenantScope(model, operation, args)).toBe(args);
-      });
-    });
-
-    describe.each(['findUnique', 'findUniqueOrThrow'])('%s', (operation) => {
-      it('is forbidden outright, even with organizationId present', () => {
-        expect(() =>
-          evaluateTenantScope(model, operation, {
-            where: { id: 'x', organizationId: 'org-1' },
-          }),
-        ).toThrow(/not allowed on a tenant-scoped model/);
-      });
-    });
-
-    describe('create', () => {
-      it('throws when the created row has no organizationId', () => {
-        expect(() =>
-          evaluateTenantScope(model, 'create', { data: { email: 'a@b.com' } }),
-        ).toThrow(/missing organizationId on the created row/);
-      });
-
-      it('allows creation when organizationId is set', () => {
-        const args = { data: { email: 'a@b.com', organizationId: 'org-1' } };
-        expect(evaluateTenantScope(model, 'create', args)).toBe(args);
-      });
-    });
-
-    describe('createMany', () => {
-      it('throws if any row is missing organizationId', () => {
-        expect(() =>
-          evaluateTenantScope(model, 'createMany', {
-            data: [{ organizationId: 'org-1' }, { email: 'no-org@b.com' }],
-          }),
-        ).toThrow(/every row must set organizationId/);
-      });
-
-      it('allows creation when every row has organizationId', () => {
-        const args = {
-          data: [{ organizationId: 'org-1' }, { organizationId: 'org-1' }],
-        };
-        expect(evaluateTenantScope(model, 'createMany', args)).toBe(args);
-      });
-    });
-
-    describe('__tenantScopeBypass', () => {
-      it('strips the bypass flag and allows an otherwise-unscoped query through', () => {
-        const result = evaluateTenantScope(model, 'findFirst', {
-          where: { email: 'a@b.com' },
-          __tenantScopeBypass: true,
+  describe.each(['User', 'RefreshToken', 'Department'])(
+    '%s (tenant-scoped)',
+    (model) => {
+      describe.each([
+        'findMany',
+        'findFirst',
+        'findFirstOrThrow',
+        'count',
+        'aggregate',
+        'groupBy',
+        'updateMany',
+        'updateManyAndReturn',
+        'deleteMany',
+      ])('%s', (operation) => {
+        it('throws when organizationId is missing from where', () => {
+          expect(() =>
+            evaluateTenantScope(model, operation, { where: { id: 'x' } }),
+          ).toThrow(/missing organizationId scope/);
         });
-        expect(result).toEqual({ where: { email: 'a@b.com' } });
-        expect(result).not.toHaveProperty('__tenantScopeBypass');
+
+        it('throws when where is entirely absent', () => {
+          expect(() => evaluateTenantScope(model, operation, {})).toThrow(
+            /missing organizationId scope/,
+          );
+        });
+
+        it('allows the query through when organizationId is present', () => {
+          const args = { where: { id: 'x', organizationId: 'org-1' } };
+          expect(evaluateTenantScope(model, operation, args)).toBe(args);
+        });
       });
 
-      it('does not affect findUnique/findUniqueOrThrow — bypass is checked first, so it is NOT forbidden when bypassed', () => {
-        // Documents the actual precedence in evaluateTenantScope: the
-        // bypass check runs before the FORBIDDEN_UNIQUE_OPS check, so a
-        // deliberate tenant-resolution lookup could in principle use
-        // findUnique too — no current call site does, but this locks in
-        // the real behavior rather than an assumed one.
-        const result = evaluateTenantScope(model, 'findUnique', {
-          where: { email: 'a@b.com' },
-          __tenantScopeBypass: true,
+      describe.each([
+        'findUnique',
+        'findUniqueOrThrow',
+        'update',
+        'delete',
+        'upsert',
+      ])('%s', (operation) => {
+        it('is forbidden outright, even with organizationId present', () => {
+          expect(() =>
+            evaluateTenantScope(model, operation, {
+              where: { id: 'x', organizationId: 'org-1' },
+            }),
+          ).toThrow(/not allowed on a tenant-scoped model/);
         });
-        expect(result).toEqual({ where: { email: 'a@b.com' } });
       });
-    });
-  });
+
+      describe('create', () => {
+        it('throws when the created row has no organizationId', () => {
+          expect(() =>
+            evaluateTenantScope(model, 'create', {
+              data: { email: 'a@b.com' },
+            }),
+          ).toThrow(/missing organizationId on the created row/);
+        });
+
+        it('allows creation when organizationId is set', () => {
+          const args = { data: { email: 'a@b.com', organizationId: 'org-1' } };
+          expect(evaluateTenantScope(model, 'create', args)).toBe(args);
+        });
+      });
+
+      describe.each(['createMany', 'createManyAndReturn'])(
+        '%s',
+        (operation) => {
+          it('throws if any row is missing organizationId', () => {
+            expect(() =>
+              evaluateTenantScope(model, operation, {
+                data: [{ organizationId: 'org-1' }, { email: 'no-org@b.com' }],
+              }),
+            ).toThrow(/every row must set organizationId/);
+          });
+
+          it('allows creation when every row has organizationId', () => {
+            const args = {
+              data: [{ organizationId: 'org-1' }, { organizationId: 'org-1' }],
+            };
+            expect(evaluateTenantScope(model, operation, args)).toBe(args);
+          });
+        },
+      );
+
+      describe('__tenantScopeBypass', () => {
+        it('strips the bypass flag and allows an otherwise-unscoped query through', () => {
+          const result = evaluateTenantScope(model, 'findFirst', {
+            where: { email: 'a@b.com' },
+            __tenantScopeBypass: true,
+          });
+          expect(result).toEqual({ where: { email: 'a@b.com' } });
+          expect(result).not.toHaveProperty('__tenantScopeBypass');
+        });
+
+        it('does not affect findUnique/findUniqueOrThrow — bypass is checked first, so it is NOT forbidden when bypassed', () => {
+          // Documents the actual precedence in evaluateTenantScope: the
+          // bypass check runs before the FORBIDDEN_UNIQUE_OPS check, so a
+          // deliberate tenant-resolution lookup could in principle use
+          // findUnique too — no current call site does, but this locks in
+          // the real behavior rather than an assumed one.
+          const result = evaluateTenantScope(model, 'findUnique', {
+            where: { email: 'a@b.com' },
+            __tenantScopeBypass: true,
+          });
+          expect(result).toEqual({ where: { email: 'a@b.com' } });
+        });
+      });
+    },
+  );
 
   describe('documented nested-write boundary', () => {
     // This isn't a test of evaluateTenantScope's internals — it's a

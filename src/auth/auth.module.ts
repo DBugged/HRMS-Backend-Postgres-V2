@@ -4,10 +4,14 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
 import { UsersModule } from '../users/users.module';
+import { EmployeesModule } from '../employees/employees.module';
 
 @Module({
   imports: [
     UsersModule,
+    // For EmployeeIdService only (the founder is Employee #1 of their own
+    // org) — see AuthService's constructor comment.
+    EmployeesModule,
     // Signing options are passed explicitly per-call in AuthService
     // (different secret/TTL for access vs refresh isn't expressible via a
     // single module-level JwtModule config), so this registration just

@@ -5,28 +5,66 @@
  * harness (which requires a live client to exercise at all). The
  * extension itself is a thin adapter that just calls this function and
  * forwards to Prisma's `query(args)`.
+ *
+ * The operation-name sets below are checked against the ACTUAL generated
+ * client's delegate methods (empirically listed via
+ * `Object.getOwnPropertyNames(prisma.user)`, not guessed from naming
+ * patterns) — Prisma 7's generated types don't expose a simple static
+ * operation-name union to grep, and two invented names (`updateOrThrow`,
+ * `deleteOrThrow`) turned out not to exist when checked this way. Real
+ * list: aggregate, aggregateRaw, count, create, createMany,
+ * createManyAndReturn, delete, deleteMany, findFirst, findFirstOrThrow,
+ * findMany, findRaw, findUnique, findUniqueOrThrow, groupBy, update,
+ * updateMany, updateManyAndReturn, upsert.
  */
 
-export const TENANT_SCOPED_MODELS = new Set(['User', 'RefreshToken']);
+export const TENANT_SCOPED_MODELS = new Set([
+  'User',
+  'RefreshToken',
+  'Department',
+]);
 
+// Operations whose `where` accepts arbitrary filters (so organizationId
+// can always be added to it) — findFirstOrThrow behaves like findFirst
+// here (arbitrary where, just throws instead of returning null), and
+// aggregate/groupBy both take a top-level `where` the same shape as
+// findMany's. *AndReturn variants are the "Many" ops' row-returning
+// siblings, same where-shape.
 const FILTERED_OPS = new Set([
   'findMany',
   'findFirst',
+  'findFirstOrThrow',
   'count',
+  'aggregate',
+  'groupBy',
   'updateMany',
+  'updateManyAndReturn',
   'deleteMany',
 ]);
 const CREATE_OPS = new Set(['create']);
-const CREATE_MANY_OPS = new Set(['createMany']);
-// Prisma's findUnique/findUniqueOrThrow can only take unique-constraint
-// fields (id, email, ...) in `where` — you cannot additionally require
-// organizationId there the way you can with findFirst. This mirrors the old
-// tenantScope.js's documented `findByPk` limitation: rather than silently
-// allow an unscoped lookup, forbid it outright and point callers at the
-// pattern that IS covered (findFirst({ where: { id, organizationId } })).
+const CREATE_MANY_OPS = new Set(['createMany', 'createManyAndReturn']);
+// findUnique/findUniqueOrThrow/update/delete/upsert all take a *unique-
+// constraint* `where` (id, email, ...) — you cannot additionally require
+// organizationId there the way you can with findFirst/updateMany/
+// deleteMany. This mirrors the old tenantScope.js's documented `findByPk`
+// limitation: rather than silently allow an unscoped single-record lookup/
+// write, forbid it outright and point callers at the pattern that IS
+// covered (findFirst/updateMany/deleteMany with `where: { id,
+// organizationId }`).
+//
+// This set originally only had the two find* ops — update/delete/upsert
+// were added after they were caught (during Employees module development)
+// slipping through the guard entirely: neither FILTERED_OPS nor this set
+// covered them, so a bare `prisma.user.update({ where: { id }, data })`
+// ran completely unchecked. Same bug class as the boundary already
+// documented below (something the guard doesn't cover) — the difference
+// is this one was closable, so it was closed rather than just documented.
 export const FORBIDDEN_UNIQUE_OPS = new Set([
   'findUnique',
   'findUniqueOrThrow',
+  'update',
+  'delete',
+  'upsert',
 ]);
 
 export interface ScopedArgs {
@@ -79,8 +117,8 @@ export function evaluateTenantScope(
   if (FORBIDDEN_UNIQUE_OPS.has(operation)) {
     throw new Error(
       `${model}.${operation}: not allowed on a tenant-scoped model — Prisma can't combine a ` +
-        `unique-id lookup with an organizationId filter here. Use findFirst({ where: { id, ` +
-        `organizationId } }) instead.`,
+        `unique-id lookup with an organizationId filter here. Use findFirst/updateMany/` +
+        `deleteMany with { where: { id, organizationId } } instead.`,
     );
   }
 
@@ -107,7 +145,7 @@ export function evaluateTenantScope(
     const rows = Array.isArray(args.data) ? args.data : [args.data];
     if (rows.some((row) => !row?.organizationId)) {
       throw new Error(
-        `${model}.createMany: every row must set organizationId.`,
+        `${model}.${operation}: every row must set organizationId.`,
       );
     }
   }

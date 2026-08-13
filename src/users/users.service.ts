@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { Prisma, Role, User } from '@prisma/client';
+import { Prisma, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 
@@ -40,10 +40,6 @@ export class UsersService {
     return this.prisma.user.findFirst({ where: { id, organizationId } });
   }
 
-  create(data: Prisma.UserUncheckedCreateInput): Promise<User> {
-    return this.prisma.user.create({ data });
-  }
-
   updateLastLogin(
     id: string,
     organizationId: string,
@@ -51,25 +47,6 @@ export class UsersService {
     return this.prisma.user.updateMany({
       where: { id, organizationId },
       data: { lastLoginAt: new Date() },
-    });
-  }
-
-  seedTestUser(
-    organizationId: string,
-    email: string,
-    hashedPassword: string,
-    role: Role,
-  ) {
-    return this.prisma.user.create({
-      data: {
-        organizationId,
-        email,
-        password: hashedPassword,
-        name: `QA ${role}`,
-        role,
-        mustChangePassword: false,
-        emailVerified: true,
-      },
     });
   }
 }

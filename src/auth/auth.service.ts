@@ -8,10 +8,10 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { Role } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UsersService } from '../users/users.service';
+import { EmployeeIdService } from '../employees/employee-id.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthUserDto } from './dto/auth-response.dto';
@@ -32,11 +32,13 @@ export interface IssuedTokens {
 @Injectable()
 export class AuthService {
   constructor(
-    // Organization is not tenant-scoped (it IS the tenant), so this uses
-    // the plain PrismaService rather than the extended client.
-    private readonly prisma: PrismaService,
+    // The tenant-scope-extended client only, including for
+    // $transaction() — see the identical comment on EmployeesService for
+    // why the plain (unextended) client's $transaction must not be used
+    // for a transaction that writes a tenant-scoped model.
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly usersService: UsersService,
+    private readonly employeeIdService: EmployeeIdService,
     private readonly jwt: JwtService,
   ) {}
 
@@ -49,21 +51,36 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
 
     // Prisma's interactive $transaction, analogous to the old system's
-    // Sequelize transaction wrapping org+founder creation.
-    const { organization, user } = await this.prisma.$transaction(
+    // Sequelize transaction wrapping org+founder creation. Called on the
+    // tenant-scope-extended client (see constructor comment) so the
+    // tx.user.create() below is actually covered by the guard, not just
+    // the tx.organization.create() call (Organization isn't tenant-scoped
+    // at all, so that part wouldn't matter either way).
+    const { organization, user } = await this.scopedPrisma.$transaction(
       async (tx) => {
         const organization = await tx.organization.create({
           data: { name: dto.organizationName },
         });
+        // The founder is Employee #1 of their own org — employeeId
+        // generation is an Employees-module concern (row-locked counter on
+        // Organization, see EmployeeIdService), reused here rather than
+        // duplicated, same as the old system's registerOrganization calling
+        // the same generateEmployeeId() every other employee creation path uses.
+        const employeeId = await this.employeeIdService.generate(
+          tx,
+          organization.id,
+        );
         const user = await tx.user.create({
           data: {
             organizationId: organization.id,
+            employeeId,
             email: dto.email,
             password: hashedPassword,
             name: dto.name,
             role: Role.ADMIN,
             isFounder: true,
             mustChangePassword: false,
+            employmentStatus: 'CONFIRMED',
             // Email verification (token + send) is deferred to when Resend
             // infra is added in a later phase — documented simplification,
             // not an oversight. The old system defaults this to false and

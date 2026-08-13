@@ -124,6 +124,7 @@ describe('Auth + RBAC (e2e)', () => {
       await prisma.user.create({
         data: {
           organizationId,
+          employeeId: `E2E-${role}`,
           email,
           password: hashedPassword,
           name: `E2E ${role}`,
