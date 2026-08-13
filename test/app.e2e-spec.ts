@@ -1,3 +1,10 @@
+import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+// Same reasoning as auth.e2e-spec.ts: env vars must be loaded before
+// AppModule's providers are instantiated in beforeEach's compile() call.
+dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
+
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';

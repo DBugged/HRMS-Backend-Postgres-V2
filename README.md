@@ -46,11 +46,40 @@ npx prisma migrate dev
 npm run start:dev       # listens on :4000, Swagger at /api/docs
 ```
 
+## Automated tests
+
+```bash
+npm run test       # unit tests — RolesGuard, tenant-scope guard logic
+npm run test:e2e   # full auth+RBAC flow against a real Postgres DB
+```
+
+`test:e2e` needs its own database (kept separate from `hrms_v2_dev` so a
+test run never touches data you're looking at in Swagger/curl):
+
+```bash
+psql postgres -c "CREATE DATABASE hrms_v2_test OWNER hrms_v2_user;"
+DATABASE_URL="postgresql://hrms_v2_user:hrms_v2_pass@localhost:5432/hrms_v2_test?schema=public" npx prisma migrate deploy
+```
+
+`.env.test` is checked in — its secrets are dummy/test-only, unlike `.env`.
+The e2e suite truncates its own tables in `afterAll`, so it's safe to
+re-run repeatedly. `test/auth.e2e-spec.ts` automates the exact
+register → login → RBAC-across-all-4-roles → refresh-rotation →
+logout-revocation → mobile-no-cookie-jar-refresh flow described below —
+the two are equivalent, the e2e suite just runs on every change instead of
+requiring a manual pass.
+
+`src/prisma/tenant-scope.guard-logic.spec.ts` also locks in the guard's
+one documented boundary (it can't see nested relational writes reached
+through a different model's `include`/`connect`) as a regression test
+rather than just a comment — if a future Prisma version changes how
+`$allOperations` surfaces nested writes, that test's premise should be
+revisited alongside it.
+
 ## Manual verification
 
-No automated test suite in this phase (per project scope — QA is handled
-separately). To verify Auth + RBAC end-to-end against a disposable local
-org:
+The automated e2e suite above covers this same flow; the manual version
+is still useful for interactive exploration via Swagger/curl:
 
 ```bash
 # 1. Register

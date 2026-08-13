@@ -180,7 +180,12 @@ export class AuthService {
     role: Role,
     meta: { ip?: string; userAgent?: string },
   ): Promise<IssuedTokens> {
-    const payload: JwtPayload = { sub: userId, organizationId, role };
+    const payload: JwtPayload = {
+      sub: userId,
+      organizationId,
+      role,
+      jti: crypto.randomUUID(),
+    };
     // expiresIn takes seconds (a plain number) rather than re-parsing the
     // env string here too — ACCESS_TOKEN_TTL_SECONDS already did that once.
     const accessToken = await this.jwt.signAsync(payload as object, {
