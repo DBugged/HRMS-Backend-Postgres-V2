@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+// Connection URL lives in prisma.config.ts (Prisma 7 moved it out of the
+// schema file) — used by the CLI for migrate/generate. The runtime
+// PrismaClient is configured separately via a driver adapter, see
+// src/prisma/prisma.service.ts.
+datasource db {
+  provider = "postgresql"
+}
+
+// A Postgres enum (not a lookup table) — mirrors the old MySQL backend's
+// DB-level ENUM role column. Gives compile-time exhaustiveness in TS and
+// makes adding SUPER_ADMIN later a one-line addition + one migration,
+// rather than a new join table. A lookup table would only be justified for
+// arbitrary per-tenant custom roles, which isn't a requirement here.
+enum Role {
+  ADMIN
+  HR
+  MANAGER
+  EMPLOYEE
+  // Future: SUPER_ADMIN. See RolesGuard for exactly how it plugs in.
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  timezone  String   @default("Asia/Kolkata")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users         User[]
+  refreshTokens RefreshToken[]
+
+  @@map("organizations")
+}
+
+model User {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // Globally unique (not per-org) so login can resolve the tenant from the
+  // email alone, same reasoning as the old system.
+  email    String @unique
+  password String
+  name     String
+  role     Role   @default(EMPLOYEE)
+
+  isFounder          Boolean   @default(false)
+  isActive            Boolean   @default(true)
+  mustChangePassword Boolean   @default(true)
+  emailVerified      Boolean   @default(true)
+  lastLoginAt        DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  refreshTokens RefreshToken[]
+
+  @@index([organizationId])
+  @@map("users")
+}
+
+model RefreshToken {
+  id             String       @id @default(uuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Stored directly (not just derivable via userId) so the tenant-scope
+  // Prisma extension never needs a special case for this model.
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // SHA-256 hash of the raw token — the raw value is only ever returned
+  // once, at issuance, and is never persisted. Mirrors the old system's
+  // pattern for password-reset/email-verification tokens.
+  tokenHash String @unique
+
+  expiresAt           DateTime
+  revokedAt            DateTime?
+  // Set on rotation (see AuthService.refresh) — kept for audit/reuse-detection.
+  replacedByTokenHash String?
+
+  createdAt   DateTime @default(now())
+  createdByIp String?
+  userAgent   String?
+
+  @@index([userId])
+  @@index([organizationId])
+  @@map("refresh_tokens")
+}
