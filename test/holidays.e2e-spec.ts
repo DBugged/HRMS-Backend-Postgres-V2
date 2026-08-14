@@ -1,0 +1,176 @@
+import * as path from 'path';
+import * as dotenv from 'dotenv';
+
+dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
+
+import { Test, TestingModule } from '@nestjs/testing';
+import { INestApplication, ValidationPipe } from '@nestjs/common';
+import cookieParser from 'cookie-parser';
+import request from 'supertest';
+import { App } from 'supertest/types';
+import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
+
+interface AuthBody {
+  accessToken: string;
+}
+interface HolidayBody {
+  id: string;
+  name: string;
+  date: string;
+  year: number;
+  type: string;
+}
+interface BulkImportBody {
+  created: number;
+  failed: { row: number; name: string; error: string }[];
+}
+
+const PASSWORD = 'TestPass123!';
+
+describe('Holidays (e2e)', () => {
+  let app: INestApplication<App>;
+  let prisma: PrismaService;
+
+  let adminToken: string;
+  let employeeToken: string;
+
+  beforeAll(async () => {
+    const moduleFixture: TestingModule = await Test.createTestingModule({
+      imports: [AppModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    app.use(cookieParser());
+    app.useGlobalPipes(
+      new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    );
+    await app.init();
+    prisma = app.get(PrismaService);
+
+    await request(app.getHttpServer()).post('/auth/register').send({
+      organizationName: 'Holidays E2E Org',
+      name: 'Founder',
+      email: 'holidays-e2e-admin@example.test',
+      password: PASSWORD,
+    });
+    const adminLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'holidays-e2e-admin@example.test', password: PASSWORD });
+    adminToken = (adminLogin.body as AuthBody).accessToken;
+
+    const empCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Plain Employee', email: 'holidays-e2e-emp@example.test' });
+    const empPassword = (empCreate.body as { generatedPassword: string })
+      .generatedPassword;
+    const empLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: 'holidays-e2e-emp@example.test', password: empPassword });
+    employeeToken = (empLogin.body as AuthBody).accessToken;
+  });
+
+  afterAll(async () => {
+    await prisma.$executeRawUnsafe(
+      'TRUNCATE TABLE "holidays", "refresh_tokens", "users", "departments", "organizations" RESTART IDENTITY CASCADE',
+    );
+    await app.close();
+  });
+
+  let holidayId: string;
+
+  it('ADMIN creates a holiday', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/holidays')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Diwali', date: '2026-11-08', type: 'NATIONAL' })
+      .expect(201);
+    const body = res.body as HolidayBody;
+    expect(body.year).toBe(2026);
+    holidayId = body.id;
+  });
+
+  it('rejects a duplicate holiday (same name + date)', async () => {
+    await request(app.getHttpServer())
+      .post('/holidays')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Diwali', date: '2026-11-08' })
+      .expect(409);
+  });
+
+  it('EMPLOYEE gets 403 creating a holiday', async () => {
+    await request(app.getHttpServer())
+      .post('/holidays')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ name: 'Should Fail', date: '2026-12-25' })
+      .expect(403);
+  });
+
+  it('any authenticated caller can list holidays', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/holidays')
+      .query({ year: 2026 })
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect(res.body as HolidayBody[]).toHaveLength(1);
+  });
+
+  it('ADMIN updates a holiday, duplicate check excludes self', async () => {
+    const res = await request(app.getHttpServer())
+      .put(`/holidays/${holidayId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ description: 'Festival of lights' })
+      .expect(200);
+    expect(
+      (res.body as HolidayBody & { description: string }).description,
+    ).toBe('Festival of lights');
+  });
+
+  it('updating the date recomputes year', async () => {
+    const res = await request(app.getHttpServer())
+      .put(`/holidays/${holidayId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ date: '2027-11-01' })
+      .expect(200);
+    expect((res.body as HolidayBody).year).toBe(2027);
+  });
+
+  it('bulk-import: valid rows create, invalid/duplicate rows fail without aborting the batch', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/holidays/bulk-import')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        rows: [
+          { name: 'Republic Day', date: '2026-01-26', rowNum: 2 },
+          { name: '', date: '2026-02-01', rowNum: 3 }, // missing name
+          { name: 'Bad Date', date: 'not-a-date', rowNum: 4 }, // invalid date
+          { name: 'Republic Day', date: '2026-01-26', rowNum: 5 }, // duplicate within batch
+        ],
+      })
+      .expect(201);
+    const body = res.body as BulkImportBody;
+    expect(body.created).toBe(1);
+    expect(body.failed).toHaveLength(3);
+  });
+
+  it('ADMIN deletes a holiday', async () => {
+    await request(app.getHttpServer())
+      .delete(`/holidays/${holidayId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+
+    const res = await request(app.getHttpServer())
+      .get('/holidays')
+      .query({ year: 2027 })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(
+      (res.body as HolidayBody[]).find((h) => h.id === holidayId),
+    ).toBeUndefined();
+  });
+});

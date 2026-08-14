@@ -12,6 +12,8 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from '../employees/employee-id.service';
+import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { AuthUserDto } from './dto/auth-response.dto';
@@ -39,6 +41,8 @@ export class AuthService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly usersService: UsersService,
     private readonly employeeIdService: EmployeeIdService,
+    private readonly statutoryConfigService: StatutoryConfigService,
+    private readonly auditLogService: AuditLogService,
     private readonly jwt: JwtService,
   ) {}
 
@@ -61,6 +65,12 @@ export class AuthService {
         const organization = await tx.organization.create({
           data: { name: dto.organizationName },
         });
+        // Every new org gets all 9 statutory modules pre-seeded (most
+        // disabled, payroll_calendar/rounding always enabled) so the
+        // future payroll engine's period-aware resolution has a row to
+        // resolve from day one — same registration-time integration point
+        // as the old system's registerOrganization.
+        await this.statutoryConfigService.seedDefaults(tx, organization.id);
         // The founder is Employee #1 of their own org — employeeId
         // generation is an Employees-module concern (row-locked counter on
         // Organization, see EmployeeIdService), reused here rather than
@@ -119,6 +129,13 @@ export class AuthService {
       user.role,
       meta,
     );
+    await this.auditLogService.log({
+      actorId: user.id,
+      action: 'LOGIN',
+      module: 'AUTH',
+      organizationId: user.organizationId,
+      ipAddress: meta.ip ?? '',
+    });
 
     return {
       ...tokens,

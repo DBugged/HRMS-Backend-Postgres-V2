@@ -1,0 +1,466 @@
+import { Inject, Injectable } from '@nestjs/common';
+import { PayrollRunStatus, Prisma, TaxRegime } from '@prisma/client';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { ReportColumn } from './report-export';
+import { PayrollReportQueryDto } from './dto/report-queries.dto';
+import { Form16ReportQueryDto } from './dto/form16-report-query.dto';
+import { ReportPayload } from './reports.service';
+
+interface PayrollLine {
+  code: string;
+  name: string;
+  amount: number;
+}
+
+interface TaxDetailsShape {
+  regime?: TaxRegime;
+  taxableIncome?: number;
+  totalAnnualTax?: number;
+}
+
+const FINALIZED_STATUSES: PayrollRunStatus[] = [
+  PayrollRunStatus.CALCULATED,
+  PayrollRunStatus.VERIFIED,
+  PayrollRunStatus.APPROVED,
+  PayrollRunStatus.LOCKED,
+  PayrollRunStatus.PAID,
+];
+const PAID_OUT_STATUSES: PayrollRunStatus[] = [
+  PayrollRunStatus.APPROVED,
+  PayrollRunStatus.LOCKED,
+  PayrollRunStatus.PAID,
+];
+
+const linesOf = (json: unknown): PayrollLine[] =>
+  (json as PayrollLine[] | null) ?? [];
+const findLine = (lines: unknown, code: string): PayrollLine | undefined =>
+  linesOf(lines).find((l) => l.code === code);
+const lineAmount = (lines: unknown, code: string): number =>
+  findLine(lines, code)?.amount ?? 0;
+
+@Injectable()
+export class PayrollReportsService {
+  constructor(
+    @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+  ) {}
+
+  private async fetchRuns(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ) {
+    const where: Prisma.PayrollRunWhereInput = {
+      organizationId,
+      isFinalSettlement: false,
+      status: { in: FINALIZED_STATUSES },
+    };
+    if (query.month) where.month = query.month;
+    if (query.year) where.year = query.year;
+
+    return this.scopedPrisma.payrollRun.findMany({
+      where,
+      include: { employee: { select: { name: true, employeeId: true } } },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+  }
+
+  // Every earning/deduction code that appears anywhere in the selected
+  // period becomes its own column, auto-detected (no hardcoded component
+  // list, since components are fully configurable).
+  async salaryRegisterReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+
+    const earningCodes = [
+      ...new Set(runs.flatMap((r) => linesOf(r.earnings).map((e) => e.code))),
+    ];
+    const deductionCodes = [
+      ...new Set(runs.flatMap((r) => linesOf(r.deductions).map((d) => d.code))),
+    ];
+
+    const rows = runs.map((r) => {
+      const row: Record<string, unknown> = {
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        month: r.month,
+        year: r.year,
+      };
+      earningCodes.forEach((code) => {
+        row[`e_${code}`] = lineAmount(r.earnings, code);
+      });
+      deductionCodes.forEach((code) => {
+        row[`d_${code}`] = lineAmount(r.deductions, code);
+      });
+      row.grossSalary = r.grossSalary;
+      row.totalDeductions = r.totalDeductions;
+      row.netPay = r.netPay;
+      return row;
+    });
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      ...earningCodes.map((code) => ({
+        header: code,
+        key: `e_${code}`,
+        width: 14,
+      })),
+      ...deductionCodes.map((code) => ({
+        header: code,
+        key: `d_${code}`,
+        width: 14,
+      })),
+      { header: 'Gross Salary', key: 'grossSalary', width: 14 },
+      { header: 'Total Deductions', key: 'totalDeductions', width: 16 },
+      { header: 'Net Pay', key: 'netPay', width: 14 },
+    ];
+
+    return {
+      title: 'Salary Register',
+      columns,
+      rows,
+      filename: 'salary_register',
+    };
+  }
+
+  // No bank fields exist on backend-v2's User model yet (same gap as the
+  // payslip PDF's PAN/UAN/bank rows) — every account field renders '-',
+  // preserving the report's shape so it lights up automatically once a
+  // future "Employee Statutory & Bank Details" batch adds them.
+  async bankTransferReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+    const rows = runs
+      .filter((r) => PAID_OUT_STATUSES.includes(r.status))
+      .map((r) => ({
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        bankAccountNo: '-',
+        bankIFSC: '-',
+        bankName: '-',
+        netPay: r.netPay,
+      }));
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Account Number', key: 'bankAccountNo', width: 20 },
+      { header: 'IFSC', key: 'bankIFSC', width: 14 },
+      { header: 'Bank Name', key: 'bankName', width: 20 },
+      { header: 'Net Pay', key: 'netPay', width: 14 },
+    ];
+
+    return {
+      title: 'Bank Transfer Report',
+      columns,
+      rows,
+      filename: 'bank_transfer_report',
+    };
+  }
+
+  // Includes only runs that actually carry an INCOME_TAX deduction line,
+  // rather than re-checking current PayrollSettings/statutory-overlay for
+  // the queried period — the run's own snapshot is authoritative for what
+  // applied that period (settings may have changed since), and this
+  // avoids re-deriving the overlay for an arbitrary date range.
+  async incomeTaxReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+    const rows = runs
+      .filter((r) => findLine(r.deductions, 'INCOME_TAX'))
+      .map((r) => {
+        const taxDetails = r.taxDetails as TaxDetailsShape | null;
+        return {
+          employeeId: r.employee.employeeId,
+          name: r.employee.name,
+          month: r.month,
+          year: r.year,
+          regime: taxDetails?.regime ?? '-',
+          taxableIncome: taxDetails?.taxableIncome ?? 0,
+          monthlyTDS: lineAmount(r.deductions, 'INCOME_TAX'),
+          annualTaxProjection: taxDetails?.totalAnnualTax ?? 0,
+        };
+      });
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      { header: 'Regime', key: 'regime', width: 10 },
+      { header: 'Taxable Income', key: 'taxableIncome', width: 16 },
+      { header: 'Monthly TDS', key: 'monthlyTDS', width: 14 },
+      {
+        header: 'Annual Tax Projection',
+        key: 'annualTaxProjection',
+        width: 18,
+      },
+    ];
+
+    return {
+      title: 'Income Tax Report',
+      columns,
+      rows,
+      filename: 'income_tax_report',
+    };
+  }
+
+  // Shared shape for PF / ESI / PT — each just filters on a different
+  // deduction/employer-contribution code pair, including only runs that
+  // actually carry that line (same reasoning as incomeTaxReport).
+  private async statutoryContributionReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+    code: string,
+    employerCode: string | null,
+    title: string,
+    filename: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+    const rows = runs
+      .filter(
+        (r) =>
+          findLine(r.deductions, code) ||
+          (employerCode && findLine(r.employerContributions, employerCode)),
+      )
+      .map((r) => ({
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        month: r.month,
+        year: r.year,
+        employeeContribution: lineAmount(r.deductions, code),
+        employerContribution: employerCode
+          ? lineAmount(r.employerContributions, employerCode)
+          : 0,
+      }));
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      {
+        header: 'Employee Contribution',
+        key: 'employeeContribution',
+        width: 18,
+      },
+      {
+        header: 'Employer Contribution',
+        key: 'employerContribution',
+        width: 18,
+      },
+    ];
+
+    return { title, columns, rows, filename };
+  }
+
+  pfReport(query: PayrollReportQueryDto, organizationId: string) {
+    return this.statutoryContributionReport(
+      query,
+      organizationId,
+      'PF',
+      'PF_EMPLOYER',
+      'PF Report',
+      'pf_report',
+    );
+  }
+
+  esiReport(query: PayrollReportQueryDto, organizationId: string) {
+    return this.statutoryContributionReport(
+      query,
+      organizationId,
+      'ESI',
+      'ESI_EMPLOYER',
+      'ESI Report',
+      'esi_report',
+    );
+  }
+
+  ptReport(query: PayrollReportQueryDto, organizationId: string) {
+    return this.statutoryContributionReport(
+      query,
+      organizationId,
+      'PT',
+      null,
+      'Professional Tax Report',
+      'pt_report',
+    );
+  }
+
+  async employerContributionsReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+    const codes = [
+      ...new Set(
+        runs.flatMap((r) =>
+          linesOf(r.employerContributions).map((e) => e.code),
+        ),
+      ),
+    ];
+
+    const rows = runs.map((r) => {
+      const row: Record<string, unknown> = {
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        month: r.month,
+        year: r.year,
+      };
+      codes.forEach((code) => {
+        row[code] = lineAmount(r.employerContributions, code);
+      });
+      row.total = r.totalEmployerContributions;
+      return row;
+    });
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      ...codes.map((code) => ({ header: code, key: code, width: 16 })),
+      { header: 'Total', key: 'total', width: 14 },
+    ];
+
+    return {
+      title: 'Employer Contributions Report',
+      columns,
+      rows,
+      filename: 'employer_contributions_report',
+    };
+  }
+
+  async bonusReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+    const rows = runs
+      .map((r) => ({
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        month: r.month,
+        year: r.year,
+        bonus: lineAmount(r.earnings, 'BONUS'),
+      }))
+      .filter((r) => r.bonus > 0);
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      { header: 'Bonus', key: 'bonus', width: 14 },
+    ];
+
+    return { title: 'Bonus Report', columns, rows, filename: 'bonus_report' };
+  }
+
+  async ctcReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.fetchRuns(query, organizationId);
+    const rows = runs.map((r) => ({
+      employeeId: r.employee.employeeId,
+      name: r.employee.name,
+      month: r.month,
+      year: r.year,
+      grossSalary: r.grossSalary,
+      employerContributions: r.totalEmployerContributions,
+      ctcMonthly: r.ctcMonthly,
+      ctcAnnual: Math.round(r.ctcMonthly * 12),
+    }));
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      { header: 'Gross Salary', key: 'grossSalary', width: 14 },
+      {
+        header: 'Employer Contributions',
+        key: 'employerContributions',
+        width: 18,
+      },
+      { header: 'CTC (Monthly)', key: 'ctcMonthly', width: 14 },
+      { header: 'CTC (Annualized)', key: 'ctcAnnual', width: 16 },
+    ];
+
+    return { title: 'CTC Report', columns, rows, filename: 'ctc_report' };
+  }
+
+  // Simplified annual tax-summary report in the spirit of Form 16 (Part B)
+  // — not the official e-filing XML format, but the same figures HR needs
+  // to hand an employee: gross pay and total tax deducted across the
+  // financial year.
+  async form16Report(
+    query: Form16ReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        financialYear: query.financialYear,
+        isFinalSettlement: false,
+        status: { in: PAID_OUT_STATUSES },
+      },
+      include: { employee: { select: { name: true, employeeId: true } } },
+    });
+
+    const byEmployee = new Map<
+      string,
+      {
+        employeeId: string;
+        name: string;
+        financialYear: string;
+        grossSalary: number;
+        totalTaxDeducted: number;
+        regime: string;
+        taxableIncome: number;
+      }
+    >();
+    for (const r of runs) {
+      const taxDetails = r.taxDetails as TaxDetailsShape | null;
+      const existing = byEmployee.get(r.employeeId) ?? {
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        financialYear: query.financialYear,
+        grossSalary: 0,
+        totalTaxDeducted: 0,
+        regime: taxDetails?.regime ?? '-',
+        taxableIncome: taxDetails?.taxableIncome ?? 0,
+      };
+      existing.grossSalary += r.grossSalary;
+      existing.totalTaxDeducted += lineAmount(r.deductions, 'INCOME_TAX');
+      byEmployee.set(r.employeeId, existing);
+    }
+
+    const rows = [...byEmployee.values()];
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Financial Year', key: 'financialYear', width: 14 },
+      { header: 'Regime', key: 'regime', width: 10 },
+      { header: 'Gross Salary (Annual)', key: 'grossSalary', width: 18 },
+      { header: 'Taxable Income', key: 'taxableIncome', width: 16 },
+      { header: 'Total Tax Deducted', key: 'totalTaxDeducted', width: 18 },
+    ];
+
+    return {
+      title: `Form 16 Summary — FY ${query.financialYear}`,
+      columns,
+      rows,
+      filename: 'form16_summary',
+    };
+  }
+}

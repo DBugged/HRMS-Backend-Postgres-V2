@@ -8,6 +8,36 @@ import { UsersModule } from './users/users.module';
 import { OrganizationsModule } from './organizations/organizations.module';
 import { DepartmentsModule } from './departments/departments.module';
 import { EmployeesModule } from './employees/employees.module';
+import { HolidaysModule } from './holidays/holidays.module';
+import { WorkLocationsModule } from './work-locations/work-locations.module';
+import { LeaveBalancesModule } from './leave-balances/leave-balances.module';
+import { LeaveTypesModule } from './leave-types/leave-types.module';
+import { CompOffsModule } from './comp-offs/comp-offs.module';
+import { LeavesModule } from './leaves/leaves.module';
+import { SalaryComponentsModule } from './salary-components/salary-components.module';
+import { PayrollSettingsModule } from './payroll-settings/payroll-settings.module';
+import { EmployeeSalaryComponentsModule } from './employee-salary-components/employee-salary-components.module';
+import { PayrollTemplatesModule } from './payroll-templates/payroll-templates.module';
+import { StatutoryConfigModule } from './statutory-config/statutory-config.module';
+import { TaxSlabsModule } from './tax-slabs/tax-slabs.module';
+import { TaxDeclarationsModule } from './tax-declarations/tax-declarations.module';
+import { AttendanceModule } from './attendance/attendance.module';
+import { OvertimeModule } from './overtime/overtime.module';
+import { PerformanceRatingsModule } from './performance-ratings/performance-ratings.module';
+import { LeaveEncashmentsModule } from './leave-encashments/leave-encashments.module';
+import { PayrollModule } from './payroll/payroll.module';
+import { ReimbursementsModule } from './reimbursements/reimbursements.module';
+import { LoansModule } from './loans/loans.module';
+import { SettlementsModule } from './settlements/settlements.module';
+import { OffboardingModule } from './offboarding/offboarding.module';
+import { DashboardModule } from './dashboard/dashboard.module';
+import { ReportsModule } from './reports/reports.module';
+import { FilesModule } from './files/files.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
+import { EmployeeTimelineModule } from './employee-timeline/employee-timeline.module';
+import { ApprovalDelegationModule } from './approval-delegation/approval-delegation.module';
+import { DocumentsModule } from './documents/documents.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 
 @Module({
@@ -18,6 +48,36 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     OrganizationsModule,
     DepartmentsModule,
     EmployeesModule,
+    HolidaysModule,
+    WorkLocationsModule,
+    LeaveBalancesModule,
+    LeaveTypesModule,
+    CompOffsModule,
+    LeavesModule,
+    SalaryComponentsModule,
+    PayrollSettingsModule,
+    EmployeeSalaryComponentsModule,
+    PayrollTemplatesModule,
+    StatutoryConfigModule,
+    TaxSlabsModule,
+    TaxDeclarationsModule,
+    AttendanceModule,
+    OvertimeModule,
+    PerformanceRatingsModule,
+    LeaveEncashmentsModule,
+    PayrollModule,
+    ReimbursementsModule,
+    LoansModule,
+    SettlementsModule,
+    OffboardingModule,
+    DashboardModule,
+    ReportsModule,
+    FilesModule,
+    AuditLogModule,
+    EmployeeTimelineModule,
+    ApprovalDelegationModule,
+    DocumentsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,0 +1,224 @@
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { isEligible } from './leave-eligibility';
+import {
+  computeCarriedInExpiry,
+  computeCarryOut,
+  computeUpfrontCredit,
+  recalcClosing,
+} from './leave-balance-math';
+
+interface CarryForwardShape {
+  allowed: boolean;
+  maxDays: number;
+  expiryMonths: number | null;
+}
+
+// Roles eligible for leave accrual/balance tracking — old system's
+// 'employee'/'department_head' → backend-v2's EMPLOYEE/MANAGER, per the
+// established role-mapping table (administrator→ADMIN, hr_admin→HR).
+const ACCRUAL_ELIGIBLE_ROLES: Role[] = [Role.EMPLOYEE, Role.MANAGER];
+
+/**
+ * Orchestrating service for the leave-balance engine — wraps the pure
+ * functions in leave-eligibility.ts/leave-balance-math.ts with the DB reads/
+ * writes the old backend's leavePolicyEngine.js performed. Exported from
+ * LeaveBalancesModule so the future Leave-requests module (Batch 4b) can
+ * inject it too (same cross-module pattern as EmployeeIdService).
+ */
+@Injectable()
+export class LeaveBalanceService {
+  constructor(
+    @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+  ) {}
+
+  /**
+   * Get-or-create for (employee, leaveType, year). Must be called with a
+   * transaction client so the read-then-maybe-create is atomic under
+   * concurrent callers, same reasoning as EmployeeIdService.generate.
+   */
+  async ensureBalanceRow(
+    tx: Prisma.TransactionClient,
+    employeeId: string,
+    leaveTypeId: string,
+    year: number,
+    organizationId: string,
+  ): Promise<LeaveBalance> {
+    const existing = await tx.leaveBalance.findFirst({
+      where: { organizationId, employeeId, leaveTypeId, year },
+    });
+    if (existing) return existing;
+
+    const [employee, leaveType, priorYearRow] = await Promise.all([
+      tx.user.findFirst({ where: { id: employeeId, organizationId } }),
+      tx.leaveType.findFirst({ where: { id: leaveTypeId, organizationId } }),
+      tx.leaveBalance.findFirst({
+        where: { organizationId, employeeId, leaveTypeId, year: year - 1 },
+      }),
+    ]);
+    if (!employee) throw new NotFoundException('Employee not found.');
+    if (!leaveType) throw new NotFoundException('Leave type not found.');
+
+    const opening = priorYearRow?.carriedForwardOut ?? 0;
+    const credited = computeUpfrontCredit(
+      leaveType,
+      employee.joiningDate,
+      year,
+    );
+
+    return tx.leaveBalance.create({
+      data: {
+        organizationId,
+        employeeId,
+        leaveTypeId,
+        year,
+        opening,
+        credited,
+        closing: opening + credited,
+      },
+    });
+  }
+
+  // Recomputes and persists `closing` for a balance row — the single
+  // source-of-truth writer, mirroring recalculateLeaveBalance. Called after
+  // every mutation to opening/credited/availed/encashed/adjusted.
+  //
+  // Uses updateMany (not update) — LeaveBalance is tenant-scoped, and the
+  // guard forbids update()'s unique-only where outright (see
+  // tenant-scope.guard-logic.ts). updateMany's where can be
+  // organizationId-scoped directly.
+  async recalculate(
+    tx: Prisma.TransactionClient,
+    balanceId: string,
+    organizationId: string,
+  ): Promise<LeaveBalance> {
+    const row = await tx.leaveBalance.findFirstOrThrow({
+      where: { id: balanceId, organizationId },
+    });
+    await tx.leaveBalance.updateMany({
+      where: { id: balanceId, organizationId },
+      data: { closing: recalcClosing(row) },
+    });
+    return tx.leaveBalance.findFirstOrThrow({
+      where: { id: balanceId, organizationId },
+    });
+  }
+
+  async getEligibleLeaveTypes(
+    employeeId: string,
+    organizationId: string,
+  ): Promise<LeaveType[]> {
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
+    const leaveTypes = await this.scopedPrisma.leaveType.findMany({
+      where: { organizationId, isActive: true },
+    });
+
+    return leaveTypes.filter((lt) => isEligible(lt, employee));
+  }
+
+  // HR-triggered, on-demand (no cron infra, same as the old system) —
+  // credits accrualAmountPerCycle to every currently-eligible EMPLOYEE/
+  // MANAGER's current-year balance for this leave type. No frequency
+  // gating or idempotency guard, ported as-is: calling this twice in the
+  // same period double-credits, exactly like the old backend.
+  async creditAccrual(
+    leaveTypeId: string,
+    organizationId: string,
+  ): Promise<{ matched: number }> {
+    const leaveType = await this.scopedPrisma.leaveType.findFirst({
+      where: { id: leaveTypeId, organizationId },
+    });
+    if (!leaveType) throw new NotFoundException('Leave type not found.');
+
+    const year = new Date().getFullYear();
+    const employees = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        role: { in: ACCRUAL_ELIGIBLE_ROLES },
+      },
+    });
+    const eligible = employees.filter((e) => isEligible(leaveType, e));
+
+    await this.scopedPrisma.$transaction(async (tx) => {
+      for (const employee of eligible) {
+        const row = await this.ensureBalanceRow(
+          tx,
+          employee.id,
+          leaveTypeId,
+          year,
+          organizationId,
+        );
+        await tx.leaveBalance.updateMany({
+          where: { id: row.id, organizationId },
+          data: { credited: row.credited + leaveType.accrualAmountPerCycle },
+        });
+        await this.recalculate(tx, row.id, organizationId);
+      }
+    });
+
+    return { matched: eligible.length };
+  }
+
+  // HR-triggered year-end rollover across every leave type with
+  // carryForward.allowed, org-wide. `year` is the closing year being
+  // rolled FROM (e.g. run with 2026 to carry 2026's unused balance into
+  // each employee's 2027 opening).
+  async runYearEndCarryForward(
+    year: number,
+    organizationId: string,
+  ): Promise<{ processed: number }> {
+    const leaveTypes = await this.scopedPrisma.leaveType.findMany({
+      where: { organizationId, isActive: true },
+    });
+    const carryForwardTypes = leaveTypes.filter(
+      (lt) => (lt.carryForward as unknown as CarryForwardShape).allowed,
+    );
+
+    let processed = 0;
+    await this.scopedPrisma.$transaction(async (tx) => {
+      for (const leaveType of carryForwardTypes) {
+        const cf = leaveType.carryForward as unknown as CarryForwardShape;
+        const rows = await tx.leaveBalance.findMany({
+          where: { organizationId, leaveTypeId: leaveType.id, year },
+        });
+
+        for (const row of rows) {
+          const carryOut = computeCarryOut(row.closing, cf.maxDays);
+          await tx.leaveBalance.updateMany({
+            where: { id: row.id, organizationId },
+            data: { carriedForwardOut: carryOut },
+          });
+
+          const nextRow = await this.ensureBalanceRow(
+            tx,
+            row.employeeId,
+            leaveType.id,
+            year + 1,
+            organizationId,
+          );
+          await tx.leaveBalance.updateMany({
+            where: { id: nextRow.id, organizationId },
+            data: {
+              opening: carryOut,
+              carriedInExpiresOn: computeCarriedInExpiry(
+                year + 1,
+                cf.expiryMonths,
+              ),
+            },
+          });
+          await this.recalculate(tx, nextRow.id, organizationId);
+          processed += 1;
+        }
+      }
+    });
+
+    return { processed };
+  }
+}

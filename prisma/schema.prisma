@@ -55,9 +55,49 @@ model Organization {
   employeeIdPrefix  String @default("EMP")
   employeeIdCounter Int    @default(0)
 
-  users         User[]
-  departments   Department[]
-  refreshTokens RefreshToken[]
+  // Admin toggle for whether WFH is offered as a work-arrangement option on
+  // Attendance — the column on Attendance always accepts WFH regardless, so
+  // disabling this later doesn't orphan history.
+  enableWFH              Boolean @default(true)
+  // Org-wide fallback shift config, used by AttendanceService whenever an
+  // employee's Department has none set (or there's no department at all).
+  // A department's own shift-config fields always win over these.
+  attendancePayrollPrefs Json    @default("{\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"weekendDays\":[0,6]}")
+
+  users                    User[]
+  departments              Department[]
+  refreshTokens            RefreshToken[]
+  holidays                 Holiday[]
+  workLocations            WorkLocation[]
+  leaveTypes               LeaveType[]
+  leaveBalances            LeaveBalance[]
+  leaves                   Leave[]
+  compOffs                 CompOff[]
+  salaryComponents         SalaryComponent[]
+  payrollSettings          PayrollSettings?
+  employeeSalaryComponents EmployeeSalaryComponent[]
+  payrollTemplates         PayrollTemplate[]
+  statutoryConfigVersions  StatutoryConfigVersion[]
+  employeeTaxDeclarations  EmployeeTaxDeclaration[]
+  taxSlabConfigs           TaxSlabConfig[]
+  punches                  Punch[]
+  attendances              Attendance[]
+  attendanceImportBatches  AttendanceImportBatch[]
+  overtimeRecords          OvertimeRecord[]
+  performanceRatings       PerformanceRating[]
+  leaveEncashments         LeaveEncashment[]
+  payrollRuns              PayrollRun[]
+  reimbursements           Reimbursement[]
+  loans                    Loan[]
+  loanRepayments           LoanRepayment[]
+  settlements              Settlement[]
+  offboardingCases         OffboardingCase[]
+  auditLogs                AuditLog[]
+  timelineEvents           EmployeeTimeline[]
+  approvalDelegations      ApprovalDelegation[]
+  policyDocuments          PolicyDocument[]
+  documentRequirements     DocumentRequirement[]
+  notifications            Notification[]
 
   @@map("organizations")
 }
@@ -76,9 +116,30 @@ model Department {
   isActive    Boolean @default(true)
 
   departmentHeadId String?
-  departmentHead    User?   @relation("DepartmentHead", fields: [departmentHeadId], references: [id])
+  departmentHead   User?   @relation("DepartmentHead", fields: [departmentHeadId], references: [id])
 
-  employees User[] @relation("EmployeeDepartment")
+  // Assigned geo-fence for self-punch validation (AttendanceService) — one
+  // per department, not per-employee. Null = no enforcement for this dept.
+  workLocationId String?
+  workLocation   WorkLocation? @relation(fields: [workLocationId], references: [id])
+
+  // Per-department shift/attendance policy, read by
+  // AttendanceService.recalculateAttendanceForDay. Falls back to
+  // Organization.attendancePayrollPrefs's default* fields when unset at
+  // the org level too (see attendance-shift-config.ts).
+  shiftStartTime           String @default("09:30")
+  shiftEndTime             String @default("18:30")
+  lateInThresholdMinutes   Int    @default(15)
+  earlyOutThresholdMinutes Int    @default(15)
+  minHoursForPresent       Float  @default(8)
+  minHoursForHalfDay       Float  @default(4)
+  // [0]=Sunday ... 6=Saturday.
+  weeklyOffs               Json   @default("[0]")
+
+  employees User[]    @relation("EmployeeDepartment")
+  holidays  Holiday[]
+
+  attendanceImportBatches AttendanceImportBatch[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -102,7 +163,7 @@ model User {
   role     Role   @default(EMPLOYEE)
 
   isFounder          Boolean   @default(false)
-  isActive            Boolean   @default(true)
+  isActive           Boolean   @default(true)
   mustChangePassword Boolean   @default(true)
   emailVerified      Boolean   @default(true)
   lastLoginAt        DateTime?
@@ -127,10 +188,64 @@ model User {
 
   managedDepartments Department[] @relation("DepartmentHead")
 
+  // { mutedCategories: NotificationCategory[], emailEnabled: boolean } —
+  // mutedCategories filters GET /notifications; emailEnabled only gates
+  // whether this user receives HR's broadcast emails (POST
+  // /notifications/send with sendEmailToo) — per-event transactional
+  // emails (leave/attendance/payroll decisions) always fire regardless,
+  // same as the old system.
+  notificationPreferences Json @default("{\"mutedCategories\":[],\"emailEnabled\":true}")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  refreshTokens RefreshToken[]
+  refreshTokens                    RefreshToken[]
+  createdWorkLocations             WorkLocation[]
+  createdLeaveTypes                LeaveType[]
+  leaveBalances                    LeaveBalance[]
+  leaves                           Leave[]                   @relation("LeaveEmployee")
+  leavesReviewed                   Leave[]                   @relation("LeaveReviewedBy")
+  leavesLevel1Approved             Leave[]                   @relation("LeaveLevel1ApprovedBy")
+  compOffs                         CompOff[]                 @relation("CompOffEmployee")
+  compOffsApproved                 CompOff[]                 @relation("CompOffApprovedBy")
+  createdSalaryComponents          SalaryComponent[]
+  updatedPayrollSettings           PayrollSettings[]
+  employeeSalaryComponents         EmployeeSalaryComponent[] @relation("EmployeeSalaryComponentEmployee")
+  createdEmployeeSalaryComponents  EmployeeSalaryComponent[] @relation("EmployeeSalaryComponentCreatedBy")
+  createdPayrollTemplates          PayrollTemplate[]
+  createdStatutoryConfigVersions   StatutoryConfigVersion[]
+  taxDeclarations                  EmployeeTaxDeclaration[]
+  punches                          Punch[]
+  attendances                      Attendance[]
+  uploadedAttendanceImportBatches  AttendanceImportBatch[]   @relation("AttendanceImportUploadedBy")
+  validatedAttendanceImportBatches AttendanceImportBatch[]   @relation("AttendanceImportValidatedBy")
+  executedAttendanceImportBatches  AttendanceImportBatch[]   @relation("AttendanceImportExecutedBy")
+  overtimeRecords                  OvertimeRecord[]          @relation("OvertimeEmployee")
+  overtimeRecordsApproved          OvertimeRecord[]          @relation("OvertimeApprovedBy")
+  performanceRatings               PerformanceRating[]       @relation("PerformanceRatingEmployee")
+  performanceRatingsGiven          PerformanceRating[]       @relation("PerformanceRatingRatedBy")
+  leaveEncashments                 LeaveEncashment[]         @relation("LeaveEncashmentEmployee")
+  leaveEncashmentsApproved         LeaveEncashment[]         @relation("LeaveEncashmentApprovedBy")
+  payrollRuns                      PayrollRun[]              @relation("PayrollRunEmployee")
+  payrollRunsCalculated            PayrollRun[]              @relation("PayrollRunCalculatedBy")
+  reimbursements                   Reimbursement[]           @relation("ReimbursementEmployee")
+  reimbursementsApproved           Reimbursement[]           @relation("ReimbursementApprovedBy")
+  loans                            Loan[]                    @relation("LoanEmployee")
+  loansApproved                    Loan[]                    @relation("LoanApprovedBy")
+  settlements                      Settlement[]              @relation("SettlementEmployee")
+  settlementsProcessed             Settlement[]              @relation("SettlementProcessedBy")
+  offboardingCases                 OffboardingCase[]         @relation("OffboardingCaseEmployee")
+  offboardingCasesInitiated        OffboardingCase[]         @relation("OffboardingCaseInitiatedBy")
+  offboardingCasesCompleted        OffboardingCase[]         @relation("OffboardingCaseCompletedBy")
+  auditLogs                        AuditLog[]
+  timelineEvents                   EmployeeTimeline[]        @relation("TimelineEmployee")
+  timelineEventsPerformed          EmployeeTimeline[]        @relation("TimelinePerformedBy")
+  delegationsGiven                 ApprovalDelegation[]      @relation("DelegationDelegator")
+  delegationsReceived              ApprovalDelegation[]      @relation("DelegationDelegate")
+  delegationsCreated               ApprovalDelegation[]      @relation("DelegationCreatedBy")
+  policyDocumentsUploaded          PolicyDocument[]          @relation("PolicyDocumentUploadedBy")
+  documentRequirementsCreated      DocumentRequirement[]     @relation("DocumentRequirementCreatedBy")
+  notifications                    Notification[]
 
   @@unique([organizationId, employeeId])
   @@index([organizationId])
@@ -153,7 +268,7 @@ model RefreshToken {
   tokenHash String @unique
 
   expiresAt           DateTime
-  revokedAt            DateTime?
+  revokedAt           DateTime?
   // Set on rotation (see AuthService.refresh) — kept for audit/reuse-detection.
   replacedByTokenHash String?
 
@@ -164,4 +279,1480 @@ model RefreshToken {
   @@index([userId])
   @@index([organizationId])
   @@map("refresh_tokens")
+}
+
+// Mirrors the old MySQL backend's Holiday.type ENUM exactly (see
+// holidayController.js ground truth).
+enum HolidayType {
+  NATIONAL
+  STATE
+  REGIONAL
+  COMPANY
+  OPTIONAL
+}
+
+model Holiday {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+  // YYYY-MM-DD, stored as a plain string same as the old system — it's
+  // always compared/sorted as an ISO date string, never a time-of-day.
+  date String
+
+  departmentId String? // null = company-wide
+  department   Department? @relation(fields: [departmentId], references: [id])
+
+  year        Int
+  // isOptional is the behavioral flag (drives employee opt-in logic); type
+  // is display/reporting taxonomy only — a state holiday can independently
+  // be optional or not. Mirrors the old model's comment verbatim.
+  isOptional  Boolean     @default(false)
+  type        HolidayType @default(COMPANY)
+  state       String?
+  description String      @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("holidays")
+}
+
+// Mirrors the old MySQL backend's WorkLocation.fenceType ENUM exactly.
+enum FenceType {
+  CIRCLE
+  RECTANGLE
+  POLYGON
+}
+
+// A geo-fenced office/site HR has marked on the map. Multiple locations are
+// supported (branches, WFH-exempt sites, etc.). Attendance/punch validation
+// against these fences is Batch 6 — this is the HR-configuration side only.
+model WorkLocation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name        String
+  address     String @default("")
+  description String @default("")
+
+  latitude     Float
+  longitude    Float
+  radiusMeters Int   @default(200)
+
+  // CIRCLE (legacy/default) keeps using latitude/longitude/radiusMeters
+  // as-is. RECTANGLE/POLYGON store their geometry in `boundary` and also
+  // keep latitude/longitude/radiusMeters populated with a derived centroid
+  // + bounding radius (see geo-fence.ts's deriveCircleSummary) so any
+  // consumer that only knows circles still gets a sensible equivalent.
+  fenceType FenceType @default(CIRCLE)
+  // circle: null. rectangle: { bounds: [[lat,lng],[lat,lng]] }. polygon:
+  // { vertices: [[lat,lng], ...] } (>= 3 points, unlimited).
+  boundary  Json?
+
+  isActive Boolean @default(true)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  departments Department[]
+
+  @@index([organizationId])
+  @@map("work_locations")
+}
+
+enum AllocationType {
+  FIXED_ANNUAL
+  PRORATED_ON_JOINING
+  EARNED_MONTHLY
+  UNLIMITED
+  NONE
+}
+
+enum AccrualFrequency {
+  YEARLY
+  HALF_YEARLY
+  QUARTERLY
+  MONTHLY
+  BI_MONTHLY
+}
+
+model LeaveType {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name         String
+  code         String
+  description  String  @default("")
+  color        String  @default("#3b82f6")
+  isActive     Boolean @default(true)
+  isPaid       Boolean @default(true)
+  displayOrder Int     @default(0)
+
+  allocationType        AllocationType   @default(FIXED_ANNUAL)
+  annualQuota           Float            @default(0)
+  accrualFrequency      AccrualFrequency @default(YEARLY)
+  accrualAmountPerCycle Float            @default(0)
+  prorateOnJoining      Boolean          @default(true)
+
+  // [] = applies to all. applicableGenders is kept for schema fidelity
+  // only — User has no gender field in backend-v2, so this is never
+  // enforced (see leave-eligibility.ts).
+  applicableDepartments   Json @default("[]")
+  applicableEmployeeTypes Json @default("[]")
+  applicableGenders       Json @default("[]")
+  minServiceMonths        Int  @default(0)
+  maxServiceMonths        Int?
+
+  salaryImpactPercent   Float   @default(100)
+  affectsLopCalculation Boolean @default(true)
+
+  // approvalLevels/autoApprove* are read by the future Leave-requests
+  // module, not this one. autoApproveIfNoAction/autoApproveDays are
+  // carried for schema parity with the old system, where they were also
+  // dead fields (no code path implemented auto-approval there either).
+  requiresApproval      Boolean @default(true)
+  approvalLevels        Int     @default(2)
+  autoApproveIfNoAction Boolean @default(false)
+  autoApproveDays       Int     @default(0)
+
+  // Default mirrors the old system's rules object exactly.
+  rules Json @default("{\"minDurationDays\":0.5,\"maxDurationDays\":null,\"noticePeriodDays\":0,\"allowBackdated\":false,\"maxBackdateDays\":0,\"allowFutureDated\":true,\"maxAdvanceDays\":null,\"allowHalfDay\":true,\"sandwichLeaveApplies\":false,\"restrictPrefixSuffixHoliday\":false,\"maxConsecutiveDays\":null,\"minGapBetweenRequestsDays\":0}")
+
+  documentsRequired         Boolean @default(false)
+  documentRequiredAfterDays Float?
+
+  carryForward    Json @default("{\"allowed\":false,\"maxDays\":0,\"expiryMonths\":null}")
+  negativeBalance Json @default("{\"allowed\":false,\"maxNegativeDays\":0}")
+  encashment      Json @default("{\"allowed\":false,\"maxDaysPerYear\":0,\"minBalanceToRetain\":0}")
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  balances         LeaveBalance[]
+  leaves           Leave[]
+  leaveEncashments LeaveEncashment[]
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("leave_types")
+}
+
+model LeaveBalance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId  String
+  employee    User      @relation(fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+  year        Int
+
+  opening            Float   @default(0)
+  credited           Float   @default(0)
+  availed            Float   @default(0)
+  // Held-but-undecided total — subtracted only in the future Leave
+  // module's "available for new request" calc, deliberately excluded from
+  // `closing` below (matches the old system's two-different-"available"-
+  // semantics design, not an oversight).
+  pending            Float   @default(0)
+  encashed           Float   @default(0)
+  adjusted           Float   @default(0)
+  carriedForwardOut  Float   @default(0)
+  // YYYY-MM-DD, same plain-string convention as Holiday.date.
+  carriedInExpiresOn String?
+  // Maintained-on-write by LeaveBalanceService.recalculate(), never
+  // computed-on-read.
+  closing            Float   @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId, leaveTypeId, year])
+  @@index([organizationId])
+  @@map("leave_balances")
+}
+
+enum LeaveStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  RETURNED
+}
+
+enum HalfDaySession {
+  FIRST_HALF
+  SECOND_HALF
+}
+
+model Leave {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId  String
+  employee    User      @relation("LeaveEmployee", fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Holiday.date.
+  startDate      String
+  endDate        String
+  isHalfDay      Boolean         @default(false)
+  halfDaySession HalfDaySession?
+  totalDays      Float
+  remarks        String          @default("")
+  attachmentUrl  String?
+
+  status         LeaveStatus @default(PENDING)
+  reviewedById   String?
+  reviewedBy     User?       @relation("LeaveReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt     DateTime?
+  reviewComments String      @default("")
+
+  // Carried for schema fidelity — no endpoint in this codebase ever sets
+  // it true (same as the old system: no "HR applies on behalf of" flow
+  // for regular Leave, unlike CompOff's employeeId override).
+  appliedOnBehalfOf Boolean @default(false)
+  editedFromLeaveId String?
+
+  // Two-level approval (dept-head then HR), capped at 2, flat fields
+  // rather than a separate approval-history table — mirrors the old
+  // system exactly (a real audit trail would come from AuditLog/
+  // EmployeeTimeline, both Batch 9, so there's no separate trail here
+  // yet either).
+  level1ApprovedById String?
+  level1ApprovedBy   User?     @relation("LeaveLevel1ApprovedBy", fields: [level1ApprovedById], references: [id])
+  level1ApprovedAt   DateTime?
+  level1Comments     String    @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("leaves")
+}
+
+enum CompOffStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  AVAILED
+  PARTIALLY_AVAILED
+  EXPIRED
+}
+
+model CompOff {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId    String
+  employee      User    @relation("CompOffEmployee", fields: [employeeId], references: [id])
+  earnedForDate String
+  reason        String  @default("")
+  daysEarned    Float   @default(1)
+  // YYYY-MM-DD. Computed at creation from a hardcoded 90-day default (the
+  // old system's own PayrollSettings.compOffExpiryDays default) — a real
+  // per-org setting is Batch 5.
+  expiryDate    String?
+
+  status       CompOffStatus @default(PENDING)
+  daysAvailed  Float         @default(0)
+  approvedById String?
+  approvedBy   User?         @relation("CompOffApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([employeeId])
+  @@map("comp_offs")
+}
+
+enum SalaryComponentType {
+  EARNING
+  DEDUCTION
+}
+
+enum CalcType {
+  FIXED
+  PERCENTAGE
+  FORMULA
+  MANUAL
+}
+
+enum StatutoryKey {
+  PF
+  ESI
+  PT
+  LWF
+  NPS
+  GRATUITY
+  BONUS
+  INCOME_TAX
+  EMPLOYER_INSURANCE
+}
+
+enum PayFrequency {
+  MONTHLY
+  QUARTERLY
+  HALF_YEARLY
+  YEARLY
+}
+
+model SalaryComponent {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+  // Stable machine key referenced by other components' formulas/
+  // percentageOf — immutable after creation (stripped from update payloads
+  // in the service layer, same as the old controller).
+  code String
+
+  type     SalaryComponentType
+  calcType CalcType            @default(FIXED)
+
+  percentageOf    String? // another component's code, when calcType=PERCENTAGE
+  percentageValue Float? // 0-100, when calcType=PERCENTAGE
+  formula         String? // grammar in formula-engine.ts, when calcType=FORMULA
+  defaultValue    Float   @default(0) // company-wide default when calcType=FIXED
+
+  isTaxable              Boolean       @default(true)
+  includeInGross         Boolean       @default(true)
+  includeInNet           Boolean       @default(true)
+  includeInCTC           Boolean       @default(true)
+  isEmployerContribution Boolean       @default(false)
+  showOnPayslip          Boolean       @default(true)
+  isStatutory            Boolean       @default(false)
+  statutoryKey           StatutoryKey?
+  payFrequency           PayFrequency  @default(MONTHLY)
+
+  displayOrder    Int     @default(0)
+  isActive        Boolean @default(true)
+  isSystemDefault Boolean @default(false)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  employeeSalaryComponents EmployeeSalaryComponent[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("salary_components")
+}
+
+// Single row per organization (find-or-create-on-read singleton, matching
+// the old system's PayrollSettings pattern) rather than a normal CRUD
+// table — organizationId is @unique, not just indexed.
+model PayrollSettings {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  financialYearStartMonth Int    @default(4)
+  // 0 = last working day of month; 1-31 = fixed calendar day (clamped to
+  // month length).
+  processingDay           Int    @default(0)
+  paymentDay              Int    @default(0)
+  currency                String @default("INR")
+  currencySymbol          String @default("₹")
+  roundingRule            String @default("nearest") // nearest|up|down|none
+  roundingDecimals        Int    @default(0)
+
+  pfEnabled                Boolean @default(false)
+  esiEnabled               Boolean @default(false)
+  ptEnabled                Boolean @default(false)
+  lwfEnabled               Boolean @default(false)
+  npsEnabled               Boolean @default(false)
+  gratuityEnabled          Boolean @default(false)
+  bonusEnabled             Boolean @default(false)
+  incomeTaxEnabled         Boolean @default(true)
+  employerInsuranceEnabled Boolean @default(false)
+
+  pfEmployeeRate  Float @default(12)
+  pfEmployerRate  Float @default(12)
+  pfWageCeiling   Float @default(15000)
+  esiEmployeeRate Float @default(0.75)
+  esiEmployerRate Float @default(3.25)
+  esiWageCeiling  Float @default(21000)
+  // Default mirrors the old system's DEFAULT_PT_SLABS exactly.
+  ptSlabs         Json  @default("[{\"upTo\":7500,\"amount\":0},{\"upTo\":10000,\"amount\":175},{\"upTo\":null,\"amount\":200}]")
+
+  lwfEmployeeAmount Float @default(25)
+  lwfEmployerAmount Float @default(75)
+  npsEmployerRate   Float @default(10)
+  gratuityRate      Float @default(4.81)
+  compOffExpiryDays Int   @default(90)
+
+  updatedById String?
+  updatedBy   User?   @relation(fields: [updatedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("payroll_settings")
+}
+
+enum AmountBasis {
+  MONTHLY
+  ANNUAL
+}
+
+model EmployeeSalaryComponent {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("EmployeeSalaryComponentEmployee", fields: [employeeId], references: [id])
+
+  // Old system's SalaryComponent FK had `constraints: false` (no DB FK) —
+  // safe to make a real Prisma FK here since the controller's synthesized
+  // read-only rows (see salary-structure-math.ts) are response-only and
+  // never persisted.
+  componentId   String
+  component     SalaryComponent @relation(fields: [componentId], references: [id])
+  // Denormalized copy of SalaryComponent.code — fast formula-engine
+  // lookups without a join, matches the old system exactly.
+  componentCode String
+
+  // Reuses SalaryComponent's CalcType enum — same four values
+  // (FIXED/PERCENTAGE/FORMULA/MANUAL), no reason to duplicate it.
+  valueType       CalcType    @default(FIXED)
+  fixedAmount     Float?
+  percentageValue Float?
+  percentageOf    String?
+  formula         String?
+  amountBasis     AmountBasis @default(MONTHLY)
+
+  isEnabled Boolean @default(true)
+
+  // YYYY-MM-DD, same plain-string convention as Holiday.date/Leave dates.
+  // Revision history: effectiveTo IS NULL means this is the CURRENT row.
+  // Editing NEVER mutates value fields in place — it closes the current
+  // row (sets effectiveTo) and inserts a brand new one. Only effectiveTo
+  // is ever updated on an existing row.
+  effectiveFrom String
+  effectiveTo   String?
+  revisionNote  String  @default("")
+
+  createdById String?
+  createdBy   User?   @relation("EmployeeSalaryComponentCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId, componentCode, effectiveFrom])
+  @@map("employee_salary_components")
+}
+
+enum HeaderStyle {
+  CLASSIC
+  MODERN
+  MINIMAL
+}
+
+enum PayslipFontFamily {
+  HELVETICA
+  TIMES_ROMAN
+  COURIER
+}
+
+// Pure payslip-PDF branding/layout config — NOT linked to SalaryComponent
+// or any employee (confirmed: old system has zero per-employee/per-
+// department template assignment). Single-default-per-org, enforced in
+// the service layer (unset others whenever one is set).
+model PayrollTemplate {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name      String  @default("Default Template")
+  isDefault Boolean @default(false)
+
+  companyLogoUrl       String?
+  companyName          String  @default("D'Bugged Programmers")
+  companyAddress       String?
+  companyEmail         String?
+  companyWebsite       String?
+  companyContactNumber String?
+
+  primaryColor   String @default("#5546e0")
+  secondaryColor String @default("#14161d")
+  accentColor    String @default("#10b981")
+
+  footerText           String?
+  signatoryName        String?
+  signatoryDesignation String?
+  watermarkText        String?
+
+  headerStyle HeaderStyle       @default(MODERN)
+  headerColor String? // falls back to primaryColor when unset (read-side, Payroll core)
+  fontFamily  PayslipFontFamily @default(HELVETICA)
+  fontSize    Int               @default(9)
+
+  showCompanyAddress        Boolean @default(true)
+  showPAN                   Boolean @default(true)
+  showUAN                   Boolean @default(true)
+  showESIC                  Boolean @default(true)
+  showPFNumber              Boolean @default(true)
+  showBankDetails           Boolean @default(true)
+  showEmployerContributions Boolean @default(true)
+  showCTC                   Boolean @default(true)
+  showYTD                   Boolean @default(true)
+  showQRCode                Boolean @default(true)
+  showFooter                Boolean @default(true)
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("payroll_templates")
+}
+
+enum StatutoryModule {
+  PF
+  ESI
+  PT
+  LWF
+  GRATUITY
+  BONUS
+  NPS
+  PAYROLL_CALENDAR
+  ROUNDING
+}
+
+// One row = one complete, atomic, effective-dated snapshot of a single
+// statutory module's config (not field-level versioning) — same
+// close-current-open-row-then-insert-new pattern as
+// EmployeeSalaryComponent revisions (Batch 5b).
+model StatutoryConfigVersion {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  module        StatutoryModule
+  // YYYY-MM-DD, same plain-string convention as every other revisioned
+  // model in this codebase.
+  effectiveFrom String
+  effectiveTo   String?
+  // Shape validated per-module in statutory-config-validation.ts.
+  config        Json            @default("{}")
+  isEnabled     Boolean         @default(false)
+  notes         String          @default("")
+
+  createdById String?
+  createdBy   User?   @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, module, effectiveFrom])
+  @@map("statutory_config_versions")
+}
+
+enum TaxRegime {
+  OLD
+  NEW
+}
+
+enum TaxDeclarationStatus {
+  DRAFT
+  SUBMITTED
+  VERIFIED
+}
+
+model EmployeeTaxDeclaration {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId    String
+  employee      User      @relation(fields: [employeeId], references: [id])
+  financialYear String
+  regimeChosen  TaxRegime @default(NEW)
+
+  section80C             Float   @default(0)
+  section80CCD1B         Float   @default(0)
+  section80CCD2          Float   @default(0)
+  section80D             Float   @default(0)
+  section80E             Float   @default(0)
+  section80G             Float   @default(0)
+  otherDeductions        Float   @default(0)
+  hraRentPaidAnnual      Float   @default(0)
+  isMetroCity            Boolean @default(false)
+  ltaClaimed             Float   @default(0)
+  previousEmployerIncome Float   @default(0)
+  // Declared on the old model but never read by tax calc anywhere — dead
+  // field, carried for schema fidelity only.
+  previousEmployerTDS    Float   @default(0)
+  otherIncome            Float   @default(0)
+
+  status TaxDeclarationStatus @default(DRAFT)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId, financialYear])
+  @@index([organizationId])
+  @@map("employee_tax_declarations")
+}
+
+model TaxSlabConfig {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  financialYear     String
+  regime            TaxRegime
+  // {from, to, rate}[] — to:null = "and above".
+  slabs             Json      @default("[]")
+  standardDeduction Float     @default(75000)
+  cessRate          Float     @default(4)
+  // {from, to, rate}[] — surcharge on TAX amount, not income.
+  surchargeSlabs    Json      @default("[]")
+  rebate87ALimit    Float     @default(1200000)
+  rebate87AAmount   Float     @default(60000)
+  isActive          Boolean   @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, financialYear, regime])
+  @@map("tax_slab_configs")
+}
+
+enum PunchSource {
+  FACE_API
+  EXCEL_IMPORT
+  MANUAL
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  HALF_DAY
+  HOLIDAY
+  WEEKLY_OFF
+  ON_LEAVE
+}
+
+enum WorkArrangement {
+  OFFICE
+  WFH
+  HYBRID
+  CLIENT_SITE
+}
+
+enum AttendanceSource {
+  FACE_API
+  EXCEL_IMPORT
+  REGULARIZED
+  SYSTEM
+}
+
+// Immutable raw punch — one row per tap (Face API device, HR manual entry,
+// or a self-punch from the mobile app). Attendance rows are derived from
+// these by AttendanceService.recalculateAttendanceForDay, never written
+// to directly by a punch endpoint.
+model Punch {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation(fields: [employeeId], references: [id])
+
+  punchTime  DateTime
+  source     PunchSource @default(FACE_API)
+  location   String?
+  latitude   Float?
+  longitude  Float?
+  // Client-supplied URL — no upload endpoint exists in backend-v2 yet, same
+  // deferral as PayrollTemplate.companyLogoUrl/Leave.attachmentUrl.
+  selfieUrl  String?
+  // Raw Face API webhook payload, kept for audit.
+  rawPayload Json?
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, employeeId, punchTime])
+  @@map("punches")
+}
+
+// One row per employee per day, derived/recomputed from that day's Punch
+// rows by recalculateAttendanceForDay. Never blind-overwritten — writers
+// only touch the specific fields they own so e.g. a pending
+// `regularization` request survives a later punch-triggered recalculation.
+model Attendance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation(fields: [employeeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Holiday.date/Leave dates.
+  date String
+
+  inTime              DateTime?
+  outTime             DateTime?
+  checkinLocation     String?
+  checkinLatitude     Float?
+  checkinLongitude    Float?
+  checkinSelfieUrl    String?
+  checkoutLocation    String?
+  checkoutLatitude    Float?
+  checkoutLongitude   Float?
+  checkoutSelfieUrl   String?
+  workDurationMinutes Int       @default(0)
+
+  status          AttendanceStatus @default(ABSENT)
+  // Independent of status — a WFH day is still `status: PRESENT` via the
+  // normal punch flow. Only offered as a choice when Organization.enableWFH
+  // is true, but the column always accepts it regardless.
+  workArrangement WorkArrangement  @default(OFFICE)
+  isLate          Boolean          @default(false)
+  isEarlyOut      Boolean          @default(false)
+  // Reflects how this row was last derived, not any individual punch's own
+  // source — recalculation always stamps FACE_API regardless of which
+  // punch source triggered it.
+  source          AttendanceSource @default(FACE_API)
+
+  // Mirrors the old Mongo subdocument shape verbatim — not a separate
+  // model, same reasoning as every other JSON-blob port in this codebase.
+  // {requested, reason, requestedInTime, requestedOutTime, status
+  // ('none'|'pending'|'approved'|'rejected'), reviewedBy, reviewedAt,
+  // reviewComments}
+  regularization Json @default("{\"requested\":false,\"reason\":\"\",\"requestedInTime\":null,\"requestedOutTime\":null,\"status\":\"none\",\"reviewedBy\":null,\"reviewedAt\":null,\"reviewComments\":\"\"}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId, date])
+  @@index([organizationId, date])
+  @@map("attendances")
+}
+
+enum ImportBatchStatus {
+  PENDING_VALIDATION
+  VALIDATED
+  REJECTED
+  EXECUTED
+}
+
+// Staging table for the two-stage Excel import (upload -> validate ->
+// execute/reject) — nothing touches the live Attendance ledger until the
+// execute step.
+model AttendanceImportBatch {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  uploadedById String
+  uploadedBy   User        @relation("AttendanceImportUploadedBy", fields: [uploadedById], references: [id])
+  departmentId String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  fileName     String      @default("")
+
+  // {employeeId, date, inTime, outTime, inLocation?, outLocation?}[] — raw
+  // parsed spreadsheet rows, untyped client input same as
+  // BulkImportHolidaysDto's row shape.
+  rows Json @default("[]")
+
+  status           ImportBatchStatus @default(PENDING_VALIDATION)
+  // {row, error}[]
+  validationErrors Json              @default("[]")
+
+  validatedById String?
+  validatedBy   User?     @relation("AttendanceImportValidatedBy", fields: [validatedById], references: [id])
+  validatedAt   DateTime?
+
+  executedById    String?
+  executedBy      User?     @relation("AttendanceImportExecutedBy", fields: [executedById], references: [id])
+  executedAt      DateTime?
+  // {imported, skipped, errors}
+  executionResult Json      @default("{\"imported\":0,\"skipped\":0,\"errors\":0}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("attendance_import_batches")
+}
+
+enum OvertimeType {
+  REGULAR
+  HOLIDAY
+  WEEKEND
+  NIGHT
+}
+
+enum OvertimeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// One row per employee/day/overtime-entry — not unique-constrained on date,
+// an employee can log multiple entries the same day (e.g. different types).
+model OvertimeRecord {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("OvertimeEmployee", fields: [employeeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as every other date field.
+  date           String
+  hours          Float
+  type           OvertimeType @default(REGULAR)
+  // Derived server-side from `type` in OvertimeService.log — never
+  // client-supplied.
+  rateMultiplier Float        @default(1.5)
+
+  status       OvertimeStatus @default(PENDING)
+  approvedById String?
+  approvedBy   User?          @relation("OvertimeApprovedBy", fields: [approvedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId, date])
+  @@map("overtime_records")
+}
+
+// One row per (employee, financialYear) — upsert semantics, not an
+// append-only log. Drives Variable-Pay payout scaling in Payroll core
+// (not built yet) — this batch only builds the CRUD surface.
+model PerformanceRating {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId    String
+  employee      User   @relation("PerformanceRatingEmployee", fields: [employeeId], references: [id])
+  financialYear String
+
+  rating           Int
+  payoutPercentage Float  @default(100)
+  notes            String @default("")
+
+  ratedById String?
+  ratedBy   User?   @relation("PerformanceRatingRatedBy", fields: [ratedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId, financialYear])
+  @@index([organizationId])
+  @@map("performance_ratings")
+}
+
+enum LeaveEncashmentStatus {
+  PENDING
+  APPROVED
+  PROCESSED
+}
+
+model LeaveEncashment {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId  String
+  employee    User       @relation("LeaveEncashmentEmployee", fields: [employeeId], references: [id])
+  leaveTypeId String?
+  leaveType   LeaveType? @relation(fields: [leaveTypeId], references: [id])
+
+  days          Float
+  ratePerDay    Float
+  amount        Float
+  // e.g. "2026-27" — resolved from PayrollSettings.financialYearStartMonth
+  // at request time via getFinancialYear.
+  financialYear String
+
+  status       LeaveEncashmentStatus @default(PENDING)
+  approvedById String?
+  approvedBy   User?                 @relation("LeaveEncashmentApprovedBy", fields: [approvedById], references: [id])
+
+  // Stamped once the PayrollRun that pays this out is locked — Payroll
+  // core, not built yet.
+  payrollRunId  String?
+  // FnF settlement linkage — Settlement module, well after Payroll core.
+  settlementRef String?
+  processedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@map("leave_encashments")
+}
+
+enum PayrollRunStatus {
+  DRAFT
+  CALCULATED
+  VERIFIED
+  APPROVED
+  LOCKED
+  PAID
+}
+
+model PayrollRun {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("PayrollRunEmployee", fields: [employeeId], references: [id])
+
+  month         Int
+  year          Int
+  financialYear String?
+  status        PayrollRunStatus @default(DRAFT)
+
+  // {workingDays, presentDays, paidLeaveDays, unpaidLeaveDays, halfDays,
+  // overtimeHours, lateMarks, holidayWorkDays, weekendWorkDays, lopDays,
+  // payableDays, totalDaysInMonth, holidays, weeklyOffs}
+  attendanceSummary     Json  @default("{}")
+  // {code, name, amount, taxable}[]
+  earnings              Json  @default("[]")
+  // {code, name, amount}[]
+  deductions            Json  @default("[]")
+  // {code, name, amount}[]
+  employerContributions Json  @default("[]")
+  // Full taxDetails shape from taxEngine.calculateTax (see tax-engine.ts).
+  taxDetails            Json?
+
+  grossSalary                Float  @default(0)
+  totalDeductions            Float  @default(0)
+  totalEmployerContributions Float  @default(0)
+  netPay                     Float  @default(0)
+  ctcMonthly                 Float  @default(0)
+  netPayInWords              String @default("")
+
+  calculatedAt   DateTime?
+  calculatedById String?
+  calculatedBy   User?     @relation("PayrollRunCalculatedBy", fields: [calculatedById], references: [id])
+  verifiedAt     DateTime?
+  verifiedById   String?
+  approvedAt     DateTime?
+  approvedById   String?
+  lockedAt       DateTime?
+  lockedById     String?
+  paidAt         DateTime?
+  paidById       String?
+  unlockedAt     DateTime?
+  unlockedById   String?
+  unlockReason   String?
+
+  // Dead field carried for schema fidelity, same as the old model — no
+  // upload endpoint writes this yet.
+  payslipUrl        String      @default("")
+  // FnF settlement runs — created by SettlementsService.process, always
+  // false for a regular monthly run.
+  isFinalSettlement Boolean     @default(false)
+  settlement        Settlement?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([employeeId, month, year, isFinalSettlement])
+  @@index([organizationId, month, year])
+  @@map("payroll_runs")
+}
+
+enum ReimbursementCategory {
+  TRAVEL
+  FUEL
+  MOBILE
+  INTERNET
+  MEDICAL
+  OTHER
+}
+
+enum ReimbursementStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  PAID
+}
+
+model Reimbursement {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("ReimbursementEmployee", fields: [employeeId], references: [id])
+
+  category    ReimbursementCategory @default(OTHER)
+  amount      Float
+  // YYYY-MM-DD, same plain-string convention as Leave.startDate.
+  claimDate   String
+  description String                @default("")
+  // No file-storage infrastructure exists yet (Batch 9 deferral, same as
+  // every other file field in backend-v2) — stored as a plain string, no
+  // signed-URL resolution.
+  receiptUrl  String                @default("")
+  status      ReimbursementStatus   @default(PENDING)
+
+  approvedById   String?
+  approvedBy     User?   @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+  reviewComments String  @default("")
+  // Stamped once a PayrollRun pays this out — payroll deduction/payout
+  // integration for reimbursements isn't built yet, same deferral as
+  // LeaveEncashment.payrollRunId.
+  payrollRunId   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@map("reimbursements")
+}
+
+enum LoanType {
+  LOAN
+  ADVANCE
+}
+
+enum LoanStatus {
+  ACTIVE
+  CLOSED
+  CANCELLED
+}
+
+model Loan {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("LoanEmployee", fields: [employeeId], references: [id])
+
+  loanType           LoanType   @default(LOAN)
+  principal          Float
+  // Annual %.
+  interestRate       Float      @default(0)
+  tenureMonths       Int
+  emiAmount          Float
+  startMonth         Int
+  startYear          Int
+  outstandingBalance Float
+  status             LoanStatus @default(ACTIVE)
+  reason             String     @default("")
+
+  approvedById String?
+  approvedBy   User?   @relation("LoanApprovedBy", fields: [approvedById], references: [id])
+
+  repayments LoanRepayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@map("loans")
+}
+
+model LoanRepayment {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  loanId String
+  loan   Loan   @relation(fields: [loanId], references: [id])
+
+  // Stamped when a PayrollRun deducts this EMI — payroll integration for
+  // loan repayments isn't built yet, same deferral as
+  // Reimbursement.payrollRunId. This endpoint currently only supports HR
+  // manually recording a repayment.
+  payrollRunId String?
+
+  month              Int
+  year               Int
+  amount             Float
+  principalComponent Float @default(0)
+  interestComponent  Float @default(0)
+  balanceAfter       Float @default(0)
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, loanId])
+  @@map("loan_repayments")
+}
+
+enum SettlementStatus {
+  DRAFT
+  PROCESSED
+  PAID
+}
+
+// Full & Final settlement — old system's FullFinalSettlement, ported under
+// a shorter name since this app has no other "settlement" concept to
+// disambiguate from.
+model Settlement {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("SettlementEmployee", fields: [employeeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Leave.startDate.
+  lastWorkingDay String
+
+  pendingSalaryAmount   Float @default(0)
+  // Unlike the old system (which read a dead, always-zero legacy
+  // User.leaveBalance.el JSON field — never written anywhere else in that
+  // codebase), this sums (closing balance × rate/day) across every
+  // LeaveType with encashment.allowed=true, using the real LeaveBalance
+  // table the leave-encashments module already relies on. No
+  // minBalanceToRetain cap here — the employee is leaving, so the full
+  // balance is paid out.
+  leaveEncashmentAmount Float @default(0)
+  bonusAmount           Float @default(0)
+  recoveriesAmount      Float @default(0)
+  loanBalanceRecovered  Float @default(0)
+  noticePeriodRecovery  Float @default(0)
+  gratuityAmount        Float @default(0)
+  netSettlementAmount   Float @default(0)
+
+  status SettlementStatus @default(DRAFT)
+
+  processedById String?
+  processedBy   User?   @relation("SettlementProcessedBy", fields: [processedById], references: [id])
+
+  payrollRunId String?     @unique
+  payrollRun   PayrollRun? @relation(fields: [payrollRunId], references: [id])
+
+  offboardingCases OffboardingCase[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@map("settlements")
+}
+
+enum OffboardingStatus {
+  INITIATED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// One row per employee exit — tracks the checklist that has to complete
+// before the account is deactivated, mirroring the old system's
+// OffboardingCase.
+model OffboardingCase {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("OffboardingCaseEmployee", fields: [employeeId], references: [id])
+
+  initiatedById String
+  initiatedBy   User   @relation("OffboardingCaseInitiatedBy", fields: [initiatedById], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Leave.startDate.
+  lastWorkingDay String
+  reason         String?
+
+  status OffboardingStatus @default(INITIATED)
+
+  // Exit checklist — each flipped independently, all required before the
+  // case can be marked complete.
+  assetsReturned         Boolean @default(false)
+  accessRevoked          Boolean @default(false)
+  // Set automatically once exitInterviewResponses is submitted (see
+  // OffboardingService.submitExitInterview) — there's no path to flip it
+  // true without actually answering the questions.
+  exitInterviewDone      Boolean @default(false)
+  exitInterviewResponses Json?
+
+  // Set once a Settlement has been linked for this exit.
+  settlementId String?
+  settlement   Settlement? @relation(fields: [settlementId], references: [id])
+
+  notes String?
+
+  completedById String?
+  completedBy   User?     @relation("OffboardingCaseCompletedBy", fields: [completedById], references: [id])
+  completedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@map("offboarding_cases")
+}
+
+enum AuditModule {
+  AUTH
+  EMPLOYEE
+  ATTENDANCE
+  LEAVE
+  PAYROLL
+  DEPARTMENT
+  DOCUMENT
+  HOLIDAY
+  NOTIFICATION
+  ORGANIZATION
+}
+
+// Records attendance changes, payroll changes, leave approvals, login
+// activity, and profile edits — fire-and-forget writes from AuditLogService
+// (write failures are swallowed, same as the old system's logAudit util,
+// since a broken audit write should never fail the underlying action).
+//
+// This batch wires it into a representative sample of high-value write
+// paths (login, employee deactivation, payroll lock/pay) as proof of
+// integration, not a full retrofit of every mutating endpoint across the
+// codebase — that's separate follow-up work given how much already exists.
+model AuditLog {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  actorId String
+  actor   User   @relation(fields: [actorId], references: [id])
+
+  // e.g. 'LEAVE_APPROVED', 'PAYROLL_PROCESSED'.
+  action    String
+  module    AuditModule
+  targetId  String?
+  details   Json        @default("{}")
+  ipAddress String      @default("")
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, module])
+  @@index([organizationId, actorId])
+  @@map("audit_logs")
+}
+
+enum TimelineCategory {
+  RECRUITMENT
+  EMPLOYMENT
+  ORGANIZATION
+  PAYROLL
+  ATTENDANCE_LEAVE
+  PERFORMANCE
+  COMPLIANCE
+  EXIT
+}
+
+// Append-only log of an employee's 360° journey — every row is a fact
+// about something that happened, never edited or overwritten afterward.
+// Written via EmployeeTimelineService.logEvent() from the various
+// services where each event actually occurs, mirroring how
+// AuditLogService.log() is called — the two are deliberately fired from
+// the same code paths so Timeline and Audit Log never drift apart.
+model EmployeeTimeline {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("TimelineEmployee", fields: [employeeId], references: [id])
+
+  category    TimelineCategory
+  // e.g. 'DEPARTMENT_CHANGED' — see employee-timeline-events.ts EVENT_META.
+  eventKey    String
+  title       String
+  description String?          @default("")
+
+  occurredAt DateTime @default(now())
+
+  // null = system-generated.
+  performedById String?
+  performedBy   User?   @relation("TimelinePerformedBy", fields: [performedById], references: [id])
+
+  remarks         String? @default("")
+  relatedDocument String? @default("")
+  status          String? @default("")
+  // Free-form event-specific context (old/new values, etc.).
+  metadata        Json    @default("{}")
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, employeeId, occurredAt])
+  @@map("employee_timeline")
+}
+
+// Temporarily routes a manager's leave/regularization approvals to another
+// MANAGER/HR/ADMIN for a date range (e.g. the manager is themself on
+// leave). Checked alongside reportingManagerId in LeavesService.review()
+// when resolving who can approve a given employee's request.
+model ApprovalDelegation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  delegatorId String
+  delegator   User   @relation("DelegationDelegator", fields: [delegatorId], references: [id])
+  delegateId  String
+  delegate    User   @relation("DelegationDelegate", fields: [delegateId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Leave.startDate.
+  fromDate String
+  toDate   String
+
+  isActive Boolean @default(true)
+
+  createdById String
+  createdBy   User   @relation("DelegationCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, delegatorId])
+  @@map("approval_delegations")
+}
+
+enum PolicyDocType {
+  PDF
+  IMAGE
+  VIDEO
+  URL
+}
+
+enum PolicyVisibility {
+  EVERYONE
+  HR_ONLY
+  MANAGERS
+  DEPARTMENTS
+  EMPLOYEES
+}
+
+// Company-wide policy/document library (distinct from DocumentRequirement
+// below, which is the master list of per-employee document *requirements*).
+model PolicyDocument {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  title    String
+  category String        @default("General")
+  docType  PolicyDocType @default(PDF)
+
+  // A relativeKey from POST /files/upload/documents (organizationId/
+  // documents/uuid.ext) when we host the file, or a raw http(s):// URL when
+  // docType=URL. Never a signed URL — those are minted fresh per response.
+  fileUrl  String
+  fileName String
+
+  isPublished Boolean @default(true)
+
+  uploadedById String?
+  uploadedBy   User?   @relation("PolicyDocumentUploadedBy", fields: [uploadedById], references: [id])
+
+  visibility         PolicyVisibility @default(EVERYONE)
+  visibleDepartments String[]         @default([])
+  visibleEmployees   String[]         @default([])
+
+  // New-version uploads create a new row (not an update) chained via
+  // previousVersionId, and retire the old row by flipping isPublished to
+  // false — version history is a linked list of rows, mirroring the old
+  // system exactly.
+  version           Int     @default(1)
+  previousVersionId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, createdAt])
+  @@map("policy_documents")
+}
+
+// HR/Admin-defined master list of expected employee document types (NDA,
+// Police Verification, ...), on top of the app's built-in defaults. Each
+// employee's actual uploaded file still lives on the Employee attachment
+// endpoints — this table is only "what's expected", not the uploads
+// themselves.
+model DocumentRequirement {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+
+  isMandatory  Boolean @default(false)
+  // Soft-disable, not a delete — matches the old system: a disabled
+  // requirement stops appearing as expected/missing but any already-
+  // uploaded documents against it are untouched.
+  isActive     Boolean @default(true)
+  displayOrder Int     @default(0)
+
+  createdById String?
+  createdBy   User?   @relation("DocumentRequirementCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@map("document_requirements")
+}
+
+enum NotificationCategory {
+  LEAVE
+  REGULARIZATION
+  PAYROLL
+  ATTENDANCE
+  GENERAL
+  // Defined for parity with the old system's enum, but nothing creates one
+  // — no controller old-side ever fires an ONBOARDING-category
+  // notification. Kept for schema fidelity, not because it's used.
+  ONBOARDING
+}
+
+model Notification {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  title    String
+  message  String
+  category NotificationCategory @default(GENERAL)
+  isRead   Boolean              @default(false)
+  // Defined for parity with the old model, but never populated by any
+  // trigger site old-side (dead field there too) — carried over as-is.
+  link     String               @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, userId, isRead])
+  @@map("notifications")
 }

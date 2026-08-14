@@ -30,3 +30,6 @@ lerna-debug.log*
 
 ## Prisma
 prisma/generated
+
+## Uploaded files (local-disk storage, see src/files/)
+/uploads
