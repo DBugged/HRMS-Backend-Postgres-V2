@@ -3,11 +3,21 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
+  app.use(
+    helmet({
+      // Swagger UI (served from this same app at /api/docs) needs inline
+      // scripts/styles — a strict default CSP would break it. Everything
+      // else (HSTS, X-Frame-Options, X-Content-Type-Options, etc.) stays
+      // at helmet's secure defaults.
+      contentSecurityPolicy: false,
+    }),
+  );
   app.use(cookieParser());
 
   // whitelist/forbidNonWhitelisted: DTOs are the single source of truth for

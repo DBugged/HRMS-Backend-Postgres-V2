@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -39,9 +40,14 @@ import { ApprovalDelegationModule } from './approval-delegation/approval-delegat
 import { DocumentsModule } from './documents/documents.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
   imports: [
+    // Global default: 100 req / 60s per IP. Auth routes override this
+    // much tighter via @Throttle() on the individual routes (see
+    // auth.controller.ts) — this is just the floor for everything else.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -88,6 +94,14 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     // the opposite of the old backend where each route file had to
     // remember to add `protect` itself.
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    // Runs after JwtAuthGuard in the guard chain (registration order),
+    // so an already-401'd request doesn't also consume a rate-limit slot.
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Every error response (HttpException or not) comes out in one
+    // consistent {statusCode, message, error, path, timestamp} shape —
+    // see the filter for why message/error are preserved as Nest
+    // produces them rather than reshaped.
+    { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
 export class AppModule {}

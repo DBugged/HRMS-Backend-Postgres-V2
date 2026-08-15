@@ -8,6 +8,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
@@ -25,12 +26,21 @@ import {
   REFRESH_TOKEN_TTL_DAYS,
 } from './auth.constants';
 
+// Overridable per-environment — the e2e suite logs in far more than 5
+// times/minute against a single in-memory app instance as normal test
+// behavior, not abuse. Production stays at the tight default.
+const AUTH_THROTTLE_LIMIT = Number(process.env.AUTH_THROTTLE_LIMIT ?? 5);
+
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
+  // 5/min per IP on every brute-force-able auth route — tighter than the
+  // app-wide default (100/min, see app.module.ts), since these are the
+  // routes that matter for credential stuffing / account enumeration.
   @Public()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   @Post('register')
   @ApiOkResponse({ type: RegisterResponseDto })
   register(@Body() dto: RegisterDto) {
@@ -38,18 +48,21 @@ export class AuthController {
   }
 
   @Public()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   @Post('forgot-password')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.authService.forgotPassword(dto);
   }
 
   @Public()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   @Post('reset-password')
   resetPassword(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto);
   }
 
   @Public()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
   @Post('login')
   @ApiOkResponse({ type: AuthResponseDto })
   async login(
