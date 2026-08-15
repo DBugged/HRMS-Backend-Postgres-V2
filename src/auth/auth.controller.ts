@@ -15,6 +15,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthResponseDto, RegisterResponseDto } from './dto/auth-response.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -107,6 +108,15 @@ export class AuthController {
   @ApiBearerAuth('access-token')
   me(@CurrentUser() user: { id: string; organizationId: string }) {
     return this.authService.me(user.id, user.organizationId);
+  }
+
+  @Post('change-password')
+  @ApiBearerAuth('access-token')
+  changePassword(
+    @CurrentUser() user: { id: string; organizationId: string },
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(user.id, user.organizationId, dto);
   }
 }
 

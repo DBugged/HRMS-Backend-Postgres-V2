@@ -46,6 +46,8 @@ describe('Dashboard (e2e)', () => {
   let organizationId: string;
   let anniversaryJoinMonth: number;
   let anniversaryJoinDay: number;
+  let birthdayMonth: number;
+  let birthdayDay: number;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -155,6 +157,28 @@ describe('Dashboard (e2e)', () => {
         name: 'Anniversary Employee',
         email: 'dash-e2e-anniv@example.test',
         joiningDate: anniversaryJoin.toISOString().slice(0, 10),
+      });
+
+    // A third employee whose dateOfBirth (in personalData) falls 6 days
+    // from now -> shows up as an upcoming birthday. Same +N-days rationale
+    // as the anniversary employee above (avoids the same-day edge case in
+    // daysUntilNextOccurrence).
+    const birthday = new Date();
+    birthday.setDate(birthday.getDate() + 6);
+    birthdayMonth = birthday.getMonth() + 1;
+    birthdayDay = birthday.getDate();
+    birthday.setFullYear(birthday.getFullYear() - 30);
+    const birthdayEmpCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Birthday Employee', email: 'dash-e2e-bday@example.test' });
+    const birthdayEmpId = (birthdayEmpCreate.body as EmployeeCreateBody)
+      .employee.id;
+    await request(app.getHttpServer())
+      .patch(`/employees/${birthdayEmpId}/personal-data`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        personalData: { dateOfBirth: birthday.toISOString().slice(0, 10) },
       });
 
     await prisma.attendance.create({
@@ -297,31 +321,53 @@ describe('Dashboard (e2e)', () => {
     expect(body.payrollSnapshot).toBeNull();
   });
 
-  it('ADMIN sees the executive dashboard with headcount + the seeded work anniversary', async () => {
+  it('ADMIN sees the executive dashboard with headcount + the seeded work anniversary + birthday', async () => {
     const res = await request(app.getHttpServer())
       .get('/dashboard/executive')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const body = res.body as {
-      headcount: { currentActiveHeadcount: number; trend: unknown[] };
+      headcount: {
+        currentActiveHeadcount: number;
+        rows: unknown[];
+        totalJoiners: number;
+        totalLeavers: number;
+        attritionRatePercent: number;
+      };
+      upcomingBirthdays: { name: string; daysAway: number }[];
       upcomingAnniversaries: {
         name: string;
         years: number;
         daysAway: number;
       }[];
     };
-    expect(body.headcount.currentActiveHeadcount).toBeGreaterThanOrEqual(5);
-    expect(body.headcount.trend).toHaveLength(12);
+    expect(body.headcount.currentActiveHeadcount).toBeGreaterThanOrEqual(6);
+    expect(body.headcount.rows).toHaveLength(12);
+    expect(body.headcount.totalJoiners).toEqual(expect.any(Number));
+    expect(body.headcount.totalLeavers).toEqual(expect.any(Number));
+    expect(body.headcount.attritionRatePercent).toEqual(expect.any(Number));
+
     const anniv = body.upcomingAnniversaries.find(
       (a) => a.name === 'Anniversary Employee',
     );
-    const expectedDaysAway = daysUntilNextOccurrence(
+    const expectedAnnivDaysAway = daysUntilNextOccurrence(
       anniversaryJoinMonth,
       anniversaryJoinDay,
       new Date(),
     );
     expect(anniv).toBeDefined();
     expect(anniv?.years).toBe(2);
-    expect(anniv?.daysAway).toBe(expectedDaysAway);
+    expect(anniv?.daysAway).toBe(expectedAnnivDaysAway);
+
+    const bday = body.upcomingBirthdays.find(
+      (b) => b.name === 'Birthday Employee',
+    );
+    const expectedBdayDaysAway = daysUntilNextOccurrence(
+      birthdayMonth,
+      birthdayDay,
+      new Date(),
+    );
+    expect(bday).toBeDefined();
+    expect(bday?.daysAway).toBe(expectedBdayDaysAway);
   });
 });

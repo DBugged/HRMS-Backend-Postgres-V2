@@ -22,6 +22,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import {
@@ -295,6 +296,51 @@ export class AuthService {
     ]);
 
     return { message: 'Password updated successfully. Please login.' };
+  }
+
+  // Shared by the mandatory first-login flow (mustChangePassword=true) and
+  // a routine voluntary password change from the Profile page — same
+  // endpoint the old system used for both. Reads mustChangePassword before
+  // clearing it so the welcome email below only fires on the actual
+  // first-time change, not every subsequent password update.
+  async changePassword(
+    userId: string,
+    organizationId: string,
+    dto: ChangePasswordDto,
+  ): Promise<{ message: string }> {
+    const user = await this.usersService.findByIdInOrg(userId, organizationId);
+    if (!user) throw new UnauthorizedException();
+
+    const valid = await bcrypt.compare(dto.currentPassword, user.password);
+    if (!valid) {
+      throw new BadRequestException('Current password is incorrect.');
+    }
+
+    const wasFirstTimeChange = user.mustChangePassword;
+    const hashedPassword = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
+    await this.scopedPrisma.user.updateMany({
+      where: { id: user.id, organizationId: user.organizationId },
+      data: { password: hashedPassword, mustChangePassword: false },
+    });
+
+    if (wasFirstTimeChange) {
+      // Best-effort, fire-and-forget — a send failure must never fail the
+      // password change itself, same as the old system.
+      this.emailService
+        .send({
+          to: user.email,
+          subject: 'Welcome to your HRMS account',
+          html: `<p>Hello ${user.name},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address (${user.email}).</p>`,
+        })
+        .catch((err: Error) => {
+          console.error(
+            '[changePassword] Failed to send welcome email:',
+            err.message,
+          );
+        });
+    }
+
+    return { message: 'Password changed successfully.' };
   }
 
   private async issueTokenPair(

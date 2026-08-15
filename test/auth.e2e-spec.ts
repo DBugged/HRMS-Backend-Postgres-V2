@@ -198,6 +198,69 @@ describe('Auth + RBAC (e2e)', () => {
     },
   );
 
+  it('rejects change-password with no token', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .send({ currentPassword: password, newPassword: 'NewPass123!' })
+      .expect(401);
+  });
+
+  it('change-password rejects an incorrect current password', async () => {
+    const loginRes = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: testEmails.employee, password })
+      .expect(201);
+    const { accessToken } = loginRes.body as AuthBody;
+
+    await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ currentPassword: 'WrongPassword!', newPassword: 'NewPass123!' })
+      .expect(400);
+  });
+
+  it('change-password succeeds, clears mustChangePassword, and the new password logs in', async () => {
+    // Seeded with mustChangePassword: false in the earlier seeding step —
+    // flip it on here to prove this endpoint is the one that clears it,
+    // same as the mandatory first-login flow relies on.
+    await prisma.user.updateMany({
+      where: { organizationId, email: testEmails.employee },
+      data: { mustChangePassword: true },
+    });
+
+    const loginRes = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: testEmails.employee, password })
+      .expect(201);
+    const { accessToken } = loginRes.body as AuthBody;
+    expect(
+      (loginRes.body as AuthBody & { user: { mustChangePassword: boolean } })
+        .user.mustChangePassword,
+    ).toBe(true);
+
+    await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ currentPassword: password, newPassword: 'NewPass123!' })
+      .expect(201);
+
+    // Old password no longer works.
+    await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: testEmails.employee, password })
+      .expect(401);
+
+    // New password works and mustChangePassword is now false.
+    const relogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: testEmails.employee, password: 'NewPass123!' })
+      .expect(201);
+    expect(
+      (relogin.body as AuthBody & { user: { mustChangePassword: boolean } })
+        .user.mustChangePassword,
+    ).toBe(false);
+  });
+
   it('refresh (via cookie) rotates the token and issues a new access token', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/refresh')

@@ -502,30 +502,27 @@ export class DashboardService {
     };
   }
 
-  // 11.4 Executive Dashboard: company-wide headcount trend and upcoming
-  // work anniversaries. Admin/HR only, distinct from the operational HR
-  // dashboard (today/this-month focused vs. trend/company-health focused).
+  // 11.4 Executive Dashboard: company-wide headcount trend, upcoming
+  // birthdays, and upcoming work anniversaries. Admin/HR only, distinct
+  // from the operational HR dashboard (today/this-month focused vs.
+  // trend/company-health focused).
   //
-  // Two documented deviations from the old system:
-  // - No upcoming-birthdays widget — there's no dateOfBirth field
-  //   anywhere on backend-v2's User model (personalData never got ported).
-  // - Headcount "leavers" are sourced from OffboardingCase.completedAt
-  //   instead of an EMPLOYEE_DEACTIVATED audit-log action, since AuditLog
-  //   doesn't exist yet (Batch 9) — OffboardingCase is actually a more
-  //   precise signal anyway (a dedicated event, not an inferred one).
-  // Shared by the executive dashboard and the Reports module's
-  // headcount-trend/attrition reports — one DB round-trip, reused
-  // everywhere headcount trend numbers are needed.
+  // Headcount "leavers" are sourced from OffboardingCase.completedAt
+  // instead of an EMPLOYEE_DEACTIVATED audit-log action (the old system's
+  // source) — OffboardingCase is actually a more precise signal anyway (a
+  // dedicated event, not an inferred one). This deliberately does NOT
+  // attempt to reconstruct exact historical total headcount for each past
+  // month — it reports joiners, leavers, and net change per month, which
+  // is honest given what's actually recorded, plus the current live
+  // headcount, total joiners/leavers, and an attrition rate as reference
+  // figures (all straight from computeHeadcountTrend below, shared with
+  // the Reports module's headcount-trend/attrition reports — one DB
+  // round-trip, reused everywhere headcount trend numbers are needed).
   //
-  // Leavers are sourced from OffboardingCase.completedAt instead of an
-  // EMPLOYEE_DEACTIVATED audit-log action (the old system's source),
-  // since AuditLog doesn't exist yet (Batch 9) — OffboardingCase is
-  // actually a more precise signal anyway (a dedicated event, not an
-  // inferred one). This deliberately does NOT attempt to reconstruct
-  // exact historical total headcount for each past month — it reports
-  // joiners, leavers, and net change per month, which is honest given
-  // what's actually recorded, plus the current live headcount as a
-  // single reference figure.
+  // Birthdays read personalData.dateOfBirth (added in the Employee
+  // rich-profile batch, after this method was first written — an employee
+  // with no dateOfBirth set just never appears in the widget, same as an
+  // employee with no personalData at all).
   async computeHeadcountTrend(months: number, organizationId: string) {
     const today = new Date();
     const windowStart = new Date(
@@ -616,15 +613,19 @@ export class DashboardService {
     const WINDOW_DAYS = 30;
     const today = new Date();
 
-    const [{ rows: headcountRows, currentActiveHeadcount }, activeEmployees] =
-      await Promise.all([
-        this.computeHeadcountTrend(12, organizationId),
-        this.scopedPrisma.user.findMany({
-          where: { organizationId, isActive: true },
-          select: { id: true, name: true, employeeId: true, joiningDate: true },
-        }),
-      ]);
-    const headcount = { currentActiveHeadcount, trend: headcountRows };
+    const [headcount, activeEmployees] = await Promise.all([
+      this.computeHeadcountTrend(12, organizationId),
+      this.scopedPrisma.user.findMany({
+        where: { organizationId, isActive: true },
+        select: {
+          id: true,
+          name: true,
+          employeeId: true,
+          joiningDate: true,
+          personalData: true,
+        },
+      }),
+    ]);
 
     const upcomingAnniversaries: {
       id: string;
@@ -632,6 +633,12 @@ export class DashboardService {
       employeeId: string;
       daysAway: number;
       years: number;
+    }[] = [];
+    const upcomingBirthdays: {
+      id: string;
+      name: string;
+      employeeId: string;
+      daysAway: number;
     }[] = [];
     for (const e of activeEmployees) {
       const jd = e.joiningDate;
@@ -654,11 +661,34 @@ export class DashboardService {
           });
         }
       }
+
+      const dob = (e.personalData as Record<string, unknown> | null)
+        ?.dateOfBirth;
+      if (typeof dob === 'string' && dob) {
+        const parsed = new Date(dob);
+        if (!Number.isNaN(parsed.getTime())) {
+          const birthdayDays = daysUntilNextOccurrence(
+            parsed.getMonth() + 1,
+            parsed.getDate(),
+            today,
+          );
+          if (birthdayDays <= WINDOW_DAYS) {
+            upcomingBirthdays.push({
+              id: e.id,
+              name: e.name,
+              employeeId: e.employeeId,
+              daysAway: birthdayDays,
+            });
+          }
+        }
+      }
     }
     upcomingAnniversaries.sort((a, b) => a.daysAway - b.daysAway);
+    upcomingBirthdays.sort((a, b) => a.daysAway - b.daysAway);
 
     return {
       headcount,
+      upcomingBirthdays: upcomingBirthdays.slice(0, 10),
       upcomingAnniversaries: upcomingAnniversaries.slice(0, 10),
     };
   }
