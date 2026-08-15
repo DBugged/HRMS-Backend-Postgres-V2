@@ -161,6 +161,7 @@ describe('Payroll Reports (e2e)', () => {
     },
     { path: 'bonus', filename: 'bonus_report.xlsx' },
     { path: 'ctc', filename: 'ctc_report.xlsx' },
+    { path: 'audit', filename: 'payroll_audit_report.xlsx' },
   ];
 
   it('MANAGER gets 403 on every payroll report endpoint (ADMIN/HR only)', async () => {
@@ -208,6 +209,15 @@ describe('Payroll Reports (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(res.headers['content-disposition']).toContain('form16_summary.xlsx');
+  });
+
+  it('the audit report includes the PAYROLL_CALCULATED action from setup, and no other module', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/reports/payroll/audit')
+      .query({ format: 'csv' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(res.text).toContain('PAYROLL_CALCULATED');
   });
 
   it('rejects a malformed financialYear', async () => {

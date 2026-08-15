@@ -39,6 +39,18 @@ enum EmploymentStatus {
   ON_HOLD
 }
 
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum ProbationStatus {
+  PENDING
+  CONFIRMED
+  EXTENDED
+}
+
 model Organization {
   id        String   @id @default(uuid())
   name      String
@@ -61,8 +73,100 @@ model Organization {
   enableWFH              Boolean @default(true)
   // Org-wide fallback shift config, used by AttendanceService whenever an
   // employee's Department has none set (or there's no department at all).
-  // A department's own shift-config fields always win over these.
+  // A department's own shift-config fields always win over these. NOT the
+  // same thing as orgPayrollAttendancePrefs below (Setup Wizard step 8) —
+  // that's a much broader admin-facing preferences blob; this one is the
+  // narrow AttendanceService consumer built in the Attendance batch. Kept
+  // separate deliberately so extending the wizard's JSON shape can never
+  // break the attendance-calculation consumer of this field.
   attendancePayrollPrefs Json    @default("{\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"weekendDays\":[0,6]}")
+
+  // --- Setup Wizard / Organization Settings — ported from the old
+  // system's Organization model verbatim (field-for-field), which is the
+  // single source of truth every other tenant-owned row hangs off of.
+  // isInitialized gates app access for non-admin roles until an admin
+  // finishes the 9-step wizard (enforced client-side, same as before).
+  isInitialized   Boolean   @default(false)
+  initializedAt   DateTime?
+  initializedById String?
+  initializedBy   User?     @relation("OrganizationInitializedBy", fields: [initializedById], references: [id])
+  setupStep       Int       @default(1)
+
+  // Step 1 — Company Profile
+  companyName String?
+  legalName   String?
+  tagline     String?
+  description String?
+
+  // Step 2 — Registration Details
+  gstin                  String?
+  pan                    String?
+  tan                    String?
+  cin                    String?
+  registrationNumber     String?
+  lin                    String?
+  msmeRegistrationNumber String?
+  epfoEstablishmentCode  String?
+  esicEmployerCode       String?
+  ptRegistrationNumber   String?
+  labourLicenseNumber    String?
+
+  // Step 3 — Contact Information
+  registeredAddress String?
+  corporateAddress  String?
+  city              String?
+  state             String?
+  country           String  @default("India")
+  pincode           String?
+  phone             String?
+  mobile            String?
+  contactEmail      String?
+  website           String?
+
+  // Step 4 — Branding (companyLogoUrl doubles as the Step 1 company logo)
+  companyLogoUrl String?
+  faviconUrl     String?
+  reportLogoUrl  String?
+  emailLogoUrl   String?
+  primaryColor   String  @default("#5546e0")
+  secondaryColor String  @default("#14161d")
+  // Original filename/size per uploaded image, keyed by upload field name
+  // (logo/favicon/reportLogo/emailLogo/signature/seal) — the URL columns
+  // point at a generated relativeKey, so this is the only place the real
+  // uploaded filename survives, for display in Organization Settings.
+  assetMeta      Json    @default("{}")
+
+  // Step 5 — Authorized Signatories: [{ id, name, designation,
+  // signatureUrl, signatureMeta: {name,size}, isPrimary }]. Exactly one
+  // entry is expected isPrimary:true; readers needing "the" signatory fall
+  // back to the first entry. The seal is a single shared asset, its own
+  // column, not per-signatory.
+  signatories Json    @default("[]")
+  sealUrl     String?
+
+  // Step 6 — Banking Details (optional)
+  banking Json @default("{\"bankName\":\"\",\"accountName\":\"\",\"accountNumber\":\"\",\"ifscCode\":\"\",\"branchName\":\"\"}")
+
+  // Step 7 — Company Policies
+  policies Json @default("{\"financialYearStartMonth\":4,\"leaveYearStartMonth\":1,\"workingHoursStart\":\"09:00\",\"workingHoursEnd\":\"18:00\",\"timezone\":\"Asia/Kolkata\",\"currency\":\"INR\",\"currencySymbol\":\"₹\",\"dateFormat\":\"DD-MM-YYYY\",\"timeFormat\":\"24\",\"language\":\"English\",\"defaultProbationDays\":90,\"defaultNoticeDays\":30,\"defaultRetirementAge\":58}")
+
+  // Step 8 — Payroll & Attendance Preferences (admin-facing, much broader
+  // than attendancePayrollPrefs above — see that field's comment).
+  orgPayrollAttendancePrefs Json @default("{\"attendanceMethod\":[\"manual\"],\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"defaultWorkWeek\":\"monday-friday\",\"weekendDays\":[0,6],\"defaultWorkingHoursPerDay\":8,\"enableAttendanceImport\":true,\"enableAttendanceRegularization\":true,\"enableOvertime\":false,\"enableCompOff\":true,\"payrollCycle\":\"monthly\",\"salaryPaymentDay\":1,\"payrollFreezeDay\":25,\"enableLeaveEncashment\":true,\"enableTaxRegimeSelection\":true,\"defaultTaxRegime\":\"new\",\"defaultLeavePolicy\":\"\",\"enableHalfDayLeave\":true,\"enableSandwichLeave\":false,\"enableNegativeLeaveBalance\":false,\"carryForwardLeave\":true,\"maxCarryForwardLimit\":15}")
+
+  // Step 9 — Document Numbering: { [type]: { label, format, resetRule,
+  // counter, lastPeriodKey } }. employeeId here is descriptive only — the
+  // row-locked employeeIdPrefix/employeeIdCounter columns above remain the
+  // actual generator, not this JSON blob, so the two never drift.
+  documentNumbering Json @default("{\"employeeId\":{\"label\":\"Employee ID\",\"format\":\"DP-{0000}\",\"resetRule\":\"never\",\"counter\":0,\"lastPeriodKey\":null},\"payslip\":{\"label\":\"Payslip\",\"format\":\"PS-{YYYYMM}-{0001}\",\"resetRule\":\"monthly\",\"counter\":0,\"lastPeriodKey\":null},\"offerLetter\":{\"label\":\"Offer Letter\",\"format\":\"OL-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null},\"appointmentLetter\":{\"label\":\"Appointment Letter\",\"format\":\"AL-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null},\"experienceLetter\":{\"label\":\"Experience Letter\",\"format\":\"EL-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null},\"relievingLetter\":{\"label\":\"Relieving Letter\",\"format\":\"RL-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null},\"salaryCertificate\":{\"label\":\"Salary Certificate\",\"format\":\"SC-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null},\"fullFinalSettlement\":{\"label\":\"Full & Final Settlement\",\"format\":\"FNF-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null},\"experienceCertificate\":{\"label\":\"Experience Certificate\",\"format\":\"EC-{YYYY}-{0001}\",\"resetRule\":\"yearly\",\"counter\":0,\"lastPeriodKey\":null}}")
+
+  // Admin-added employee types beyond the built-in default list (see
+  // default-employee-types.ts) — each entry { value, label }.
+  customEmployeeTypes Json @default("[]")
+
+  // Bare enforcement hook for a future plan/billing system — high default
+  // so nothing breaks until real billing exists.
+  maxEmployees Int @default(999999)
 
   users                    User[]
   departments              Department[]
@@ -98,6 +202,10 @@ model Organization {
   policyDocuments          PolicyDocument[]
   documentRequirements     DocumentRequirement[]
   notifications            Notification[]
+  employeeDocuments        EmployeeDocument[]
+  employeeAssets           EmployeeAsset[]
+  employeeRoleHistory      EmployeeRoleHistory[]
+  employmentStatusHistory  EmploymentStatusHistory[]
 
   @@map("organizations")
 }
@@ -162,6 +270,13 @@ model User {
   name     String
   role     Role   @default(EMPLOYEE)
 
+  // Forgot/reset-password — a SHA-256 hash of the raw token mailed to the
+  // user (never store the raw token), unique so a hash lookup can find the
+  // owning row directly. Both null once unset/consumed. 30-minute expiry
+  // enforced in AuthService, not the DB.
+  resetPasswordToken   String?   @unique
+  resetPasswordExpires DateTime?
+
   isFounder          Boolean   @default(false)
   isActive           Boolean   @default(true)
   mustChangePassword Boolean   @default(true)
@@ -178,6 +293,29 @@ model User {
   joiningDate      DateTime         @default(now())
   employeeType     String           @default("permanent")
   employmentStatus EmploymentStatus @default(ONBOARDING)
+
+  // Leave-policy source of truth — separate from whatever's mirrored in
+  // personalData below (the old system had a redundant copy there too; a
+  // comment in the old code names this top-level one as authoritative).
+  gender Gender?
+
+  probationEndDate String?
+  probationStatus  ProbationStatus?
+
+  // Profile photo — a relativeKey through the existing generic files
+  // module (POST /files/upload/profile-photos), not raw personalData.
+  profileImage String?
+
+  // One JSON blob for the "rich profile" fields the old system also kept
+  // as a single loosely-structured object (dob/address/personalEmail/
+  // bloodGroup, family + emergency contacts, free-text professional info,
+  // previousEmployment[] capped at 3 client-side, bank details +
+  // cancelledChequeUrl, statutory IDs, references[], profileCompleted/
+  // profileCompletedAt) — normalizing every sub-object into its own table
+  // would multiply migrations for fields nothing else ever joins against;
+  // documents and assets DO get real tables below since those need actual
+  // list/status/referential-integrity semantics.
+  personalData Json @default("{}")
 
   departmentId String?
   department   Department? @relation("EmployeeDepartment", fields: [departmentId], references: [id])
@@ -246,6 +384,15 @@ model User {
   policyDocumentsUploaded          PolicyDocument[]          @relation("PolicyDocumentUploadedBy")
   documentRequirementsCreated      DocumentRequirement[]     @relation("DocumentRequirementCreatedBy")
   notifications                    Notification[]
+  organizationsInitialized         Organization[]            @relation("OrganizationInitializedBy")
+  employeeDocuments                EmployeeDocument[]        @relation("EmployeeDocumentEmployee")
+  employeeDocumentsReviewed        EmployeeDocument[]        @relation("EmployeeDocumentReviewedBy")
+  assets                           EmployeeAsset[]           @relation("EmployeeAssetEmployee")
+  assetsAllocated                  EmployeeAsset[]           @relation("EmployeeAssetAllocatedBy")
+  roleHistoryEntries               EmployeeRoleHistory[]     @relation("RoleHistoryEmployee")
+  roleHistoryChangedBy             EmployeeRoleHistory[]     @relation("RoleHistoryChangedBy")
+  employmentStatusHistoryEntries   EmploymentStatusHistory[] @relation("StatusHistoryEmployee")
+  employmentStatusHistoryChangedBy EmploymentStatusHistory[] @relation("StatusHistoryChangedBy")
 
   @@unique([organizationId, employeeId])
   @@index([organizationId])
@@ -402,9 +549,8 @@ model LeaveType {
   accrualAmountPerCycle Float            @default(0)
   prorateOnJoining      Boolean          @default(true)
 
-  // [] = applies to all. applicableGenders is kept for schema fidelity
-  // only — User has no gender field in backend-v2, so this is never
-  // enforced (see leave-eligibility.ts).
+  // [] = applies to all. applicableGenders stores Gender enum values
+  // (MALE/FEMALE/OTHER) and is enforced in leave-eligibility.ts.
   applicableDepartments   Json @default("[]")
   applicableEmployeeTypes Json @default("[]")
   applicableGenders       Json @default("[]")
@@ -1755,4 +1901,130 @@ model Notification {
 
   @@index([organizationId, userId, isRead])
   @@map("notifications")
+}
+
+enum EmployeeDocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// Real table, not a JSON array like the old system — lets a review action
+// join back to the reviewer and gives normal list/status semantics. Files
+// themselves go through the existing generic files module (POST
+// /files/upload/documents) — this row only ever stores the resulting
+// relativeKey, matching the "upload-then-PATCH/POST" convention already
+// established for policy documents, branding assets, etc.
+model EmployeeDocument {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("EmployeeDocumentEmployee", fields: [employeeId], references: [id])
+
+  // Free string, matched loosely against a hardcoded default list
+  // (PAN Card / Aadhaar Card / Passport Photo / Educational Certificate /
+  // Relieving Letter or Experience Certificate / Other) and the org's own
+  // DocumentRequirement master list — same as the old system.
+  docType  String
+  fileName String
+  fileUrl  String
+
+  status       EmployeeDocumentStatus @default(PENDING)
+  reviewReason String?
+  reviewedById String?
+  reviewedBy   User?                  @relation("EmployeeDocumentReviewedBy", fields: [reviewedById], references: [id])
+  reviewedAt   DateTime?
+
+  uploadedAt DateTime @default(now())
+
+  @@index([organizationId, employeeId])
+  @@map("employee_documents")
+}
+
+enum AssetStatus {
+  ALLOCATED
+  RETURNED
+  LOST
+}
+
+// assetType is deliberately free-text, not an enum — the old system had a
+// 6-value ENUM that didn't match its own frontend's much larger dropdown
+// (Laptop/Desktop/MacBook/Monitor/... 25+ options), so most real
+// allocations there silently fell through to "Other". Not a behavior worth
+// preserving.
+model EmployeeAsset {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("EmployeeAssetEmployee", fields: [employeeId], references: [id])
+
+  assetType String
+  assetName String
+  assetTag  String?
+
+  status        AssetStatus @default(ALLOCATED)
+  allocatedDate String
+  returnedDate  String?
+  notes         String?
+
+  allocatedById String
+  allocatedBy   User   @relation("EmployeeAssetAllocatedBy", fields: [allocatedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@map("employee_assets")
+}
+
+// Append-only audit trail of role/designation/department changes —
+// written automatically inside EmployeesService.update() whenever one of
+// those three fields actually changes, mirroring the old system's
+// logAudit-adjacent behavior.
+model EmployeeRoleHistory {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("RoleHistoryEmployee", fields: [employeeId], references: [id])
+
+  previousRole         Role?
+  newRole              Role?
+  previousDesignation  String?
+  newDesignation       String?
+  previousDepartmentId String?
+  newDepartmentId      String?
+
+  changedById String
+  changedBy   User     @relation("RoleHistoryChangedBy", fields: [changedById], references: [id])
+  changedAt   DateTime @default(now())
+
+  @@index([organizationId, employeeId])
+  @@map("employee_role_history")
+}
+
+// Append-only audit trail of employmentStatus transitions.
+model EmploymentStatusHistory {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("StatusHistoryEmployee", fields: [employeeId], references: [id])
+
+  previousStatus EmploymentStatus?
+  newStatus      EmploymentStatus
+  note           String?
+
+  changedById String
+  changedBy   User     @relation("StatusHistoryChangedBy", fields: [changedById], references: [id])
+  changedAt   DateTime @default(now())
+
+  @@index([organizationId, employeeId])
+  @@map("employment_status_history")
 }

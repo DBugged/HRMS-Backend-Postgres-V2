@@ -64,6 +64,9 @@ export class HolidaysService {
         }),
         ...(query.type && { type: query.type }),
       },
+      include: {
+        department: { select: { id: true, name: true } },
+      },
       orderBy: { date: 'asc' },
     });
   }

@@ -25,6 +25,8 @@ interface ReimbursementBody {
   amount: number;
   employeeId: string;
   reviewComments: string;
+  receiptUrl?: string;
+  employee?: { id: string; name: string; employeeId: string };
 }
 
 const PASSWORD = 'TestPass123!';
@@ -165,6 +167,39 @@ describe('Reimbursements (e2e)', () => {
     const claims = res.body as ReimbursementBody[];
     expect(claims.length).toBeGreaterThan(0);
     expect(claims.every((c) => c.employeeId === employeeId)).toBe(true);
+  });
+
+  it('list responses include the employee relation, not just the ID', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/reimbursements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const [claim] = res.body as ReimbursementBody[];
+    expect(claim.employee?.id).toBe(employeeId);
+  });
+
+  it('a stored receiptUrl relativeKey comes back signed as /files/<token>, not the raw key', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/reimbursements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({
+        amount: 250,
+        claimDate: '2026-06-12',
+        receiptUrl: 'documents/some-org/receipt.pdf',
+      })
+      .expect(201);
+    const body = created.body as ReimbursementBody;
+    expect(body.receiptUrl).toMatch(/^\/files\//);
+    expect(body.receiptUrl).not.toBe('documents/some-org/receipt.pdf');
+
+    const list = await request(app.getHttpServer())
+      .get('/reimbursements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const same = (list.body as ReimbursementBody[]).find(
+      (c) => c.id === body.id,
+    );
+    expect(same?.receiptUrl).toMatch(/^\/files\//);
   });
 
   it("another EMPLOYEE's list never includes claims that aren't theirs", async () => {

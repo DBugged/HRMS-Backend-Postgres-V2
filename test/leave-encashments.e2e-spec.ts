@@ -29,6 +29,8 @@ interface EncashmentBody {
   amount: number;
   financialYear: string;
   employeeId: string;
+  employee?: { id: string; name: string; employeeId: string };
+  leaveType?: { id: string; name: string; code: string };
 }
 
 const PASSWORD = 'TestPass123!';
@@ -222,6 +224,16 @@ describe('Leave Encashments (e2e)', () => {
     const rows = res.body as EncashmentBody[];
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.employeeId === employeeId)).toBe(true);
+  });
+
+  it('list responses include the employee and leaveType relations, not just IDs', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/leave-encashments')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const [row] = res.body as EncashmentBody[];
+    expect(row.employee?.id).toBe(employeeId);
+    expect(row.leaveType?.id).toBe(encashableLeaveTypeId);
   });
 
   it('EMPLOYEE gets 403 reviewing a request', async () => {

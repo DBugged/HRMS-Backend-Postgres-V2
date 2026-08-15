@@ -81,6 +81,17 @@ interface TransitionConfig {
 // A single config table (not 4 near-duplicate handlers) drives both the
 // single-run and bulk transition endpoints — ported from the old
 // backend's TRANSITIONS table.
+const PAYROLL_HISTORY_ACTIONS = [
+  'PAYROLL_DRAFT_CREATED',
+  'PAYROLL_CALCULATED',
+  'PAYROLL_ADJUSTED',
+  'PAYROLL_VERIFIED',
+  'PAYROLL_APPROVED',
+  'PAYROLL_LOCKED',
+  'PAYROLL_PAID',
+  'PAYROLL_UNLOCKED',
+];
+
 const TRANSITIONS: Record<PayrollTransitionAction, TransitionConfig> = {
   verify: {
     fromStatuses: [PayrollRunStatus.CALCULATED],
@@ -505,7 +516,7 @@ export class PayrollService {
     };
   }
 
-  async draft(dto: DraftPayrollDto, organizationId: string) {
+  async draft(dto: DraftPayrollDto, actor: Actor, organizationId: string) {
     const employees = await this.targetEmployees(
       dto.employeeId,
       organizationId,
@@ -534,6 +545,13 @@ export class PayrollService {
       }
       runs.push(run);
     }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_DRAFT_CREATED',
+      module: 'PAYROLL',
+      organizationId,
+      details: { month: dto.month, year: dto.year, count: runs.length },
+    });
     return { count: runs.length, runs };
   }
 
@@ -633,6 +651,18 @@ export class PayrollService {
       }
     }
 
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_CALCULATED',
+      module: 'PAYROLL',
+      organizationId,
+      details: {
+        month: dto.month,
+        year: dto.year,
+        count: results.length,
+        failed: failures.length,
+      },
+    });
     return { count: results.length, payrolls: results, failures };
   }
 
@@ -700,6 +730,96 @@ export class PayrollService {
     return run;
   }
 
+  // Every draft/calculate/adjust/verify/approve/lock/pay/unlock action,
+  // newest first — sourced from the audit log rather than a dedicated
+  // table, same as LeavesService.getCreditHistory. Batch-level actions
+  // (draft/calculate) have no targetId, so they're only resolvable to a
+  // run via the query filters below; per-run actions always carry one.
+  async getHistory(
+    query: QueryPayrollDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const where: Prisma.AuditLogWhereInput = {
+      organizationId,
+      module: 'PAYROLL',
+      action: { in: PAYROLL_HISTORY_ACTIONS },
+    };
+
+    if (query.employeeId || query.month || query.year) {
+      const runWhere: Prisma.PayrollRunWhereInput = {
+        organizationId,
+        isFinalSettlement: false,
+        ...(query.employeeId && { employeeId: query.employeeId }),
+        ...(query.month && { month: query.month }),
+        ...(query.year && { year: query.year }),
+      };
+      const runs = await this.scopedPrisma.payrollRun.findMany({
+        where: runWhere,
+        select: { id: true },
+      });
+      const runIds = runs.map((r) => r.id);
+      where.OR = [
+        { targetId: { in: runIds } },
+        ...(!query.employeeId
+          ? [
+              {
+                targetId: null,
+                action: { in: ['PAYROLL_DRAFT_CREATED', 'PAYROLL_CALCULATED'] },
+              },
+            ]
+          : []),
+      ];
+    }
+
+    if (actor.role === Role.MANAGER) {
+      const deptEmployees = await this.scopedPrisma.user.findMany({
+        where: { organizationId, departmentId: actor.departmentId },
+        select: { id: true },
+      });
+      const deptRuns = await this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          employeeId: { in: deptEmployees.map((e) => e.id) },
+        },
+        select: { id: true },
+      });
+      where.targetId = { in: deptRuns.map((r) => r.id) };
+      delete where.OR;
+    }
+
+    const logs = await this.scopedPrisma.auditLog.findMany({
+      where,
+      include: {
+        actor: {
+          select: { id: true, name: true, employeeId: true, role: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+
+    const targetIds = [
+      ...new Set(
+        logs.map((l) => l.targetId).filter((id): id is string => !!id),
+      ),
+    ];
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: { id: { in: targetIds }, organizationId },
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
+    });
+    const runById = new Map(runs.map((r) => [r.id, r]));
+
+    return {
+      history: logs.map((log) => ({
+        ...log,
+        run: log.targetId ? (runById.get(log.targetId) ?? null) : null,
+      })),
+    };
+  }
+
   // Manual correction of a run's computed earnings/deductions before it's
   // finalized. Not allowed once locked/paid (unlock first). Editing an
   // already-verified/approved run invalidates that sign-off, so it drops
@@ -759,17 +879,54 @@ export class PayrollService {
       where: { id, organizationId },
       data,
     });
-    return this.scopedPrisma.payrollRun.findFirstOrThrow({
+    const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
       where: { id, organizationId },
     });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_ADJUSTED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { netPay, reason: dto.reason ?? '' },
+    });
+    return updated;
   }
 
   async verify(id: string, actor: Actor, organizationId: string) {
-    return this.transitionOne(id, TRANSITIONS.verify, actor, organizationId);
+    const run = await this.transitionOne(
+      id,
+      TRANSITIONS.verify,
+      actor,
+      organizationId,
+    );
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_VERIFIED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: run.id,
+      details: { employeeId: run.employeeId, month: run.month, year: run.year },
+    });
+    return run;
   }
 
   async approve(id: string, actor: Actor, organizationId: string) {
-    return this.transitionOne(id, TRANSITIONS.approve, actor, organizationId);
+    const run = await this.transitionOne(
+      id,
+      TRANSITIONS.approve,
+      actor,
+      organizationId,
+    );
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_APPROVED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: run.id,
+      details: { employeeId: run.employeeId, month: run.month, year: run.year },
+    });
+    return run;
   }
 
   async lock(id: string, actor: Actor, organizationId: string) {
@@ -907,9 +1064,18 @@ export class PayrollService {
         unlockReason: dto.reason ?? '',
       },
     });
-    return this.scopedPrisma.payrollRun.findFirstOrThrow({
+    const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
       where: { id, organizationId },
     });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_UNLOCKED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { reason: dto.reason ?? '' },
+    });
+    return updated;
   }
 
   // Core of both the single-row and bulk transition endpoints — moves

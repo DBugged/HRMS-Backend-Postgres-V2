@@ -27,6 +27,8 @@ interface OffboardingBody {
   exitInterviewDone: boolean;
   settlementId: string | null;
   completedById: string | null;
+  employee?: { id: string; name: string; employeeId: string };
+  settlement?: { id: string } | null;
 }
 interface SettlementBody {
   id: string;
@@ -306,5 +308,25 @@ describe('Offboarding (e2e)', () => {
     const cases = res.body as OffboardingBody[];
     expect(cases.some((c) => c.id === caseId)).toBe(true);
     expect(cases.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('list and detail responses include the employee and settlement relations', async () => {
+    const listRes = await request(app.getHttpServer())
+      .get('/offboarding')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const found = (listRes.body as OffboardingBody[]).find(
+      (c) => c.id === caseId,
+    );
+    expect(found?.employee?.id).toBe(employeeId);
+    expect(found?.settlement?.id).toBe(settlementId);
+
+    const detailRes = await request(app.getHttpServer())
+      .get(`/offboarding/${caseId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const detail = detailRes.body as OffboardingBody;
+    expect(detail.employee?.id).toBe(employeeId);
+    expect(detail.settlement?.id).toBe(settlementId);
   });
 });

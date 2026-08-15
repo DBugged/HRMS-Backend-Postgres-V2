@@ -4,16 +4,63 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PayrollTemplate } from '@prisma/client';
+import {
+  HeaderStyle,
+  PayrollTemplate,
+  PayslipFontFamily,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreatePayrollTemplateDto } from './dto/create-payroll-template.dto';
 import { UpdatePayrollTemplateDto } from './dto/update-payroll-template.dto';
+import { PayslipPdfService } from '../payroll/payslip-pdf.service';
+
+// Defaults for whatever the "draft" preview body leaves unset — mirrors the
+// Prisma column defaults so the rendered preview always has every field the
+// PDF layout reads, even from a brand-new, never-saved editor session.
+const DRAFT_DEFAULTS: PayrollTemplate = {
+  id: 'preview',
+  organizationId: '',
+  name: 'New Template',
+  isDefault: false,
+  companyLogoUrl: null,
+  companyName: "D'Bugged Programmers",
+  companyAddress: null,
+  companyEmail: null,
+  companyWebsite: null,
+  companyContactNumber: null,
+  primaryColor: '#5546e0',
+  secondaryColor: '#14161d',
+  accentColor: '#10b981',
+  footerText: null,
+  signatoryName: null,
+  signatoryDesignation: null,
+  watermarkText: null,
+  headerStyle: HeaderStyle.MODERN,
+  headerColor: null,
+  fontFamily: PayslipFontFamily.HELVETICA,
+  fontSize: 9,
+  showCompanyAddress: true,
+  showPAN: true,
+  showUAN: true,
+  showESIC: true,
+  showPFNumber: true,
+  showBankDetails: true,
+  showEmployerContributions: true,
+  showCTC: true,
+  showYTD: true,
+  showQRCode: true,
+  showFooter: true,
+  createdById: null,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
 
 @Injectable()
 export class PayrollTemplatesService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly payslipPdfService: PayslipPdfService,
   ) {}
 
   findAll(organizationId: string) {
@@ -88,6 +135,23 @@ export class PayrollTemplatesService {
       data: { isDefault: true },
     });
     return this.findByIdOrThrow(id, organizationId);
+  }
+
+  async previewDraft(dto: CreatePayrollTemplateDto, organizationId: string) {
+    const merged: PayrollTemplate = {
+      ...DRAFT_DEFAULTS,
+      ...dto,
+      organizationId,
+    };
+    return this.payslipPdfService.buildPreviewPdfBuffer(merged, organizationId);
+  }
+
+  async previewSaved(id: string, organizationId: string) {
+    const template = await this.findByIdOrThrow(id, organizationId);
+    return this.payslipPdfService.buildPreviewPdfBuffer(
+      template,
+      organizationId,
+    );
   }
 
   private async unsetOtherDefaults(exceptId: string, organizationId: string) {

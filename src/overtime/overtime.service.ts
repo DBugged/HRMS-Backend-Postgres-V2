@@ -72,6 +72,9 @@ export class OvertimeService {
 
     return this.scopedPrisma.overtimeRecord.findMany({
       where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
       orderBy: { date: 'desc' },
     });
   }

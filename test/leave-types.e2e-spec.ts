@@ -175,6 +175,51 @@ describe('Leave Types (e2e)', () => {
       .expect(200);
   });
 
+  it('eligible/me excludes types the employee is filtered out of by applicableGenders', async () => {
+    await prisma.user.update({
+      where: { id: employeeId },
+      data: { gender: 'FEMALE' },
+    });
+
+    const restricted = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Paternity Leave',
+        code: 'PTL',
+        applicableGenders: ['MALE'],
+      })
+      .expect(201);
+    const restrictedId = (restricted.body as LeaveTypeBody).id;
+
+    const excluded = await request(app.getHttpServer())
+      .get('/leave-types/eligible/me')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect((excluded.body as LeaveTypeBody[]).map((t) => t.id)).not.toContain(
+      restrictedId,
+    );
+
+    await request(app.getHttpServer())
+      .put(`/leave-types/${restrictedId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ applicableGenders: ['FEMALE'] })
+      .expect(200);
+
+    const included = await request(app.getHttpServer())
+      .get('/leave-types/eligible/me')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect((included.body as LeaveTypeBody[]).map((t) => t.id)).toContain(
+      restrictedId,
+    );
+
+    await request(app.getHttpServer())
+      .delete(`/leave-types/${restrictedId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
   it('ADMIN updates a leave type', async () => {
     const res = await request(app.getHttpServer())
       .put(`/leave-types/${annualLeaveId}`)
@@ -277,6 +322,52 @@ describe('Leave Types (e2e)', () => {
     });
     expect(nextRow?.opening).toBe(5);
     expect(nextRow?.carriedInExpiresOn).toBe(`${thisYear + 1}-07-01`);
+  });
+
+  it('GET /leaves/credit-history reflects the accrual and carry-forward runs above', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/leaves/credit-history')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const { history } = res.body as {
+      history: { action: string; actor: { name: string } }[];
+    };
+    expect(history.some((h) => h.action === 'LEAVE_ACCRUAL_RUN')).toBe(true);
+    expect(history.some((h) => h.action === 'LEAVE_CARRYFORWARD_RUN')).toBe(
+      true,
+    );
+    expect(history[0].actor.name).toBe('Founder');
+  });
+
+  it('GET /leave-types?activeOnly=true excludes deactivated types', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Sabbatical', code: 'SAB' })
+      .expect(201);
+    const sabId = (created.body as LeaveTypeBody).id;
+    await request(app.getHttpServer())
+      .put(`/leave-types/${sabId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isActive: false })
+      .expect(200);
+
+    const all = await request(app.getHttpServer())
+      .get('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((all.body as LeaveTypeBody[]).some((lt) => lt.id === sabId)).toBe(
+      true,
+    );
+
+    const activeOnly = await request(app.getHttpServer())
+      .get('/leave-types')
+      .query({ activeOnly: 'true' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(
+      (activeOnly.body as LeaveTypeBody[]).some((lt) => lt.id === sabId),
+    ).toBe(false);
   });
 
   it('ADMIN deletes a leave type', async () => {

@@ -6,6 +6,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,7 @@ import { LeaveTypesService } from './leave-types.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
+import { ListLeaveTypesQueryDto } from './dto/list-leave-types-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -44,12 +46,22 @@ export class LeaveTypesController {
     @Body() dto: RunCarryForwardDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.leaveTypesService.runCarryForward(dto, caller.organizationId);
+    return this.leaveTypesService.runCarryForward(
+      dto,
+      caller.id,
+      caller.organizationId,
+    );
   }
 
   @Get()
-  findAll(@CurrentUser() caller: Caller) {
-    return this.leaveTypesService.findAll(caller.organizationId);
+  findAll(
+    @Query() query: ListLeaveTypesQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.leaveTypesService.findAll(
+      caller.organizationId,
+      query.activeOnly,
+    );
   }
 
   @Get(':id')
@@ -86,6 +98,10 @@ export class LeaveTypesController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   runAccrual(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.leaveTypesService.runAccrual(id, caller.organizationId);
+    return this.leaveTypesService.runAccrual(
+      id,
+      caller.id,
+      caller.organizationId,
+    );
   }
 }

@@ -32,6 +32,7 @@ interface SettlementBody {
   gratuityAmount: number;
   netSettlementAmount: number;
   payrollRunId: string | null;
+  employee?: { id: string; name: string; employeeId: string };
 }
 interface ProcessResultBody {
   settlement: SettlementBody;
@@ -313,6 +314,15 @@ describe('Settlements (e2e)', () => {
     const rows = res.body as SettlementBody[];
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.employeeId === employeeId)).toBe(true);
+  });
+
+  it('list responses include the employee relation, not just the ID', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/settlements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const [row] = res.body as SettlementBody[];
+    expect(row.employee?.id).toBe(employeeId);
   });
 
   it('404s processing a non-existent settlement', async () => {

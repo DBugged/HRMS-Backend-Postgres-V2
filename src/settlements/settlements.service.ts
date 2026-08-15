@@ -54,6 +54,9 @@ export class SettlementsService {
 
     return this.scopedPrisma.settlement.findMany({
       where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

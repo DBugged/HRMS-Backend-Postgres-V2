@@ -36,6 +36,17 @@ export class UsersService {
     return this.prisma.user.findFirst(args);
   }
 
+  // A reset-token hash alone identifies the account — same tenant-unknown
+  // reasoning as findByEmail above.
+  findByResetToken(tokenHash: string): Promise<User | null> {
+    type FindFirstArgs = Parameters<typeof this.prisma.user.findFirst>[0];
+    const args = {
+      where: { resetPasswordToken: tokenHash },
+      __tenantScopeBypass: true,
+    } as unknown as FindFirstArgs;
+    return this.prisma.user.findFirst(args);
+  }
+
   findByIdInOrg(id: string, organizationId: string): Promise<User | null> {
     return this.prisma.user.findFirst({ where: { id, organizationId } });
   }

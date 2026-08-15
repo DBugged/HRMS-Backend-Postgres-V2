@@ -20,6 +20,7 @@ interface CompOffBody {
   status: string;
   daysEarned: number;
   daysAvailed: number;
+  employee?: { id: string; name: string; employeeId: string };
 }
 
 const PASSWORD = 'TestPass123!';
@@ -157,9 +158,11 @@ describe('Comp-Offs (e2e)', () => {
       .get('/comp-offs')
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
-    expect(
-      (deptList.body as CompOffBody[]).some((c) => c.id === compOffId),
-    ).toBe(true);
+    const deptBody = deptList.body as CompOffBody[];
+    expect(deptBody.some((c) => c.id === compOffId)).toBe(true);
+    expect(deptBody.find((c) => c.id === compOffId)?.employee?.id).toBe(
+      deptBody.find((c) => c.id === compOffId)?.employeeId,
+    );
   });
 
   it('EMPLOYEE gets 403 reviewing a comp-off', async () => {

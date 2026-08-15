@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     // point as EmployeeIdService above.
     StatutoryConfigModule,
     AuditLogModule,
+    NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService
     // (different secret/TTL for access vs refresh isn't expressible via a
     // single module-level JwtModule config), so this registration just

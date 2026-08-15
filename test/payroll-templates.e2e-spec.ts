@@ -159,4 +159,34 @@ describe('Payroll Templates (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(404);
   });
+
+  it('draft preview renders a PDF from an in-progress, unsaved editor config', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/payroll-templates/draft/preview')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Unsaved Draft', primaryColor: '#123456' })
+      .expect(201);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(Buffer.isBuffer(res.body) ? res.body.length : 0).toBeGreaterThan(
+      1000,
+    );
+  });
+
+  it('saved-template preview renders a PDF for an existing template', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/payroll-templates/${secondId}/preview`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+    expect(res.headers['content-type']).toBe('application/pdf');
+    expect(Buffer.isBuffer(res.body) ? res.body.length : 0).toBeGreaterThan(
+      1000,
+    );
+  });
+
+  it('404s previewing a non-existent saved template', async () => {
+    await request(app.getHttpServer())
+      .post('/payroll-templates/00000000-0000-4000-8000-000000000000/preview')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(404);
+  });
 });

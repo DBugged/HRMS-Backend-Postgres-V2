@@ -87,6 +87,18 @@ export class PayrollReportQueryDto extends FormatQueryDto {
   year?: number;
 }
 
+export class PayrollAuditReportQueryDto extends FormatQueryDto {
+  @ApiPropertyOptional({ example: '2026-06-01' })
+  @IsOptional()
+  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-30' })
+  @IsOptional()
+  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  to?: string;
+}
+
 export class HeadcountReportQueryDto extends FormatQueryDto {
   @ApiPropertyOptional({ default: 12 })
   @IsOptional()

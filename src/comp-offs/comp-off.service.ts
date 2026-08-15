@@ -96,6 +96,9 @@ export class CompOffService {
 
     return this.scopedPrisma.compOff.findMany({
       where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

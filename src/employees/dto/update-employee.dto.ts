@@ -8,7 +8,7 @@ import {
   IsString,
   IsUUID,
 } from 'class-validator';
-import { EmploymentStatus, Role } from '@prisma/client';
+import { EmploymentStatus, Gender, Role } from '@prisma/client';
 
 // Note: employeeId is deliberately not editable through this DTO at all
 // (not even by HR/Admin) — unlike the old system, which technically
@@ -44,6 +44,13 @@ export class UpdateEmployeeDto {
   @IsString()
   contactNumber?: string;
 
+  // Self-editable — feeds LeaveType.applicableGenders eligibility filtering
+  // (leave-eligibility.ts), which has no other way to be set.
+  @ApiPropertyOptional({ enum: Gender })
+  @IsOptional()
+  @IsEnum(Gender)
+  gender?: Gender;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsDateString()
@@ -68,4 +75,12 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  // Durable relativeKey from POST /files/upload/profile-photos — never a
+  // signed URL (see file-token.ts). Self-editable, not in the HR-only
+  // locked-fields list.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  profileImage?: string;
 }

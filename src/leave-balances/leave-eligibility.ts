@@ -5,14 +5,16 @@
  * DB-touching orchestration in leave-balance.service.ts so it's directly
  * unit-testable, same reasoning as employee-query-scope.ts.
  *
- * `applicableGenders` is deliberately NOT checked here — backend-v2's User
- * model has no `gender` field (the old system's did). The JSON field is
- * kept on LeaveType for schema fidelity only; see schema.prisma's comment.
+ * `applicableGenders` stores Gender enum values (MALE/FEMALE/OTHER,
+ * uppercase) — now enforceable since User gained a `gender` field as part
+ * of the Employee rich-profile work, unlike when this file was first
+ * ported (see the now-stale comment this replaced in schema.prisma).
  */
 
 export interface EligibilityLeaveType {
   applicableDepartments: unknown;
   applicableEmployeeTypes: unknown;
+  applicableGenders: unknown;
   minServiceMonths: number;
   maxServiceMonths: number | null;
 }
@@ -21,6 +23,7 @@ export interface EligibilityEmployee {
   departmentId: string | null;
   employeeType: string;
   joiningDate: Date;
+  gender: string | null;
 }
 
 // Inclusive of the joining month itself, matching the old system's
@@ -52,6 +55,9 @@ export function isEligible(
   if (
     !matchesListFilter(leaveType.applicableEmployeeTypes, employee.employeeType)
   ) {
+    return false;
+  }
+  if (!matchesListFilter(leaveType.applicableGenders, employee.gender)) {
     return false;
   }
 

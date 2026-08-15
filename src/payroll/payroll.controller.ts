@@ -49,6 +49,16 @@ export class PayrollController {
     return this.payrollService.findAll(query, caller, caller.organizationId);
   }
 
+  // Registered before ':id' so Nest doesn't try to match "history" as a
+  // route param — same reason as Holidays' bulk-import and LeaveTypes'
+  // eligible/me routes.
+  @Get('history')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  history(@Query() query: QueryPayrollDto, @CurrentUser() caller: Caller) {
+    return this.payrollService.getHistory(query, caller, caller.organizationId);
+  }
+
   // No @Roles() — 403 for an EMPLOYEE viewing someone else's payslip is
   // enforced inline in the service; MANAGER/ADMIN/HR may view any single
   // payslip by id (only the list endpoint above scopes MANAGER by dept).
@@ -90,7 +100,7 @@ export class PayrollController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   draft(@Body() dto: DraftPayrollDto, @CurrentUser() caller: Caller) {
-    return this.payrollService.draft(dto, caller.organizationId);
+    return this.payrollService.draft(dto, caller, caller.organizationId);
   }
 
   @Post('calculate')

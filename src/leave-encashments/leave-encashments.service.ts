@@ -49,6 +49,10 @@ export class LeaveEncashmentsService {
 
     return this.scopedPrisma.leaveEncashment.findMany({
       where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+        leaveType: { select: { id: true, name: true, code: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

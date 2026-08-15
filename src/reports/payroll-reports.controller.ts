@@ -4,7 +4,10 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { PayrollReportsService } from './payroll-reports.service';
 import { sendReport } from './report-export';
-import { PayrollReportQueryDto } from './dto/report-queries.dto';
+import {
+  PayrollAuditReportQueryDto,
+  PayrollReportQueryDto,
+} from './dto/report-queries.dto';
 import { Form16ReportQueryDto } from './dto/form16-report-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -14,8 +17,6 @@ type Caller = Omit<User, 'password'>;
 
 // Old system's PAYROLL_VIEW_ROLES collapses to [ADMIN, HR], same
 // convention used throughout Payroll/Reimbursements/Loans/Settlements.
-// payrollAuditReport is not ported here — it needs AuditLog, which doesn't
-// exist yet (Batch 9).
 @ApiTags('reports')
 @ApiBearerAuth('access-token')
 @Controller('reports/payroll')
@@ -148,6 +149,19 @@ export class PayrollReportsController {
     @Res() res: Response,
   ) {
     const report = await this.payrollReportsService.form16Report(
+      query,
+      caller.organizationId,
+    );
+    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+  }
+
+  @Get('audit')
+  async audit(
+    @Query() query: PayrollAuditReportQueryDto,
+    @CurrentUser() caller: Caller,
+    @Res() res: Response,
+  ) {
+    const report = await this.payrollReportsService.payrollAuditReport(
       query,
       caller.organizationId,
     );

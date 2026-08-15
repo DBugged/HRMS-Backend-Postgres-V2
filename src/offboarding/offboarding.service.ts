@@ -36,6 +36,10 @@ export class OffboardingService {
   async findAll(organizationId: string) {
     return this.scopedPrisma.offboardingCase.findMany({
       where: { organizationId },
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+        settlement: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -43,6 +47,10 @@ export class OffboardingService {
   async findOne(id: string, organizationId: string) {
     const record = await this.scopedPrisma.offboardingCase.findFirst({
       where: { id, organizationId },
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+        settlement: true,
+      },
     });
     if (!record) throw new NotFoundException('Offboarding case not found.');
     return record;

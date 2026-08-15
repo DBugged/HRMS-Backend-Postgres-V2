@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -10,12 +11,17 @@ import * as crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { signFileToken } from '../files/file-token';
+import { signPersonalDataFileUrls } from '../employees/personal-data';
 import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmailService } from '../notifications/email.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { AuthUserDto } from './dto/auth-response.dto';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import {
@@ -24,6 +30,12 @@ import {
 } from './auth.constants';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
+// 30 minutes — matches the old system's window exactly.
+const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+// Same generic message regardless of whether the email exists — never
+// reveals account existence, ported from the old system's forgotPassword.
+const FORGOT_PASSWORD_GENERIC_MESSAGE =
+  'If that email exists, a reset link has been sent.';
 
 export interface IssuedTokens {
   accessToken: string;
@@ -43,6 +55,7 @@ export class AuthService {
     private readonly employeeIdService: EmployeeIdService,
     private readonly statutoryConfigService: StatutoryConfigService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailService: EmailService,
     private readonly jwt: JwtService,
   ) {}
 
@@ -205,7 +218,83 @@ export class AuthService {
     if (!user) throw new UnauthorizedException();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
     const { password, ...safe } = user;
+    // profileImage is a durable relativeKey (never a signed URL — see
+    // file-token.ts), so it's signed fresh on every read.
+    if (safe.profileImage) {
+      safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage)}`;
+    }
+    if (safe.personalData && typeof safe.personalData === 'object') {
+      safe.personalData = signPersonalDataFileUrls(
+        safe.personalData as Record<string, unknown>,
+        safe.organizationId,
+      ) as unknown as typeof safe.personalData;
+    }
     return safe;
+  }
+
+  // Never reveals whether the email exists — same response either way.
+  // Ported from the old system's forgotPassword exactly (32-byte raw
+  // token mailed to the user, SHA-256 hash stored, 30-minute expiry).
+  async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
+    const user = await this.usersService.findByEmail(dto.email);
+    if (user) {
+      const rawToken = crypto.randomBytes(32).toString('hex');
+      await this.scopedPrisma.user.updateMany({
+        where: { id: user.id, organizationId: user.organizationId },
+        data: {
+          resetPasswordToken: hashToken(rawToken),
+          resetPasswordExpires: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+        },
+      });
+
+      const resetUrl = `${(process.env.CORS_ORIGIN || 'http://localhost:5173').split(',')[0]}/reset-password/${rawToken}`;
+      await this.emailService.send({
+        to: user.email,
+        subject: "D'Bugged Programmers HRMS - Password Reset",
+        html: `<p>Hello ${user.name},</p><p>Click the link below to reset your password. This link expires in 30 minutes.</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
+      });
+    }
+    return { message: FORGOT_PASSWORD_GENERIC_MESSAGE };
+  }
+
+  // One vague error for both "invalid" and "expired" — deliberately
+  // doesn't distinguish, same as the old system. Also revokes every
+  // active refresh token for the account (an enhancement beyond the old
+  // system, which had no session concept to revoke) so a compromised
+  // session doesn't survive a password reset.
+  async resetPassword(dto: ResetPasswordDto): Promise<{ message: string }> {
+    const tokenHash = hashToken(dto.token);
+    const user = await this.usersService.findByResetToken(tokenHash);
+    if (
+      !user ||
+      !user.resetPasswordExpires ||
+      user.resetPasswordExpires < new Date()
+    ) {
+      throw new BadRequestException('Reset link is invalid or has expired.');
+    }
+
+    const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
+    await this.scopedPrisma.$transaction([
+      this.scopedPrisma.user.updateMany({
+        where: { id: user.id, organizationId: user.organizationId },
+        data: {
+          password: hashedPassword,
+          resetPasswordToken: null,
+          resetPasswordExpires: null,
+          mustChangePassword: false,
+        },
+      }),
+      this.scopedPrisma.refreshToken.updateMany({
+        where: {
+          userId: user.id,
+          organizationId: user.organizationId,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
+
+    return { message: 'Password updated successfully. Please login.' };
   }
 
   private async issueTokenPair(
@@ -273,6 +362,6 @@ export class AuthService {
   }
 }
 
-function hashToken(raw: string): string {
+export function hashToken(raw: string): string {
   return crypto.createHash('sha256').update(raw).digest('hex');
 }

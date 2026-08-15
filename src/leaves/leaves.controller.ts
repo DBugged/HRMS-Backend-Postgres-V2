@@ -67,6 +67,13 @@ export class LeavesController {
     );
   }
 
+  @Get('credit-history')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  creditHistory(@CurrentUser() caller: Caller) {
+    return this.leavesService.getCreditHistory(caller.organizationId);
+  }
+
   @Get('history/:employeeId')
   history(
     @Param('employeeId') employeeId: string,

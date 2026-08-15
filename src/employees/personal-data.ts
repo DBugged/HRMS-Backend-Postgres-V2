@@ -1,0 +1,80 @@
+import { signFileToken } from '../files/file-token';
+
+interface PreviousEmploymentEntry {
+  documentUrl?: string;
+  [key: string]: unknown;
+}
+
+// The two file-bearing fields inside the personalData JSON blob
+// (cancelledChequeUrl, previousEmployment[].documentUrl) hold durable
+// relativeKeys, never signed URLs (see file-token.ts) — signed fresh here
+// wherever personalData is exposed, same pattern as EmployeeDocument's
+// withSignedFileUrl.
+export function signPersonalDataFileUrls(
+  personalData: Record<string, unknown>,
+  organizationId: string,
+): Record<string, unknown> {
+  const signed = { ...personalData };
+  if (
+    typeof signed.cancelledChequeUrl === 'string' &&
+    signed.cancelledChequeUrl
+  ) {
+    signed.cancelledChequeUrl = `/files/${signFileToken(organizationId, signed.cancelledChequeUrl)}`;
+  }
+  if (Array.isArray(signed.previousEmployment)) {
+    signed.previousEmployment = (
+      signed.previousEmployment as PreviousEmploymentEntry[]
+    ).map((entry) =>
+      entry && typeof entry.documentUrl === 'string' && entry.documentUrl
+        ? {
+            ...entry,
+            documentUrl: `/files/${signFileToken(organizationId, entry.documentUrl)}`,
+          }
+        : entry,
+    );
+  }
+  return signed;
+}
+
+// Ported from the old system's updatePersonalData: profileCompleted flips
+// true once these 8 fields are all truthy — an intentionally small subset
+// of the full personal-data shape, not "every field filled in".
+const REQUIRED_FOR_COMPLETION = [
+  'fullNameAsPerGovtId',
+  'dateOfBirth',
+  'gender',
+  'currentAddress',
+  'fatherName',
+  'emergencyContact1Number',
+  'bankAccountNo',
+  'bankIFSC',
+] as const;
+
+export function isProfileComplete(
+  personalData: Record<string, unknown>,
+): boolean {
+  return REQUIRED_FOR_COMPLETION.every((field) => {
+    const value = personalData[field];
+    return typeof value === 'string' && value.trim().length > 0;
+  });
+}
+
+// Merge (not overwrite) semantics — PUT /employees/:id/personal-data sends
+// only the fields being changed; anything omitted keeps its prior value.
+// previousEmployment/references arrays are replaced wholesale when present
+// in the patch (the client always sends the full array back), same as the
+// old system's plain object-spread merge.
+export function mergePersonalData(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const merged = { ...current, ...patch };
+  const completed = isProfileComplete(merged);
+  return {
+    ...merged,
+    profileCompleted: completed,
+    profileCompletedAt: completed
+      ? (current.profileCompletedAt ?? new Date().toISOString())
+      : null,
+  };
+}

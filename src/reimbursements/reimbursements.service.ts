@@ -1,18 +1,34 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Role, User } from '@prisma/client';
+import { Prisma, Reimbursement, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { signFileToken } from '../files/file-token';
 import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
 
 type Actor = Omit<User, 'password'>;
 
+const EXTERNAL_URL_RE = /^https?:\/\//i;
+
 @Injectable()
 export class ReimbursementsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
+
+  // receiptUrl is stored as the relativeKey from POST /files/upload/documents
+  // — never servable as-is, so every read signs it fresh, same pattern as
+  // DocumentsService.withSignedUrl.
+  private withSignedReceipt<T extends Reimbursement>(claim: T): T {
+    if (!claim.receiptUrl || EXTERNAL_URL_RE.test(claim.receiptUrl)) {
+      return claim;
+    }
+    return {
+      ...claim,
+      receiptUrl: `/files/${signFileToken(claim.organizationId, claim.receiptUrl)}`,
+    };
+  }
 
   async findAll(
     query: QueryReimbursementDto,
@@ -28,10 +44,14 @@ export class ReimbursementsService {
     }
     if (query.status) where.status = query.status;
 
-    return this.scopedPrisma.reimbursement.findMany({
+    const claims = await this.scopedPrisma.reimbursement.findMany({
       where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
+    return claims.map((c) => this.withSignedReceipt(c));
   }
 
   async create(
@@ -39,7 +59,7 @@ export class ReimbursementsService {
     actor: Actor,
     organizationId: string,
   ) {
-    return this.scopedPrisma.reimbursement.create({
+    const claim = await this.scopedPrisma.reimbursement.create({
       data: {
         organizationId,
         employeeId: actor.id,
@@ -50,6 +70,7 @@ export class ReimbursementsService {
         receiptUrl: dto.receiptUrl ?? '',
       },
     });
+    return this.withSignedReceipt(claim);
   }
 
   async review(
@@ -71,8 +92,9 @@ export class ReimbursementsService {
         approvedById: actor.id,
       },
     });
-    return this.scopedPrisma.reimbursement.findFirstOrThrow({
+    const updated = await this.scopedPrisma.reimbursement.findFirstOrThrow({
       where: { id, organizationId },
     });
+    return this.withSignedReceipt(updated);
   }
 }

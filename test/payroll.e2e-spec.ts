@@ -690,6 +690,55 @@ describe('Payroll (e2e)', () => {
       expect(body.updatedCount).toBe(1);
       expect(body.skipped.some((s) => s.status === 'not_found')).toBe(true);
     });
+
+    it('GET /payroll/history reflects the actions above, newest first, with the run+actor joined in', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/payroll/history')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const { history } = res.body as {
+        history: {
+          action: string;
+          targetId: string | null;
+          actor: { name: string };
+          run: { id: string; employee: { id: string } } | null;
+        }[];
+      };
+      expect(history.length).toBeGreaterThan(0);
+      const actions = new Set(history.map((h) => h.action));
+      expect(actions.has('PAYROLL_CALCULATED')).toBe(true);
+      expect(actions.has('PAYROLL_ADJUSTED')).toBe(true);
+      expect(actions.has('PAYROLL_VERIFIED')).toBe(true);
+
+      const adjustEntry = history.find((h) => h.action === 'PAYROLL_ADJUSTED');
+      expect(adjustEntry?.run?.employee.id).toBe(employeeId);
+      expect(adjustEntry?.actor.name).toBeTruthy();
+
+      const draftEntry = history.find(
+        (h) => h.action === 'PAYROLL_DRAFT_CREATED',
+      );
+      expect(draftEntry?.targetId).toBeNull();
+      expect(draftEntry?.run).toBeNull();
+    });
+
+    it('GET /payroll/history filtered by employeeId excludes batch-level draft/calculate entries', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/payroll/history')
+        .query({ employeeId })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const { history } = res.body as { history: { action: string }[] };
+      expect(history.some((h) => h.action === 'PAYROLL_DRAFT_CREATED')).toBe(
+        false,
+      );
+    });
+
+    it('EMPLOYEE gets 403 on the history endpoint', async () => {
+      await request(app.getHttpServer())
+        .get('/payroll/history')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
   });
 
   describe('Payslip PDF', () => {

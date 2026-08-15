@@ -10,8 +10,11 @@ import * as crypto from 'crypto';
 import { Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { signFileToken } from '../files/file-token';
+import { signPersonalDataFileUrls } from './personal-data';
 import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from './employee-id.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
@@ -41,6 +44,7 @@ export class EmployeesService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly usersService: UsersService,
     private readonly employeeIdService: EmployeeIdService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async create(
@@ -99,6 +103,38 @@ export class EmployeesService {
     return { employee: toSafe(user), generatedPassword };
   }
 
+  // Row-level isolation, same as the old system's bulkCreateEmployees —
+  // one bad row (duplicate email, missing name) doesn't abort the rest of
+  // the sheet. Reuses create() so seat limits, employeeId generation, and
+  // role defaults all stay in exactly one place.
+  async bulkCreate(
+    rows: Array<
+      Pick<
+        CreateEmployeeDto,
+        'name' | 'email' | 'designation' | 'contactNumber' | 'joiningDate'
+      >
+    >,
+    actor: Actor & { role: Role },
+    organizationId: string,
+  ) {
+    const created: string[] = [];
+    const failed: { row: unknown; error: string }[] = [];
+
+    for (const row of rows) {
+      try {
+        const { employee } = await this.create(row, actor, organizationId);
+        created.push(employee.employeeId);
+      } catch (err) {
+        failed.push({
+          row,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+    }
+
+    return { created, failed };
+  }
+
   async findAll(
     query: ListEmployeesQueryDto,
     actor: Actor,
@@ -154,10 +190,10 @@ export class EmployeesService {
   async update(
     id: string,
     dto: UpdateEmployeeDto,
-    actor: Actor & { role: Role },
+    actor: Actor & { id: string; role: Role },
     organizationId: string,
   ) {
-    await this.findByIdOrThrow(id, organizationId);
+    const before = await this.findByIdOrThrow(id, organizationId);
     const clean = stripLockedFields(dto, actor.role);
 
     // updateMany (not update) — its `where` accepts arbitrary filters, so
@@ -175,7 +211,99 @@ export class EmployeesService {
           : undefined,
       },
     });
+
+    await this.logChangesIfAny(before, clean, actor.id, organizationId);
+
     return toSafe(await this.findByIdOrThrow(id, organizationId));
+  }
+
+  // Append-only audit trail of role/designation/department/employmentStatus
+  // transitions, written whenever update() actually changes one of them —
+  // mirrors the old system's logAudit-adjacent behavior. Silent no-op for
+  // any field the caller didn't touch.
+  private async logChangesIfAny(
+    before: User,
+    clean: UpdateEmployeeDto,
+    changedById: string,
+    organizationId: string,
+  ) {
+    const roleChanged = clean.role !== undefined && clean.role !== before.role;
+    const designationChanged =
+      clean.designation !== undefined &&
+      clean.designation !== before.designation;
+    const departmentChanged =
+      clean.departmentId !== undefined &&
+      clean.departmentId !== before.departmentId;
+
+    if (roleChanged || designationChanged || departmentChanged) {
+      await this.scopedPrisma.employeeRoleHistory.create({
+        data: {
+          organizationId,
+          employeeId: before.id,
+          previousRole: roleChanged ? before.role : undefined,
+          newRole: roleChanged ? clean.role : undefined,
+          previousDesignation: designationChanged
+            ? before.designation
+            : undefined,
+          newDesignation: designationChanged ? clean.designation : undefined,
+          previousDepartmentId: departmentChanged
+            ? before.departmentId
+            : undefined,
+          newDepartmentId: departmentChanged ? clean.departmentId : undefined,
+          changedById,
+        },
+      });
+      if (roleChanged) {
+        await this.timelineService.logEvent({
+          organizationId,
+          employeeId: before.id,
+          eventKey: 'ROLE_CHANGED',
+          performedById: changedById,
+        });
+      }
+      if (designationChanged) {
+        await this.timelineService.logEvent({
+          organizationId,
+          employeeId: before.id,
+          eventKey: 'DESIGNATION_CHANGED',
+          performedById: changedById,
+        });
+      }
+      if (departmentChanged) {
+        await this.timelineService.logEvent({
+          organizationId,
+          employeeId: before.id,
+          eventKey: 'DEPARTMENT_CHANGED',
+          performedById: changedById,
+        });
+      }
+    }
+
+    if (
+      clean.employmentStatus !== undefined &&
+      clean.employmentStatus !== before.employmentStatus
+    ) {
+      await this.scopedPrisma.employmentStatusHistory.create({
+        data: {
+          organizationId,
+          employeeId: before.id,
+          previousStatus: before.employmentStatus,
+          newStatus: clean.employmentStatus,
+          changedById,
+        },
+      });
+      // Generic fallback event for direct employmentStatus edits through
+      // this endpoint. Flows with a dedicated meaning (probation
+      // confirm/extend, offboarding) log their own specific eventKey
+      // instead via their own services, so this only fires for the
+      // plain PATCH /employees/:id path.
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: before.id,
+        eventKey: 'EMPLOYEE_UPDATED',
+        performedById: changedById,
+      });
+    }
   }
 
   async deactivate(id: string, organizationId: string) {
@@ -199,8 +327,21 @@ export class EmployeesService {
   }
 }
 
+// profileImage is stored as a durable relativeKey (never a signed URL —
+// see file-token.ts), so every response that surfaces one signs it fresh,
+// same pattern as PolicyDocument's withSignedUrl / OrganizationSettings'
+// withSignedUrls.
 function toSafe(user: User) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
   const { password, ...safe } = user;
+  if (safe.profileImage) {
+    safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage)}`;
+  }
+  if (safe.personalData && typeof safe.personalData === 'object') {
+    safe.personalData = signPersonalDataFileUrls(
+      safe.personalData as Record<string, unknown>,
+      safe.organizationId,
+    ) as unknown as User['personalData'];
+  }
   return safe;
 }

@@ -1,11 +1,20 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { PayrollRunStatus, Prisma, TaxRegime } from '@prisma/client';
+import {
+  AuditModule,
+  PayrollRunStatus,
+  Prisma,
+  TaxRegime,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { ReportColumn } from './report-export';
-import { PayrollReportQueryDto } from './dto/report-queries.dto';
+import {
+  PayrollAuditReportQueryDto,
+  PayrollReportQueryDto,
+} from './dto/report-queries.dto';
 import { Form16ReportQueryDto } from './dto/form16-report-query.dto';
 import { ReportPayload } from './reports.service';
+import { formatDateTimeDisplay } from '../payroll/format-date';
 
 interface PayrollLine {
   code: string;
@@ -461,6 +470,51 @@ export class PayrollReportsService {
       columns,
       rows,
       filename: 'form16_summary',
+    };
+  }
+
+  async payrollAuditReport(
+    query: PayrollAuditReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const where: Prisma.AuditLogWhereInput = {
+      organizationId,
+      module: AuditModule.PAYROLL,
+    };
+    if (query.from || query.to) {
+      where.createdAt = {
+        ...(query.from && { gte: new Date(query.from) }),
+        ...(query.to && { lte: new Date(query.to) }),
+      };
+    }
+
+    const logs = await this.scopedPrisma.auditLog.findMany({
+      where,
+      include: { actor: { select: { name: true, employeeId: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const rows = logs.map((l) => ({
+      timestamp: formatDateTimeDisplay(l.createdAt),
+      actor: l.actor?.name || '-',
+      action: l.action,
+      targetId: l.targetId || '-',
+      details: JSON.stringify(l.details || {}),
+    }));
+
+    const columns: ReportColumn[] = [
+      { header: 'Timestamp', key: 'timestamp', width: 20 },
+      { header: 'Actor', key: 'actor', width: 20 },
+      { header: 'Action', key: 'action', width: 26 },
+      { header: 'Target ID', key: 'targetId', width: 26 },
+      { header: 'Details', key: 'details', width: 40 },
+    ];
+
+    return {
+      title: 'Payroll Audit Report',
+      columns,
+      rows,
+      filename: 'payroll_audit_report',
     };
   }
 }

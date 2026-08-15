@@ -30,6 +30,7 @@ describe('isEligible', () => {
   const baseType = {
     applicableDepartments: [] as string[],
     applicableEmployeeTypes: [] as string[],
+    applicableGenders: [] as string[],
     minServiceMonths: 0,
     maxServiceMonths: null as number | null,
   };
@@ -37,6 +38,7 @@ describe('isEligible', () => {
     departmentId: 'dept-eng',
     employeeType: 'permanent',
     joiningDate: new Date(Date.UTC(2020, 0, 1)),
+    gender: 'FEMALE' as string | null,
   };
 
   it('empty applicableDepartments/applicableEmployeeTypes means "applies to all"', () => {
@@ -65,6 +67,25 @@ describe('isEligible', () => {
   it('non-empty applicableEmployeeTypes restricts to listed employee types', () => {
     const type = { ...baseType, applicableEmployeeTypes: ['contract'] };
     expect(isEligible(type, baseEmployee, asOf)).toBe(false);
+  });
+
+  it('non-empty applicableGenders restricts to listed genders', () => {
+    const type = { ...baseType, applicableGenders: ['MALE'] };
+    expect(isEligible(type, baseEmployee, asOf)).toBe(false);
+    expect(
+      isEligible(
+        { ...baseType, applicableGenders: ['FEMALE'] },
+        baseEmployee,
+        asOf,
+      ),
+    ).toBe(true);
+  });
+
+  it('an employee with no gender set fails a gender-restricted type', () => {
+    const type = { ...baseType, applicableGenders: ['FEMALE'] };
+    expect(isEligible(type, { ...baseEmployee, gender: null }, asOf)).toBe(
+      false,
+    );
   });
 
   it('enforces minServiceMonths', () => {

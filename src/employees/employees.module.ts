@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
 import { EmployeesController } from './employees.controller';
 import { EmployeesService } from './employees.service';
+import { EmployeeProfileService } from './employee-profile.service';
 import { EmployeeIdService } from './employee-id.service';
 import { UsersModule } from '../users/users.module';
+import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 
 @Module({
-  imports: [UsersModule],
+  imports: [UsersModule, EmployeeTimelineModule],
   controllers: [EmployeesController],
-  providers: [EmployeesService, EmployeeIdService],
+  providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],
   // EmployeeIdService is exported specifically so AuthModule can reuse it
   // for founder-account creation (the founder is Employee #1 of their own
   // org) instead of duplicating the row-locked counter logic.

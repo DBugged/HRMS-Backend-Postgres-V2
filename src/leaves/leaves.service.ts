@@ -30,8 +30,13 @@ import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 type Actor = Omit<User, 'password'>;
+
+// The only two actions LeaveTypesService.runAccrual/runCarryForward ever
+// write — same fixed list the old system's getCreditHistory filtered on.
+const CREDIT_HISTORY_ACTIONS = ['LEAVE_ACCRUAL_RUN', 'LEAVE_CARRYFORWARD_RUN'];
 
 // Old system's LEAVE_APPROVE_ROLES / LEAVE_VIEW_ROLES both collapse to this
 // set — see the Batch 4b plan's role-mapping note.
@@ -64,10 +69,33 @@ export class LeavesService {
     private readonly delegationService: ApprovalDelegationService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async apply(dto: ApplyLeaveDto, actor: Actor, organizationId: string) {
     return this.createLeaveInternal(dto, actor, organizationId);
+  }
+
+  // History of periodic accrual/carry-forward runs, visible to whoever can
+  // approve leave (HR triggers them, Managers get a read-only view) —
+  // mirrors the old system's getCreditHistory, sourced from the audit log
+  // rather than a dedicated table since these are infrequent admin actions.
+  async getCreditHistory(organizationId: string) {
+    const logs = await this.scopedPrisma.auditLog.findMany({
+      where: {
+        organizationId,
+        module: 'LEAVE',
+        action: { in: CREDIT_HISTORY_ACTIONS },
+      },
+      include: {
+        actor: {
+          select: { id: true, name: true, employeeId: true, role: true },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+    });
+    return { history: logs };
   }
 
   async findAll(

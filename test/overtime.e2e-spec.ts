@@ -24,6 +24,7 @@ interface OvertimeBody {
   rateMultiplier: number;
   status: string;
   employeeId: string;
+  employee?: { id: string; name: string; employeeId: string };
 }
 
 const PASSWORD = 'TestPass123!';
@@ -172,6 +173,15 @@ describe('Overtime (e2e)', () => {
     const records = res.body as OvertimeBody[];
     expect(records.length).toBeGreaterThan(0);
     expect(records.every((r) => r.employeeId === employeeId)).toBe(true);
+  });
+
+  it('list responses include the employee relation, not just the ID', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/overtime')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const [row] = res.body as OvertimeBody[];
+    expect(row.employee?.id).toBe(employeeId);
   });
 
   it('EMPLOYEE gets 403 reviewing an overtime record', async () => {

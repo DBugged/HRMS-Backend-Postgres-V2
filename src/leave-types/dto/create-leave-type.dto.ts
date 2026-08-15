@@ -96,6 +96,15 @@ export class CreateLeaveTypeDto {
   @IsArray()
   applicableEmployeeTypes?: string[];
 
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      '[] = applies to all genders; values are Gender enum names (MALE/FEMALE/OTHER)',
+  })
+  @IsOptional()
+  @IsArray()
+  applicableGenders?: string[];
+
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsInt()

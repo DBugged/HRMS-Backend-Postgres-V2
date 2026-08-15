@@ -120,6 +120,39 @@ describe('Holidays (e2e)', () => {
     expect(res.body as HolidayBody[]).toHaveLength(1);
   });
 
+  it('a department-scoped holiday comes back with the department relation joined in, not just the id', async () => {
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Engineering', code: 'ENG' })
+      .expect(201);
+    const departmentId = (dept.body as { id: string }).id;
+
+    await request(app.getHttpServer())
+      .post('/holidays')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Eng Offsite',
+        date: '2026-09-01',
+        department: departmentId,
+      })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get('/holidays')
+      .query({ year: 2026 })
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const rows = res.body as (HolidayBody & {
+      department: { id: string; name: string } | null;
+    })[];
+    const scoped = rows.find((r) => r.name === 'Eng Offsite');
+    expect(scoped?.department).toEqual({
+      id: departmentId,
+      name: 'Engineering',
+    });
+  });
+
   it('ADMIN updates a holiday, duplicate check excludes self', async () => {
     const res = await request(app.getHttpServer())
       .put(`/holidays/${holidayId}`)

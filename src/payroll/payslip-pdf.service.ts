@@ -1,7 +1,7 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import PDFDocument from 'pdfkit';
 import * as QRCode from 'qrcode';
-import { PayrollRunStatus } from '@prisma/client';
+import { PayrollRunStatus, PayrollTemplate } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
@@ -96,6 +96,98 @@ interface YtdTotals {
   deductionsByCode: Record<string, number>;
 }
 
+// Shape the renderer actually reads off a run — satisfied by both a real
+// (Prisma-fetched) PayrollRun+employee and the dummy preview run below.
+interface PayslipRun {
+  id: string;
+  month: number;
+  year: number;
+  paidAt: Date | null;
+  netPay: number;
+  netPayInWords: string;
+  grossSalary: number;
+  totalDeductions: number;
+  attendanceSummary: unknown;
+  earnings: unknown;
+  deductions: unknown;
+  employerContributions: unknown;
+  employee: {
+    employeeId: string;
+    name: string;
+    designation: string | null;
+    joiningDate: Date | string | null;
+    department: { name: string } | null;
+  };
+}
+
+// Same fixed, illustrative figures as the old system's buildDummyPayroll —
+// exercises every section of the layout (earnings, deductions, employer
+// contributions, YTD is intentionally skipped since there's no real
+// financial year to aggregate) without reading any real employee data.
+function buildDummyRun(): PayslipRun {
+  const now = new Date();
+  return {
+    id: 'preview',
+    month: now.getMonth() + 1,
+    year: now.getFullYear(),
+    paidAt: now,
+    attendanceSummary: {
+      workingDays: 26,
+      presentDays: 24,
+      weekendWorkDays: 4,
+      holidayWorkDays: 1,
+      paidLeaveDays: 1,
+      lopDays: 1,
+      halfDays: 0,
+      overtimeHours: 6,
+      payableDays: 25,
+      totalDaysInMonth: 31,
+    },
+    earnings: [
+      { code: 'BASIC', name: 'Basic Salary', amount: 35000, taxable: true },
+      {
+        code: 'HRA',
+        name: 'House Rent Allowance',
+        amount: 14000,
+        taxable: true,
+      },
+      {
+        code: 'SPECIAL',
+        name: 'Special Allowance',
+        amount: 8500,
+        taxable: true,
+      },
+      {
+        code: 'CONVEYANCE',
+        name: 'Conveyance Allowance',
+        amount: 1600,
+        taxable: false,
+      },
+    ],
+    deductions: [
+      { code: 'PF', name: 'Provident Fund', amount: 4200 },
+      { code: 'ESI', name: 'ESI', amount: 435 },
+      { code: 'PT', name: 'Professional Tax', amount: 200 },
+      { code: 'INCOME_TAX', name: 'Income Tax (TDS)', amount: 2100 },
+    ],
+    employerContributions: [
+      { code: 'PF_ER', name: 'Employer PF', amount: 4200 },
+      { code: 'ESI_ER', name: 'Employer ESI', amount: 1885 },
+    ],
+    grossSalary: 59100,
+    totalDeductions: 6935,
+    netPay: 52165,
+    netPayInWords: 'Rupees Fifty Two Thousand One Hundred Sixty Five Only',
+    employee: {
+      employeeId: 'DP-0000',
+      name: 'Aditi Sharma',
+      designation: 'Senior Software Engineer',
+      department: null,
+      joiningDate: '2022-06-15',
+    },
+  };
+}
+
 @Injectable()
 export class PayslipPdfService {
   constructor(
@@ -138,6 +230,36 @@ export class PayslipPdfService {
         : Promise.resolve(null),
     ]);
 
+    return this.renderPayslipPdf(run, template, settings, ytd);
+  }
+
+  // Renders a dummy, fixed-figure payslip through the exact same layout
+  // code as a real one — used by the template editor's "Preview" button so
+  // HR can see branding/toggle changes without a real PayrollRun. No real
+  // employee data is read; `templateOverride` is the in-progress (possibly
+  // unsaved) editor state posted straight from the frontend, so every
+  // PayrollTemplate column must already be present in it.
+  async buildPreviewPdfBuffer(
+    templateOverride: PayrollTemplate,
+    organizationId: string,
+  ): Promise<Buffer> {
+    const settings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const { buffer } = await this.renderPayslipPdf(
+      buildDummyRun(),
+      templateOverride,
+      settings,
+      null,
+    );
+    return buffer;
+  }
+
+  private async renderPayslipPdf(
+    run: PayslipRun,
+    template: PayrollTemplate,
+    settings: Awaited<ReturnType<PayrollSettingsService['getOrCreate']>>,
+    ytd: YtdTotals | null,
+  ): Promise<{ buffer: Buffer; filename: string }> {
     const rawSymbol = settings.currencySymbol || '₹';
     // pdfkit's standard 14 fonts only cover WinAnsi — the ₹ glyph isn't in
     // that set and renders as a broken glyph, so the PDF always falls back
@@ -156,10 +278,9 @@ export class PayslipPdfService {
     const fonts = FONT_MAP[template.fontFamily] ?? FONT_MAP.HELVETICA;
 
     const deptName = run.employee.department?.name || '-';
-    const earnings = run.earnings as unknown as PayrollLine[];
-    const deductions = run.deductions as unknown as PayrollLine[];
-    const employerContributions =
-      run.employerContributions as unknown as PayrollLine[];
+    const earnings = run.earnings as PayrollLine[];
+    const deductions = run.deductions as PayrollLine[];
+    const employerContributions = run.employerContributions as PayrollLine[];
 
     const rowCount = Math.max(earnings.length, deductions.length, 1);
     const tableRowH = rowCount > 10 ? 11 : rowCount > 6 ? 13 : 15;
@@ -309,10 +430,7 @@ export class PayslipPdfService {
       doc.roundedRect(attX, y, attW, cardH, 8).fillAndStroke('#ffffff', BORDER);
       doc.font(fonts.bold).fontSize(8.5).fillColor(primary);
       text('ATTENDANCE SUMMARY', attX + 10, y + 9, { width: attW - 20 });
-      const a = run.attendanceSummary as unknown as Record<
-        string,
-        number | undefined
-      >;
+      const a = run.attendanceSummary as Record<string, number | undefined>;
       // Field/label pairing ported verbatim from the old system, including
       // its apparent mislabeling (Weekly Offs shows weekendWorkDays —
       // weekend-overtime day count, not attendance.weeklyOffs; Holidays

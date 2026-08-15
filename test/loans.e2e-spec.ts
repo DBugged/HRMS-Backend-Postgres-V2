@@ -25,6 +25,7 @@ interface LoanBody {
   principal: number;
   emiAmount: number;
   outstandingBalance: number;
+  employee?: { id: string; name: string; employeeId: string };
 }
 interface RepaymentResultBody {
   repayment: { id: string; principalComponent: number; balanceAfter: number };
@@ -192,6 +193,15 @@ describe('Loans (e2e)', () => {
       .expect(200);
     const loans = res.body as LoanBody[];
     expect(loans.every((l) => l.employeeId !== employeeId)).toBe(true);
+  });
+
+  it('list responses include the employee relation, not just the ID', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/loans')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const [loan] = res.body as LoanBody[];
+    expect(loan.employee?.id).toBe(employeeId);
   });
 
   it('EMPLOYEE gets 403 reading repayments for a loan that is not theirs', async () => {

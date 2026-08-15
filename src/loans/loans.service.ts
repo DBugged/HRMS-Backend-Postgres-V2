@@ -33,6 +33,9 @@ export class LoansService {
 
     return this.scopedPrisma.loan.findMany({
       where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
   }

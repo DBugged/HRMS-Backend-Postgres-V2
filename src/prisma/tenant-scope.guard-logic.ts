@@ -53,6 +53,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   'PolicyDocument',
   'DocumentRequirement',
   'Notification',
+  'EmployeeDocument',
+  'EmployeeAsset',
+  'EmployeeRoleHistory',
+  'EmploymentStatusHistory',
 ]);
 
 // Operations whose `where` accepts arbitrary filters (so organizationId

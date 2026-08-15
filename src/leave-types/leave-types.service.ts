@@ -8,6 +8,7 @@ import { LeaveType, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
@@ -17,6 +18,7 @@ export class LeaveTypesService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly leaveBalanceService: LeaveBalanceService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(
@@ -42,6 +44,7 @@ export class LeaveTypesService {
         prorateOnJoining: dto.prorateOnJoining ?? true,
         applicableDepartments: dto.applicableDepartments ?? [],
         applicableEmployeeTypes: dto.applicableEmployeeTypes ?? [],
+        applicableGenders: dto.applicableGenders ?? [],
         minServiceMonths: dto.minServiceMonths ?? 0,
         maxServiceMonths: dto.maxServiceMonths,
         salaryImpactPercent: dto.salaryImpactPercent ?? 100,
@@ -70,9 +73,9 @@ export class LeaveTypesService {
     });
   }
 
-  findAll(organizationId: string) {
+  findAll(organizationId: string, activeOnly?: boolean) {
     return this.scopedPrisma.leaveType.findMany({
-      where: { organizationId },
+      where: { organizationId, ...(activeOnly && { isActive: true }) },
       orderBy: { displayOrder: 'asc' },
     });
   }
@@ -120,6 +123,9 @@ export class LeaveTypesService {
         }),
         ...(dto.applicableEmployeeTypes !== undefined && {
           applicableEmployeeTypes: dto.applicableEmployeeTypes,
+        }),
+        ...(dto.applicableGenders !== undefined && {
+          applicableGenders: dto.applicableGenders,
         }),
         ...(dto.minServiceMonths !== undefined && {
           minServiceMonths: dto.minServiceMonths,
@@ -185,21 +191,44 @@ export class LeaveTypesService {
     );
   }
 
-  async runAccrual(id: string, organizationId: string) {
-    await this.findByIdOrThrow(id, organizationId);
+  async runAccrual(id: string, actorId: string, organizationId: string) {
+    const leaveType = await this.findByIdOrThrow(id, organizationId);
     const { matched } = await this.leaveBalanceService.creditAccrual(
       id,
       organizationId,
     );
+    await this.auditLogService.log({
+      actorId,
+      action: 'LEAVE_ACCRUAL_RUN',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: {
+        leaveType: leaveType.code,
+        amount: leaveType.accrualAmountPerCycle,
+        matched,
+      },
+    });
     return { message: `Accrual credited to ${matched} employee(s)`, matched };
   }
 
-  async runCarryForward(dto: RunCarryForwardDto, organizationId: string) {
+  async runCarryForward(
+    dto: RunCarryForwardDto,
+    actorId: string,
+    organizationId: string,
+  ) {
     const year = dto.year ?? new Date().getFullYear();
     const { processed } = await this.leaveBalanceService.runYearEndCarryForward(
       year,
       organizationId,
     );
+    await this.auditLogService.log({
+      actorId,
+      action: 'LEAVE_CARRYFORWARD_RUN',
+      module: 'LEAVE',
+      organizationId,
+      details: { year, processed },
+    });
     return {
       message: `Carried forward balances for ${processed} employee/leave-type combination(s)`,
       processed,
