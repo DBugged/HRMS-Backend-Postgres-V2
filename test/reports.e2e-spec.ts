@@ -27,9 +27,15 @@ function todayStr() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// setUTCDate/getUTCDate + toISOString(), matching the same UTC-based
+// "today" convention documented in leaves.service.ts/attendance.service.ts
+// (and every other e2e spec's own offsetDate()) — local setDate() mixed
+// with toISOString() would shift this by a day for any machine running
+// ahead of UTC once local time crosses into that window, same bug
+// dashboard.e2e-spec.ts had.
 function offsetDate(days: number) {
   const d = new Date();
-  d.setDate(d.getDate() + days);
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
