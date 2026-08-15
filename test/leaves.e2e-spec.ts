@@ -368,6 +368,23 @@ describe('Leaves (e2e)', () => {
     ).toBe(true);
   });
 
+  it('a low ?limit= caps the number of leaves returned', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/leaves')
+      .query({ limit: 1 })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((res.body as LeaveBody[]).length).toBeLessThanOrEqual(1);
+  });
+
+  it('rejects a ?limit= above the 2000 hard cap', async () => {
+    await request(app.getHttpServer())
+      .get('/leaves')
+      .query({ limit: 2001 })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+  });
+
   it('GET /leaves/balance for another employee requires ADMIN/HR/MANAGER', async () => {
     await request(app.getHttpServer())
       .get('/leaves/balance')

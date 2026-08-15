@@ -520,6 +520,24 @@ describe('Attendance (e2e)', () => {
       expect(employeeIds.has(employeeId)).toBe(true);
       expect(employeeIds.has(noDeptEmployeeId)).toBe(true);
     });
+
+    it('a low ?limit= caps the number of records returned', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ limit: 1 })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const records = (res.body as { records: unknown[] }).records;
+      expect(records.length).toBeLessThanOrEqual(1);
+    });
+
+    it('rejects a ?limit= above the 2000 hard cap', async () => {
+      await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ limit: 2001 })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+    });
   });
 
   describe('Regularization', () => {

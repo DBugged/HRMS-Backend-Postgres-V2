@@ -574,6 +574,7 @@ export class AttendanceService {
         },
       },
       orderBy: { date: 'desc' },
+      take: query.limit,
     });
 
     return {

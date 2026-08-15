@@ -87,6 +87,6 @@ export class AuditLogService {
       this.scopedPrisma.auditLog.count({ where }),
     ]);
 
-    return { total, page, logs };
+    return { total, page, limit, logs };
   }
 }

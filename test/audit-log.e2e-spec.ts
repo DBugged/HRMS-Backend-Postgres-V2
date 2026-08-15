@@ -28,6 +28,7 @@ interface AuditLogEntry {
 interface AuditLogListBody {
   total: number;
   page: number;
+  limit: number;
   logs: AuditLogEntry[];
 }
 
@@ -184,6 +185,15 @@ describe('Audit Log (e2e)', () => {
     const body = res.body as AuditLogListBody;
     expect(body.logs.length).toBe(1);
     expect(body.page).toBe(1);
+    expect(body.limit).toBe(1);
+  });
+
+  it('rejects a ?limit= above the 2000 hard cap', async () => {
+    await request(app.getHttpServer())
+      .get('/audit-logs')
+      .query({ limit: 2001 })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
   });
 
   it('payroll lock/pay produce PAYROLL_LOCKED/PAYROLL_PAID entries', async () => {

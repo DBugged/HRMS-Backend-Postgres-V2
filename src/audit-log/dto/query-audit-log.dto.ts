@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
 } from 'class-validator';
 import { AuditModule } from '@prisma/client';
@@ -44,10 +45,11 @@ export class QueryAuditLogDto {
   @Min(1)
   page?: number;
 
-  @ApiPropertyOptional({ default: 50 })
+  @ApiPropertyOptional({ default: 50, maximum: 2000 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(2000)
   limit?: number;
 }

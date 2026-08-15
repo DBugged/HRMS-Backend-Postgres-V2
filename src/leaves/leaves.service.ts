@@ -124,6 +124,7 @@ export class LeavesService {
         leaveType: { select: { id: true, name: true, code: true } },
       },
       orderBy: { createdAt: 'desc' },
+      take: query.limit,
     });
   }
 
