@@ -6,6 +6,13 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
+import { initSentry } from './common/sentry';
+
+// Called before NestFactory.create() so an error during module
+// bootstrapping itself (a bad Prisma connection string, a provider that
+// throws in its constructor, etc.) still has a chance of being captured —
+// no-ops entirely unless SENTRY_DSN is set, see sentry.ts.
+initSentry();
 
 async function bootstrap() {
   // bufferLogs holds Nest's own startup logs (module init order, route

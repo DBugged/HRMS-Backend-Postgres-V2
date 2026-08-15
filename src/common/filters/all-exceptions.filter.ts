@@ -7,6 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { captureException } from '../sentry';
 
 // Every error response, HttpException or not, comes out in this exact
 // shape. statusCode/message/error are Nest's own fields (preserved
@@ -46,6 +47,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       this.logger.error(
         exception instanceof Error ? exception.stack : exception,
       );
+      captureException(exception);
     }
 
     response.status(status).json({
