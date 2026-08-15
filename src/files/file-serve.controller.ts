@@ -3,8 +3,10 @@ import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ApiTags } from '@nestjs/swagger';
+import { GetObjectCommand, NoSuchKey } from '@aws-sdk/client-s3';
 import { Public } from '../common/decorators/public.decorator';
-import { UPLOAD_ROOT } from './file-storage.config';
+import { UPLOAD_ROOT, fileStorageDriver } from './file-storage.config';
+import { getS3Bucket, getS3Client } from './s3-client';
 import { verifyFileToken } from './file-token';
 
 // Deliberately NOT behind the JwtAuthGuard — an <img src>, a
@@ -17,13 +19,21 @@ import { verifyFileToken } from './file-token';
 export class FileServeController {
   @Get(':token')
   @Public()
-  serve(@Param('token') token: string, @Res() res: Response) {
+  async serve(@Param('token') token: string, @Res() res: Response) {
     const claim = verifyFileToken(token);
     if (!claim) {
       throw new NotFoundException('This link is invalid or has expired.');
     }
 
-    const filePath = path.join(UPLOAD_ROOT, claim.relativeKey);
+    if (fileStorageDriver() === 's3') {
+      await this.serveFromS3(claim.relativeKey, res);
+      return;
+    }
+    this.serveFromDisk(claim.relativeKey, res);
+  }
+
+  private serveFromDisk(relativeKey: string, res: Response) {
+    const filePath = path.join(UPLOAD_ROOT, relativeKey);
     // Reject anything that resolves outside the uploads root (path
     // traversal via a tampered/forged relativeKey) — belt-and-suspenders
     // alongside the HMAC signature already covering the token as a whole.
@@ -34,5 +44,23 @@ export class FileServeController {
       throw new NotFoundException('File not found.');
     }
     res.sendFile(filePath);
+  }
+
+  private async serveFromS3(relativeKey: string, res: Response) {
+    try {
+      const object = await getS3Client().send(
+        new GetObjectCommand({ Bucket: getS3Bucket(), Key: relativeKey }),
+      );
+      if (object.ContentType) res.setHeader('Content-Type', object.ContentType);
+      // Body is a Node Readable in the Node runtime (not a web
+      // ReadableStream/Blob, which the SDK's types also allow for
+      // browser/other runtimes) — this controller only ever runs on Node.
+      (object.Body as NodeJS.ReadableStream).pipe(res);
+    } catch (err) {
+      if (err instanceof NoSuchKey) {
+        throw new NotFoundException('File not found.');
+      }
+      throw err;
+    }
   }
 }

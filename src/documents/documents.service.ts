@@ -1,5 +1,3 @@
-import * as fs from 'fs';
-import * as path from 'path';
 import {
   BadRequestException,
   Inject,
@@ -15,7 +13,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { UPLOAD_ROOT } from '../files/file-storage.config';
+import { deleteStoredFile } from '../files/delete-stored-file';
 import { signFileToken } from '../files/file-token';
 import { CreatePolicyDocumentDto } from './dto/create-policy-document.dto';
 import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
@@ -215,12 +213,7 @@ export class DocumentsService {
     // Only remove the file if it's one we actually stored (a relative
     // storage key), never an external URL someone pasted in.
     if (!EXTERNAL_URL_RE.test(policy.fileUrl)) {
-      const localPath = path.join(UPLOAD_ROOT, policy.fileUrl);
-      if (localPath.startsWith(UPLOAD_ROOT + path.sep)) {
-        fs.unlink(localPath, () => {
-          // best-effort — a missing/locked file shouldn't block deleting the record
-        });
-      }
+      deleteStoredFile(policy.fileUrl);
     }
 
     await this.scopedPrisma.policyDocument.deleteMany({
