@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { LoggerModule } from 'nestjs-pino';
+import { loggerModuleOptions } from './common/logger.config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -44,6 +46,10 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
   imports: [
+    // Structured (pino) logging app-wide — see logger.config.ts for why
+    // this needs zero changes to the existing new Logger(X.name) call
+    // sites scattered across the codebase.
+    LoggerModule.forRoot(loggerModuleOptions()),
     // Global default: 100 req / 60s per IP. Auth routes override this
     // much tighter via @Throttle() on the individual routes (see
     // auth.controller.ts) — this is just the floor for everything else.

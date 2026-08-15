@@ -23,15 +23,24 @@ interface EmployeeCreateBody {
 
 const PASSWORD = 'TestPass123!';
 
-function todayStr() {
-  const d = new Date();
+// toISOString() converts through UTC — for a machine running ahead of UTC
+// (e.g. IST, UTC+5:30), any local time before the offset rolls past
+// midnight makes the UTC date one day behind the local date, silently
+// shifting this by a day. Format from local Y/M/D components instead,
+// same fix already applied to backend-v2/scripts/migrate-legacy-data.js
+// for the identical bug.
+function localDateStr(d: Date) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function todayStr() {
+  return localDateStr(new Date());
 }
 
 function offsetDate(days: number) {
   const d = new Date();
   d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+  return localDateStr(d);
 }
 
 describe('Dashboard (e2e)', () => {
@@ -156,7 +165,7 @@ describe('Dashboard (e2e)', () => {
       .send({
         name: 'Anniversary Employee',
         email: 'dash-e2e-anniv@example.test',
-        joiningDate: anniversaryJoin.toISOString().slice(0, 10),
+        joiningDate: localDateStr(anniversaryJoin),
       });
 
     // A third employee whose dateOfBirth (in personalData) falls 6 days
@@ -178,7 +187,7 @@ describe('Dashboard (e2e)', () => {
       .patch(`/employees/${birthdayEmpId}/personal-data`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        personalData: { dateOfBirth: birthday.toISOString().slice(0, 10) },
+        personalData: { dateOfBirth: localDateStr(birthday) },
       });
 
     await prisma.attendance.create({
