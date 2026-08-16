@@ -167,7 +167,7 @@ describe('Work Locations (e2e)', () => {
       .query({ search: 'HQ' })
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const body = res.body as WorkLocationBody[];
+    const body = (res.body as { data: WorkLocationBody[] }).data;
     expect(body).toHaveLength(1);
     expect(body[0].name).toBe('HQ Mumbai');
   });
@@ -216,7 +216,7 @@ describe('Work Locations (e2e)', () => {
       .query({ activeOnly: 'true' })
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const body = res.body as WorkLocationBody[];
+    const body = (res.body as { data: WorkLocationBody[] }).data;
     expect(body.find((l) => l.id === circleId)).toBeUndefined();
   });
 

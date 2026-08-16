@@ -25,7 +25,10 @@ interface NotificationBody {
   isRead: boolean;
 }
 interface NotificationsListBody {
-  notifications: NotificationBody[];
+  data: NotificationBody[];
+  total: number;
+  page: number;
+  limit: number;
   unreadCount: number;
 }
 interface PreferencesBody {
@@ -186,12 +189,8 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     const body = empView.body as NotificationsListBody;
-    expect(body.notifications.some((n) => n.title === 'Company Update')).toBe(
-      true,
-    );
-    expect(
-      body.notifications.every((n) => n.category === 'GENERAL' || true),
-    ).toBe(true);
+    expect(body.data.some((n) => n.title === 'Company Update')).toBe(true);
+    expect(body.data.every((n) => n.category === 'GENERAL' || true)).toBe(true);
   });
 
   it('broadcast to a specific department only reaches that department', async () => {
@@ -211,7 +210,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (empView.body as NotificationsListBody).notifications.some(
+      (empView.body as NotificationsListBody).data.some(
         (n) => n.title === 'Engineering Only',
       ),
     ).toBe(true);
@@ -221,7 +220,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(
-      (mgrView.body as NotificationsListBody).notifications.some(
+      (mgrView.body as NotificationsListBody).data.some(
         (n) => n.title === 'Engineering Only',
       ),
     ).toBe(false);
@@ -253,7 +252,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(
-      (mgrView.body as NotificationsListBody).notifications.some(
+      (mgrView.body as NotificationsListBody).data.some(
         (n) => n.title === 'Just For You',
       ),
     ).toBe(true);
@@ -263,7 +262,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (empView.body as NotificationsListBody).notifications.some(
+      (empView.body as NotificationsListBody).data.some(
         (n) => n.title === 'Just For You',
       ),
     ).toBe(false);
@@ -317,7 +316,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (view.body as NotificationsListBody).notifications.some(
+      (view.body as NotificationsListBody).data.some(
         (n) => n.title === 'Should Be Muted',
       ),
     ).toBe(false);
@@ -426,7 +425,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(
-      (mgrView.body as NotificationsListBody).notifications.some(
+      (mgrView.body as NotificationsListBody).data.some(
         (n) => n.title === 'New Leave Application' && n.category === 'LEAVE',
       ),
     ).toBe(true);
@@ -447,7 +446,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (empView.body as NotificationsListBody).notifications.some(
+      (empView.body as NotificationsListBody).data.some(
         (n) => n.title === 'Leave Request APPROVED' && n.category === 'LEAVE',
       ),
     ).toBe(true);
@@ -472,7 +471,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (empView.body as NotificationsListBody).notifications.some(
+      (empView.body as NotificationsListBody).data.some(
         (n) =>
           n.title === 'Comp-Off Request APPROVED' && n.category === 'LEAVE',
       ),
@@ -491,7 +490,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(
-      (mgrView.body as NotificationsListBody).notifications.some(
+      (mgrView.body as NotificationsListBody).data.some(
         (n) =>
           n.title === 'Attendance Regularization Requested' &&
           n.category === 'REGULARIZATION',
@@ -514,7 +513,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (empView.body as NotificationsListBody).notifications.some(
+      (empView.body as NotificationsListBody).data.some(
         (n) =>
           n.title === 'Regularization Request APPROVED' &&
           n.category === 'REGULARIZATION',
@@ -537,7 +536,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(
-      (adminView.body as NotificationsListBody).notifications.some(
+      (adminView.body as NotificationsListBody).data.some(
         (n) =>
           n.title === 'Attendance Import Batch Uploaded' &&
           n.category === 'ATTENDANCE',
@@ -563,9 +562,9 @@ describe('Notifications (e2e)', () => {
       .get('/notifications')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const absentNotifs = (
-      empView.body as NotificationsListBody
-    ).notifications.filter((n) => n.title === 'Marked Absent — 2026-08-03');
+    const absentNotifs = (empView.body as NotificationsListBody).data.filter(
+      (n) => n.title === 'Marked Absent — 2026-08-03',
+    );
     expect(absentNotifs.length).toBe(1);
 
     // Running it again must not create a second Notification row (dedup).
@@ -581,7 +580,7 @@ describe('Notifications (e2e)', () => {
       .expect(200);
     const absentNotifsAgain = (
       empViewAgain.body as NotificationsListBody
-    ).notifications.filter((n) => n.title === 'Marked Absent — 2026-08-03');
+    ).data.filter((n) => n.title === 'Marked Absent — 2026-08-03');
     expect(absentNotifsAgain.length).toBe(1);
   });
 });

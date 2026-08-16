@@ -356,7 +356,9 @@ describe('Leaves (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     expect(
-      (selfList.body as LeaveBody[]).every((l) => l.employeeId === employeeId),
+      (selfList.body as { data: LeaveBody[] }).data.every(
+        (l) => l.employeeId === employeeId,
+      ),
     ).toBe(true);
 
     const deptList = await request(app.getHttpServer())
@@ -364,7 +366,9 @@ describe('Leaves (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(
-      (deptList.body as LeaveBody[]).some((l) => l.employeeId === employeeId),
+      (deptList.body as { data: LeaveBody[] }).data.some(
+        (l) => l.employeeId === employeeId,
+      ),
     ).toBe(true);
   });
 
@@ -374,7 +378,9 @@ describe('Leaves (e2e)', () => {
       .query({ limit: 1 })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((res.body as LeaveBody[]).length).toBeLessThanOrEqual(1);
+    expect((res.body as { data: LeaveBody[] }).data.length).toBeLessThanOrEqual(
+      1,
+    );
   });
 
   it('rejects a ?limit= above the 2000 hard cap', async () => {

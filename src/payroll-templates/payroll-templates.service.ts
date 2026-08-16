@@ -14,6 +14,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreatePayrollTemplateDto } from './dto/create-payroll-template.dto';
 import { UpdatePayrollTemplateDto } from './dto/update-payroll-template.dto';
 import { PayslipPdfService } from '../payroll/payslip-pdf.service';
+import { wrapAll } from '../common/pagination';
 
 // Defaults for whatever the "draft" preview body leaves unset — mirrors the
 // Prisma column defaults so the rendered preview always has every field the
@@ -63,11 +64,12 @@ export class PayrollTemplatesService {
     private readonly payslipPdfService: PayslipPdfService,
   ) {}
 
-  findAll(organizationId: string) {
-    return this.scopedPrisma.payrollTemplate.findMany({
+  async findAll(organizationId: string) {
+    const data = await this.scopedPrisma.payrollTemplate.findMany({
       where: { organizationId },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
+    return wrapAll(data);
   }
 
   async findOne(id: string, organizationId: string) {

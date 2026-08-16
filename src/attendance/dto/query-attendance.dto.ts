@@ -14,11 +14,19 @@ import { AttendanceStatus } from '@prisma/client';
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class QueryAttendanceDto {
-  // No caller passes this today — the frontend fetches one bounded batch
-  // and paginates/filters client-side (same EnterpriseTable pattern as
-  // /audit-logs), so this only exists as a safety cap against an
-  // unbounded findMany on a large tenant's attendance history, not as a
-  // page-through UI contract. Default matches /audit-logs' own default.
+  // Real server-side pagination (skip/take + a DB count), same contract as
+  // /audit-logs and /employees. The frontend still fetches one large page
+  // (limit=1000) and paginates/filters client-side via EnterpriseTable —
+  // that UX choice is unchanged — but the API itself no longer just caps
+  // an unbounded findMany; `total` below is a real count, not data.length,
+  // so any future caller that *does* want to page through can.
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
   @ApiPropertyOptional({ default: 1000, maximum: 2000 })
   @IsOptional()
   @Type(() => Number)

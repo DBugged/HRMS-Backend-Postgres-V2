@@ -11,6 +11,8 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from './email.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
+import { QueryNotificationsDto } from './dto/query-notifications.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -82,7 +84,11 @@ export class NotificationsService {
     });
   }
 
-  async findMine(actor: Actor, organizationId: string) {
+  async findMine(
+    query: QueryNotificationsDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
     const prefs = readPreferences(actor.notificationPreferences);
     const where: Prisma.NotificationWhereInput = {
       organizationId,
@@ -92,18 +98,25 @@ export class NotificationsService {
       }),
     };
 
-    const [notifications, unreadCount] = await Promise.all([
-      this.scopedPrisma.notification.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      }),
+    const [result, unreadCount] = await Promise.all([
+      paginate(
+        () =>
+          this.scopedPrisma.notification.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            skip: (query.page - 1) * query.limit,
+            take: query.limit,
+          }),
+        () => this.scopedPrisma.notification.count({ where }),
+        query.page,
+        query.limit,
+      ),
       this.scopedPrisma.notification.count({
         where: { ...where, isRead: false },
       }),
     ]);
 
-    return { notifications, unreadCount };
+    return { ...result, unreadCount };
   }
 
   getPreferences(actor: Actor) {

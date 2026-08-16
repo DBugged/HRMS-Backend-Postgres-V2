@@ -27,6 +27,7 @@ import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import { checkLeaveRules, LeaveRules } from './leave-rules';
 import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
+import { paginate } from '../common/pagination';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
@@ -117,15 +118,22 @@ export class LeavesService {
     }
     if (query.status) where.status = query.status;
 
-    return this.scopedPrisma.leave.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-        leaveType: { select: { id: true, name: true, code: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: query.limit,
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.leave.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+            leaveType: { select: { id: true, name: true, code: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.leave.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async getBalance(

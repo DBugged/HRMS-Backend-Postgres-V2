@@ -10,6 +10,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateDelegationDto } from './dto/create-delegation.dto';
 import { QueryDelegationDto } from './dto/query-delegation.dto';
+import { wrapAll } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -32,7 +33,7 @@ export class ApprovalDelegationService {
         ? query.delegator
         : actor.id;
 
-    return this.scopedPrisma.approvalDelegation.findMany({
+    const data = await this.scopedPrisma.approvalDelegation.findMany({
       where: { organizationId, delegatorId },
       include: {
         delegate: { select: { id: true, name: true, employeeId: true } },
@@ -40,6 +41,7 @@ export class ApprovalDelegationService {
       },
       orderBy: { fromDate: 'desc' },
     });
+    return wrapAll(data);
   }
 
   async create(dto: CreateDelegationDto, actor: Actor, organizationId: string) {

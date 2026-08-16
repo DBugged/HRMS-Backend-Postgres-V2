@@ -31,6 +31,12 @@ interface RequirementBody {
   displayOrder: number;
   isActive: boolean;
 }
+interface PaginatedBody<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 const PASSWORD = 'TestPass123!';
 
@@ -205,7 +211,7 @@ describe('Documents (e2e)', () => {
       .get('/documents/policies')
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
-    const body = res.body as PolicyBody[];
+    const body = (res.body as PaginatedBody<PolicyBody>).data;
     expect(body.some((p) => p.id === everyonePolicyId)).toBe(true);
   });
 
@@ -229,7 +235,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
     expect(
-      (employeeView.body as PolicyBody[]).some(
+      (employeeView.body as PaginatedBody<PolicyBody>).data.some(
         (p) => p.id === unpublishedPolicyId,
       ),
     ).toBe(false);
@@ -239,7 +245,9 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
     expect(
-      (hrView.body as PolicyBody[]).some((p) => p.id === unpublishedPolicyId),
+      (hrView.body as PaginatedBody<PolicyBody>).data.some(
+        (p) => p.id === unpublishedPolicyId,
+      ),
     ).toBe(true);
   });
 
@@ -261,7 +269,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${deptEmployeeToken}`)
       .expect(200);
     expect(
-      (deptView.body as { title: string }[]).some(
+      (deptView.body as PaginatedBody<{ title: string }>).data.some(
         (p) => p.title === 'Engineering Handbook',
       ),
     ).toBe(true);
@@ -271,7 +279,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
     expect(
-      (outsideView.body as { title: string }[]).some(
+      (outsideView.body as PaginatedBody<{ title: string }>).data.some(
         (p) => p.title === 'Engineering Handbook',
       ),
     ).toBe(false);
@@ -295,7 +303,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
     expect(
-      (named.body as { title: string }[]).some(
+      (named.body as PaginatedBody<{ title: string }>).data.some(
         (p) => p.title === 'Personal Offer Letter',
       ),
     ).toBe(true);
@@ -305,7 +313,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${deptEmployeeToken}`)
       .expect(200);
     expect(
-      (other.body as { title: string }[]).some(
+      (other.body as PaginatedBody<{ title: string }>).data.some(
         (p) => p.title === 'Personal Offer Letter',
       ),
     ).toBe(false);
@@ -328,7 +336,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(
-      (mgrView.body as { title: string }[]).some(
+      (mgrView.body as PaginatedBody<{ title: string }>).data.some(
         (p) => p.title === 'Manager Playbook',
       ),
     ).toBe(true);
@@ -338,7 +346,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
     expect(
-      (empView.body as { title: string }[]).some(
+      (empView.body as PaginatedBody<{ title: string }>).data.some(
         (p) => p.title === 'Manager Playbook',
       ),
     ).toBe(false);
@@ -362,7 +370,7 @@ describe('Documents (e2e)', () => {
       .get(`/documents/policies/${everyonePolicyId}/versions`)
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
-    const chain = versions.body as PolicyBody[];
+    const chain = (versions.body as PaginatedBody<PolicyBody>).data;
     expect(chain).toHaveLength(2);
     expect(chain[0].id).toBe(v2Body.id);
     expect(chain[0].isPublished).toBe(true);
@@ -390,7 +398,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
     expect(
-      (employeeView.body as PolicyBody[]).some(
+      (employeeView.body as PaginatedBody<PolicyBody>).data.some(
         (p) => p.id === unpublishedPolicyId,
       ),
     ).toBe(true);
@@ -407,7 +415,9 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
     expect(
-      (hrView.body as PolicyBody[]).some((p) => p.id === unpublishedPolicyId),
+      (hrView.body as PaginatedBody<PolicyBody>).data.some(
+        (p) => p.id === unpublishedPolicyId,
+      ),
     ).toBe(false);
   });
 
@@ -447,7 +457,9 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
       .expect(200);
     expect(
-      (res.body as RequirementBody[]).some((r) => r.id === requirementId),
+      (res.body as PaginatedBody<RequirementBody>).data.some(
+        (r) => r.id === requirementId,
+      ),
     ).toBe(true);
   });
 

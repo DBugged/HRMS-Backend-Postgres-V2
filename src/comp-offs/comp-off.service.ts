@@ -25,6 +25,8 @@ import {
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -74,7 +76,7 @@ export class CompOffService {
   }
 
   async findAll(
-    query: { employeeId?: string; status?: CompOffStatus },
+    query: ListCompOffsQueryDto,
     actor: Actor,
     organizationId: string,
   ) {
@@ -94,13 +96,21 @@ export class CompOffService {
     }
     if (query.status) where.status = query.status;
 
-    return this.scopedPrisma.compOff.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.compOff.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.compOff.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async balance(

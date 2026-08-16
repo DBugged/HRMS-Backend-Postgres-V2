@@ -6,6 +6,7 @@ import { signFileToken } from '../files/file-token';
 import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -44,14 +45,25 @@ export class ReimbursementsService {
     }
     if (query.status) where.status = query.status;
 
-    const claims = await this.scopedPrisma.reimbursement.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-    return claims.map((c) => this.withSignedReceipt(c));
+    const result = await paginate(
+      () =>
+        this.scopedPrisma.reimbursement.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.reimbursement.count({ where }),
+      query.page,
+      query.limit,
+    );
+    return {
+      ...result,
+      data: result.data.map((c) => this.withSignedReceipt(c)),
+    };
   }
 
   async create(

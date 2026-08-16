@@ -152,13 +152,13 @@ describe('Comp-Offs (e2e)', () => {
       .get('/comp-offs')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    expect(selfList.body as CompOffBody[]).toHaveLength(1);
+    expect((selfList.body as { data: CompOffBody[] }).data).toHaveLength(1);
 
     const deptList = await request(app.getHttpServer())
       .get('/comp-offs')
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
-    const deptBody = deptList.body as CompOffBody[];
+    const deptBody = (deptList.body as { data: CompOffBody[] }).data;
     expect(deptBody.some((c) => c.id === compOffId)).toBe(true);
     expect(deptBody.find((c) => c.id === compOffId)?.employee?.id).toBe(
       deptBody.find((c) => c.id === compOffId)?.employeeId,

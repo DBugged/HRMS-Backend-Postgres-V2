@@ -25,7 +25,10 @@ interface TimelineEvent {
   title: string;
 }
 interface TimelineListBody {
-  events: TimelineEvent[];
+  data: TimelineEvent[];
+  total: number;
+  page: number;
+  limit: number;
   categories: { value: string; label: string }[];
 }
 
@@ -184,7 +187,7 @@ describe('Employee Timeline (e2e)', () => {
       .expect(200);
     const body = res.body as TimelineListBody;
     expect(body.categories).toHaveLength(8);
-    expect(body.events.some((e) => e.eventKey === 'PAYROLL_PROCESSED')).toBe(
+    expect(body.data.some((e) => e.eventKey === 'PAYROLL_PROCESSED')).toBe(
       true,
     );
   });
@@ -229,8 +232,8 @@ describe('Employee Timeline (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const body = res.body as TimelineListBody;
-    expect(body.events.every((e) => e.category === 'PAYROLL')).toBe(true);
-    expect(body.events.length).toBeGreaterThan(0);
+    expect(body.data.every((e) => e.category === 'PAYROLL')).toBe(true);
+    expect(body.data.length).toBeGreaterThan(0);
   });
 
   it('search matches the event title', async () => {
@@ -240,7 +243,7 @@ describe('Employee Timeline (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const body = res.body as TimelineListBody;
-    expect(body.events.some((e) => e.eventKey === 'PAYROLL_PROCESSED')).toBe(
+    expect(body.data.some((e) => e.eventKey === 'PAYROLL_PROCESSED')).toBe(
       true,
     );
   });
@@ -251,7 +254,7 @@ describe('Employee Timeline (e2e)', () => {
       .query({ category: 'RECRUITMENT' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((res.body as TimelineListBody).events).toEqual([]);
+    expect((res.body as TimelineListBody).data).toEqual([]);
   });
 
   it('exports as xlsx', async () => {

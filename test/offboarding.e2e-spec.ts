@@ -34,6 +34,12 @@ interface SettlementBody {
   id: string;
   employeeId: string;
 }
+interface OffboardingListBody {
+  data: OffboardingBody[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 const PASSWORD = 'TestPass123!';
 
@@ -305,7 +311,7 @@ describe('Offboarding (e2e)', () => {
       .get('/offboarding')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const cases = res.body as OffboardingBody[];
+    const cases = (res.body as OffboardingListBody).data;
     expect(cases.some((c) => c.id === caseId)).toBe(true);
     expect(cases.length).toBeGreaterThanOrEqual(2);
   });
@@ -315,7 +321,7 @@ describe('Offboarding (e2e)', () => {
       .get('/offboarding')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const found = (listRes.body as OffboardingBody[]).find(
+    const found = (listRes.body as OffboardingListBody).data.find(
       (c) => c.id === caseId,
     );
     expect(found?.employee?.id).toBe(employeeId);

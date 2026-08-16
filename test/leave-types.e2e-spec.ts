@@ -133,7 +133,7 @@ describe('Leave Types (e2e)', () => {
       .get('/leave-types')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    expect(list.body as LeaveTypeBody[]).toHaveLength(1);
+    expect((list.body as { data: LeaveTypeBody[] }).data).toHaveLength(1);
 
     await request(app.getHttpServer())
       .get(`/leave-types/${annualLeaveId}`)
@@ -356,9 +356,11 @@ describe('Leave Types (e2e)', () => {
       .get('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect((all.body as LeaveTypeBody[]).some((lt) => lt.id === sabId)).toBe(
-      true,
-    );
+    expect(
+      (all.body as { data: LeaveTypeBody[] }).data.some(
+        (lt) => lt.id === sabId,
+      ),
+    ).toBe(true);
 
     const activeOnly = await request(app.getHttpServer())
       .get('/leave-types')
@@ -366,7 +368,9 @@ describe('Leave Types (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(
-      (activeOnly.body as LeaveTypeBody[]).some((lt) => lt.id === sabId),
+      (activeOnly.body as { data: LeaveTypeBody[] }).data.some(
+        (lt) => lt.id === sabId,
+      ),
     ).toBe(false);
   });
 

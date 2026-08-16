@@ -1,8 +1,10 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { CustomReportService } from './custom-report.service';
+import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 import { CustomReportQueryDto } from './dto/custom-report-query.dto';
 import { sendReport } from './report-export';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -19,6 +21,7 @@ type Caller = Omit<User, 'password'>;
 @Controller('reports/custom')
 @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
 @UseGuards(RolesGuard)
+@Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
 export class CustomReportController {
   constructor(private readonly customReportService: CustomReportService) {}
 

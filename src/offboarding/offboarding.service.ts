@@ -13,6 +13,8 @@ import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -33,15 +35,24 @@ export class OffboardingService {
     private readonly timelineService: EmployeeTimelineService,
   ) {}
 
-  async findAll(organizationId: string) {
-    return this.scopedPrisma.offboardingCase.findMany({
-      where: { organizationId },
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-        settlement: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAll(query: ListOffboardingQueryDto, organizationId: string) {
+    const where: Prisma.OffboardingCaseWhereInput = { organizationId };
+    return paginate(
+      () =>
+        this.scopedPrisma.offboardingCase.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+            settlement: true,
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.offboardingCase.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async findOne(id: string, organizationId: string) {

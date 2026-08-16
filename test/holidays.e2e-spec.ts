@@ -117,7 +117,7 @@ describe('Holidays (e2e)', () => {
       .query({ year: 2026 })
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    expect(res.body as HolidayBody[]).toHaveLength(1);
+    expect((res.body as { data: HolidayBody[] }).data).toHaveLength(1);
   });
 
   it('a department-scoped holiday comes back with the department relation joined in, not just the id', async () => {
@@ -143,9 +143,13 @@ describe('Holidays (e2e)', () => {
       .query({ year: 2026 })
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const rows = res.body as (HolidayBody & {
-      department: { id: string; name: string } | null;
-    })[];
+    const rows = (
+      res.body as {
+        data: (HolidayBody & {
+          department: { id: string; name: string } | null;
+        })[];
+      }
+    ).data;
     const scoped = rows.find((r) => r.name === 'Eng Offsite');
     expect(scoped?.department).toEqual({
       id: departmentId,
@@ -203,7 +207,9 @@ describe('Holidays (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect(
-      (res.body as HolidayBody[]).find((h) => h.id === holidayId),
+      (res.body as { data: HolidayBody[] }).data.find(
+        (h) => h.id === holidayId,
+      ),
     ).toBeUndefined();
   });
 });

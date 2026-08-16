@@ -19,6 +19,7 @@ import { CreatePolicyDocumentDto } from './dto/create-policy-document.dto';
 import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
 import { CreateDocumentRequirementDto } from './dto/create-document-requirement.dto';
 import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.dto';
+import { wrapAll } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -75,7 +76,7 @@ export class DocumentsService {
     const visible = isHr
       ? policies
       : policies.filter((p) => this.canView(p, actor));
-    return visible.map((p) => this.withSignedUrl(p));
+    return wrapAll(visible.map((p) => this.withSignedUrl(p)));
   }
 
   async createPolicy(
@@ -169,7 +170,7 @@ export class DocumentsService {
       cur = cur.previousVersionId ? byId.get(cur.previousVersionId) : undefined;
     }
 
-    return chain.map((p) => this.withSignedUrl(p));
+    return wrapAll(chain.map((p) => this.withSignedUrl(p)));
   }
 
   async updatePolicy(
@@ -223,10 +224,11 @@ export class DocumentsService {
   }
 
   async findRequirements(organizationId: string) {
-    return this.scopedPrisma.documentRequirement.findMany({
+    const data = await this.scopedPrisma.documentRequirement.findMany({
       where: { organizationId },
       orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
     });
+    return wrapAll(data);
   }
 
   async createRequirement(

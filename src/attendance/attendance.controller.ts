@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { IngestPunchDto } from './dto/ingest-punch.dto';
@@ -26,6 +27,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 
 type Caller = Omit<User, 'password'>;
 
@@ -130,6 +132,7 @@ export class AttendanceController {
   @Roles(Role.MANAGER, Role.HR)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   uploadImportBatch(
     @Body() dto: UploadImportBatchDto,
     @CurrentUser() caller: Caller,
@@ -168,6 +171,7 @@ export class AttendanceController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   executeImportBatch(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.attendanceService.executeImportBatch(
       id,

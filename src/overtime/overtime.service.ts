@@ -16,6 +16,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LogOvertimeDto } from './dto/log-overtime.dto';
 import { ReviewOvertimeDto } from './dto/review-overtime.dto';
 import { QueryOvertimeDto } from './dto/query-overtime.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -70,13 +71,21 @@ export class OvertimeService {
       where.date = { gte: from, lte: to };
     }
 
-    return this.scopedPrisma.overtimeRecord.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-      },
-      orderBy: { date: 'desc' },
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.overtimeRecord.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+          },
+          orderBy: { date: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.overtimeRecord.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async review(

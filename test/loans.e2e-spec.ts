@@ -31,6 +31,12 @@ interface RepaymentResultBody {
   repayment: { id: string; principalComponent: number; balanceAfter: number };
   loan: LoanBody;
 }
+interface PaginatedBody<T> {
+  data: T[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 const PASSWORD = 'TestPass123!';
 
@@ -181,7 +187,7 @@ describe('Loans (e2e)', () => {
       .get('/loans')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const loans = res.body as LoanBody[];
+    const loans = (res.body as PaginatedBody<LoanBody>).data;
     expect(loans.length).toBeGreaterThan(0);
     expect(loans.every((l) => l.employeeId === employeeId)).toBe(true);
   });
@@ -191,7 +197,7 @@ describe('Loans (e2e)', () => {
       .get('/loans')
       .set('Authorization', `Bearer ${otherEmployeeToken}`)
       .expect(200);
-    const loans = res.body as LoanBody[];
+    const loans = (res.body as PaginatedBody<LoanBody>).data;
     expect(loans.every((l) => l.employeeId !== employeeId)).toBe(true);
   });
 
@@ -200,7 +206,7 @@ describe('Loans (e2e)', () => {
       .get('/loans')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const [loan] = res.body as LoanBody[];
+    const [loan] = (res.body as PaginatedBody<LoanBody>).data;
     expect(loan.employee?.id).toBe(employeeId);
   });
 
@@ -347,7 +353,7 @@ describe('Loans (e2e)', () => {
       .query({ employeeId, status: 'CLOSED' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const loans = res.body as LoanBody[];
+    const loans = (res.body as PaginatedBody<LoanBody>).data;
     expect(loans.length).toBeGreaterThan(0);
     expect(loans.every((l) => l.status === 'CLOSED')).toBe(true);
   });

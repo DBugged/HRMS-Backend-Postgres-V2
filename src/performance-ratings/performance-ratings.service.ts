@@ -4,6 +4,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertPerformanceRatingDto } from './dto/upsert-performance-rating.dto';
 import { QueryPerformanceRatingDto } from './dto/query-performance-rating.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -35,10 +36,18 @@ export class PerformanceRatingsService {
     }
     if (query.financialYear) where.financialYear = query.financialYear;
 
-    return this.scopedPrisma.performanceRating.findMany({
-      where,
-      orderBy: { financialYear: 'desc' },
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.performanceRating.findMany({
+          where,
+          orderBy: { financialYear: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.performanceRating.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async upsert(

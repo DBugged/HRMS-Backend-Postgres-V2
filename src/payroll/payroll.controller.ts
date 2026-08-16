@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { PayrollRunStatus, Role, User } from '@prisma/client';
 import { PayrollService } from './payroll.service';
 import { PayslipPdfService } from './payslip-pdf.service';
@@ -24,6 +25,7 @@ import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 
 type Caller = Omit<User, 'password'>;
 
@@ -71,6 +73,7 @@ export class PayrollController {
   // unless the run has passed approval, matching the old system's
   // downloadPayslipPdf exactly.
   @Get(':id/pdf')
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   async downloadPdf(
     @Param('id') id: string,
     @CurrentUser() caller: Caller,
@@ -106,6 +109,7 @@ export class PayrollController {
   @Post('calculate')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   calculate(@Body() dto: CalculatePayrollDto, @CurrentUser() caller: Caller) {
     return this.payrollService.calculate(dto, caller, caller.organizationId);
   }
@@ -124,6 +128,7 @@ export class PayrollController {
   @Post('bulk-transition')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   bulkTransition(
     @Body() dto: BulkTransitionPayrollDto,
     @CurrentUser() caller: Caller,

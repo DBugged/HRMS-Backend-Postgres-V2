@@ -216,7 +216,7 @@ describe('Performance Ratings (e2e)', () => {
       .get('/performance-ratings')
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
-    const rows = res.body as RatingBody[];
+    const rows = (res.body as { data: RatingBody[] }).data;
     expect(rows.some((r) => r.employeeId === deptEmployeeId)).toBe(true);
     expect(rows.every((r) => r.employeeId !== outsideEmployeeId)).toBe(true);
   });

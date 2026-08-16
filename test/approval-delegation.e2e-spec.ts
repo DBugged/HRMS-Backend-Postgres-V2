@@ -310,7 +310,7 @@ describe('Approval Delegation (e2e)', () => {
       .get('/delegations')
       .set('Authorization', `Bearer ${manager1Token}`)
       .expect(200);
-    const body = res.body as DelegationBody[];
+    const body = (res.body as { data: DelegationBody[] }).data;
     expect(body.some((d) => d.id === delegationId)).toBe(true);
   });
 
@@ -319,7 +319,7 @@ describe('Approval Delegation (e2e)', () => {
       .get('/delegations')
       .set('Authorization', `Bearer ${manager2Token}`)
       .expect(200);
-    const body = res.body as DelegationBody[];
+    const body = (res.body as { data: DelegationBody[] }).data;
     expect(body.some((d) => d.id === delegationId)).toBe(false);
   });
 
@@ -329,7 +329,7 @@ describe('Approval Delegation (e2e)', () => {
       .query({ delegator: manager1Id })
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
-    const body = res.body as DelegationBody[];
+    const body = (res.body as { data: DelegationBody[] }).data;
     expect(body.some((d) => d.id === delegationId)).toBe(true);
   });
 

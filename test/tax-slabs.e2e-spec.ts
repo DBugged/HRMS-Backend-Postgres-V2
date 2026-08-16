@@ -152,7 +152,7 @@ describe('Tax Slabs (e2e)', () => {
       .query({ financialYear: '2026-27' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const rows = res.body as SlabConfigBody[];
+    const rows = (res.body as { data: SlabConfigBody[] }).data;
     expect(rows.every((r) => r.financialYear === '2026-27')).toBe(true);
   });
 
@@ -162,7 +162,7 @@ describe('Tax Slabs (e2e)', () => {
       .query({ financialYear: '2025-26' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const id = (list.body as SlabConfigBody[])[0].id;
+    const id = (list.body as { data: SlabConfigBody[] }).data[0].id;
 
     await request(app.getHttpServer())
       .delete(`/tax-slabs/${id}`)

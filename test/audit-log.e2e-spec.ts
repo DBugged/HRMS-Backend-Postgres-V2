@@ -29,7 +29,7 @@ interface AuditLogListBody {
   total: number;
   page: number;
   limit: number;
-  logs: AuditLogEntry[];
+  data: AuditLogEntry[];
 }
 
 const PASSWORD = 'TestPass123!';
@@ -151,7 +151,7 @@ describe('Audit Log (e2e)', () => {
       .expect(200);
     const body = res.body as AuditLogListBody;
     expect(body.total).toBeGreaterThanOrEqual(4); // admin+hr+manager+employee logins
-    expect(body.logs.some((l) => l.actor.id === adminId)).toBe(true);
+    expect(body.data.some((l) => l.actor.id === adminId)).toBe(true);
   });
 
   it("ADMIN's actor filter narrows to one user's logins", async () => {
@@ -161,7 +161,7 @@ describe('Audit Log (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const body = res.body as AuditLogListBody;
-    expect(body.logs.every((l) => l.actor.id === adminId)).toBe(true);
+    expect(body.data.every((l) => l.actor.id === adminId)).toBe(true);
   });
 
   it("HR's view hides ADMIN and MANAGER actor activity, but keeps EMPLOYEE/HR activity", async () => {
@@ -170,9 +170,9 @@ describe('Audit Log (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
     const body = res.body as AuditLogListBody;
-    expect(body.logs.some((l) => l.actor.id === adminId)).toBe(false);
+    expect(body.data.some((l) => l.actor.id === adminId)).toBe(false);
     expect(
-      body.logs.every((l) => !['ADMIN', 'MANAGER'].includes(l.actor.role)),
+      body.data.every((l) => !['ADMIN', 'MANAGER'].includes(l.actor.role)),
     ).toBe(true);
   });
 
@@ -183,7 +183,7 @@ describe('Audit Log (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const body = res.body as AuditLogListBody;
-    expect(body.logs.length).toBe(1);
+    expect(body.data.length).toBe(1);
     expect(body.page).toBe(1);
     expect(body.limit).toBe(1);
   });
@@ -239,12 +239,12 @@ describe('Audit Log (e2e)', () => {
       .expect(200);
     const body = res.body as AuditLogListBody;
     expect(
-      body.logs.some(
+      body.data.some(
         (l) => l.action === 'PAYROLL_LOCKED' && l.targetId === runId,
       ),
     ).toBe(true);
     expect(
-      body.logs.some(
+      body.data.some(
         (l) => l.action === 'PAYROLL_PAID' && l.targetId === runId,
       ),
     ).toBe(true);
@@ -291,6 +291,6 @@ describe('Audit Log (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const body = res.body as AuditLogListBody;
-    expect(body.logs.some((l) => l.targetId === employeeId)).toBe(true);
+    expect(body.data.some((l) => l.targetId === employeeId)).toBe(true);
   });
 });

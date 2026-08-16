@@ -5,6 +5,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,7 @@ import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
+import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -32,8 +34,11 @@ export class OffboardingController {
   constructor(private readonly offboardingService: OffboardingService) {}
 
   @Get()
-  findAll(@CurrentUser() caller: Caller) {
-    return this.offboardingService.findAll(caller.organizationId);
+  findAll(
+    @Query() query: ListOffboardingQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.offboardingService.findAll(query, caller.organizationId);
   }
 
   @Get(':id')

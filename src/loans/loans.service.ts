@@ -12,6 +12,7 @@ import { CreateLoanDto } from './dto/create-loan.dto';
 import { UpdateLoanStatusDto } from './dto/update-loan-status.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -31,13 +32,21 @@ export class LoansService {
     }
     if (query.status) where.status = query.status;
 
-    return this.scopedPrisma.loan.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.loan.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.loan.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async create(dto: CreateLoanDto, actor: Actor, organizationId: string) {

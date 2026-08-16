@@ -34,6 +34,12 @@ interface ListEmployeesBody {
   page: number;
   limit: number;
 }
+interface ListDepartmentsBody {
+  data: { id: string }[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 const PASSWORD = 'TestPass123!';
 
@@ -157,7 +163,7 @@ describe('Employees + Departments (e2e)', () => {
       .get('/departments')
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
-    expect(res.body).toHaveLength(3);
+    expect((res.body as ListDepartmentsBody).data).toHaveLength(3);
   });
 
   let engManagerToken: string;

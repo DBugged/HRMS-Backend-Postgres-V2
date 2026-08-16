@@ -1,8 +1,10 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { ReportsService } from './reports.service';
+import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 import { sendReport } from './report-export';
 import {
   AttendanceReportQueryDto,
@@ -29,6 +31,9 @@ type Caller = Omit<User, 'password'>;
 @Controller('reports')
 @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
 @UseGuards(RolesGuard)
+// Every route here renders an Excel/CSV/PDF export, some over an org's
+// full history — a much tighter cap than the 100/min global default.
+@Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
 export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 

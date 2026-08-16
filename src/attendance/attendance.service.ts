@@ -23,6 +23,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
+import { paginate } from '../common/pagination';
 import {
   enumerateDateStrings,
   isWeeklyOff,
@@ -561,24 +562,32 @@ export class AttendanceService {
     }
     if (query.status) where.status = query.status;
 
-    const records = await this.scopedPrisma.attendance.findMany({
-      where,
-      include: {
-        employee: {
-          select: {
-            id: true,
-            name: true,
-            employeeId: true,
-            department: { include: { workLocation: true } },
+    const result = await paginate(
+      () =>
+        this.scopedPrisma.attendance.findMany({
+          where,
+          include: {
+            employee: {
+              select: {
+                id: true,
+                name: true,
+                employeeId: true,
+                department: { include: { workLocation: true } },
+              },
+            },
           },
-        },
-      },
-      orderBy: { date: 'desc' },
-      take: query.limit,
-    });
+          orderBy: { date: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.attendance.count({ where }),
+      query.page,
+      query.limit,
+    );
 
     return {
-      records: records.map((record) => {
+      ...result,
+      data: result.data.map((record) => {
         const fence = record.employee.department?.workLocation;
         const checkinInsideGeoFence =
           fence &&

@@ -15,6 +15,7 @@ import { localDateStr } from '../employee-salary-components/salary-structure-mat
 import { RequestLeaveEncashmentDto } from './dto/request-leave-encashment.dto';
 import { ReviewLeaveEncashmentDto } from './dto/review-leave-encashment.dto';
 import { QueryLeaveEncashmentDto } from './dto/query-leave-encashment.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -47,14 +48,22 @@ export class LeaveEncashmentsService {
     }
     if (query.status) where.status = query.status;
 
-    return this.scopedPrisma.leaveEncashment.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-        leaveType: { select: { id: true, name: true, code: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.leaveEncashment.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+            leaveType: { select: { id: true, name: true, code: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.leaveEncashment.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async request(

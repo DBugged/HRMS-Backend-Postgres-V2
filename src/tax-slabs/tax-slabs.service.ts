@@ -4,6 +4,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxSlabDto } from './dto/upsert-tax-slab.dto';
 import { getDefaultTaxSlabConfig } from './default-tax-slabs';
+import { wrapAll } from '../common/pagination';
 
 @Injectable()
 export class TaxSlabsService {
@@ -15,11 +16,12 @@ export class TaxSlabsService {
     return getDefaultTaxSlabConfig(regime);
   }
 
-  findAll(financialYear: string | undefined, organizationId: string) {
-    return this.scopedPrisma.taxSlabConfig.findMany({
+  async findAll(financialYear: string | undefined, organizationId: string) {
+    const data = await this.scopedPrisma.taxSlabConfig.findMany({
       where: { organizationId, ...(financialYear && { financialYear }) },
       orderBy: [{ financialYear: 'desc' }, { regime: 'asc' }],
     });
+    return wrapAll(data);
   }
 
   async upsert(dto: UpsertTaxSlabDto, organizationId: string) {

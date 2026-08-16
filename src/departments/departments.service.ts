@@ -11,6 +11,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { MapEmployeesDto } from './dto/map-employees.dto';
+import { wrapAll } from '../common/pagination';
 
 // Mirrors the frontend's own NON_DEMOTABLE_ROLES — these roles already
 // carry broader-than-department authority, so assigning one of these users
@@ -56,12 +57,13 @@ export class DepartmentsService {
     });
   }
 
-  findAll(organizationId: string) {
-    return this.scopedPrisma.department.findMany({
+  async findAll(organizationId: string) {
+    const data = await this.scopedPrisma.department.findMany({
       where: { organizationId, isActive: true },
       orderBy: { name: 'asc' },
       include: DEPARTMENT_INCLUDE,
     });
+    return wrapAll(data);
   }
 
   private async findOrThrow(id: string, organizationId: string) {

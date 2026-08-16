@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
 import { PayslipPdfService } from './payslip-pdf.service';
+import { PayslipEmailQueueService } from './payslip-email-queue.service';
+import { PayslipEmailWorker } from './payslip-email.worker';
 import { PayrollSettingsModule } from '../payroll-settings/payroll-settings.module';
 import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
@@ -17,7 +19,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [PayrollController],
-  providers: [PayrollService, PayslipPdfService],
+  providers: [
+    PayrollService,
+    PayslipPdfService,
+    PayslipEmailQueueService,
+    PayslipEmailWorker,
+  ],
   exports: [PayrollService, PayslipPdfService],
 })
 export class PayrollModule {}

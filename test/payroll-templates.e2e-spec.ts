@@ -143,7 +143,7 @@ describe('Payroll Templates (e2e)', () => {
       .get('/payroll-templates')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const templates = list.body as TemplateBody[];
+    const templates = (list.body as { data: TemplateBody[] }).data;
     expect(templates.find((t) => t.id === firstId)?.isDefault).toBe(false);
     expect(templates.find((t) => t.id === secondId)?.isDefault).toBe(true);
   });

@@ -12,6 +12,7 @@ import { UpdateWorkLocationDto } from './dto/update-work-location.dto';
 import { ListWorkLocationsQueryDto } from './dto/list-work-locations-query.dto';
 import { deriveCircleSummary, isInsideGeoFence } from './geo-fence';
 import { validateGeometry } from './geometry-validation';
+import { wrapAll } from '../common/pagination';
 
 type Boundary = { bounds?: [number, number][]; vertices?: [number, number][] };
 
@@ -62,7 +63,7 @@ export class WorkLocationsService {
   }
 
   async findAll(query: ListWorkLocationsQueryDto, organizationId: string) {
-    return this.scopedPrisma.workLocation.findMany({
+    const data = await this.scopedPrisma.workLocation.findMany({
       where: {
         organizationId,
         ...(query.activeOnly && { isActive: true }),
@@ -80,6 +81,7 @@ export class WorkLocationsService {
       },
       orderBy: { name: 'asc' },
     });
+    return wrapAll(data);
   }
 
   async findOne(id: string, organizationId: string) {

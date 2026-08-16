@@ -15,6 +15,8 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollService } from '../payroll/payroll.service';
+import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
+import { paginate } from '../common/pagination';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { EmployeeSalaryComponentsService } from '../employee-salary-components/employee-salary-components.service';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
@@ -48,17 +50,29 @@ export class SettlementsService {
     private readonly leaveBalanceService: LeaveBalanceService,
   ) {}
 
-  async findAll(actor: Actor, organizationId: string) {
+  async findAll(
+    query: ListSettlementsQueryDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
     const where: Prisma.SettlementWhereInput = { organizationId };
     if (actor.role === Role.EMPLOYEE) where.employeeId = actor.id;
 
-    return this.scopedPrisma.settlement.findMany({
-      where,
-      include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    return paginate(
+      () =>
+        this.scopedPrisma.settlement.findMany({
+          where,
+          include: {
+            employee: { select: { id: true, name: true, employeeId: true } },
+          },
+          orderBy: { createdAt: 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.settlement.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   // Computes the full settlement breakdown and stores/updates it as a

@@ -10,6 +10,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { EVENT_META } from './timeline-events';
 import { QueryTimelineDto } from './dto/query-timeline.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -116,14 +117,24 @@ export class EmployeeTimelineService {
     organizationId: string,
   ) {
     await this.assertCanView(employeeId, actor, organizationId);
-    const events = await this.scopedPrisma.employeeTimeline.findMany({
-      where: this.buildWhere(employeeId, query, organizationId),
-      include: {
-        performedBy: { select: { id: true, name: true, employeeId: true } },
-      },
-      orderBy: { occurredAt: query.sort === 'asc' ? 'asc' : 'desc' },
-    });
-    return { events };
+    const where = this.buildWhere(employeeId, query, organizationId);
+    return paginate(
+      () =>
+        this.scopedPrisma.employeeTimeline.findMany({
+          where,
+          include: {
+            performedBy: {
+              select: { id: true, name: true, employeeId: true },
+            },
+          },
+          orderBy: { occurredAt: query.sort === 'asc' ? 'asc' : 'desc' },
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.employeeTimeline.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   // Shared by the two export endpoints — resolves the target employee (for

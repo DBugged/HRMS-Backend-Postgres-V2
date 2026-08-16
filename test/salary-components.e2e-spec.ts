@@ -200,7 +200,7 @@ describe('Salary Components (e2e)', () => {
       .get('/salary-components')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const body = list.body as ComponentBody[];
+    const body = (list.body as { data: ComponentBody[] }).data;
     expect(body[0].id).toBe(secondId);
   });
 

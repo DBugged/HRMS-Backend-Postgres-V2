@@ -1,8 +1,10 @@
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { PayrollReportsService } from './payroll-reports.service';
+import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 import { sendReport } from './report-export';
 import {
   PayrollAuditReportQueryDto,
@@ -22,6 +24,7 @@ type Caller = Omit<User, 'password'>;
 @Controller('reports/payroll')
 @Roles(Role.ADMIN, Role.HR)
 @UseGuards(RolesGuard)
+@Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
 export class PayrollReportsController {
   constructor(private readonly payrollReportsService: PayrollReportsService) {}
 

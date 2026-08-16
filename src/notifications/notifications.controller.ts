@@ -6,6 +6,7 @@ import {
   Patch,
   Post,
   Put,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -13,6 +14,7 @@ import { Role, User } from '@prisma/client';
 import { NotificationsService } from './notifications.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
+import { QueryNotificationsDto } from './dto/query-notifications.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -26,8 +28,15 @@ export class NotificationsController {
   constructor(private readonly notificationsService: NotificationsService) {}
 
   @Get()
-  findMine(@CurrentUser() caller: Caller) {
-    return this.notificationsService.findMine(caller, caller.organizationId);
+  findMine(
+    @Query() query: QueryNotificationsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.notificationsService.findMine(
+      query,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Get('preferences')

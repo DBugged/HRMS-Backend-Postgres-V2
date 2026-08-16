@@ -17,8 +17,16 @@ export class ListLeavesQueryDto {
   @IsEnum(LeaveStatus)
   status?: LeaveStatus;
 
-  // Same safety-cap-not-page-through-UI rationale as
-  // QueryAttendanceDto.limit — see that file's comment.
+  // Real server-side pagination — see QueryAttendanceDto's comment for the
+  // full rationale (frontend still requests one large page today, but
+  // `total` is now a DB count, not data.length).
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
   @ApiPropertyOptional({ default: 1000, maximum: 2000 })
   @IsOptional()
   @Type(() => Number)

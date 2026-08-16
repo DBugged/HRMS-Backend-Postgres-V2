@@ -12,6 +12,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
+import { wrapAll } from '../common/pagination';
 
 @Injectable()
 export class LeaveTypesService {
@@ -73,11 +74,12 @@ export class LeaveTypesService {
     });
   }
 
-  findAll(organizationId: string, activeOnly?: boolean) {
-    return this.scopedPrisma.leaveType.findMany({
+  async findAll(organizationId: string, activeOnly?: boolean) {
+    const data = await this.scopedPrisma.leaveType.findMany({
       where: { organizationId, ...(activeOnly && { isActive: true }) },
       orderBy: { displayOrder: 'asc' },
     });
+    return wrapAll(data);
   }
 
   async findOne(id: string, organizationId: string) {

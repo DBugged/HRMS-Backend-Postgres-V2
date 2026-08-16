@@ -170,7 +170,7 @@ describe('Overtime (e2e)', () => {
       .get('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const records = res.body as OvertimeBody[];
+    const records = (res.body as { data: OvertimeBody[] }).data;
     expect(records.length).toBeGreaterThan(0);
     expect(records.every((r) => r.employeeId === employeeId)).toBe(true);
   });
@@ -180,7 +180,7 @@ describe('Overtime (e2e)', () => {
       .get('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const [row] = res.body as OvertimeBody[];
+    const [row] = (res.body as { data: OvertimeBody[] }).data;
     expect(row.employee?.id).toBe(employeeId);
   });
 
@@ -189,7 +189,7 @@ describe('Overtime (e2e)', () => {
       .get('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const id = (list.body as OvertimeBody[])[0].id;
+    const id = (list.body as { data: OvertimeBody[] }).data[0].id;
 
     await request(app.getHttpServer())
       .patch(`/overtime/${id}/review`)
@@ -203,7 +203,7 @@ describe('Overtime (e2e)', () => {
       .get('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const id = (list.body as OvertimeBody[])[0].id;
+    const id = (list.body as { data: OvertimeBody[] }).data[0].id;
 
     const res = await request(app.getHttpServer())
       .patch(`/overtime/${id}/review`)

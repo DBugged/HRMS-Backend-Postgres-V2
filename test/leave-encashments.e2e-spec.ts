@@ -32,6 +32,12 @@ interface EncashmentBody {
   employee?: { id: string; name: string; employeeId: string };
   leaveType?: { id: string; name: string; code: string };
 }
+interface EncashmentListBody {
+  data: EncashmentBody[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 const PASSWORD = 'TestPass123!';
 const BASIC_MONTHLY = 30000; // defaultValue on the BASIC SalaryComponent
@@ -221,7 +227,7 @@ describe('Leave Encashments (e2e)', () => {
       .get('/leave-encashments')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const rows = res.body as EncashmentBody[];
+    const rows = (res.body as EncashmentListBody).data;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.employeeId === employeeId)).toBe(true);
   });
@@ -231,7 +237,7 @@ describe('Leave Encashments (e2e)', () => {
       .get('/leave-encashments')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const [row] = res.body as EncashmentBody[];
+    const [row] = (res.body as EncashmentListBody).data;
     expect(row.employee?.id).toBe(employeeId);
     expect(row.leaveType?.id).toBe(encashableLeaveTypeId);
   });

@@ -11,6 +11,7 @@ import { CreateHolidayDto } from './dto/create-holiday.dto';
 import { UpdateHolidayDto } from './dto/update-holiday.dto';
 import { ListHolidaysQueryDto } from './dto/list-holidays-query.dto';
 import { BulkImportHolidaysDto } from './dto/bulk-import-holidays.dto';
+import { wrapAll } from '../common/pagination';
 
 const VALID_TYPES = new Set(Object.values(HolidayType));
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -55,7 +56,7 @@ export class HolidaysService {
   }
 
   async findAll(query: ListHolidaysQueryDto, organizationId: string) {
-    return this.scopedPrisma.holiday.findMany({
+    const data = await this.scopedPrisma.holiday.findMany({
       where: {
         organizationId,
         ...(query.year && { year: query.year }),
@@ -69,6 +70,7 @@ export class HolidaysService {
       },
       orderBy: { date: 'asc' },
     });
+    return wrapAll(data);
   }
 
   async update(id: string, dto: UpdateHolidayDto, organizationId: string) {

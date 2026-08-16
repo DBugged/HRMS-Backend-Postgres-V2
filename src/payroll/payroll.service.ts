@@ -67,6 +67,8 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { PayslipPdfService } from './payslip-pdf.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { paginate } from '../common/pagination';
+import { PayslipEmailQueueService } from './payslip-email-queue.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -177,6 +179,7 @@ export class PayrollService {
     private readonly payslipPdfService: PayslipPdfService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly payslipEmailQueueService: PayslipEmailQueueService,
   ) {}
 
   // Computes a full payroll snapshot for one employee for one month/year.
@@ -691,20 +694,28 @@ export class PayrollService {
       where.employeeId = query.employeeId;
     }
 
-    return this.scopedPrisma.payrollRun.findMany({
-      where,
-      include: {
-        employee: {
-          select: {
-            id: true,
-            name: true,
-            employeeId: true,
-            departmentId: true,
+    return paginate(
+      () =>
+        this.scopedPrisma.payrollRun.findMany({
+          where,
+          include: {
+            employee: {
+              select: {
+                id: true,
+                name: true,
+                employeeId: true,
+                departmentId: true,
+              },
+            },
           },
-        },
-      },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
-    });
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+          skip: (query.page - 1) * query.limit,
+          take: query.limit,
+        }),
+      () => this.scopedPrisma.payrollRun.count({ where }),
+      query.page,
+      query.limit,
+    );
   }
 
   async findOne(id: string, actor: Actor, organizationId: string) {
@@ -988,6 +999,8 @@ export class PayrollService {
       const title = `Payslip for ${run.month}/${run.year}`;
       const message = `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.`;
 
+      // In-app notification is a fast DB write — always synchronous, the
+      // employee should see it immediately regardless of queue state.
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -996,17 +1009,29 @@ export class PayrollService {
         category: NotificationCategory.PAYROLL,
       });
 
-      const { buffer, filename } =
-        await this.payslipPdfService.buildPayslipPdfBuffer(
-          run.id,
-          organizationId,
-        );
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-        attachments: [{ filename, content: buffer }],
+      // PDF rendering + email delivery are the slow/flaky part — queued
+      // via BullMQ when REDIS_URL is configured (PayslipEmailWorker does
+      // the actual build+send off the request thread, with retries).
+      // Falls back to doing it inline here, exactly as before, when the
+      // queue isn't configured — same opt-in-with-unchanged-fallback
+      // pattern as every other driver in this codebase.
+      const queued = await this.payslipEmailQueueService.enqueue({
+        runId: run.id,
+        organizationId,
       });
+      if (!queued) {
+        const { buffer, filename } =
+          await this.payslipPdfService.buildPayslipPdfBuffer(
+            run.id,
+            organizationId,
+          );
+        await this.emailService.send({
+          to: employee.email,
+          subject: title,
+          html: message,
+          attachments: [{ filename, content: buffer }],
+        });
+      }
     } catch {
       // Swallowed deliberately — see method doc.
     }

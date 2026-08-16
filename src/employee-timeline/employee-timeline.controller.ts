@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { EmployeeTimelineService } from './employee-timeline.service';
 import { QueryTimelineDto } from './dto/query-timeline.dto';
@@ -9,6 +10,7 @@ import { sendReport } from '../reports/report-export';
 import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 
 type Caller = Omit<User, 'password'>;
 
@@ -29,18 +31,19 @@ export class EmployeeTimelineController {
     @Query() query: QueryTimelineDto,
     @CurrentUser() caller: Caller,
   ) {
-    const { events } = await this.timelineService.findAll(
+    const result = await this.timelineService.findAll(
       id,
       query,
       caller,
       caller.organizationId,
     );
-    return { events, categories: TIMELINE_CATEGORIES };
+    return { ...result, categories: TIMELINE_CATEGORIES };
   }
 
   @Get('export/excel')
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   async exportExcel(
     @Param('id') id: string,
     @Query() query: QueryTimelineDto,
@@ -81,6 +84,7 @@ export class EmployeeTimelineController {
   @Get('export/pdf')
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   async exportPdf(
     @Param('id') id: string,
     @Query() query: QueryTimelineDto,

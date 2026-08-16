@@ -1,8 +1,17 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { SettlementsService } from './settlements.service';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -20,8 +29,15 @@ export class SettlementsController {
   // No @Roles() — any authenticated caller (self-scoped for EMPLOYEE,
   // service-side).
   @Get()
-  findAll(@CurrentUser() caller: Caller) {
-    return this.settlementsService.findAll(caller, caller.organizationId);
+  findAll(
+    @Query() query: ListSettlementsQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.settlementsService.findAll(
+      query,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Post('calculate')

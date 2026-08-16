@@ -3,6 +3,7 @@ import { AuditModule, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { QueryAuditLogDto } from './dto/query-audit-log.dto';
+import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -72,21 +73,22 @@ export class AuditLogService {
     const limit = query.limit ?? 50;
     const skip = (page - 1) * limit;
 
-    const [logs, total] = await Promise.all([
-      this.scopedPrisma.auditLog.findMany({
-        where,
-        include: {
-          actor: {
-            select: { id: true, name: true, employeeId: true, role: true },
+    return paginate(
+      () =>
+        this.scopedPrisma.auditLog.findMany({
+          where,
+          include: {
+            actor: {
+              select: { id: true, name: true, employeeId: true, role: true },
+            },
           },
-        },
-        orderBy: { createdAt: 'desc' },
-        skip,
-        take: limit,
-      }),
-      this.scopedPrisma.auditLog.count({ where }),
-    ]);
-
-    return { total, page, limit, logs };
+          orderBy: { createdAt: 'desc' },
+          skip,
+          take: limit,
+        }),
+      () => this.scopedPrisma.auditLog.count({ where }),
+      page,
+      limit,
+    );
   }
 }

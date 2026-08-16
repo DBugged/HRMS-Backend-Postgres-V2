@@ -420,7 +420,7 @@ describe('Payroll (e2e)', () => {
         .get('/payroll')
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(200);
-      const runs = res.body as PayrollRunBody[];
+      const runs = (res.body as { data: PayrollRunBody[] }).data;
       expect(runs.length).toBeGreaterThan(0);
       expect(runs.every((r) => r.employeeId === employeeId)).toBe(true);
     });
@@ -460,7 +460,7 @@ describe('Payroll (e2e)', () => {
         .get('/payroll')
         .set('Authorization', `Bearer ${managerToken}`)
         .expect(200);
-      const runs = res.body as PayrollRunBody[];
+      const runs = (res.body as { data: PayrollRunBody[] }).data;
       expect(runs.every((r) => r.employeeId === deptEmployeeId)).toBe(true);
     });
 
@@ -469,7 +469,7 @@ describe('Payroll (e2e)', () => {
         .get('/payroll')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
-      const runs = res.body as PayrollRunBody[];
+      const runs = (res.body as { data: PayrollRunBody[] }).data;
       expect(runs.some((r) => r.employeeId === employeeId)).toBe(true);
     });
   });

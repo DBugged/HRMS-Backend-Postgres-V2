@@ -34,6 +34,12 @@ interface SettlementBody {
   payrollRunId: string | null;
   employee?: { id: string; name: string; employeeId: string };
 }
+interface SettlementListBody {
+  data: SettlementBody[];
+  total: number;
+  page: number;
+  limit: number;
+}
 interface ProcessResultBody {
   settlement: SettlementBody;
   payrollRun: {
@@ -311,7 +317,7 @@ describe('Settlements (e2e)', () => {
       .get('/settlements')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const rows = res.body as SettlementBody[];
+    const rows = (res.body as SettlementListBody).data;
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.every((r) => r.employeeId === employeeId)).toBe(true);
   });
@@ -321,7 +327,7 @@ describe('Settlements (e2e)', () => {
       .get('/settlements')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const [row] = res.body as SettlementBody[];
+    const [row] = (res.body as SettlementListBody).data;
     expect(row.employee?.id).toBe(employeeId);
   });
 

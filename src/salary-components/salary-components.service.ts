@@ -13,6 +13,7 @@ import { UpdateSalaryComponentDto } from './dto/update-salary-component.dto';
 import { ReorderSalaryComponentsDto } from './dto/reorder-salary-components.dto';
 import { ValidateFormulaDto } from './dto/validate-formula.dto';
 import { compileFormula, SYSTEM_VARS } from './formula-engine';
+import { wrapAll } from '../common/pagination';
 import {
   detectCircularReferences,
   isValidPercentage,
@@ -98,11 +99,12 @@ export class SalaryComponentsService {
     });
   }
 
-  findAll(organizationId: string) {
-    return this.scopedPrisma.salaryComponent.findMany({
+  async findAll(organizationId: string) {
+    const data = await this.scopedPrisma.salaryComponent.findMany({
       where: { organizationId },
       orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
     });
+    return wrapAll(data);
   }
 
   validateFormula(dto: ValidateFormulaDto, organizationId: string) {

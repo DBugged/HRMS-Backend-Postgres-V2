@@ -28,6 +28,12 @@ interface ReimbursementBody {
   receiptUrl?: string;
   employee?: { id: string; name: string; employeeId: string };
 }
+interface PaginatedReimbursements {
+  data: ReimbursementBody[];
+  total: number;
+  page: number;
+  limit: number;
+}
 
 const PASSWORD = 'TestPass123!';
 
@@ -164,7 +170,7 @@ describe('Reimbursements (e2e)', () => {
       .get('/reimbursements')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const claims = res.body as ReimbursementBody[];
+    const claims = (res.body as PaginatedReimbursements).data;
     expect(claims.length).toBeGreaterThan(0);
     expect(claims.every((c) => c.employeeId === employeeId)).toBe(true);
   });
@@ -174,7 +180,7 @@ describe('Reimbursements (e2e)', () => {
       .get('/reimbursements')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const [claim] = res.body as ReimbursementBody[];
+    const [claim] = (res.body as { data: ReimbursementBody[] }).data;
     expect(claim.employee?.id).toBe(employeeId);
   });
 
@@ -196,7 +202,7 @@ describe('Reimbursements (e2e)', () => {
       .get('/reimbursements')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    const same = (list.body as ReimbursementBody[]).find(
+    const same = (list.body as { data: ReimbursementBody[] }).data.find(
       (c) => c.id === body.id,
     );
     expect(same?.receiptUrl).toMatch(/^\/files\//);
@@ -207,7 +213,7 @@ describe('Reimbursements (e2e)', () => {
       .get('/reimbursements')
       .set('Authorization', `Bearer ${otherEmployeeToken}`)
       .expect(200);
-    const claims = res.body as ReimbursementBody[];
+    const claims = (res.body as { data: ReimbursementBody[] }).data;
     expect(claims.every((c) => c.employeeId !== employeeId)).toBe(true);
   });
 
@@ -261,7 +267,7 @@ describe('Reimbursements (e2e)', () => {
       .query({ status: 'PAID' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const claims = res.body as ReimbursementBody[];
+    const claims = (res.body as { data: ReimbursementBody[] }).data;
     expect(claims.some((c) => c.id === claimId)).toBe(true);
     expect(claims.every((c) => c.status === 'PAID')).toBe(true);
   });

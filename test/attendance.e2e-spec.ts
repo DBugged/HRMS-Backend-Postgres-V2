@@ -503,8 +503,7 @@ describe('Attendance (e2e)', () => {
         .query({ employeeId: noDeptEmployeeId })
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(200);
-      const records = (res.body as { records: { employeeId: string }[] })
-        .records;
+      const records = (res.body as { data: { employeeId: string }[] }).data;
       expect(records.length).toBeGreaterThan(0);
       expect(records.every((r) => r.employeeId === employeeId)).toBe(true);
     });
@@ -514,8 +513,7 @@ describe('Attendance (e2e)', () => {
         .get('/attendance')
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
-      const records = (res.body as { records: { employeeId: string }[] })
-        .records;
+      const records = (res.body as { data: { employeeId: string }[] }).data;
       const employeeIds = new Set(records.map((r) => r.employeeId));
       expect(employeeIds.has(employeeId)).toBe(true);
       expect(employeeIds.has(noDeptEmployeeId)).toBe(true);
@@ -527,7 +525,7 @@ describe('Attendance (e2e)', () => {
         .query({ limit: 1 })
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
-      const records = (res.body as { records: unknown[] }).records;
+      const records = (res.body as { data: unknown[] }).data;
       expect(records.length).toBeLessThanOrEqual(1);
     });
 
