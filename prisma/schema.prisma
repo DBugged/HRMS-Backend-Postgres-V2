@@ -1121,6 +1121,19 @@ enum WorkArrangement {
   CLIENT_SITE
 }
 
+// Only meaningful when Attendance.workArrangement is WFH — every other
+// arrangement stays NONE since it doesn't touch geo-fence enforcement.
+// WFH starts PENDING on request and only reaches APPROVED via manager/HR
+// review (see AttendanceService.reviewWorkArrangement); the fence-skip in
+// selfPunch requires APPROVED specifically, not just workArrangement=WFH,
+// so a self-declared WFH day can't bypass the fence unreviewed.
+enum WfhApprovalStatus {
+  NONE
+  PENDING
+  APPROVED
+  REJECTED
+}
+
 enum AttendanceSource {
   FACE_API
   EXCEL_IMPORT
@@ -1184,17 +1197,23 @@ model Attendance {
   checkoutSelfieUrl   String?
   workDurationMinutes Int       @default(0)
 
-  status          AttendanceStatus @default(ABSENT)
+  status                        AttendanceStatus  @default(ABSENT)
   // Independent of status — a WFH day is still `status: PRESENT` via the
   // normal punch flow. Only offered as a choice when Organization.enableWFH
   // is true, but the column always accepts it regardless.
-  workArrangement WorkArrangement  @default(OFFICE)
-  isLate          Boolean          @default(false)
-  isEarlyOut      Boolean          @default(false)
+  workArrangement               WorkArrangement   @default(OFFICE)
+  // See WfhApprovalStatus's comment — PENDING on WFH request, APPROVED/
+  // REJECTED after review, NONE for non-WFH arrangements.
+  workArrangementStatus         WfhApprovalStatus @default(NONE)
+  workArrangementReviewedById   String?
+  workArrangementReviewedAt     DateTime?
+  workArrangementReviewComments String?
+  isLate                        Boolean           @default(false)
+  isEarlyOut                    Boolean           @default(false)
   // Reflects how this row was last derived, not any individual punch's own
   // source — recalculation always stamps FACE_API regardless of which
   // punch source triggered it.
-  source          AttendanceSource @default(FACE_API)
+  source                        AttendanceSource  @default(FACE_API)
 
   // Mirrors the old Mongo subdocument shape verbatim — not a separate
   // model, same reasoning as every other JSON-blob port in this codebase.

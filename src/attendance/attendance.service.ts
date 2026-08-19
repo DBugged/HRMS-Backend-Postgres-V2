@@ -17,6 +17,7 @@ import {
   PunchSource,
   Role,
   User,
+  WfhApprovalStatus,
   WorkArrangement,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -37,10 +38,12 @@ import { SetWorkArrangementDto } from './dto/set-work-arrangement.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { RequestRegularizationDto } from './dto/request-regularization.dto';
 import { ReviewRegularizationDto } from './dto/review-regularization.dto';
+import { ReviewWfhDto } from './dto/review-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 // Either the plain scoped client or a $transaction callback's tx client —
@@ -115,6 +118,7 @@ export class AttendanceService {
     private readonly prisma: PrismaService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   // The core engine — derives an Attendance row for one employee/day from
@@ -425,11 +429,26 @@ export class AttendanceService {
     });
     const fence = employee?.department?.workLocation;
     if (fence && fence.isActive) {
-      const inside = isInsideGeoFence(dto.latitude, dto.longitude, fence);
-      if (inside === false) {
-        throw new ForbiddenException(
-          `You must be inside your office geo-fence (${fence.name}) to punch in/out.`,
-        );
+      // WFH-only, and only once approved (see WfhApprovalStatus's comment
+      // on the schema) — a self-declared-but-unreviewed WFH day, or any
+      // other arrangement (HYBRID/CLIENT_SITE included), still enforces
+      // the fence exactly as before. Checked fresh on every punch (not
+      // just punch-in) so switching arrangement mid-day is respected.
+      const today = await this.scopedPrisma.attendance.findFirst({
+        where: { organizationId, employeeId: actor.id, date: todayStr() },
+        select: { workArrangement: true, workArrangementStatus: true },
+      });
+      const wfhExempt =
+        today?.workArrangement === WorkArrangement.WFH &&
+        today?.workArrangementStatus === WfhApprovalStatus.APPROVED;
+
+      if (!wfhExempt) {
+        const inside = isInsideGeoFence(dto.latitude, dto.longitude, fence);
+        if (inside === false) {
+          throw new ForbiddenException(
+            `You must be inside your office geo-fence (${fence.name}) to punch in/out.`,
+          );
+        }
       }
     }
 
@@ -480,7 +499,8 @@ export class AttendanceService {
     actor: Actor,
     organizationId: string,
   ) {
-    if (dto.workArrangement === WorkArrangement.WFH) {
+    const isWfh = dto.workArrangement === WorkArrangement.WFH;
+    if (isWfh) {
       const org = await this.prisma.organization.findUnique({
         where: { id: organizationId },
       });
@@ -491,6 +511,22 @@ export class AttendanceService {
       }
     }
 
+    // Only WFH ever needs review (it's the only arrangement that can
+    // exempt a punch from geo-fencing — see selfPunch). Switching to any
+    // other arrangement always resets to NONE, clearing out a stale
+    // pending/approved/rejected WFH review from an earlier change of mind
+    // for the same date, same "fresh request clears prior review state"
+    // reasoning as requestRegularization.
+    const workArrangementFields = {
+      workArrangement: dto.workArrangement,
+      workArrangementStatus: isWfh
+        ? WfhApprovalStatus.PENDING
+        : WfhApprovalStatus.NONE,
+      workArrangementReviewedById: null,
+      workArrangementReviewedAt: null,
+      workArrangementReviewComments: null,
+    };
+
     const dateStr = dto.date ?? todayStr();
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
@@ -499,7 +535,7 @@ export class AttendanceService {
     if (existing) {
       await this.scopedPrisma.attendance.updateMany({
         where: { id: existing.id, organizationId },
-        data: { workArrangement: dto.workArrangement },
+        data: workArrangementFields,
       });
     } else {
       await this.scopedPrisma.attendance.create({
@@ -507,13 +543,145 @@ export class AttendanceService {
           organizationId,
           employeeId: actor.id,
           date: dateStr,
-          workArrangement: dto.workArrangement,
+          ...workArrangementFields,
         },
       });
     }
 
+    if (isWfh) {
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: actor.id,
+        eventKey: 'WFH_REQUESTED',
+        performedById: actor.id,
+        description: `Requested Work From Home for ${dateStr}.`,
+      });
+      await this.notifyWfhRequested(actor, dateStr, organizationId);
+    }
+
     return this.scopedPrisma.attendance.findFirstOrThrow({
       where: { organizationId, employeeId: actor.id, date: dateStr },
+    });
+  }
+
+  // Same ported-against-reportingManagerId reasoning as
+  // notifyRegularizationRequested — no manager, no notification (HR still
+  // sees it via listPendingWfhRequests).
+  private async notifyWfhRequested(
+    actor: Actor,
+    date: string,
+    organizationId: string,
+  ) {
+    if (!actor.reportingManagerId || actor.reportingManagerId === actor.id) {
+      return;
+    }
+    await this.notificationsService.create({
+      organizationId,
+      userId: actor.reportingManagerId,
+      title: 'Work From Home Requested',
+      message: `${actor.name} requested Work From Home for ${date}, pending your approval.`,
+      category: NotificationCategory.ATTENDANCE,
+    });
+  }
+
+  // HR/Admin sees every pending WFH request org-wide; a MANAGER sees only
+  // their own department's — same scoping idiom as list()'s MANAGER
+  // branch, deliberately not the "any HR/MANAGER reviews anyone" pattern
+  // regularization uses, since an unreviewed WFH request is what lets a
+  // punch skip geo-fencing (see selfPunch) and a manager approving a
+  // stranger's location claim doesn't make sense.
+  async listPendingWfhRequests(actor: Actor, organizationId: string) {
+    const where: Prisma.AttendanceWhereInput = {
+      organizationId,
+      workArrangement: WorkArrangement.WFH,
+      workArrangementStatus: WfhApprovalStatus.PENDING,
+    };
+
+    if (actor.role === Role.MANAGER) {
+      const deptEmployees = await this.scopedPrisma.user.findMany({
+        where: { organizationId, departmentId: actor.departmentId },
+        select: { id: true },
+      });
+      where.employeeId = { in: deptEmployees.map((e) => e.id) };
+    }
+
+    return this.scopedPrisma.attendance.findMany({
+      where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
+      orderBy: { date: 'desc' },
+    });
+  }
+
+  // `id` is the Attendance row's id, same convention as
+  // reviewRegularization. MANAGER is restricted to their own department's
+  // employees (unlike reviewRegularization) — see listPendingWfhRequests's
+  // comment for why.
+  async reviewWorkArrangement(
+    id: string,
+    dto: ReviewWfhDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const row = await this.scopedPrisma.attendance.findFirst({
+      where: { id, organizationId },
+      include: { employee: true },
+    });
+    if (!row) throw new NotFoundException('Attendance record not found.');
+    if (row.workArrangement !== WorkArrangement.WFH) {
+      throw new BadRequestException(
+        'This attendance record has no Work From Home request.',
+      );
+    }
+    if (actor.role === Role.MANAGER) {
+      if (row.employee.departmentId !== actor.departmentId) {
+        throw new ForbiddenException(
+          "You can only review your own department's requests.",
+        );
+      }
+    }
+
+    const status =
+      dto.decision === 'APPROVED'
+        ? WfhApprovalStatus.APPROVED
+        : WfhApprovalStatus.REJECTED;
+
+    await this.scopedPrisma.attendance.updateMany({
+      where: { id, organizationId },
+      data: {
+        workArrangementStatus: status,
+        workArrangementReviewedById: actor.id,
+        workArrangementReviewedAt: new Date(),
+        workArrangementReviewComments: dto.comments ?? '',
+      },
+    });
+
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: row.employeeId,
+      eventKey: dto.decision === 'APPROVED' ? 'WFH_APPROVED' : 'WFH_REJECTED',
+      performedById: actor.id,
+      description: dto.comments ?? '',
+    });
+
+    const title = `Work From Home Request ${dto.decision}`;
+    const message = `Your Work From Home request for ${row.date} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+    await this.notificationsService.create({
+      organizationId,
+      userId: row.employeeId,
+      title,
+      message,
+      category: NotificationCategory.ATTENDANCE,
+    });
+    await this.emailService.send({
+      to: row.employee.email,
+      subject: title,
+      html: message,
+    });
+
+    return this.scopedPrisma.attendance.findFirstOrThrow({
+      where: { id, organizationId },
     });
   }
 

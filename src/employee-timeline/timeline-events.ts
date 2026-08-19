@@ -83,6 +83,18 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   LEAVE_REJECTED: { category: 'ATTENDANCE_LEAVE', title: 'Leave Rejected' },
   LEAVE_CANCELLED: { category: 'ATTENDANCE_LEAVE', title: 'Leave Cancelled' },
   COMP_OFF_GRANTED: { category: 'ATTENDANCE_LEAVE', title: 'Comp-Off Granted' },
+  WFH_REQUESTED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Work From Home Requested',
+  },
+  WFH_APPROVED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Work From Home Approved',
+  },
+  WFH_REJECTED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Work From Home Rejected',
+  },
   // Performance
   PERFORMANCE_REVIEW: { category: 'PERFORMANCE', title: 'Performance Review' },
   PROMOTION: { category: 'PERFORMANCE', title: 'Promotion' },

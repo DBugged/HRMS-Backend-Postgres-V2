@@ -21,6 +21,7 @@ import { SetWorkArrangementDto } from './dto/set-work-arrangement.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { RequestRegularizationDto } from './dto/request-regularization.dto';
 import { ReviewRegularizationDto } from './dto/review-regularization.dto';
+import { ReviewWfhDto } from './dto/review-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
 import { Public } from '../common/decorators/public.decorator';
@@ -79,6 +80,35 @@ export class AttendanceController {
     @CurrentUser() caller: Caller,
   ) {
     return this.attendanceService.setWorkArrangement(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // Literal path, so it must be registered before Patch('work-arrangement/:id/review').
+  @Get('work-arrangement/pending')
+  @Roles(Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  listPendingWfhRequests(@CurrentUser() caller: Caller) {
+    return this.attendanceService.listPendingWfhRequests(
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Patch('work-arrangement/:id/review')
+  @Roles(Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  reviewWorkArrangement(
+    @Param('id') id: string,
+    @Body() dto: ReviewWfhDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.reviewWorkArrangement(
+      id,
       dto,
       caller,
       caller.organizationId,

@@ -476,6 +476,231 @@ describe('Attendance (e2e)', () => {
     });
   });
 
+  describe('Work From Home approval', () => {
+    let wfhEmployeeToken: string;
+    let wfhEmployeeId: string;
+    let sameDeptManagerToken: string;
+    let otherDeptManagerToken: string;
+
+    beforeAll(async () => {
+      const wfhEmpCreate = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'WFH Employee',
+          email: 'att-e2e-wfh-emp@example.test',
+          departmentId,
+        });
+      const wfhEmpBody = wfhEmpCreate.body as EmployeeCreateBody;
+      wfhEmployeeId = wfhEmpBody.employee.id;
+      const wfhEmpLogin = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-wfh-emp@example.test',
+          password: wfhEmpBody.generatedPassword,
+        });
+      wfhEmployeeToken = (wfhEmpLogin.body as AuthBody).accessToken;
+
+      const sameDeptManagerCreate = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'WFH Same-Dept Manager',
+          email: 'att-e2e-wfh-same-mgr@example.test',
+          role: 'MANAGER',
+          departmentId,
+        });
+      const sameDeptManagerLogin = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-wfh-same-mgr@example.test',
+          password: (sameDeptManagerCreate.body as EmployeeCreateBody)
+            .generatedPassword,
+        });
+      sameDeptManagerToken = (sameDeptManagerLogin.body as AuthBody)
+        .accessToken;
+
+      const otherDept = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Sales WFH', code: 'SLW' });
+      const otherDeptId = (otherDept.body as { id: string }).id;
+      const otherDeptManagerCreate = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'WFH Other-Dept Manager',
+          email: 'att-e2e-wfh-other-mgr@example.test',
+          role: 'MANAGER',
+          departmentId: otherDeptId,
+        });
+      const otherDeptManagerLogin = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-wfh-other-mgr@example.test',
+          password: (otherDeptManagerCreate.body as EmployeeCreateBody)
+            .generatedPassword,
+        });
+      otherDeptManagerToken = (otherDeptManagerLogin.body as AuthBody)
+        .accessToken;
+    });
+
+    it('requesting WFH starts PENDING, and an unreviewed WFH day still enforces the geo-fence', async () => {
+      const date = offsetDate(1);
+      const res = await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date, workArrangement: 'WFH' })
+        .expect(200);
+      expect(
+        (res.body as { workArrangementStatus: string }).workArrangementStatus,
+      ).toBe('PENDING');
+
+      // Punch resolves to "today" internally, not the requested future
+      // date, but PENDING should never bypass the fence regardless.
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .expect(403);
+    });
+
+    it('EMPLOYEE gets 403 listing or reviewing pending WFH requests', async () => {
+      await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .expect(403);
+    });
+
+    it("HR sees the pending request; a different department's MANAGER cannot review it", async () => {
+      const date = offsetDate(1);
+      const pending = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const row = (
+        pending.body as { id: string; date: string; employeeId: string }[]
+      ).find((r) => r.date === date && r.employeeId === wfhEmployeeId);
+      expect(row).toBeTruthy();
+
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/${row!.id}/review`)
+        .set('Authorization', `Bearer ${otherDeptManagerToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(403);
+    });
+
+    it("the employee's own department MANAGER approves it, and the fence is then bypassed", async () => {
+      const date = offsetDate(1);
+      const pending = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${sameDeptManagerToken}`)
+        .expect(200);
+      const row = (pending.body as { id: string; date: string }[]).find(
+        (r) => r.date === date,
+      );
+      expect(row).toBeTruthy();
+
+      // Approving a future-dated request here only proves the review path
+      // itself; the actual fence-bypass check below re-requests for today
+      // since selfPunch only ever looks at today's row.
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/${row!.id}/review`)
+        .set('Authorization', `Bearer ${sameDeptManagerToken}`)
+        .send({ decision: 'APPROVED', comments: 'Approved for one day' })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ workArrangement: 'WFH' })
+        .expect(200);
+      const todayPending = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const todayRow = (
+        todayPending.body as { id: string; employeeId: string }[]
+      ).find((r) => r.employeeId === wfhEmployeeId);
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/${todayRow!.id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .expect(201);
+    });
+
+    it('switching back to OFFICE resets the approval, so the fence applies again', async () => {
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ workArrangement: 'OFFICE' })
+        .expect(200);
+
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: wfhEmployeeId, date: offsetDate(0) },
+      });
+      expect(row.workArrangementStatus).toBe('NONE');
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .expect(403);
+    });
+
+    it('a rejected WFH request never bypasses the fence', async () => {
+      const date = offsetDate(2);
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date, workArrangement: 'WFH' })
+        .expect(200);
+
+      const pending = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const row = (pending.body as { id: string; date: string }[]).find(
+        (r) => r.date === date,
+      );
+
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/${row!.id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'REJECTED', comments: 'Need onsite this week' })
+        .expect(200);
+
+      const after = await prisma.attendance.findFirstOrThrow({
+        where: { id: row!.id },
+      });
+      expect(after.workArrangementStatus).toBe('REJECTED');
+    });
+
+    it('reviewing an Attendance row with no WFH request is rejected', async () => {
+      const date = offsetDate(3);
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date, workArrangement: 'HYBRID' })
+        .expect(200);
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: wfhEmployeeId, date },
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/${row.id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(400);
+    });
+  });
+
   describe('GET /attendance/geofence/mine', () => {
     it("returns the caller's department geo-fence", async () => {
       const res = await request(app.getHttpServer())
