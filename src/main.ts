@@ -29,6 +29,15 @@ async function bootstrap() {
       // else (HSTS, X-Frame-Options, X-Content-Type-Options, etc.) stays
       // at helmet's secure defaults.
       contentSecurityPolicy: false,
+      // Helmet's default 'same-origin' CORP blocks the browser from
+      // rendering anything this API serves (branding logos, uploaded
+      // documents, profile photos — all under /files) whenever the
+      // frontend is on a different origin, which is the normal case (a
+      // different port in dev, a different subdomain in prod). Access to
+      // those resources is already controlled by the signed token in the
+      // URL and by CORS above, so CORP here was only breaking legitimate
+      // same-app cross-origin image loads, not adding real protection.
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
     }),
   );
   app.use(cookieParser());

@@ -159,7 +159,7 @@ export class AttendanceController {
   }
 
   @Post('import')
-  @Roles(Role.MANAGER, Role.HR)
+  @Roles(Role.MANAGER, Role.HR, Role.ADMIN)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
@@ -175,7 +175,7 @@ export class AttendanceController {
   }
 
   @Get('import')
-  @Roles(Role.HR, Role.MANAGER)
+  @Roles(Role.HR, Role.MANAGER, Role.ADMIN)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   listImportBatches(@CurrentUser() caller: Caller) {

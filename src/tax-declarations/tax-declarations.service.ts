@@ -28,8 +28,15 @@ export class TaxDeclarationsService {
     actor: Actor,
     organizationId: string,
   ) {
+    // EMPLOYEE always gets forced to their own record — an employeeId
+    // query param must be ignored for that role, or they could view a
+    // co-worker's declaration just by guessing/passing another id. Every
+    // other role defaults to their own record when no employeeId is given
+    // (this is what lets ADMIN/HR/MANAGER use the self-service "my
+    // declaration" page, which never sends employeeId, same as EMPLOYEE
+    // does) but can still pass one explicitly to view someone else's.
     const employeeId =
-      actor.role === Role.EMPLOYEE ? actor.id : employeeIdParam;
+      actor.role === Role.EMPLOYEE ? actor.id : (employeeIdParam ?? actor.id);
     if (!employeeId || !financialYear) {
       throw new BadRequestException(
         'employeeId and financialYear are required.',
@@ -48,10 +55,11 @@ export class TaxDeclarationsService {
     actor: Actor,
     organizationId: string,
   ) {
-    const employeeId = actor.role === Role.EMPLOYEE ? actor.id : dto.employeeId;
-    if (!employeeId) {
-      throw new BadRequestException('employeeId is required.');
-    }
+    // Same self-resolution as get() above, including the same EMPLOYEE
+    // guard — an EMPLOYEE must never be able to write another employee's
+    // declaration by passing dto.employeeId.
+    const employeeId =
+      actor.role === Role.EMPLOYEE ? actor.id : (dto.employeeId ?? actor.id);
 
     // Identity-based, not role-based — closes the gap where an HR/Admin
     // editing their OWN record could self-verify. Any caller editing
