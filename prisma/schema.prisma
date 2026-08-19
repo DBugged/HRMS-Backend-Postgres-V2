@@ -270,6 +270,13 @@ model User {
   name     String
   role     Role   @default(EMPLOYEE)
 
+  // Corporate/company inbox, set up separately from the login email above
+  // (often after IT provisions it post-joining) — nullable since it's
+  // normally unknown at creation time; unique when set so two employees
+  // can't share one. Credentials can be re-sent here once it exists via
+  // POST /employees/:id/resend-credentials.
+  officialEmail String? @unique
+
   // Forgot/reset-password — a SHA-256 hash of the raw token mailed to the
   // user (never store the raw token), unique so a hash lookup can find the
   // owning row directly. Both null once unset/consumed. 30-minute expiry

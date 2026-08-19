@@ -18,6 +18,7 @@ import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
+import { frontendUrl } from '../common/frontend-url';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
@@ -248,7 +249,7 @@ export class AuthService {
         },
       });
 
-      const resetUrl = `${(process.env.CORS_ORIGIN || 'http://localhost:5173').split(',')[0]}/reset-password/${rawToken}`;
+      const resetUrl = `${frontendUrl()}/reset-password/${rawToken}`;
       await this.emailService.send({
         to: user.email,
         subject: "D'Bugged Programmers HRMS - Password Reset",

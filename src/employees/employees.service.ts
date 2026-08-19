@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { Role, User } from '@prisma/client';
+import { Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken } from '../files/file-token';
@@ -15,10 +15,13 @@ import { signPersonalDataFileUrls } from './personal-data';
 import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from './employee-id.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { EmailService } from '../notifications/email.service';
+import { frontendUrl } from '../common/frontend-url';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { stripLockedFields } from './employee-field-lock';
+import { mergePersonalData } from './personal-data';
 import {
   Actor,
   canManagerAccessEmployee,
@@ -45,6 +48,7 @@ export class EmployeesService {
     private readonly usersService: UsersService,
     private readonly employeeIdService: EmployeeIdService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailService: EmailService,
   ) {}
 
   async create(
@@ -92,15 +96,80 @@ export class EmployeesService {
           employeeType: dto.employeeType ?? 'permanent',
           employmentStatus:
             dto.employeeType === 'probation' ? 'PROBATION' : 'ONBOARDING',
+          // personalEmail rides along at creation (rather than only via the
+          // later personal-data PATCH) specifically so the welcome email
+          // below always has somewhere to go on the interactive Add
+          // Employee path. Absent for bulk-imported rows — see the DTO.
+          personalData: dto.personalEmail
+            ? (mergePersonalData(
+                {},
+                { personalEmail: dto.personalEmail },
+              ) as Prisma.InputJsonValue)
+            : undefined,
         },
       });
     });
 
-    // Email delivery deferred (no Resend infra yet, same simplification as
-    // Phase 1's registration flow) — the generated password is returned
-    // once in the response instead, same as the old system's
-    // createEmployeeManual for the no-email path.
+    // Welcome email — login URL, employee ID, generated password — sent to
+    // the personal email HR just entered, since the official/company email
+    // is normally still unset at this point (see officialEmail's comment on
+    // the User model and resendCredentials() below for that path). Sent
+    // after the transaction commits, and EmailService never throws (it
+    // falls back to a console dry-run log on any delivery failure), so a
+    // bad SMTP/Resend config can't roll back or fail employee creation —
+    // the password is also still returned in the response either way, same
+    // as the no-email fallback this replaces.
+    if (dto.personalEmail) {
+      await this.emailService.send({
+        to: dto.personalEmail,
+        subject: "Welcome to D'Bugged Programmers HRMS",
+        html: welcomeEmailHtml({
+          name: user.name,
+          employeeId: user.employeeId,
+          email: user.email,
+          password: generatedPassword,
+        }),
+      });
+    }
+
     return { employee: toSafe(user), generatedPassword };
+  }
+
+  // ADMIN/HR only (enforced in the controller) — used once an employee's
+  // officialEmail has been set on their profile (it's normally unknown at
+  // creation time) to also get them their login details there. The
+  // original password can't literally be "resent" since it's hashed
+  // immediately and never stored in plaintext, so this issues a fresh one
+  // and invalidates the old one, same generation path as create().
+  async resendCredentials(id: string, organizationId: string) {
+    const employee = await this.findByIdOrThrow(id, organizationId);
+    if (!employee.officialEmail) {
+      throw new ConflictException(
+        'This employee has no official email on file yet.',
+      );
+    }
+
+    const generatedPassword =
+      crypto.randomBytes(6).toString('base64url') + 'A1!';
+    const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
+
+    await this.scopedPrisma.user.updateMany({
+      where: { id, organizationId },
+      data: { password: hashedPassword, mustChangePassword: true },
+    });
+
+    await this.emailService.send({
+      to: employee.officialEmail,
+      subject: "Your D'Bugged Programmers HRMS login credentials",
+      html: welcomeEmailHtml({
+        name: employee.name,
+        employeeId: employee.employeeId,
+        email: employee.email,
+        password: generatedPassword,
+      }),
+    });
+
+    return { success: true, sentTo: employee.officialEmail };
   }
 
   // Row-level isolation, same as the old system's bulkCreateEmployees —
@@ -344,4 +413,27 @@ function toSafe(user: User) {
     ) as unknown as User['personalData'];
   }
   return safe;
+}
+
+// Shared by both the initial welcome email (create()) and
+// resendCredentials() — same content either way, just a different
+// recipient address and (for a resend) a freshly-generated password.
+function welcomeEmailHtml(params: {
+  name: string;
+  employeeId: string;
+  email: string;
+  password: string;
+}): string {
+  const loginUrl = `${frontendUrl()}/login`;
+  return `
+    <p>Hello ${params.name},</p>
+    <p>Your account on D'Bugged Programmers HRMS is ready. Here are your login details:</p>
+    <p>
+      Login URL: <a href="${loginUrl}">${loginUrl}</a><br>
+      Employee ID: <strong>${params.employeeId}</strong><br>
+      Email: <strong>${params.email}</strong><br>
+      Password: <strong>${params.password}</strong>
+    </p>
+    <p>You'll be asked to set a new password the first time you sign in. Please keep these details confidential.</p>
+  `;
 }

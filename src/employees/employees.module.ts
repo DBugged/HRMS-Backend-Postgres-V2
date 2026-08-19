@@ -5,9 +5,10 @@ import { EmployeeProfileService } from './employee-profile.service';
 import { EmployeeIdService } from './employee-id.service';
 import { UsersModule } from '../users/users.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
-  imports: [UsersModule, EmployeeTimelineModule],
+  imports: [UsersModule, EmployeeTimelineModule, NotificationsModule],
   controllers: [EmployeesController],
   providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],
   // EmployeeIdService is exported specifically so AuthModule can reuse it

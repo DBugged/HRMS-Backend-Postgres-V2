@@ -27,6 +27,14 @@ export class UpdateEmployeeDto {
   @IsEmail()
   email?: string;
 
+  // Corporate inbox, usually set well after creation once IT provisions it
+  // — self-editable (not in LOCKED_FIELDS_FOR_EMPLOYEE), unlike the login
+  // email above. See officialEmail's comment on the User model.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsEmail()
+  officialEmail?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsUUID()

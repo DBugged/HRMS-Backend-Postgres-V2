@@ -95,6 +95,13 @@ export class EmployeesController {
     return this.employeesService.deactivate(id, caller.organizationId);
   }
 
+  @Post(':id/resend-credentials')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  resendCredentials(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.employeesService.resendCredentials(id, caller.organizationId);
+  }
+
   @Patch(':id/personal-data')
   updatePersonalData(
     @Param('id') id: string,

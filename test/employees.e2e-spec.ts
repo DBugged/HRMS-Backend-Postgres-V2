@@ -226,6 +226,86 @@ describe('Employees + Departments (e2e)', () => {
     salesEmployeeId = (salesEmpRes.body as EmployeeBody).employee.id;
   });
 
+  describe('welcome email + officialEmail + resend credentials', () => {
+    let welcomeEmployeeId: string;
+
+    it('creating an employee with personalEmail stores it in personalData and still returns generatedPassword (email delivery is best-effort/dry-run, not a precondition of success)', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Welcome Email Employee',
+          email: 'employees-e2e-welcome@example.test',
+          personalEmail: 'employees-e2e-welcome-personal@example.test',
+          departmentId: engDepartmentId,
+        })
+        .expect(201);
+      const body = res.body as EmployeeBody & {
+        employee: { personalData: { personalEmail?: string } };
+      };
+      expect(body.generatedPassword).toBeTruthy();
+      expect(body.employee.personalData.personalEmail).toBe(
+        'employees-e2e-welcome-personal@example.test',
+      );
+      welcomeEmployeeId = body.employee.id;
+    });
+
+    it('creating an employee without personalEmail still succeeds (bulk-import path has no per-row personalEmail column)', async () => {
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'No Personal Email Employee',
+          email: 'employees-e2e-no-personal-email@example.test',
+          departmentId: engDepartmentId,
+        })
+        .expect(201);
+    });
+
+    it('resend-credentials fails with no officialEmail on file yet', async () => {
+      await request(app.getHttpServer())
+        .post(`/employees/${welcomeEmployeeId}/resend-credentials`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(409);
+    });
+
+    it('HR sets officialEmail via PATCH /employees/:id, then resend-credentials succeeds and forces a password change', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${welcomeEmployeeId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ officialEmail: 'employees-e2e-welcome-official@example.test' })
+        .expect(200);
+
+      const resendRes = await request(app.getHttpServer())
+        .post(`/employees/${welcomeEmployeeId}/resend-credentials`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(201);
+      expect((resendRes.body as { sentTo: string }).sentTo).toBe(
+        'employees-e2e-welcome-official@example.test',
+      );
+
+      const employee = await prisma.user.findUniqueOrThrow({
+        where: { id: welcomeEmployeeId },
+      });
+      expect(employee.mustChangePassword).toBe(true);
+    });
+
+    it('EMPLOYEE cannot resend-credentials (HR/Admin-only)', async () => {
+      await request(app.getHttpServer())
+        .post(`/employees/${welcomeEmployeeId}/resend-credentials`)
+        .set('Authorization', `Bearer ${engEmployeeToken}`)
+        .expect(403);
+    });
+
+    it('two employees cannot share the same officialEmail', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${engEmployeeId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ officialEmail: 'employees-e2e-welcome-official@example.test' })
+        .expect(500); // unmapped Prisma unique-constraint error — same as the pre-existing behavior for a duplicate `email` on this endpoint
+    });
+  });
+
   it('HR cannot create an ADMIN account (role-assignability check)', async () => {
     await request(app.getHttpServer())
       .post('/employees')
