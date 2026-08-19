@@ -4,7 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LeaveEncashmentStatus, Prisma, Role, User } from '@prisma/client';
+import {
+  LeaveEncashmentStatus,
+  NotificationCategory,
+  Prisma,
+  Role,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
@@ -16,6 +22,8 @@ import { RequestLeaveEncashmentDto } from './dto/request-leave-encashment.dto';
 import { ReviewLeaveEncashmentDto } from './dto/review-leave-encashment.dto';
 import { QueryLeaveEncashmentDto } from './dto/query-leave-encashment.dto';
 import { paginate } from '../common/pagination';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -32,6 +40,8 @@ export class LeaveEncashmentsService {
     private readonly leaveBalanceService: LeaveBalanceService,
     private readonly payrollSettingsService: PayrollSettingsService,
     private readonly employeeSalaryComponentsService: EmployeeSalaryComponentsService,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async findAll(
@@ -153,7 +163,7 @@ export class LeaveEncashmentsService {
     if (!row)
       throw new NotFoundException('Leave encashment request not found.');
 
-    return this.scopedPrisma.$transaction(async (tx) => {
+    const result = await this.scopedPrisma.$transaction(async (tx) => {
       await tx.leaveEncashment.updateMany({
         where: { id, organizationId },
         data: { status: dto.status, approvedById: actor.id },
@@ -186,5 +196,27 @@ export class LeaveEncashmentsService {
         where: { id, organizationId },
       });
     });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: row.employeeId, organizationId },
+    });
+    if (employee) {
+      const title = `Leave Encashment Request ${dto.status}`;
+      const message = `Your leave encashment request for ${row.days} day(s) (${row.amount}) has been ${dto.status.toLowerCase()}.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.LEAVE,
+      });
+      await this.emailService.send({
+        to: employee.email,
+        subject: title,
+        html: message,
+      });
+    }
+
+    return result;
   }
 }

@@ -1,10 +1,18 @@
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
-import { Prisma, Role, User } from '@prisma/client';
+import {
+  NotificationCategory,
+  PerformanceRating,
+  Prisma,
+  Role,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertPerformanceRatingDto } from './dto/upsert-performance-rating.dto';
 import { QueryPerformanceRatingDto } from './dto/query-performance-rating.dto';
 import { paginate } from '../common/pagination';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -12,6 +20,8 @@ type Actor = Omit<User, 'password'>;
 export class PerformanceRatingsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async findAll(
@@ -81,23 +91,46 @@ export class PerformanceRatingsService {
       ratedById: actor.id,
     };
 
+    let rating: PerformanceRating;
     if (existing) {
       await this.scopedPrisma.performanceRating.updateMany({
         where: { id: existing.id, organizationId },
         data,
       });
-      return this.scopedPrisma.performanceRating.findFirstOrThrow({
+      rating = await this.scopedPrisma.performanceRating.findFirstOrThrow({
         where: { id: existing.id, organizationId },
+      });
+    } else {
+      rating = await this.scopedPrisma.performanceRating.create({
+        data: {
+          organizationId,
+          employeeId: dto.employeeId,
+          financialYear: dto.financialYear,
+          ...data,
+        },
       });
     }
 
-    return this.scopedPrisma.performanceRating.create({
-      data: {
-        organizationId,
-        employeeId: dto.employeeId,
-        financialYear: dto.financialYear,
-        ...data,
-      },
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId },
     });
+    if (employee) {
+      const title = 'Performance Rating Published';
+      const message = `Your performance rating for FY ${dto.financialYear} has been published: ${dto.rating}.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.GENERAL,
+      });
+      await this.emailService.send({
+        to: employee.email,
+        subject: title,
+        html: message,
+      });
+    }
+
+    return rating;
   }
 }

@@ -5,6 +5,7 @@ import { PayrollModule } from '../payroll/payroll.module';
 import { PayrollSettingsModule } from '../payroll-settings/payroll-settings.module';
 import { EmployeeSalaryComponentsModule } from '../employee-salary-components/employee-salary-components.module';
 import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
+import { NotificationsModule } from '../notifications/notifications.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
     PayrollSettingsModule,
     EmployeeSalaryComponentsModule,
     LeaveBalancesModule,
+    NotificationsModule,
   ],
   controllers: [SettlementsController],
   providers: [SettlementsService],

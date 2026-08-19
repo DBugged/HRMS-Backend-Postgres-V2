@@ -4,10 +4,18 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { LoanStatus, Prisma, Role, User } from '@prisma/client';
+import {
+  LoanStatus,
+  NotificationCategory,
+  Prisma,
+  Role,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { calculateEmi } from './loan-math';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
 import { UpdateLoanStatusDto } from './dto/update-loan-status.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
@@ -20,6 +28,8 @@ type Actor = Omit<User, 'password'>;
 export class LoansService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async findAll(query: QueryLoanDto, actor: Actor, organizationId: string) {
@@ -56,7 +66,7 @@ export class LoansService {
       dto.tenureMonths,
     );
 
-    return this.scopedPrisma.loan.create({
+    const loan = await this.scopedPrisma.loan.create({
       data: {
         organizationId,
         employeeId: dto.employeeId,
@@ -72,6 +82,28 @@ export class LoansService {
         approvedById: actor.id,
       },
     });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId },
+    });
+    if (employee) {
+      const title = 'Loan Sanctioned';
+      const message = `A ${dto.loanType} loan of ${dto.principal} has been sanctioned for you, repayable as ${emiAmount}/month over ${dto.tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.GENERAL,
+      });
+      await this.emailService.send({
+        to: employee.email,
+        subject: title,
+        html: message,
+      });
+    }
+
+    return loan;
   }
 
   async updateStatus(
@@ -88,9 +120,38 @@ export class LoansService {
       where: { id, organizationId },
       data: { status: dto.status },
     });
-    return this.scopedPrisma.loan.findFirstOrThrow({
+    const updated = await this.scopedPrisma.loan.findFirstOrThrow({
       where: { id, organizationId },
     });
+
+    if (dto.status !== loan.status) {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: loan.employeeId, organizationId },
+      });
+      if (employee) {
+        const title = `Loan ${dto.status === LoanStatus.CLOSED ? 'Closed' : dto.status === LoanStatus.CANCELLED ? 'Cancelled' : 'Updated'}`;
+        const message =
+          dto.status === LoanStatus.CLOSED
+            ? `Your ${loan.loanType} loan has been fully repaid and is now closed.`
+            : dto.status === LoanStatus.CANCELLED
+              ? `Your ${loan.loanType} loan has been cancelled.`
+              : `Your ${loan.loanType} loan status is now ${dto.status}.`;
+        await this.notificationsService.create({
+          organizationId,
+          userId: employee.id,
+          title,
+          message,
+          category: NotificationCategory.GENERAL,
+        });
+        await this.emailService.send({
+          to: employee.email,
+          subject: title,
+          html: message,
+        });
+      }
+    }
+
+    return updated;
   }
 
   // Called by the payroll engine when a loan EMI is deducted for a given

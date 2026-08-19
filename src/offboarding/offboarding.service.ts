@@ -4,7 +4,12 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OffboardingStatus, Prisma, User } from '@prisma/client';
+import {
+  NotificationCategory,
+  OffboardingStatus,
+  Prisma,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
@@ -15,6 +20,8 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
 import { paginate } from '../common/pagination';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -33,6 +40,8 @@ export class OffboardingService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async findAll(query: ListOffboardingQueryDto, organizationId: string) {
@@ -90,7 +99,7 @@ export class OffboardingService {
       );
     }
 
-    return this.scopedPrisma.offboardingCase.create({
+    const offboardingCase = await this.scopedPrisma.offboardingCase.create({
       data: {
         organizationId,
         employeeId: dto.employeeId,
@@ -99,6 +108,23 @@ export class OffboardingService {
         reason: dto.reason,
       },
     });
+
+    const title = 'Offboarding Process Initiated';
+    const message = `Your offboarding has been initiated with a last working day of ${dto.lastWorkingDay}. HR will reach out with the exit checklist.`;
+    await this.notificationsService.create({
+      organizationId,
+      userId: employee.id,
+      title,
+      message,
+      category: NotificationCategory.GENERAL,
+    });
+    await this.emailService.send({
+      to: employee.email,
+      subject: title,
+      html: message,
+    });
+
+    return offboardingCase;
   }
 
   async updateChecklist(

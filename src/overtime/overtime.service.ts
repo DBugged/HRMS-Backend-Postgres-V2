@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  NotificationCategory,
   OvertimeStatus,
   OvertimeType,
   Prisma,
@@ -17,6 +18,8 @@ import { LogOvertimeDto } from './dto/log-overtime.dto';
 import { ReviewOvertimeDto } from './dto/review-overtime.dto';
 import { QueryOvertimeDto } from './dto/query-overtime.dto';
 import { paginate } from '../common/pagination';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -41,6 +44,8 @@ function monthRange(month: number, year: number): { from: string; to: string } {
 export class OvertimeService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async log(dto: LogOvertimeDto, actor: Actor, organizationId: string) {
@@ -109,8 +114,30 @@ export class OvertimeService {
       data: { status: dto.status, approvedById: actor.id },
     });
 
-    return this.scopedPrisma.overtimeRecord.findFirstOrThrow({
+    const updated = await this.scopedPrisma.overtimeRecord.findFirstOrThrow({
       where: { id, organizationId },
     });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: record.employeeId, organizationId },
+    });
+    if (employee) {
+      const title = `Overtime Request ${dto.status}`;
+      const message = `Your overtime of ${record.hours} hour(s) on ${record.date} has been ${dto.status.toLowerCase()}.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.ATTENDANCE,
+      });
+      await this.emailService.send({
+        to: employee.email,
+        subject: title,
+        html: message,
+      });
+    }
+
+    return updated;
   }
 }

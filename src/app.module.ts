@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { loggerModuleOptions } from './common/logger.config';
@@ -41,6 +42,7 @@ import { EmployeeTimelineModule } from './employee-timeline/employee-timeline.mo
 import { ApprovalDelegationModule } from './approval-delegation/approval-delegation.module';
 import { DocumentsModule } from './documents/documents.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { HrEventsModule } from './hr-events/hr-events.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -54,6 +56,9 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // much tighter via @Throttle() on the individual routes (see
     // auth.controller.ts) — this is just the floor for everything else.
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // Enables @Cron() handlers app-wide — currently only HrEventsModule's
+    // daily birthday/work-anniversary email job.
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -90,6 +95,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     ApprovalDelegationModule,
     DocumentsModule,
     NotificationsModule,
+    HrEventsModule,
   ],
   controllers: [AppController],
   providers: [

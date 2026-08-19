@@ -8,6 +8,7 @@ import {
 import {
   EmployeeDocument,
   EmploymentStatus,
+  NotificationCategory,
   Prisma,
   Role,
   User,
@@ -16,6 +17,8 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken } from '../files/file-token';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
@@ -56,6 +59,8 @@ export class EmployeeProfileService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async findEmployeeOrThrow(id: string, organizationId: string) {
@@ -255,11 +260,31 @@ export class EmployeeProfileService {
       },
     });
 
-    return withSignedFileUrl(
-      await this.scopedPrisma.employeeDocument.findFirstOrThrow({
-        where: { id: docId, organizationId },
-      }),
-    );
+    const updated = await this.scopedPrisma.employeeDocument.findFirstOrThrow({
+      where: { id: docId, organizationId },
+    });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id, organizationId },
+    });
+    if (employee) {
+      const title = `Document ${dto.status === 'APPROVED' ? 'Approved' : 'Rejected'}`;
+      const message = `Your document "${doc.fileName}" has been ${dto.status.toLowerCase()}.${dto.reason ? ` Reason: ${dto.reason}` : ''}`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.GENERAL,
+      });
+      await this.emailService.send({
+        to: employee.email,
+        subject: title,
+        html: message,
+      });
+    }
+
+    return withSignedFileUrl(updated);
   }
 
   // -- Assets --

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import {
   LoanStatus,
+  NotificationCategory,
   Prisma,
   PayrollRunStatus,
   Role,
@@ -22,6 +23,8 @@ import { EmployeeSalaryComponentsService } from '../employee-salary-components/e
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -48,6 +51,8 @@ export class SettlementsService {
     private readonly payrollSettingsService: PayrollSettingsService,
     private readonly employeeSalaryComponentsService: EmployeeSalaryComponentsService,
     private readonly leaveBalanceService: LeaveBalanceService,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async findAll(
@@ -289,7 +294,7 @@ export class SettlementsService {
     const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
     const now = new Date();
 
-    return this.scopedPrisma.$transaction(async (tx) => {
+    const result = await this.scopedPrisma.$transaction(async (tx) => {
       const run = await tx.payrollRun.create({
         data: {
           organizationId,
@@ -344,6 +349,40 @@ export class SettlementsService {
         payrollRun: run,
       };
     });
+
+    // Sent to the personal email on file, not the login email — by this
+    // point the employee is deactivated and the login inbox (if it was
+    // even a personal mailbox to begin with) may no longer be checked.
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: settlement.employeeId, organizationId },
+    });
+    if (employee) {
+      const personalData = (employee.personalData ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const personalEmail =
+        typeof personalData.personalEmail === 'string' &&
+        personalData.personalEmail
+          ? personalData.personalEmail
+          : employee.email;
+      const title = 'Full & Final Settlement Processed';
+      const message = `Your full & final settlement has been processed. Net settlement amount: ${settlement.netSettlementAmount} (${amountInWords(settlement.netSettlementAmount)}). Your payslip for this settlement will follow separately.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.PAYROLL,
+      });
+      await this.emailService.send({
+        to: personalEmail,
+        subject: title,
+        html: message,
+      });
+    }
+
+    return result;
   }
 
   async markPaid(id: string, actor: Actor, organizationId: string) {

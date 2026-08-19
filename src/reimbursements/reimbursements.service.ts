@@ -1,8 +1,16 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, Reimbursement, Role, User } from '@prisma/client';
+import {
+  NotificationCategory,
+  Prisma,
+  Reimbursement,
+  Role,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken } from '../files/file-token';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
@@ -16,6 +24,8 @@ const EXTERNAL_URL_RE = /^https?:\/\//i;
 export class ReimbursementsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   // receiptUrl is stored as the relativeKey from POST /files/upload/documents
@@ -107,6 +117,27 @@ export class ReimbursementsService {
     const updated = await this.scopedPrisma.reimbursement.findFirstOrThrow({
       where: { id, organizationId },
     });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: claim.employeeId, organizationId },
+    });
+    if (employee) {
+      const title = `Reimbursement Claim ${dto.status}`;
+      const message = `Your reimbursement claim of ${claim.amount} for ${claim.category} has been ${dto.status.toLowerCase()}.${dto.reviewComments ? ` Comments: ${dto.reviewComments}` : ''}`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.GENERAL,
+      });
+      await this.emailService.send({
+        to: employee.email,
+        subject: title,
+        html: message,
+      });
+    }
+
     return this.withSignedReceipt(updated);
   }
 }

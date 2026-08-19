@@ -1,8 +1,16 @@
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import { Role, User } from '@prisma/client';
+import {
+  EmployeeTaxDeclaration,
+  NotificationCategory,
+  Role,
+  TaxDeclarationStatus,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxDeclarationDto } from './dto/upsert-tax-declaration.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -10,6 +18,8 @@ type Actor = Omit<User, 'password'>;
 export class TaxDeclarationsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   async get(
@@ -84,23 +94,49 @@ export class TaxDeclarationsService {
       where: { organizationId, employeeId, financialYear: dto.financialYear },
     });
 
+    let declaration: EmployeeTaxDeclaration;
     if (existing) {
       await this.scopedPrisma.employeeTaxDeclaration.updateMany({
         where: { id: existing.id, organizationId },
         data,
       });
-      return this.scopedPrisma.employeeTaxDeclaration.findFirstOrThrow({
-        where: { id: existing.id, organizationId },
+      declaration =
+        await this.scopedPrisma.employeeTaxDeclaration.findFirstOrThrow({
+          where: { id: existing.id, organizationId },
+        });
+    } else {
+      declaration = await this.scopedPrisma.employeeTaxDeclaration.create({
+        data: {
+          organizationId,
+          employeeId,
+          financialYear: dto.financialYear,
+          ...data,
+        },
       });
     }
 
-    return this.scopedPrisma.employeeTaxDeclaration.create({
-      data: {
-        organizationId,
-        employeeId,
-        financialYear: dto.financialYear,
-        ...data,
-      },
-    });
+    if (!isOwnDeclaration && status === TaxDeclarationStatus.VERIFIED) {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+      });
+      if (employee) {
+        const title = 'Tax Declaration Verified';
+        const message = `Your tax declaration for FY ${dto.financialYear} has been verified.`;
+        await this.notificationsService.create({
+          organizationId,
+          userId: employee.id,
+          title,
+          message,
+          category: NotificationCategory.GENERAL,
+        });
+        await this.emailService.send({
+          to: employee.email,
+          subject: title,
+          html: message,
+        });
+      }
+    }
+
+    return declaration;
   }
 }
