@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
 } from 'class-validator';
 
 export class SendNotificationDto {
@@ -21,10 +22,14 @@ export class SendNotificationDto {
   @IsIn(['all', 'department', 'specific'])
   recipientType!: 'all' | 'department' | 'specific';
 
+  // The send form always round-trips this field on the request body (it
+  // stays '' whenever recipientType isn't 'department'), so '' has to
+  // stay valid — @IsOptional alone only skips validation for undefined.
   @ApiPropertyOptional({
     description: 'Required when recipientType=department',
   })
   @IsOptional()
+  @ValidateIf((o) => o.department !== '')
   @IsUUID()
   department?: string;
 
