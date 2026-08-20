@@ -36,6 +36,27 @@ export interface LeaveTypeDefault {
   };
 }
 
+// Mirrors the LeaveType.rules column's own Prisma-level @default exactly.
+// Each entry below only lists what it deliberately overrides — the DB
+// write is not a JSON merge, so every field not explicitly present here
+// (allowFutureDated in particular, since applying for leave in the future
+// is the normal case) has to come from an explicit spread of this base,
+// or it's silently lost rather than falling back to the column default.
+export const DEFAULT_RULES = {
+  minDurationDays: 0.5,
+  maxDurationDays: null,
+  noticePeriodDays: 0,
+  allowBackdated: false,
+  maxBackdateDays: 0,
+  allowFutureDated: true,
+  maxAdvanceDays: null,
+  allowHalfDay: true,
+  sandwichLeaveApplies: false,
+  restrictPrefixSuffixHoliday: false,
+  maxConsecutiveDays: null,
+  minGapBetweenRequestsDays: 0,
+};
+
 export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   {
     code: 'EL',

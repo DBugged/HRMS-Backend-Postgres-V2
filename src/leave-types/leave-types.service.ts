@@ -13,7 +13,7 @@ import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
 import { wrapAll } from '../common/pagination';
-import { LEAVE_TYPE_DEFAULTS } from './leave-type-defaults';
+import { DEFAULT_RULES, LEAVE_TYPE_DEFAULTS } from './leave-type-defaults';
 
 @Injectable()
 export class LeaveTypesService {
@@ -39,7 +39,7 @@ export class LeaveTypesService {
           ...rest,
           organizationId,
           createdById,
-          rules: rules as unknown as Prisma.InputJsonValue,
+          rules: { ...DEFAULT_RULES, ...rules },
           ...(carryForward !== undefined && {
             carryForward: carryForward,
           }),

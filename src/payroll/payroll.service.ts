@@ -294,6 +294,19 @@ export class PayrollService {
       ),
     );
 
+    // A formula/percentage component (e.g. the default HRA, 40% of BASIC)
+    // can reference a real component's code that exists in the org but
+    // isn't applicable *for this employee* — BASIC is FIXED/opt-in, so an
+    // employee with no override for it never has BASIC in scope even
+    // though HRA still auto-applies. Without this, resolveComponentValue
+    // throws "Unknown reference" for every such employee instead of
+    // treating the un-opted-in base as 0, which is what "40% of a Basic
+    // this employee was never given" actually means.
+    const applicableCodes = new Set(applicable.map((c) => c.code));
+    for (const c of allComponents) {
+      if (!applicableCodes.has(c.code)) baseContext[c.code] = 0;
+    }
+
     const earningComponents = applicable.filter(
       (c) =>
         c.type === SalaryComponentType.EARNING && !c.isEmployerContribution,
