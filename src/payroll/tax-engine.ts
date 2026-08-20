@@ -152,7 +152,7 @@ export function calculateTax({
 }: CalculateTaxInput): TaxDetails {
   if (!taxSlabConfig) {
     throw new Error(
-      'No tax slab configuration found for this financial year/regime',
+      'No tax slab configuration found for this financial year/regime.',
     );
   }
 

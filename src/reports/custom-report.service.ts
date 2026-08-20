@@ -47,7 +47,7 @@ export class CustomReportService {
     const src = CUSTOM_REPORT_SOURCES[query.source];
     if (!src) {
       throw new BadRequestException(
-        `source must be one of: ${Object.keys(CUSTOM_REPORT_SOURCES).join(', ')}`,
+        `source must be one of: ${Object.keys(CUSTOM_REPORT_SOURCES).join(', ')}.`,
       );
     }
     if (actor.role === Role.MANAGER) {

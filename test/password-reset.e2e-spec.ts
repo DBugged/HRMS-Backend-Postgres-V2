@@ -133,7 +133,7 @@ describe('Password Reset (e2e)', () => {
       .send({ token: rawToken, password: 'BrandNewPassword123!' })
       .expect(201);
     expect((res.body as MessageBody).message).toBe(
-      'Password updated successfully. Please login.',
+      'Password updated successfully. Please log in.',
     );
 
     const user = await prisma.user.findFirstOrThrow({

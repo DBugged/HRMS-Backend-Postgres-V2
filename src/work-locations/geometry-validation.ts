@@ -26,7 +26,7 @@ export function validateGeometry(input: GeometryInput): void {
       !Number.isFinite(Number(longitude))
     ) {
       throw new Error(
-        'Latitude and longitude are required for a circle geo-fence',
+        'Latitude and longitude are required for a circle geo-fence.',
       );
     }
     return;
@@ -36,7 +36,7 @@ export function validateGeometry(input: GeometryInput): void {
     const bounds = boundary?.bounds;
     if (!isValidPointPair(bounds, 2)) {
       throw new Error(
-        'Rectangle geo-fence requires two corner points ([[lat,lng],[lat,lng]])',
+        'Rectangle geo-fence requires two corner points ([[lat,lng],[lat,lng]]).',
       );
     }
     return;
@@ -46,7 +46,7 @@ export function validateGeometry(input: GeometryInput): void {
   const vertices = boundary?.vertices;
   if (!isValidPointPair(vertices, 3, true)) {
     throw new Error(
-      'Polygon geo-fence requires at least 3 vertices ([[lat,lng], ...])',
+      'Polygon geo-fence requires at least 3 vertices ([[lat,lng], ...]).',
     );
   }
 }

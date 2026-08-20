@@ -92,7 +92,7 @@ export class StatutoryConfigController {
   private assertKnownModule(module: string): StatutoryModule {
     const upper = module.toUpperCase();
     if (!Object.values(StatutoryModule).includes(upper as StatutoryModule)) {
-      throw new BadRequestException(`Unknown statutory module: ${module}`);
+      throw new BadRequestException(`Unknown statutory module: ${module}.`);
     }
     return upper as StatutoryModule;
   }

@@ -332,7 +332,7 @@ export class AuthService {
       }),
     ]);
 
-    return { message: 'Password updated successfully. Please login.' };
+    return { message: 'Password updated successfully. Please log in.' };
   }
 
   // Shared by the mandatory first-login flow (mustChangePassword=true) and
