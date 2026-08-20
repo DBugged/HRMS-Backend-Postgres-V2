@@ -54,7 +54,18 @@ const ATTENDANCE_PREFS_KEYS = [
 ] as const;
 
 const SECTION_FIELDS: Record<string, string[]> = {
-  profile: ['companyName', 'legalName', 'tagline', 'description'],
+  // companyLogoUrl/assetMeta are also editable from this tab (the Setup
+  // Wizard's Company Profile step has its own logo uploader alongside
+  // Branding's) — must be whitelisted here too, or a save from this tab
+  // silently drops the logo the user just uploaded.
+  profile: [
+    'companyName',
+    'legalName',
+    'tagline',
+    'description',
+    'companyLogoUrl',
+    'assetMeta',
+  ],
   registration: [
     'gstin',
     'pan',

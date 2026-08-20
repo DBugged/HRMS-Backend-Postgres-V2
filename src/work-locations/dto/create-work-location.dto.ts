@@ -6,6 +6,7 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Min,
 } from 'class-validator';
 import { FenceType } from '@prisma/client';
 
@@ -56,9 +57,12 @@ export class CreateWorkLocationDto {
   @IsNumber()
   longitude?: number;
 
+  // A zero/negative radius silently breaks the punch-in/out distance check
+  // (attendance-shift-config.ts) rather than rejecting the request.
   @ApiPropertyOptional({ default: 200 })
   @IsOptional()
   @IsNumber()
+  @Min(1)
   radiusMeters?: number;
 
   @ApiPropertyOptional({ enum: FenceType, default: FenceType.CIRCLE })

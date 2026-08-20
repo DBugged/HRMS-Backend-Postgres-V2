@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
 } from 'class-validator';
 import { Role } from '@prisma/client';
 
@@ -27,8 +28,13 @@ export class CreateEmployeeDto {
   // sends the welcome email (login URL, employee ID, generated password);
   // when absent (bulk-imported rows), no email is sent, matching today's
   // fallback of returning the password in the response only.
+  // '' and absent are both "don't send a welcome email" to
+  // EmployeesService.create()'s truthy checks, so '' has to stay valid —
+  // @IsOptional alone only skips validation for undefined, same class of
+  // bug as UpdateEmployeeDto.officialEmail / SendNotificationDto.department.
   @ApiPropertyOptional({ example: 'jane.personal@gmail.com' })
   @IsOptional()
+  @ValidateIf((o: CreateEmployeeDto) => o.personalEmail !== '')
   @IsEmail()
   personalEmail?: string;
 

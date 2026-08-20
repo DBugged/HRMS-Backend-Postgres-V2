@@ -281,6 +281,13 @@ export class EmployeesService {
       where: { id, organizationId },
       data: {
         ...clean,
+        // officialEmail is @unique — writing '' literally (rather than
+        // null) means the second employee to clear it collides with the
+        // first and gets an unhandled unique-constraint 500. '' and
+        // "not yet provisioned" are the same thing to callers (see the
+        // DTO's ValidateIf comment), so normalize to null on write; NULLs
+        // are exempt from the unique index, unlike duplicate ''s.
+        officialEmail: clean.officialEmail === '' ? null : clean.officialEmail,
         joiningDate: clean.joiningDate
           ? new Date(clean.joiningDate)
           : undefined,
