@@ -24,7 +24,15 @@ export function fileStorageDriver(): 'local' | 's3' {
 // namespacing by org meaningful as an access boundary rather than just
 // tidier storage, and what stays byte-for-byte identical across both
 // drivers (see file-serve.controller.ts).
-export const UPLOAD_ROOT = path.join(__dirname, '../../uploads');
+// Anchored to process.cwd() rather than __dirname: tsc's outDir preserves
+// the src/ prefix inside dist/ (compiled files land at dist/src/files/, one
+// level deeper than src/files/), so a __dirname-relative path resolved to a
+// different depth depending on whether the process was running compiled
+// (dist/src/files/../../uploads → dist/uploads, silently wiped by every
+// `nest build`, which has deleteOutDir: true) or via ts-node (src/files/../../uploads
+// → the real uploads/ dir). Nest is always started with cwd at the project
+// root in every mode (start, start:dev, start:prod, test), so this is stable.
+export const UPLOAD_ROOT = path.join(process.cwd(), 'uploads');
 
 export interface FileCategoryConfig {
   allowedMimePrefixes: string[];

@@ -1,0 +1,3 @@
+-- AlterEnum
+ALTER TYPE "Gender" ADD VALUE 'PREFER_NOT_TO_SAY';
+
