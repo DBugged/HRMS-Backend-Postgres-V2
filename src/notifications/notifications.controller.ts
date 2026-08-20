@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to list, read, and set preferences for a caller's notifications, plus an admin broadcast.
+// Responsibilities: Validates DTOs and delegates all logic to NotificationsService.
+// Important: Only sendBroadcast is gated to ADMIN/HR; everything else self-scopes to the caller.
 import {
   Body,
   Controller,

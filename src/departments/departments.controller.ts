@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for departments, plus assigning a department head and mapping employees to a department.
+// Responsibilities: Validates DTOs and delegates all logic to DepartmentsService.
+// Important: Only findAll (list) has no @Roles() — needed for dropdowns on other forms; all writes are ADMIN/HR.
 import {
   Body,
   Controller,

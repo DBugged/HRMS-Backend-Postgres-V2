@@ -1,3 +1,10 @@
+// Purpose: Manages per-employee, per-financial-year tax declarations (regime choice, 80C/80D/etc.
+// deductions, HRA/LTA inputs) that PayrollService.calculatePayroll reads for TDS calculation.
+// Responsibilities: Owns self-vs-other employeeId resolution (an EMPLOYEE is always forced to their own
+// record) and upsert-by-(employee, financialYear).
+// Important: upsert()'s isOwnDeclaration check is identity-based, not role-based — an HR/Admin caller
+// editing their OWN declaration can never set `status` themselves (closing a self-verification loophole),
+// even though they could set it freely when editing someone else's.
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import {
   EmployeeTaxDeclaration,

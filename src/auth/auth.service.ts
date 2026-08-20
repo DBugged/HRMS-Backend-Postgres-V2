@@ -1,3 +1,13 @@
+// Purpose: Handles registration (org + founder bootstrap), login, token refresh/rotation, logout, and
+// password reset/change.
+// Responsibilities: Owns JWT access/refresh token issuance and hashing; delegates default-data seeding on
+// registration to StatutoryConfigService, LeaveTypesService, SalaryComponentsService and HolidaysService,
+// and employeeId generation to EmployeeIdService, all inside one transaction.
+// Important: register() and resetPassword() must run on the tenant-scope-extended client's own
+// $transaction (see constructor comment) or the tx writes silently bypass tenant scoping. Refresh tokens
+// rotate on every use (revoke-and-reissue) to limit replay of a leaked token. forgotPassword() and
+// findRefreshTokenByHash() deliberately return the same response/bypass tenant scoping for tenant-unknown
+// lookups by design, not by oversight.
 import {
   BadRequestException,
   ConflictException,

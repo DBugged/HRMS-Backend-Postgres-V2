@@ -1,3 +1,8 @@
+// Purpose: CRUD for Department records, department-head assignment, and employee-to-department mapping.
+// Responsibilities: Owns department lifecycle including deletion guard (blocks delete while employees are
+// mapped); assignHead() folds a role promotion (to MANAGER) into the same call as head assignment.
+// Important: assignHead() refuses to promote a user who already holds ADMIN/HR (NON_DEMOTABLE_ROLES) since
+// that would silently demote their real role to MANAGER — mirrors the frontend's own NON_DEMOTABLE_ROLES list.
 import {
   BadRequestException,
   ConflictException,

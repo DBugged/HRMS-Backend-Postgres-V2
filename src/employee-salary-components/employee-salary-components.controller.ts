@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints for viewing and setting an employee's salary component structure and history.
+// Responsibilities: Validates DTOs and delegates all logic to EmployeeSalaryComponentsService.
+// Important: getStructure uses @SelfOrRoles so an employee can view their own structure; writes are ADMIN/HR only.
 import {
   Body,
   Controller,

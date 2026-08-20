@@ -1,3 +1,6 @@
+// Purpose: Exposes a single endpoint for querying the organization's audit log.
+// Responsibilities: Validates the query DTO and delegates to AuditLogService.
+// Important: Restricted to ADMIN/HR at the controller level, with no per-route override.
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';

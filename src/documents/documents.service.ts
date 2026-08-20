@@ -1,3 +1,11 @@
+// Purpose: Manages the policy-document library (versioned, visibility-scoped) and the org's document
+// requirement checklist.
+// Responsibilities: Owns policy CRUD/versioning (a linked list via previousVersionId) and requirement CRUD;
+// signs stored file URLs on every read via signFileToken rather than persisting signed URLs.
+// Important: canView() implements role/department/employee visibility scoping ported from the old system's
+// canViewPolicy; HR/Admin bypass visibility entirely since they manage the library, not just consume it.
+// deletePolicy() only deletes the underlying file when fileUrl is an internal storage key, never an
+// external URL a user pasted in.
 import {
   BadRequestException,
   Inject,

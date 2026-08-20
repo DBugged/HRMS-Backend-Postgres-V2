@@ -1,3 +1,12 @@
+// Purpose: Core attendance engine — derives daily Attendance rows from punches, holidays and approved
+// leave, and manages punch ingestion, WFH/regularization review, and bulk Excel import workflows.
+// Responsibilities: Owns recalculateAttendanceForDay() as the single source of truth for a day's status;
+// integrates with LeavesService (write/revertAttendanceForLeave), NotificationsService and EmailService for
+// alerts, and EmployeeTimelineService for WFH audit events; delegates geo-fence math to isInsideGeoFence.
+// Important: recalculateAttendanceForDay() read-merges rather than blind-upserts, so it never clobbers
+// workArrangement/regularization fields owned by other write paths — see the inline comments throughout
+// for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
+// executeImportBatch since Attendance has no unique constraint on employeeId+date).
 import {
   BadRequestException,
   ForbiddenException,

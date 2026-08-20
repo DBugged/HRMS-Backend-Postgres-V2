@@ -1,3 +1,9 @@
+// Purpose: Sends birthday and work-anniversary wishes (notification + email) to employees, org-wide.
+// Responsibilities: Owns the daily cron trigger (sendDailyWishes) and per-org wish logic (sendWishesForOrg);
+// delegates actual delivery to NotificationsService/EmailService.
+// Important: matches month/day in UTC to stay consistent with how joiningDate/dateOfBirth are stored
+// elsewhere, and is not deduped against a same-day re-run (e.g. after a restart) — wishes simply resend,
+// same accepted precedent as the Marked Absent email in AttendanceService.
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory } from '@prisma/client';

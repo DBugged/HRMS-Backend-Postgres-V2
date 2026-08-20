@@ -1,3 +1,6 @@
+// Purpose: Exposes attendance/leave/payroll/employee/department/headcount/attrition reports as file exports.
+// Responsibilities: Validates each query DTO and delegates report generation/export to ReportsService.
+// Important: Base gate is ADMIN/HR/MANAGER, but payroll/employee/department/headcount/attrition routes further restrict to ADMIN/HR.
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';

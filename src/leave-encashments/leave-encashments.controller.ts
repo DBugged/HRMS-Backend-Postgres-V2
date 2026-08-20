@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to request, list, and review leave-encashment requests.
+// Responsibilities: Validates DTOs and delegates all logic to LeaveEncashmentsService.
+// Important: Only review is gated to ADMIN/HR/MANAGER; findAll/request have no @Roles() and self-scope for EMPLOYEE in the service.
 import {
   Body,
   Controller,

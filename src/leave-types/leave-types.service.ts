@@ -1,3 +1,9 @@
+// Purpose: CRUD for LeaveType policy definitions, plus HR-triggered accrual and year-end carry-forward runs.
+// Responsibilities: Owns leave-type name/code uniqueness and registration-time default seeding
+// (seedDefaults, called from AuthService.register()); delegates actual balance math to
+// LeaveBalanceService.creditAccrual/runYearEndCarryForward and audits both runs via AuditLogService.
+// Important: rules/carryForward/negativeBalance/encashment are opaque JSON columns validated only by the
+// DTO shape, not by a DB schema — keep leave-type-defaults.ts's shapes in sync with what the engine expects.
 import {
   ConflictException,
   Inject,

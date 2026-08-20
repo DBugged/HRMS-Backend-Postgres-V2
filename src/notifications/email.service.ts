@@ -1,3 +1,9 @@
+// Purpose: Single outbound-email gateway for the whole app, switchable between Resend and SMTP.
+// Responsibilities: Owns provider selection (EMAIL_DRIVER env var), lazy transporter/client construction,
+// and the dry-run/console fallback so a delivery failure never silently loses time-sensitive content.
+// Important: send() never throws — any provider failure (or missing credentials) degrades to a console
+// dry-run log rather than propagating, so a bad SMTP/Resend config can never fail the caller's business
+// action. Only an explicit EMAIL_DRIVER=resend switches off the default SMTP path.
 import { Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { Resend } from 'resend';

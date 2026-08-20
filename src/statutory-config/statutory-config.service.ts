@@ -1,3 +1,13 @@
+// Purpose: Versioned, effective-dated statutory config (PF/ESI/PT/LWF/NPS/Gratuity/Bonus/Income
+// Tax/Employer Insurance) per module, with the read path PayrollService relies on to resolve "what applied
+// on this date."
+// Responsibilities: Owns getEffective() (cached point-in-time resolution) and create()/remove() version
+// management, closing out the currently-open version's effectiveTo when a new one starts and reopening it
+// if the newer one is deleted; seedDefaults() pre-populates all 9 modules at registration.
+// Important: getEffective() is cached (5 min TTL, invalidated on every write) because it's hit once per
+// module per employee inside a full payroll batch — O(9xN) lookups of data that rarely changes. remove()
+// only allows deleting a future-dated version — past/current versions are permanent history — and refuses
+// to delete the last remaining version for a module.
 import {
   BadRequestException,
   ConflictException,

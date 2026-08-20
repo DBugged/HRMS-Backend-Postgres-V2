@@ -1,3 +1,6 @@
+// Purpose: Exposes get/update endpoints for the organization's payroll settings (pay cycle dates, etc.).
+// Responsibilities: Validates the update DTO and delegates to PayrollSettingsService, which resolves cycle dates.
+// Important: Entire controller is gated to ADMIN/HR.
 import { Body, Controller, Get, Put, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';

@@ -1,3 +1,9 @@
+// Purpose: CRUD for WorkLocation geo-fences (circle or polygon) used to gate self-punch attendance.
+// Responsibilities: Owns geometry validation/derivation (assertValidGeometry, deriveCircleSummary) on both
+// create and any update that touches geometry fields; checkPoint() lets the frontend test a lat/lng against
+// a saved fence before relying on AttendanceService's own runtime check.
+// Important: for a CIRCLE fence, `boundary` is always stored as JsonNull (not the raw circle math) — the
+// derived summary (latitude/longitude/radiusMeters) is the single source of truth for circle fences.
 import {
   BadRequestException,
   Inject,

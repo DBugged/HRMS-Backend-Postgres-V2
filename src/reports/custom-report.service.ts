@@ -1,3 +1,11 @@
+// Purpose: Generic ad-hoc report builder — pick a data source, pick columns, get rows — driving the
+// frontend's custom report screen.
+// Responsibilities: Owns column/source validation and MANAGER-role scoping (forced to their own department,
+// blocked from restricted sources); delegates actual data fetching per source to CUSTOM_REPORT_SOURCES'
+// fetch functions.
+// Important: MANAGER_BLOCKED_SOURCES exists so this generic builder can't become a side door around the
+// ADMIN/HR-only restriction the dedicated /reports/payroll route already enforces; a MANAGER with no
+// department assigned is denied outright rather than silently falling through to an unfiltered (org-wide) view.
 import {
   BadRequestException,
   ForbiddenException,

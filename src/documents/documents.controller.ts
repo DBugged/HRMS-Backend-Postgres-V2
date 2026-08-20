@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for policy documents and per-employee document requirements.
+// Responsibilities: Validates DTOs and delegates all logic to DocumentsService.
+// Important: Read endpoints have no @Roles() and are visibility-filtered in the service; writes are ADMIN/HR only.
 import {
   Body,
   Controller,

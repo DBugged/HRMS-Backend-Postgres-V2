@@ -1,3 +1,11 @@
+// Purpose: Backs the multi-step Setup Wizard / Organization Settings screens — per-section field writes,
+// branding/logo URL signing, setup completion/reset, and the Face API webhook key.
+// Responsibilities: Owns SECTION_FIELDS as the real security boundary (a client can send any JSON body, only
+// whitelisted keys per section are ever written) and derives the narrower attendancePayrollPrefs from
+// orgPayrollAttendancePrefs on every attendancePayroll-section write.
+// Important: regenerateFaceApiKey() replaces the old single process-wide FACE_API_KEY that let anyone
+// holding it forge attendance webhooks for ANY organization; the generated key is shown once and never
+// exposed again on a read path, same as a generated employee password.
 import {
   BadRequestException,
   Injectable,

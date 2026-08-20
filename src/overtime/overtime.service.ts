@@ -1,3 +1,9 @@
+// Purpose: Employee-logged overtime records and manager/HR single-level review.
+// Responsibilities: Owns rateMultiplier derivation from `type` (REGULAR/HOLIDAY/WEEKEND/NIGHT) at log time —
+// always server-computed, never client-supplied — and department-scoped review authorization via
+// assertManagerDeptScope.
+// Important: rateMultiplier is fixed per type at creation and not recalculated later, so a later change to
+// RATE_MULTIPLIERS only affects new records, not historical ones.
 import {
   BadRequestException,
   Inject,

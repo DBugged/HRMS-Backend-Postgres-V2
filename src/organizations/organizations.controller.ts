@@ -1,3 +1,6 @@
+// Purpose: Exposes the organization's own profile plus the setup-wizard settings (branding, sections, face-api key).
+// Responsibilities: Validates DTOs and delegates to OrganizationsService (profile) or OrganizationSettingsService (setup).
+// Important: `settings/:section` intentionally takes a plain object, not a typed DTO — shape varies per section and is whitelisted server-side against SECTION_FIELDS.
 import {
   Body,
   Controller,

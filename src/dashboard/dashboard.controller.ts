@@ -1,3 +1,6 @@
+// Purpose: Exposes role-specific dashboard aggregates (HR, executive, department-head, employee, payroll cost).
+// Responsibilities: Validates the date-range query param and delegates all aggregation to DashboardService.
+// Important: hr/executive are gated to ADMIN/HR (fixed here vs. old system); department-head/employee self-scope in the service.
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';

@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to earn, list, and review compensatory-off (comp-off) requests and check balances.
+// Responsibilities: Validates DTOs and delegates all logic to CompOffService.
+// Important: Only review is gated to ADMIN/HR/MANAGER; other routes have no @Roles() and self-scope in the service.
 import {
   Body,
   Controller,

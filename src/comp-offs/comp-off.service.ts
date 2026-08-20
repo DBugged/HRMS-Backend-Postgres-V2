@@ -1,3 +1,9 @@
+// Purpose: Manages comp-off (compensatory time off) earning, review, expiry, and consumption.
+// Responsibilities: Owns comp-off CRUD, balance calculation and expiry sweeping; exposes
+// consumeForLeave()/releaseForLeave() for LeavesService to debit/credit balance transactionally when a
+// COMPOFF-type Leave is approved or cancelled, rather than duplicating comp-off math there.
+// Important: consumeForLeave() throws on insufficient balance rather than partially consuming — callers
+// must check availability before approving. sweepExpired() runs inline before reads, not on a cron.
 import {
   BadRequestException,
   ForbiddenException,

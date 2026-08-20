@@ -1,3 +1,9 @@
+// Purpose: Manages an employee's individual salary-component structure as a revision history over time.
+// Responsibilities: Owns applyRevision() (close-out-then-insert, never mutates an existing row's value
+// fields) shared by setComponentValue and bulkSetStructure; exposes getCurrentMonthlyValue() for other
+// modules (e.g. Leave Encashment) to resolve one component's live monthly value without a full payroll run.
+// Important: getCurrentMonthlyValue() resolves formula/percentage dependencies recursively via
+// extractDependencies/resolveComponentValue, so component definitions can reference each other by code.
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   EmployeeSalaryComponent,

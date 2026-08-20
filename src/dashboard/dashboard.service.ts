@@ -1,3 +1,11 @@
+// Purpose: Aggregates read-only dashboard views for HR, department-head, employee and executive roles.
+// Responsibilities: Owns all cross-model aggregation queries and derived stats (payroll cost summary,
+// attendance/leave/reimbursement snapshots, headcount trend, upcoming birthdays/anniversaries); delegates
+// payroll settings lookup to PayrollSettingsService and comp-off balance to CompOffService rather than
+// recomputing them.
+// Important: departmentHeadDashboard() intentionally ports a quirk from the old system — a manager with no
+// department matches every other no-department user via departmentId: null, not zero rows.
+// computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AttendanceStatus,

@@ -1,3 +1,11 @@
+// Purpose: Manages the employee-profile "extras" — personal data, probation decisions, documents, and
+// assets — kept separate from EmployeesService's core CRUD.
+// Responsibilities: Owns updatePersonalData (deep-merge, not overwrite), probationDecision (status +
+// history + timeline event), and document/asset lifecycle; delegates timeline logging and
+// notification/email delivery to their respective services.
+// Important: assertSelfOrHr() gates personal-data/document/asset self-service so a non-HR actor can only
+// touch their own profile; getFullProfile() is the HR/Admin-only variant that returns everything, unlike
+// the password-stripped-only view elsewhere.
 import {
   BadRequestException,
   ForbiddenException,

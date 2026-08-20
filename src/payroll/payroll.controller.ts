@@ -1,3 +1,6 @@
+// Purpose: Exposes the payroll run lifecycle — draft, calculate, adjust, verify/approve/lock/pay/unlock — plus payslip PDF download.
+// Responsibilities: Validates DTOs, streams payslip PDFs via raw @Res(), and delegates all logic to PayrollService/PayslipPdfService.
+// Important: Reads self/dept-scope inline in the service (EMPLOYEE own-only, MANAGER own-department); every write is ADMIN/HR.
 import {
   BadRequestException,
   Body,

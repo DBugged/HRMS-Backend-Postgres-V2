@@ -1,3 +1,8 @@
+// Purpose: Manages approval-delegation records letting a manager name a stand-in reviewer for a date range.
+// Responsibilities: Owns delegation CRUD/cancel; exposes isActiveDelegate() for LeavesService.review() to
+// check whether a delegate may act in a manager's place, rather than duplicating that lookup elsewhere.
+// Important: isActiveDelegate() mirrors the old leaveController.js's inline check exactly (active
+// delegation, today within [fromDate, toDate]) — keep the two in sync if the rule ever changes.
 import {
   BadRequestException,
   ForbiddenException,

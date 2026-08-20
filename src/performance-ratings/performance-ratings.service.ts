@@ -1,3 +1,7 @@
+// Purpose: Manages per-employee, per-financial-year PerformanceRating rows used to scale variable pay.
+// Responsibilities: Owns the upsert-by-(employee, financialYear) rule and MANAGER-can-only-rate-own-department
+// authorization; payoutPercentage set here is later read by PayrollService.calculatePayroll to scale
+// non-monthly earning components.
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import {
   NotificationCategory,

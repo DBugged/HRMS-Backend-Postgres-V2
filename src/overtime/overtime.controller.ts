@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to log, list, and review overtime entries.
+// Responsibilities: Validates DTOs and delegates all logic to OvertimeService.
+// Important: Only review is gated to ADMIN/HR/MANAGER; findAll/log have no @Roles() and self-scope for EMPLOYEE in the service.
 import {
   Body,
   Controller,

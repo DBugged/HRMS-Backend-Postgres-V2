@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to apply for, list, update, review, and cancel leave requests, plus balance/team-calendar views.
+// Responsibilities: Validates DTOs and delegates all logic to LeavesService.
+// Important: Most routes have no @Roles() and self-scope in the service; team-calendar/credit-history/review are ADMIN/HR/MANAGER.
 import {
   Body,
   Controller,

@@ -1,3 +1,6 @@
+// Purpose: Exposes fixed payroll reports (salary register, bank transfer, income tax, PF, ESI, PT, CTC, Form16, audit) as file exports.
+// Responsibilities: Validates each query DTO and delegates report generation/export to PayrollReportsService.
+// Important: Entire controller is gated to ADMIN/HR and throttled as an expensive operation.
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';

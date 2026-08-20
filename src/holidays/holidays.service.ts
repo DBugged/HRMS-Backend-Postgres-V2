@@ -1,3 +1,11 @@
+// Purpose: Manages the org's holiday calendar — CRUD, registration-time national-holiday seeding, and
+// spreadsheet bulk import.
+// Responsibilities: Owns duplicate detection (same name+date) and bulkImport()'s per-row fail-but-continue
+// validation; seedDefaults() is called once from AuthService.register() to pre-populate the current year's
+// 3 fixed National Holidays.
+// Important: bulkImport() mirrors the old bulkImportHolidays' behavior exactly — invalid or duplicate rows
+// are collected into `failed` rather than aborting the whole batch, and duplicates are checked both against
+// existing DB rows and within the same batch.
 import {
   ConflictException,
   Inject,

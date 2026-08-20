@@ -1,3 +1,10 @@
+// Purpose: Producer side of the background payslip-email job — enqueues PDF-build+send work onto BullMQ
+// when Redis is configured, so it runs off the request thread with retries.
+// Responsibilities: Owns queue/connection lifecycle only (construct-if-enabled, explicit close on module
+// destroy); the actual PDF build and email send live in PayslipEmailWorker (consumer side, elsewhere).
+// Important: enqueue() returns false when REDIS_URL isn't configured, and PayrollService.afterPay falls
+// back to doing the work inline in that case — this service is a pure opt-in accelerator, never a hard
+// dependency.
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { Queue } from 'bullmq';
 import IORedis from 'ioredis';

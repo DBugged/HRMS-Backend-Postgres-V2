@@ -1,3 +1,7 @@
+// Purpose: Employee expense-reimbursement claim submission and manager/HR review.
+// Responsibilities: Owns receipt-URL signing (withSignedReceipt, same relativeKey pattern as
+// DocumentsService.withSignedUrl) on every read, and department-scoped review authorization via
+// assertManagerDeptScope.
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   NotificationCategory,

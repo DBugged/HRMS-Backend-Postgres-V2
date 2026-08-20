@@ -1,3 +1,12 @@
+// Purpose: CRUD for org-defined SalaryComponent definitions (earnings/deductions/employer contributions)
+// that drive payroll calculation.
+// Responsibilities: Owns code derivation/uniqueness, display-order management, and circular-reference
+// detection across every active component's percentage/formula references (assertNoCircularReferences);
+// seedDefaults() is called from AuthService.register() to pre-populate the standard component catalog.
+// Important: create()/update() both validate the candidate component against every OTHER active component
+// before allowing a save, so a formula/percentage change can never introduce a reference cycle the payroll
+// engine's topoSortComponents would then be unable to resolve. remove() blocks deletion while any employee
+// has an override referencing this component's code — disable instead.
 import {
   BadRequestException,
   ConflictException,

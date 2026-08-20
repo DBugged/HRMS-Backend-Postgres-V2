@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to fetch and upsert an employee's investment/tax declaration for a financial year.
+// Responsibilities: Validates DTOs and delegates all logic to TaxDeclarationsService.
+// Important: No @Roles() anywhere — access is identity-based (self-vs-other) in the service, not role-based.
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { User } from '@prisma/client';

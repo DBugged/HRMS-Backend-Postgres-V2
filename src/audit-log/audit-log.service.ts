@@ -1,3 +1,9 @@
+// Purpose: Writes and lists AuditLog entries, the org's tamper trail of who did what.
+// Responsibilities: Owns log() (fire-and-forget writer) and findAll() (paginated, role-filtered reader);
+// callers throughout the app invoke log() but never read AuditLog directly.
+// Important: log() swallows and logs its own errors — a broken audit write must never fail the action it's
+// documenting. findAll() hides ADMIN/MANAGER activity from HR viewers (HR_HIDDEN_ACTOR_ROLES), mirroring
+// the old system's HR_HIDDEN_ACTOR_ROLES exactly.
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AuditModule, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';

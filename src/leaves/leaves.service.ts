@@ -1,3 +1,12 @@
+// Purpose: End-to-end leave lifecycle — apply, edit, single/two-level review, cancel — and its balance and
+// attendance side effects.
+// Responsibilities: Owns rule validation (via leave-rules/leave-balance-check), the pending/availed balance
+// hold-and-release dance (createLeaveInternal/releaseHold), and orchestrates AttendanceService
+// (write/revert attendance for approved leave), CompOffService (consume/release for COMPOFF-type leave),
+// and ApprovalDelegationService (stand-in reviewer support) — none of those own their own side of this flow.
+// Important: review() implements a two-level workflow where a MANAGER's approval on a 2-level leave type
+// only records level-1 sign-off (status stays PENDING); only ADMIN/HR can give final approval. releaseHold()
+// is the single place that reverses whatever a leave's current status implied, shared by update() and cancel().
 import {
   BadRequestException,
   ForbiddenException,

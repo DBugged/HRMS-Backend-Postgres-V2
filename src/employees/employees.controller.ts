@@ -1,3 +1,6 @@
+// Purpose: Exposes employee CRUD plus profile sub-resources — documents, assets, probation, role/status history.
+// Responsibilities: Validates DTOs and delegates to EmployeesService (core record) or EmployeeProfileService (sub-resources).
+// Important: Roles vary per route (ADMIN/HR, self-or-ADMIN/HR/MANAGER); document/asset read routes have no @Roles() and self-scope in the service.
 import {
   Body,
   Controller,

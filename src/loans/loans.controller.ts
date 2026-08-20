@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints for employee loans — creation, status updates, and repayment recording/listing.
+// Responsibilities: Validates DTOs and delegates all logic to LoansService.
+// Important: Loans are always initiated by ADMIN/HR on an employee's behalf, not self-service; reads self-scope in the service.
 import {
   Body,
   Controller,

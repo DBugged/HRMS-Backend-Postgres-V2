@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for payslip PDF templates, plus PDF preview rendering for drafts and saved templates.
+// Responsibilities: Validates DTOs, streams PDF buffers via raw @Res(), and delegates all logic to PayrollTemplatesService.
+// Important: Entire controller is gated to ADMIN/HR; `draft/preview` is registered before the `:id` routes so it isn't swallowed as a param.
 import {
   Body,
   Controller,

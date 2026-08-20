@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for leave types plus running accrual and carry-forward jobs.
+// Responsibilities: Validates DTOs and delegates all logic to LeaveTypesService.
+// Important: Static routes (eligible/me, run-carry-forward) are declared before :id routes so Nest doesn't treat them as a param.
 import {
   Body,
   Controller,

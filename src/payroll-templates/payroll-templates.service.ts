@@ -1,3 +1,9 @@
+// Purpose: CRUD for payslip PDF templates (branding/layout options) and default-template management.
+// Responsibilities: Owns the single-default-per-org invariant (unsetOtherDefaults on create/setDefault) and
+// preview generation, delegating actual PDF rendering to PayslipPdfService.
+// Important: previewDraft() merges an unsaved editor draft over DRAFT_DEFAULTS (mirroring the Prisma column
+// defaults) so the rendered preview always has every field the PDF layout reads, even for a brand-new
+// session. isDefault is deliberately excluded from UpdatePayrollTemplateDto — only setDefault() may flip it.
 import {
   BadRequestException,
   Inject,

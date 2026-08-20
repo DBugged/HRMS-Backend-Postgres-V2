@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for the organization's holiday calendar, plus bulk import.
+// Responsibilities: Validates DTOs and delegates all logic to HolidaysService.
+// Important: findAll has no @Roles() — any authenticated caller can view the calendar; writes are ADMIN/HR only.
 import {
   Body,
   Controller,

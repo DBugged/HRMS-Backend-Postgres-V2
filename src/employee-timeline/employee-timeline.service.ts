@@ -1,3 +1,10 @@
+// Purpose: Records and serves the per-employee activity timeline (onboarding, WFH, regularization, etc.).
+// Responsibilities: Owns logEvent() as the single write path other services call to append timeline
+// entries, and findAll()/fetchForExport() as the paginated/export read paths; delegates event-category and
+// default-title lookup to the EVENT_META table.
+// Important: logEvent() is fire-and-forget (swallows and logs its own errors), same posture as
+// AuditLogService.log() — a broken timeline write must never fail the action it's documenting. View access
+// is scoped like EmployeesService.findOne: a MANAGER may only view their own department's employees.
 import {
   ForbiddenException,
   Inject,

@@ -1,3 +1,8 @@
+// Purpose: General-purpose exportable reports — attendance, leave register/balance/history, department
+// leave summary, payroll, employee, department, headcount trend, and attrition.
+// Responsibilities: Owns per-report row/column shaping and MANAGER dept-scoping (always forced to the
+// caller's own department, never a caller-chosen one); delegates headcount/attrition math to
+// DashboardService.computeHeadcountTrend so the numbers stay consistent with the Executive Dashboard.
 import { Inject, Injectable } from '@nestjs/common';
 import { LeaveStatus, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';

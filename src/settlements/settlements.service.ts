@@ -1,3 +1,14 @@
+// Purpose: Computes and processes full & final settlements for departing employees (pending salary, leave
+// encashment, gratuity, bonus, minus recoveries/loan balance/notice-period recovery).
+// Responsibilities: Owns settlement-figure calculation (calculate(), idempotent DRAFT preview) and
+// process() (locks the settlement in, creates a linked isFinalSettlement PayrollRun so the same universal
+// payslip renderer works, closes active loans, deactivates the employee) inside one transaction; delegates
+// the pending-salary component to PayrollService.calculatePayroll.
+// Important: gratuity requires >= 5 years of service (YEARS_FOR_GRATUITY_ELIGIBILITY, Payment of Gratuity
+// Act 1972, ported verbatim); leave-encashment sums every encashment-allowed LeaveType's closing balance
+// with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
+// email goes to the employee's personalEmail, not their login email, since by process() time the account is
+// already deactivated.
 import {
   BadRequestException,
   Inject,

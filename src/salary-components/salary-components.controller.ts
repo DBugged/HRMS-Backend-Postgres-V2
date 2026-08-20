@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for salary component definitions, plus reordering and formula validation.
+// Responsibilities: Validates DTOs and delegates all logic to SalaryComponentsService.
+// Important: Entire controller is gated to ADMIN/HR; validate-formula is registered before ':id' so it isn't swallowed as a param.
 import {
   Body,
   Controller,

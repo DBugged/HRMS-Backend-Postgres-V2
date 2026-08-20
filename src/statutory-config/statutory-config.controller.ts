@@ -1,3 +1,6 @@
+// Purpose: Exposes versioned CRUD for statutory compliance config (PF/ESI/PT/etc. rules) by module and effective date.
+// Responsibilities: Validates the module param/DTOs and delegates all logic to StatutoryConfigService.
+// Important: Deliberately ADMIN-only (not the usual ADMIN/HR payroll-config split) — enabling a statutory module is an org-level compliance decision.
 import {
   BadRequestException,
   Body,

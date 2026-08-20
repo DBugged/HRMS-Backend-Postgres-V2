@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to claim, list, and review reimbursement requests.
+// Responsibilities: Validates DTOs and delegates all logic to ReimbursementsService.
+// Important: Only review is gated to ADMIN/HR; findAll/create have no @Roles() and self-scope for EMPLOYEE in the service.
 import {
   Body,
   Controller,

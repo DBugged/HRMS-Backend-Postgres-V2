@@ -1,3 +1,11 @@
+// Purpose: Payroll-specific exportable reports — salary register, bank transfer, income tax, PF/ESI/PT,
+// employer contributions, bonus, CTC, Form 16 summary, and payroll audit trail.
+// Responsibilities: Owns per-report row/column shaping only; all read from already-persisted, already-
+// calculated PayrollRun snapshots (or the audit log) rather than recomputing anything.
+// Important: reports filter by each run's own snapshot data (e.g. "has an INCOME_TAX deduction line") rather
+// than re-deriving current settings/statutory-overlay for the period, since a run's own snapshot is
+// authoritative for what applied at that time even if settings changed since. bankTransferReport's account
+// fields always render '-' since no bank-details fields exist on User yet (same gap as the payslip PDF).
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AuditModule,

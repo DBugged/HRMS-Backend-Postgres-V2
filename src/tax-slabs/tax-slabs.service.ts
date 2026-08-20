@@ -1,3 +1,7 @@
+// Purpose: CRUD for per-financial-year, per-regime TaxSlabConfig rows (slabs, standard deduction, cess,
+// surcharge, 87A rebate) that PayrollService.calculatePayroll's tax engine reads.
+// Responsibilities: Owns upsert-by-(financialYear, regime) and exposes getDefaults() (static slab data,
+// not persisted) for the frontend to pre-fill a new config.
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TaxRegime } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';

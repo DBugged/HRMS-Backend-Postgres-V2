@@ -1,3 +1,6 @@
+// Purpose: Exposes punch in/out, work-arrangement, regularization, import-batch, and absentee-notification endpoints.
+// Responsibilities: Validates DTOs and delegates all business logic to AttendanceService.
+// Important: punch/ingest is @Public(), authenticated by a shared-secret x-face-api-key header instead of a JWT.
 import {
   Body,
   Controller,

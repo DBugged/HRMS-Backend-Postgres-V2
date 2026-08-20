@@ -1,3 +1,6 @@
+// Purpose: Read/update the caller's own Organization record (the tenant-boundary entity itself).
+// Responsibilities: Owns findOwn()/updateOwn(), both always scoped by the authenticated caller's own
+// organizationId rather than any client-supplied id; strips faceApiKey from every response.
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';

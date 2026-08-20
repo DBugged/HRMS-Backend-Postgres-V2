@@ -1,3 +1,11 @@
+// Purpose: Manages the employee exit workflow — initiate, checklist, exit interview, settlement linking,
+// completion (deactivates the account), and cancellation.
+// Responsibilities: Owns the OffboardingCase state machine (INITIATED -> IN_PROGRESS -> COMPLETED/CANCELLED)
+// and its completion gate; delegates audit/timeline logging and notification/email delivery to their
+// respective services.
+// Important: complete() requires assetsReturned, accessRevoked, exitInterviewDone, and a linked settlement
+// all present before it will deactivate the account — the deactivation and case-completion write happen in
+// one transaction so the account is never left active with a "completed" case, or vice versa.
 import {
   BadRequestException,
   Inject,

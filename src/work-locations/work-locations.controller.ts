@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for geofenced work locations plus a lat/long point-in-geofence check.
+// Responsibilities: Validates DTOs and delegates all logic to WorkLocationsService.
+// Important: Reads have no @Roles() — needed for punch-in UI regardless of caller role; writes are ADMIN/HR only.
 import {
   Body,
   Controller,

@@ -1,3 +1,11 @@
+// Purpose: Writes/reads in-app Notification rows and handles HR/Admin broadcast to all/department/specific
+// recipients.
+// Responsibilities: Owns create()/createMany() as the shared write path every other module calls, and
+// per-user preference storage (muted categories, email-enabled) read via readPreferences(); delegates
+// actual email delivery to EmailService and broadcast auditing to AuditLogService.
+// Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the old system exactly);
+// the optional accompanying email is gated per-recipient by their own emailEnabled preference — the only
+// place that flag is actually consulted.
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import {
   AuditModule,

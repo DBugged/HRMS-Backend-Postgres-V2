@@ -1,3 +1,6 @@
+// Purpose: Exposes full-and-final settlement endpoints — calculate, process, and mark paid.
+// Responsibilities: Validates DTOs and delegates all logic to SettlementsService.
+// Important: calculate/process/pay are gated to ADMIN/HR; findAll has no @Roles() and self-scopes for EMPLOYEE in the service.
 import {
   Body,
   Controller,

@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints for creating, listing, and cancelling approval delegations.
+// Responsibilities: Validates DTOs and delegates all logic to ApprovalDelegationService.
+// Important: Gated to ADMIN/HR/MANAGER — only roles that can ever be an approver may create/view delegations.
 import {
   Body,
   Controller,

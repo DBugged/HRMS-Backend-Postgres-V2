@@ -1,3 +1,13 @@
+// Purpose: Core employee CRUD — create/list/find/update/deactivate — plus credential issuance and change
+// history tracking.
+// Responsibilities: Owns password generation and welcome/resend-credentials email content; delegates
+// employeeId generation to EmployeeIdService and change-history/timeline logging (logChangesIfAny) inline
+// rather than to a shared audit helper; bulkCreate() reuses create() row-by-row so seat limits and role
+// defaults stay in one place.
+// Important: update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
+// just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
+// pre-check. officialEmail is normalized to null (not '') on clear since it's a unique column and empty
+// strings would collide across employees.
 import {
   ConflictException,
   ForbiddenException,

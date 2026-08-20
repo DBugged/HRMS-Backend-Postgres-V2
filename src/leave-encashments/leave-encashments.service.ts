@@ -1,3 +1,10 @@
+// Purpose: Lets an employee request encashment of unused leave for cash, and lets a reviewer approve/reject it.
+// Responsibilities: Owns request-time eligibility/limit checks against the leave type's `encashment` rule
+// and rate calculation (current BASIC monthly value via EmployeeSalaryComponentsService, converted with
+// dailyRateFromMonthly); delegates the actual balance debit to LeaveBalanceService.
+// Important: review()'s balance deduction on APPROVED is a second, independent deduction — request() only
+// validated availability, it never reserved a hold — so this carries the old system's latent race condition
+// forward as-is (ported deliberately, not an oversight).
 import {
   BadRequestException,
   Inject,

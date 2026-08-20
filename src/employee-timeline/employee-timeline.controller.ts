@@ -1,3 +1,6 @@
+// Purpose: Exposes an employee's activity timeline and its Excel/PDF export, mounted at /employees/:id/timeline.
+// Responsibilities: Validates the query DTO, streams exports via sendReport, and delegates data fetching to EmployeeTimelineService.
+// Important: Self-or-role scoped (self, or ADMIN/HR/MANAGER — MANAGER further restricted to own department in the service).
 import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';

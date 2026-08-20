@@ -1,3 +1,6 @@
+// Purpose: Exposes endpoints to list and upsert employee performance ratings.
+// Responsibilities: Validates DTOs and delegates all logic to PerformanceRatingsService.
+// Important: Entire controller is gated to ADMIN/HR/MANAGER; MANAGER scoping (e.g. own department) is enforced in the service.
 import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';

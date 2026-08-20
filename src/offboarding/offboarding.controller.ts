@@ -1,3 +1,6 @@
+// Purpose: Exposes the full offboarding workflow — initiate, checklist, exit interview, settlement link, complete/cancel.
+// Responsibilities: Validates DTOs and delegates all logic to OffboardingService.
+// Important: [ADMIN, HR] applies to every endpoint at the controller level — unlike most modules, there is no self-service path.
 import {
   Body,
   Controller,

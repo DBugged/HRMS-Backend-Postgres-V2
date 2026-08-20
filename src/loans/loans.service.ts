@@ -1,3 +1,9 @@
+// Purpose: Manages employee loans (advances) — sanctioning, status transitions, and repayment recording.
+// Responsibilities: Owns EMI calculation at creation (calculateEmi) and outstanding-balance bookkeeping on
+// each repayment; recordRepayment() is called by the payroll engine when an EMI is deducted, but is also
+// exposed for HR to record/adjust a repayment manually.
+// Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan check independently of findAll's
+// filter, since it's reached directly by loan id rather than through the pre-filtered list.
 import {
   ForbiddenException,
   Inject,

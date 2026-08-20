@@ -1,3 +1,14 @@
+// Purpose: The payroll engine — computes a full monthly payroll snapshot per employee and drives the
+// PayrollRun status workflow (Draft -> Calculated -> Verified -> Approved -> Locked -> Paid).
+// Responsibilities: Owns calculatePayroll() (pure computation, ported verbatim from the old backend's
+// payrollEngine.js — resolves component dependency order, proration, tax, variable-pay scaling, and pending
+// leave-encashment folding) and the TRANSITIONS-table-driven status machine shared by single and bulk
+// endpoints; delegates statutory config resolution to StatutoryConfigService and payslip PDF/email delivery
+// to PayslipPdfService/PayslipEmailQueueService.
+// Important: calculatePayroll() never persists — draft()/calculate() decide when to write a PayrollRun row.
+// afterLock() marks approved-unprocessed leave encashments PROCESSED so a future run can't double-count
+// them. afterPay()'s notification/email failures are swallowed deliberately — the payment transition has
+// already committed by that point and must not be rolled back by a PDF/email failure.
 import {
   BadRequestException,
   ForbiddenException,

@@ -1,3 +1,12 @@
+// Purpose: Owns the leave-balance ledger — get-or-create per (employee, leaveType, year), the single
+// recalculate() writer for `closing`, accrual crediting, and year-end carry-forward.
+// Responsibilities: Wraps the pure math in leave-eligibility.ts/leave-balance-math.ts with the actual DB
+// reads/writes; exposed cross-module (e.g. to LeaveEncashmentsService, LeaveTypesService) as the one place
+// balance mutations happen, mirroring the old backend's leavePolicyEngine.js.
+// Important: ensureBalanceRow()/recalculate() must be called with a transaction client so the
+// read-then-maybe-create/read-then-write is atomic under concurrent callers. creditAccrual() has no
+// frequency gating or idempotency guard — calling it twice in the same period double-credits, ported as-is
+// from the old system.
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';

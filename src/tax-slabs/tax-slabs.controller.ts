@@ -1,3 +1,6 @@
+// Purpose: Exposes CRUD for income-tax slab definitions plus a lookup of system default slabs by regime.
+// Responsibilities: Validates DTOs/params (including regime enum checks) and delegates all logic to TaxSlabsService.
+// Important: Entire controller is gated to ADMIN/HR.
 import {
   BadRequestException,
   Body,

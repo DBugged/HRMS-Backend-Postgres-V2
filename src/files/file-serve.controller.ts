@@ -1,3 +1,6 @@
+// Purpose: Serves an uploaded file (disk or S3) by a signed, short-lived token instead of an authenticated request.
+// Responsibilities: Verifies the token, then streams the file from whichever storage driver is configured.
+// Important: @Public() by necessity — <img>/<iframe> tags can't attach a Bearer header, so the HMAC token is the only credential.
 import { Controller, Get, NotFoundException, Param, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import * as fs from 'fs';

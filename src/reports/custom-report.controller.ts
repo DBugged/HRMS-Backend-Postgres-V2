@@ -1,3 +1,6 @@
+// Purpose: Exposes the ad-hoc/custom report builder — listing available data sources and running a report to JSON or file export.
+// Responsibilities: Validates the query DTO, branches JSON vs. file response, and delegates all query logic to CustomReportService.
+// Important: Entire controller is gated to ADMIN/HR/MANAGER and throttled as an expensive operation.
 import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';

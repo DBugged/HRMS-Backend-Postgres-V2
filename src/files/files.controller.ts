@@ -1,3 +1,6 @@
+// Purpose: Exposes multipart upload endpoints for documents, selfies, branding assets, and profile photos.
+// Responsibilities: Validates file type/size per category via multer interceptors and delegates storage to FilesService.
+// Important: Any authenticated user may upload — access control lives downstream, in what each domain field does with the returned key.
 import {
   BadRequestException,
   Controller,
