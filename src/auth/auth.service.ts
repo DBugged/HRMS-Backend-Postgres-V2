@@ -18,6 +18,7 @@ import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { LeaveTypesService } from '../leave-types/leave-types.service';
+import { SalaryComponentsService } from '../salary-components/salary-components.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
@@ -61,6 +62,7 @@ export class AuthService {
     private readonly employeeIdService: EmployeeIdService,
     private readonly statutoryConfigService: StatutoryConfigService,
     private readonly leaveTypesService: LeaveTypesService,
+    private readonly salaryComponentsService: SalaryComponentsService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly jwt: JwtService,
@@ -124,6 +126,14 @@ export class AuthService {
         // registration-time integration point as the statutory defaults
         // above.
         await this.leaveTypesService.seedDefaults(tx, organization.id, user.id);
+        // Every new org also starts with the standard salary-component
+        // catalog (Basic, HRA, PF, ESI, PT, employer contributions, etc.)
+        // instead of an empty Salary Components page and blank payslips.
+        await this.salaryComponentsService.seedDefaults(
+          tx,
+          organization.id,
+          user.id,
+        );
         return { organization, user };
       },
     );

@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
 import { LeaveTypesModule } from '../leave-types/leave-types.module';
+import { SalaryComponentsModule } from '../salary-components/salary-components.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -24,6 +25,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // leave-type set (Casual, Sick, Earned, Maternity, etc.) at
     // registration, same integration point as StatutoryConfigModule above.
     LeaveTypesModule,
+    // For SalaryComponentsService.seedDefaults — every new org gets the
+    // standard salary-component catalog at registration, same
+    // integration point as LeaveTypesModule above.
+    SalaryComponentsModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService

@@ -5,5 +5,6 @@ import { SalaryComponentsService } from './salary-components.service';
 @Module({
   controllers: [SalaryComponentsController],
   providers: [SalaryComponentsService],
+  exports: [SalaryComponentsService],
 })
 export class SalaryComponentsModule {}

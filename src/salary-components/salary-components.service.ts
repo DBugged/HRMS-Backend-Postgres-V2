@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CalcType, SalaryComponent } from '@prisma/client';
+import { CalcType, Prisma, SalaryComponent } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateSalaryComponentDto } from './dto/create-salary-component.dto';
@@ -18,6 +18,7 @@ import {
   detectCircularReferences,
   isValidPercentage,
 } from './salary-component-validation';
+import { SALARY_COMPONENT_DEFAULTS } from './salary-component-defaults';
 
 function slugify(name: string): string {
   return name
@@ -31,6 +32,28 @@ export class SalaryComponentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
+
+  // Every new org starts with the standard component set (Basic, HRA,
+  // PF, ESI, PT, employer contributions, etc.) instead of an empty
+  // Salary Components page and blank payslips — admin can edit/disable/
+  // add to these afterward. Same registration-time integration point as
+  // LeaveTypesService.seedDefaults / StatutoryConfigService.seedDefaults.
+  async seedDefaults(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    createdById?: string,
+  ): Promise<void> {
+    for (const def of SALARY_COMPONENT_DEFAULTS) {
+      await tx.salaryComponent.create({
+        data: {
+          ...def,
+          organizationId,
+          createdById,
+          isSystemDefault: true,
+        },
+      });
+    }
+  }
 
   async create(
     dto: CreateSalaryComponentDto,
