@@ -306,7 +306,7 @@ describe('Employees + Departments (e2e)', () => {
         .patch(`/employees/${engEmployeeId}`)
         .set('Authorization', `Bearer ${hrToken}`)
         .send({ officialEmail: 'employees-e2e-welcome-official@example.test' })
-        .expect(500); // unmapped Prisma unique-constraint error — same as the pre-existing behavior for a duplicate `email` on this endpoint
+        .expect(409); // AllExceptionsFilter now maps Prisma P2002 to a proper Conflict instead of an unmapped 500
     });
   });
 

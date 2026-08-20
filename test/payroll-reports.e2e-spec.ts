@@ -99,17 +99,9 @@ describe('Payroll Reports (e2e)', () => {
       .send({ name: 'Plain Employee', email: 'prpt-e2e-emp@example.test' });
     employeeId = (empCreate.body as EmployeeCreateBody).employee.id;
 
-    await request(app.getHttpServer())
-      .post('/salary-components')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Basic',
-        code: 'BASIC',
-        type: 'EARNING',
-        calcType: 'FIXED',
-        defaultValue: 30000,
-      })
-      .expect(201);
+    // BASIC is auto-seeded on every new org (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults) — only the per-employee
+    // override is needed, not a fresh component.
     await request(app.getHttpServer())
       .post(`/employee-salary/${employeeId}/structure`)
       .set('Authorization', `Bearer ${adminToken}`)

@@ -152,8 +152,8 @@ describe('Approval Delegation (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
@@ -206,7 +206,7 @@ describe('Approval Delegation (e2e)', () => {
 
   it("without any delegation, manager2 (not the direct manager) gets 403 reviewing the employee's leave", async () => {
     const leaveType = await prisma.leaveType.findFirstOrThrow({
-      where: { code: 'EL' },
+      where: { code: 'TAL' },
     });
     const leave = await request(app.getHttpServer())
       .post('/leaves')
@@ -228,7 +228,7 @@ describe('Approval Delegation (e2e)', () => {
 
   it("manager1 (the employee's direct manager) can always review, no delegation needed", async () => {
     const leaveType = await prisma.leaveType.findFirstOrThrow({
-      where: { code: 'EL' },
+      where: { code: 'TAL' },
     });
     const leave = await request(app.getHttpServer())
       .post('/leaves')
@@ -261,7 +261,7 @@ describe('Approval Delegation (e2e)', () => {
     const futureDelegationId = (created.body as DelegationBody).id;
 
     const leaveType = await prisma.leaveType.findFirstOrThrow({
-      where: { code: 'EL' },
+      where: { code: 'TAL' },
     });
     const leave = await request(app.getHttpServer())
       .post('/leaves')
@@ -342,7 +342,7 @@ describe('Approval Delegation (e2e)', () => {
 
   it('with an active delegation covering today, manager2 CAN review the employee leave', async () => {
     const leaveType = await prisma.leaveType.findFirstOrThrow({
-      where: { code: 'EL' },
+      where: { code: 'TAL' },
     });
     const leave = await request(app.getHttpServer())
       .post('/leaves')
@@ -369,7 +369,7 @@ describe('Approval Delegation (e2e)', () => {
       .expect(200);
 
     const leaveType = await prisma.leaveType.findFirstOrThrow({
-      where: { code: 'EL' },
+      where: { code: 'TAL' },
     });
     const leave = await request(app.getHttpServer())
       .post('/leaves')

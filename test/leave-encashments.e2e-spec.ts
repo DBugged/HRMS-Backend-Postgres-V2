@@ -112,26 +112,28 @@ describe('Leave Encashments (e2e)', () => {
       });
     employeeToken = (empLogin.body as AuthBody).accessToken;
 
-    // BASIC component with a known defaultValue — with no per-employee
-    // override, getCurrentMonthlyValue resolves straight to this.
+    // BASIC is auto-seeded on every new org (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults) with defaultValue 0 — patch it
+    // to a known value so that, with no per-employee override,
+    // getCurrentMonthlyValue resolves straight to this.
+    const seededComponents = await request(app.getHttpServer())
+      .get('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const basicComponentId = (
+      seededComponents.body as { data: { id: string; code: string }[] }
+    ).data.find((c) => c.code === 'BASIC')!.id;
     await request(app.getHttpServer())
-      .post('/salary-components')
+      .patch(`/salary-components/${basicComponentId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Basic',
-        code: 'BASIC',
-        type: 'EARNING',
-        calcType: 'FIXED',
-        defaultValue: BASIC_MONTHLY,
-      })
-      .expect(201);
+      .send({ defaultValue: BASIC_MONTHLY })
+      .expect(200);
 
     const encashableType = await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
@@ -143,8 +145,8 @@ describe('Leave Encashments (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Sick Leave',
-        code: 'SL',
+        name: 'Test Sick Leave',
+        code: 'SLT',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 12,
         prorateOnJoining: false,
@@ -187,8 +189,8 @@ describe('Leave Encashments (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Casual Leave',
-        code: 'CL',
+        name: 'Test Casual Leave',
+        code: 'CLT',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 3,
         prorateOnJoining: false,

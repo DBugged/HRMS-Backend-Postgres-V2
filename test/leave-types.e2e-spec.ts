@@ -96,8 +96,8 @@ describe('Leave Types (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
       })
@@ -111,12 +111,12 @@ describe('Leave Types (e2e)', () => {
     await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Earned Leave', code: 'EL2' })
+      .send({ name: 'Test Annual Leave', code: 'EL2' })
       .expect(409);
     await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Something Else', code: 'EL' })
+      .send({ name: 'Something Else', code: 'TAL' })
       .expect(409);
   });
 
@@ -133,7 +133,9 @@ describe('Leave Types (e2e)', () => {
       .get('/leave-types')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    expect((list.body as { data: LeaveTypeBody[] }).data).toHaveLength(1);
+    // 14 auto-seeded defaults (see LeaveTypesService.seedDefaults) + the
+    // 'Test Annual Leave' row created above.
+    expect((list.body as { data: LeaveTypeBody[] }).data).toHaveLength(15);
 
     await request(app.getHttpServer())
       .get(`/leave-types/${annualLeaveId}`)
@@ -181,12 +183,15 @@ describe('Leave Types (e2e)', () => {
       data: { gender: 'FEMALE' },
     });
 
+    // 'Paternity Leave'/'PTL' would collide with the auto-seeded default
+    // (see LeaveTypesService.seedDefaults), so this uses a distinct
+    // name/code.
     const restricted = await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Paternity Leave',
-        code: 'PTL',
+        name: 'Test Paternity Leave',
+        code: 'PTLT',
         applicableGenders: ['MALE'],
       })
       .expect(201);
@@ -232,12 +237,14 @@ describe('Leave Types (e2e)', () => {
   });
 
   it('run-accrual credits the current-year balance row for an EARNED_MONTHLY type', async () => {
+    // 'Casual Leave'/'CL' would collide with the auto-seeded default (see
+    // LeaveTypesService.seedDefaults), so this uses a distinct name/code.
     const created = await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Casual Leave',
-        code: 'CL',
+        name: 'Test Monthly Leave',
+        code: 'CLT',
         allocationType: 'EARNED_MONTHLY',
         accrualAmountPerCycle: 1.5,
       })

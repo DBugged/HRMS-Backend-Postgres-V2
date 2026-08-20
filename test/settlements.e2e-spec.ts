@@ -55,6 +55,10 @@ const MONTH = 6;
 const YEAR = 2026;
 const LAST_WORKING_DAY = `${YEAR}-0${MONTH}-15`;
 const BASIC_MONTHLY = 30000;
+// HRA is auto-seeded (see SalaryComponentsService.seedDefaults) as 40% of
+// BASIC and auto-applies to every employee once BASIC is opted into, so it
+// now contributes to gross pay alongside BASIC.
+const HRA_MONTHLY = BASIC_MONTHLY * 0.4;
 const DAYS_IN_MONTH = 30;
 
 async function markFullMonthPresent(
@@ -152,18 +156,10 @@ describe('Settlements (e2e)', () => {
       });
     employeeToken = (empLogin.body as AuthBody).accessToken;
 
-    // BASIC (FIXED, opt-in) at a known monthly value.
-    await request(app.getHttpServer())
-      .post('/salary-components')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Basic',
-        code: 'BASIC',
-        type: 'EARNING',
-        calcType: 'FIXED',
-        defaultValue: BASIC_MONTHLY,
-      })
-      .expect(201);
+    // BASIC (FIXED, opt-in) at a known monthly value — BASIC is
+    // auto-seeded on every new org (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults), only the per-employee
+    // override is needed here.
     await request(app.getHttpServer())
       .post(`/employee-salary/${employeeId}/structure`)
       .set('Authorization', `Bearer ${adminToken}`)
@@ -181,8 +177,8 @@ describe('Settlements (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
@@ -190,13 +186,34 @@ describe('Settlements (e2e)', () => {
       })
       .expect(201);
 
+    // The auto-seeded 'EL' default (see LeaveTypesService.seedDefaults) is
+    // also encashment-enabled — disable it so this test's encashment total
+    // stays isolated to the single TAL type it controls.
+    const seededTypesForEncash = await request(app.getHttpServer())
+      .get('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`);
+    const seededElId = (
+      seededTypesForEncash.body as { data: { id: string; code: string }[] }
+    ).data.find((t) => t.code === 'EL')!.id;
+    await request(app.getHttpServer())
+      .put(`/leave-types/${seededElId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        encashment: {
+          allowed: false,
+          maxDaysPerYear: 0,
+          minBalanceToRetain: 0,
+        },
+      })
+      .expect(200);
+
     // A non-encashable leave type — proves it's excluded from the payout.
     await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Sick Leave',
-        code: 'SL',
+        name: 'Test Sick Leave',
+        code: 'SLT',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 12,
         prorateOnJoining: false,
@@ -252,6 +269,7 @@ describe('Settlements (e2e)', () => {
     const expectedLeaveEncashment = Math.round(24 * (BASIC_MONTHLY / 30));
     expectedNet = Math.round(
       BASIC_MONTHLY +
+        HRA_MONTHLY +
         expectedLeaveEncashment +
         2000 +
         expectedGratuity -
@@ -274,7 +292,7 @@ describe('Settlements (e2e)', () => {
     const body = res.body as SettlementBody;
     settlementId = body.id;
     expect(body.status).toBe('DRAFT');
-    expect(body.pendingSalaryAmount).toBe(BASIC_MONTHLY); // full month present
+    expect(body.pendingSalaryAmount).toBe(BASIC_MONTHLY + HRA_MONTHLY); // full month present
     expect(body.leaveEncashmentAmount).toBe(expectedLeaveEncashment);
     expect(body.loanBalanceRecovered).toBe(5000);
     expect(body.gratuityAmount).toBe(expectedGratuity);

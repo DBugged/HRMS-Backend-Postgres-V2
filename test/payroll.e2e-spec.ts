@@ -178,36 +178,27 @@ describe('Payroll (e2e)', () => {
       });
     otherEmployeeToken = (otherLogin.body as AuthBody).accessToken;
 
-    // BASIC (FIXED, opt-in) + HRA (PERCENTAGE of BASIC, auto-applies).
-    await request(app.getHttpServer())
-      .post('/salary-components')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Basic',
-        code: 'BASIC',
-        type: 'EARNING',
-        calcType: 'FIXED',
-        defaultValue: 30000,
-      })
-      .expect(201);
-    await request(app.getHttpServer())
-      .post('/salary-components')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'HRA',
-        code: 'HRA',
-        type: 'EARNING',
-        calcType: 'PERCENTAGE',
-        percentageOf: 'BASIC',
-        percentageValue: 40,
-      })
-      .expect(201);
-
+    // BASIC (FIXED, opt-in) + HRA (PERCENTAGE of BASIC, auto-applies) are
+    // both auto-seeded on every new org already (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults) with this exact shape — only
+    // the per-employee override on BASIC is needed.
     // BASIC is FIXED/opt-in — needs an explicit per-employee override.
     // effectiveFrom is set well before the test period (MONTH/YEAR is in
     // the past relative to "today" in this session).
     await request(app.getHttpServer())
       .post(`/employee-salary/${employeeId}/structure`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        componentCode: 'BASIC',
+        fixedAmount: 30000,
+        effectiveFrom: '2026-01-01',
+      })
+      .expect(201);
+    // otherEmployeeId also needs a BASIC override — HRA (seeded, PERCENTAGE
+    // of BASIC) auto-applies to every employee and its formula fails to
+    // resolve if BASIC itself was never opted into for them.
+    await request(app.getHttpServer())
+      .post(`/employee-salary/${otherEmployeeId}/structure`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         componentCode: 'BASIC',
@@ -374,19 +365,8 @@ describe('Payroll (e2e)', () => {
   });
 
   it('an income-tax line only appears once a TaxSlabConfig exists for the FY/regime', async () => {
-    await request(app.getHttpServer())
-      .post('/salary-components')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Income Tax',
-        code: 'INCOME_TAX',
-        type: 'DEDUCTION',
-        calcType: 'FIXED',
-        isStatutory: true,
-        statutoryKey: 'INCOME_TAX',
-      })
-      .expect(201);
-
+    // INCOME_TAX is auto-seeded on every new org already (see
+    // LeaveTypesService/SalaryComponentsService.seedDefaults).
     const withoutSlab = await request(app.getHttpServer())
       .post('/payroll/calculate')
       .set('Authorization', `Bearer ${adminToken}`)

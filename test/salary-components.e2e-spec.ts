@@ -132,7 +132,7 @@ describe('Salary Components (e2e)', () => {
       .post('/salary-components')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'HRA',
+        name: 'HRA Test',
         type: 'EARNING',
         calcType: 'FORMULA',
         formula: 'BASIC_PAY * 0.4',
@@ -143,7 +143,7 @@ describe('Salary Components (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/salary-components/${basicId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ calcType: 'FORMULA', formula: 'HRA * 2' })
+      .send({ calcType: 'FORMULA', formula: 'HRA_TEST * 2' })
       .expect(400);
 
     await request(app.getHttpServer())
@@ -181,7 +181,7 @@ describe('Salary Components (e2e)', () => {
     const second = await request(app.getHttpServer())
       .post('/salary-components')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Conveyance', type: 'EARNING' })
+      .send({ name: 'Conveyance Test', type: 'EARNING' })
       .expect(201);
     const secondId = (second.body as ComponentBody).id;
 
@@ -191,7 +191,11 @@ describe('Salary Components (e2e)', () => {
       .send({
         order: [
           { id: basicId, displayOrder: 5 },
-          { id: secondId, displayOrder: 1 },
+          // 0 rather than 1 — the auto-seeded defaults (see
+          // SalaryComponentsService.seedDefaults) already occupy
+          // displayOrder 1, so this needs a value lower than any of them
+          // to deterministically sort first.
+          { id: secondId, displayOrder: 0 },
         ],
       })
       .expect(200);
@@ -219,7 +223,7 @@ describe('Salary Components (e2e)', () => {
       .post('/salary-components')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'DA',
+        name: 'DA Test',
         type: 'EARNING',
         calcType: 'FORMULA',
         formula: 'BASIC_PAY * 0.1',

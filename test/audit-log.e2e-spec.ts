@@ -197,15 +197,16 @@ describe('Audit Log (e2e)', () => {
   });
 
   it('payroll lock/pay produce PAYROLL_LOCKED/PAYROLL_PAID entries', async () => {
+    // BASIC is auto-seeded on every new org (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults) — only the per-employee
+    // override is needed, not a fresh component.
     await request(app.getHttpServer())
-      .post('/salary-components')
+      .post(`/employee-salary/${employeeId}/structure`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Basic',
-        code: 'BASIC',
-        type: 'EARNING',
-        calcType: 'FIXED',
-        defaultValue: 30000,
+        componentCode: 'BASIC',
+        fixedAmount: 30000,
+        effectiveFrom: '2026-01-01',
       })
       .expect(201);
     const calc = await request(app.getHttpServer())

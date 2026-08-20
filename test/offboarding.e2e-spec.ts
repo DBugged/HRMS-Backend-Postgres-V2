@@ -116,6 +116,23 @@ describe('Offboarding (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ name: 'Other Employee', email: 'offb-e2e-other@example.test' });
     otherEmployeeId = (otherCreate.body as EmployeeCreateBody).employee.id;
+
+    // BASIC is auto-seeded on every new org (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults) — HRA (also seeded, PERCENTAGE
+    // of BASIC) auto-applies to every employee and its formula fails to
+    // resolve unless BASIC itself was opted into via an override, which
+    // the settlement calc below depends on transitively.
+    for (const id of [employeeId, otherEmployeeId]) {
+      await request(app.getHttpServer())
+        .post(`/employee-salary/${id}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentCode: 'BASIC',
+          fixedAmount: 30000,
+          effectiveFrom: '2026-01-01',
+        })
+        .expect(201);
+    }
   });
 
   afterAll(async () => {

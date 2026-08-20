@@ -204,8 +204,8 @@ describe('Dashboard (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,

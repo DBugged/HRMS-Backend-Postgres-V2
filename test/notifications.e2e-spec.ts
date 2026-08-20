@@ -145,8 +145,8 @@ describe('Notifications (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
@@ -408,7 +408,7 @@ describe('Notifications (e2e)', () => {
 
   it('applying for leave notifies the reporting manager', async () => {
     const leaveType = await prisma.leaveType.findFirstOrThrow({
-      where: { code: 'EL' },
+      where: { code: 'TAL' },
     });
     await request(app.getHttpServer())
       .post('/leaves')

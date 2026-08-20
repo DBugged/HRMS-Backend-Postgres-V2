@@ -24,6 +24,7 @@ interface LeaveBody {
 }
 interface LeaveTypeBody {
   id: string;
+  code: string;
 }
 
 const PASSWORD = 'TestPass123!';
@@ -143,24 +144,24 @@ describe('Leaves (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
       });
     elLeaveTypeId = (elType.body as LeaveTypeBody).id;
 
-    const compOffType = await request(app.getHttpServer())
-      .post('/leave-types')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Comp Off',
-        code: 'COMPOFF',
-        allocationType: 'NONE',
-        approvalLevels: 1,
-      });
-    compOffLeaveTypeId = (compOffType.body as LeaveTypeBody).id;
+    // COMPOFF is auto-seeded on every new org already (see
+    // LeaveTypesService.seedDefaults) with this exact shape (code
+    // 'COMPOFF' is hardcoded in leaves.service.ts, so a duplicate can't be
+    // created alongside it) — just look up the seeded row's id.
+    const leaveTypesList = await request(app.getHttpServer())
+      .get('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`);
+    compOffLeaveTypeId = (
+      leaveTypesList.body as { data: LeaveTypeBody[] }
+    ).data.find((t) => t.code === 'COMPOFF')!.id;
   });
 
   afterAll(async () => {

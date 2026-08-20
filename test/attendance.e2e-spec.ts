@@ -34,6 +34,25 @@ function offsetDate(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// The 3 fixed National Holidays auto-seeded on every org (see
+// HolidaysService.seedDefaults) — same month/day every year.
+const FIXED_NATIONAL_HOLIDAYS = new Set(['01-26', '08-15', '10-02']);
+
+// Like offsetDate, but nudges forward a day at a time past any date that
+// would land on one of the fixed National Holidays — for tests asserting
+// a real working-day attendance status (PRESENT/ABSENT/etc.), where a
+// plain offsetDate() would otherwise flip to HOLIDAY depending on what day
+// the suite happens to run.
+function offsetDateAvoidingHolidays(days: number): string {
+  let d = days;
+  let date = offsetDate(d);
+  while (FIXED_NATIONAL_HOLIDAYS.has(date.slice(5))) {
+    d += 1;
+    date = offsetDate(d);
+  }
+  return date;
+}
+
 // Finds the next date (from a UTC anchor) matching the given getUTCDay()
 // value, so weekly-off tests aren't flaky depending on when the suite runs.
 function nextWeekday(targetDay: number, fromOffsetDays: number): string {
@@ -253,7 +272,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('HR can punch on behalf of an employee; two punches spanning >=8h yield PRESENT', async () => {
-      const date = offsetDate(-5);
+      const date = offsetDateAvoidingHolidays(-5);
       const inTime = `${date}T09:00:00.000Z`;
       const outTime = `${date}T18:00:00.000Z`;
 
@@ -481,7 +500,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('accepts a non-WFH arrangement regardless of the org toggle, without touching other fields', async () => {
-      const date = offsetDate(-5); // the PRESENT day from the manual-punch test above
+      const date = offsetDateAvoidingHolidays(-5); // the PRESENT day from the manual-punch test above
       const before = await prisma.attendance.findFirstOrThrow({
         where: { employeeId, date },
       });

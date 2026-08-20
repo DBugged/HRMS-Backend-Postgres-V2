@@ -154,8 +154,8 @@ describe('Reports (e2e)', () => {
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Earned Leave',
-        code: 'EL',
+        name: 'Test Annual Leave',
+        code: 'TAL',
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
@@ -179,15 +179,16 @@ describe('Reports (e2e)', () => {
       .send({ decision: 'APPROVED' })
       .expect(200);
 
+    // BASIC is auto-seeded on every new org (see LeaveTypesService/
+    // SalaryComponentsService.seedDefaults) — only the per-employee
+    // override is needed, not a fresh component.
     await request(app.getHttpServer())
-      .post('/salary-components')
+      .post(`/employee-salary/${employeeId}/structure`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'Basic',
-        code: 'BASIC',
-        type: 'EARNING',
-        calcType: 'FIXED',
-        defaultValue: 30000,
+        componentCode: 'BASIC',
+        fixedAmount: 30000,
+        effectiveFrom: '2026-01-01',
       })
       .expect(201);
     await request(app.getHttpServer())

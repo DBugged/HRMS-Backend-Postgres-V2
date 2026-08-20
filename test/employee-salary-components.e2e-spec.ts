@@ -95,11 +95,13 @@ describe('Employee Salary Components (e2e)', () => {
       .send({ name: 'Basic Pay', type: 'EARNING', defaultValue: 30000 });
     basicId = (basic.body as ComponentBody).id;
 
+    // Named/coded distinctly from 'HRA' — that code collides with the
+    // auto-seeded default (see SalaryComponentsService.seedDefaults).
     await request(app.getHttpServer())
       .post('/salary-components')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        name: 'HRA',
+        name: 'HRA Test',
         type: 'EARNING',
         calcType: 'PERCENTAGE',
         percentageOf: 'BASIC_PAY',
