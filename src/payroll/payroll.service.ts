@@ -67,7 +67,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { PayslipPdfService } from './payslip-pdf.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import { assertManagerDeptScope } from '../common/dept-scope';
 import { mapWithConcurrency } from '../common/concurrency';
 import { issueDocumentNumber } from '../organizations/document-numbering';
@@ -772,7 +772,7 @@ export class PayrollService {
             },
           },
           orderBy: [{ year: 'desc' }, { month: 'desc' }],
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.payrollRun.count({ where }),

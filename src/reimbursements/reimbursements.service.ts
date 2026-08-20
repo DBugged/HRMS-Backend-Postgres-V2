@@ -14,7 +14,7 @@ import { EmailService } from '../notifications/email.service';
 import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
@@ -75,7 +75,7 @@ export class ReimbursementsService {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.reimbursement.count({ where }),

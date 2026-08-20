@@ -10,7 +10,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertPerformanceRatingDto } from './dto/upsert-performance-rating.dto';
 import { QueryPerformanceRatingDto } from './dto/query-performance-rating.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 
@@ -51,7 +51,7 @@ export class PerformanceRatingsService {
         this.scopedPrisma.performanceRating.findMany({
           where,
           orderBy: { financialYear: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.performanceRating.count({ where }),

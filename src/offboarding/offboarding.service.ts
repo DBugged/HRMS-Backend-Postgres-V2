@@ -19,7 +19,7 @@ import { LinkSettlementDto } from './dto/link-settlement.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 
@@ -55,7 +55,7 @@ export class OffboardingService {
             settlement: true,
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.offboardingCase.count({ where }),

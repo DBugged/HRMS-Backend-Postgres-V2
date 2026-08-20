@@ -17,7 +17,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LogOvertimeDto } from './dto/log-overtime.dto';
 import { ReviewOvertimeDto } from './dto/review-overtime.dto';
 import { QueryOvertimeDto } from './dto/query-overtime.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
@@ -96,7 +96,7 @@ export class OvertimeService {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
           orderBy: { date: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.overtimeRecord.count({ where }),

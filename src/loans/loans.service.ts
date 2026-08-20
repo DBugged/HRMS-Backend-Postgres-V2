@@ -20,7 +20,7 @@ import { CreateLoanDto } from './dto/create-loan.dto';
 import { UpdateLoanStatusDto } from './dto/update-loan-status.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import { deptScopedEmployeeIds } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
@@ -59,7 +59,7 @@ export class LoansService {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.loan.count({ where }),

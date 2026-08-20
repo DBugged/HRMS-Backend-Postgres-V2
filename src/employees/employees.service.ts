@@ -18,6 +18,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
 import { mapWithConcurrency } from '../common/concurrency';
+import { skip } from '../common/pagination';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
@@ -237,7 +238,7 @@ export class EmployeesService {
     const [rows, total] = await Promise.all([
       this.scopedPrisma.user.findMany({
         where,
-        skip: (query.page - 1) * query.limit,
+        skip: skip(query.page, query.limit),
         take: query.limit,
         orderBy: { employeeId: 'asc' },
       }),

@@ -10,7 +10,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { EVENT_META } from './timeline-events';
 import { QueryTimelineDto } from './dto/query-timeline.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -128,7 +128,7 @@ export class EmployeeTimelineService {
             },
           },
           orderBy: { occurredAt: query.sort === 'asc' ? 'asc' : 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.employeeTimeline.count({ where }),

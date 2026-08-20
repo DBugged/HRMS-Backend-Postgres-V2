@@ -21,7 +21,7 @@ import { localDateStr } from '../employee-salary-components/salary-structure-mat
 import { RequestLeaveEncashmentDto } from './dto/request-leave-encashment.dto';
 import { ReviewLeaveEncashmentDto } from './dto/review-leave-encashment.dto';
 import { QueryLeaveEncashmentDto } from './dto/query-leave-encashment.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
@@ -81,7 +81,7 @@ export class LeaveEncashmentsService {
             leaveType: { select: { id: true, name: true, code: true } },
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.leaveEncashment.count({ where }),

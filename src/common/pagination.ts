@@ -10,6 +10,13 @@ export interface PaginatedResult<T> {
   limit: number;
 }
 
+// The Prisma `skip` for a 1-indexed page — every paginate() call site
+// computed this inline identically (`(query.page - 1) * query.limit`)
+// rather than sharing one helper.
+export function skip(page: number, limit: number): number {
+  return (page - 1) * limit;
+}
+
 // Runs the findMany + count in parallel and wraps them in the canonical
 // shape — used by every "Category A" list endpoint (attendance, leaves,
 // payroll runs, comp-offs, reimbursements, etc.: collections that grow

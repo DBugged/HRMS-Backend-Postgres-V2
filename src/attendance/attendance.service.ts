@@ -24,7 +24,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
 import {
   enumerateDateStrings,
@@ -759,7 +759,7 @@ export class AttendanceService {
             },
           },
           orderBy: { date: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.attendance.count({ where }),

@@ -26,7 +26,7 @@ import { PayrollSettingsService } from '../payroll-settings/payroll-settings.ser
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
@@ -110,7 +110,7 @@ export class CompOffService {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.compOff.count({ where }),

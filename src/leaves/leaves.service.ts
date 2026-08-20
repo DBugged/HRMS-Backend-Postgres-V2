@@ -28,7 +28,7 @@ import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import { checkLeaveRules, LeaveRules } from './leave-rules';
 import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
@@ -134,7 +134,7 @@ export class LeavesService {
             leaveType: { select: { id: true, name: true, code: true } },
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.leave.count({ where }),

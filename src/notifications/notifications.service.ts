@@ -12,7 +12,7 @@ import { EmailService } from './email.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
 
@@ -104,7 +104,7 @@ export class NotificationsService {
           this.scopedPrisma.notification.findMany({
             where,
             orderBy: { createdAt: 'desc' },
-            skip: (query.page - 1) * query.limit,
+            skip: skip(query.page, query.limit),
             take: query.limit,
           }),
         () => this.scopedPrisma.notification.count({ where }),

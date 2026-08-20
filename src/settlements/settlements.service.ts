@@ -17,7 +17,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollService } from '../payroll/payroll.service';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
-import { paginate } from '../common/pagination';
+import { paginate, skip } from '../common/pagination';
 import { deptScopedEmployeeIds } from '../common/dept-scope';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { EmployeeSalaryComponentsService } from '../employee-salary-components/employee-salary-components.service';
@@ -84,7 +84,7 @@ export class SettlementsService {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
           orderBy: { createdAt: 'desc' },
-          skip: (query.page - 1) * query.limit,
+          skip: skip(query.page, query.limit),
           take: query.limit,
         }),
       () => this.scopedPrisma.settlement.count({ where }),
