@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateIf,
 } from 'class-validator';
 import { EmploymentStatus, Gender, Role } from '@prisma/client';
 
@@ -29,9 +30,13 @@ export class UpdateEmployeeDto {
 
   // Corporate inbox, usually set well after creation once IT provisions it
   // — self-editable (not in LOCKED_FIELDS_FOR_EMPLOYEE), unlike the login
-  // email above. See officialEmail's comment on the User model.
+  // email above. See officialEmail's comment on the User model. The edit
+  // form always round-trips this field, blank or not, so '' (not yet
+  // provisioned) has to stay valid — @IsOptional alone only skips
+  // validation for undefined, not ''.
   @ApiPropertyOptional()
   @IsOptional()
+  @ValidateIf((o) => o.officialEmail !== '')
   @IsEmail()
   officialEmail?: string;
 
