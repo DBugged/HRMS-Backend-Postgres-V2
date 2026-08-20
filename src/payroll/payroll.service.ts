@@ -68,6 +68,8 @@ import { PayslipPdfService } from './payslip-pdf.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { paginate } from '../common/pagination';
+import { assertManagerDeptScope } from '../common/dept-scope';
+import { mapWithConcurrency } from '../common/concurrency';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
 
 type Actor = Omit<User, 'password'>;
@@ -524,30 +526,47 @@ export class PayrollService {
       dto.employeeId,
       organizationId,
     );
-    const runs: PayrollRun[] = [];
-    for (const employee of employees) {
-      let run = await this.scopedPrisma.payrollRun.findFirst({
-        where: {
+
+    // One batched existence check instead of one findFirst per employee,
+    // then one batched createMany for whoever's missing a row — 3 queries
+    // total regardless of employee count, instead of up to 2N.
+    const existing = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: employees.map((e) => e.id) },
+        month: dto.month,
+        year: dto.year,
+        isFinalSettlement: false,
+      },
+    });
+    const existingByEmployeeId = new Map(
+      existing.map((r) => [r.employeeId, r]),
+    );
+    const missing = employees.filter((e) => !existingByEmployeeId.has(e.id));
+    if (missing.length > 0) {
+      await this.scopedPrisma.payrollRun.createMany({
+        data: missing.map((employee) => ({
           organizationId,
           employeeId: employee.id,
           month: dto.month,
           year: dto.year,
-          isFinalSettlement: false,
-        },
+          status: PayrollRunStatus.DRAFT,
+        })),
       });
-      if (!run) {
-        run = await this.scopedPrisma.payrollRun.create({
-          data: {
-            organizationId,
-            employeeId: employee.id,
-            month: dto.month,
-            year: dto.year,
-            status: PayrollRunStatus.DRAFT,
-          },
-        });
-      }
-      runs.push(run);
     }
+    const runs =
+      missing.length > 0
+        ? await this.scopedPrisma.payrollRun.findMany({
+            where: {
+              organizationId,
+              employeeId: { in: employees.map((e) => e.id) },
+              month: dto.month,
+              year: dto.year,
+              isFinalSettlement: false,
+            },
+          })
+        : existing;
+
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'PAYROLL_DRAFT_CREATED',
@@ -575,23 +594,39 @@ export class PayrollService {
       message: string;
     }[] = [];
 
-    for (const employee of employees) {
-      let run = await this.scopedPrisma.payrollRun.findFirst({
-        where: {
-          organizationId,
-          employeeId: employee.id,
-          month: dto.month,
-          year: dto.year,
-          isFinalSettlement: false,
-        },
-      });
+    // One batched existence check instead of one findFirst per employee —
+    // the per-employee calculatePayroll()/create/update below still has to
+    // run individually (real computation, and one employee's failure must
+    // not abort the batch), but the lookup itself no longer is N+1.
+    const existingRuns = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: employees.map((e) => e.id) },
+        month: dto.month,
+        year: dto.year,
+        isFinalSettlement: false,
+      },
+    });
+    const existingRunByEmployeeId = new Map(
+      existingRuns.map((r) => [r.employeeId, r]),
+    );
+
+    // Bounded concurrency, not fully sequential — each employee's
+    // calculatePayroll() does several DB round-trips, and a few hundred
+    // employees awaited one at a time in a single request is a real
+    // timeout risk. Order-independent (results/failures are per-employee,
+    // not accumulated), and results.push/failures.push from concurrent
+    // workers is safe — JS has no true parallelism, so a synchronous
+    // array push is never interleaved by another worker mid-operation.
+    await mapWithConcurrency(employees, 8, async (employee) => {
+      let run = existingRunByEmployeeId.get(employee.id) ?? null;
       if (
         run &&
         (run.status === PayrollRunStatus.LOCKED ||
           run.status === PayrollRunStatus.PAID)
       ) {
         results.push(run);
-        continue;
+        return;
       }
 
       // One employee's misconfigured/missing salary structure must not
@@ -652,7 +687,7 @@ export class PayrollService {
           message: err instanceof Error ? err.message : 'Unknown error',
         });
       }
-    }
+    });
 
     await this.auditLogService.log({
       actorId: actor.id,
@@ -737,6 +772,14 @@ export class PayrollService {
     if (!run) throw new NotFoundException('Payslip not found.');
     if (actor.role === Role.EMPLOYEE && run.employeeId !== actor.id) {
       throw new ForbiddenException('Not authorized to view this payslip.');
+    }
+    if (actor.role === Role.MANAGER) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        run.employeeId,
+      );
     }
     return run;
   }
@@ -1119,28 +1162,35 @@ export class PayrollService {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where: { id: { in: runIds }, organizationId },
     });
-    const updated: PayrollRun[] = [];
     const skipped: { id: string; status: string }[] = [];
 
+    // Every eligible run in this batch moves to the same toStatus via the
+    // same actor/at fields, so this is one updateMany + one findMany for
+    // the whole batch instead of an updateMany+findFirstOrThrow pair per
+    // run — was 2N queries, now 2 regardless of batch size.
+    const eligibleIds: string[] = [];
     for (const run of runs) {
       if (!config.fromStatuses.includes(run.status)) {
         skipped.push({ id: run.id, status: run.status });
         continue;
       }
+      eligibleIds.push(run.id);
+    }
+
+    let updated: PayrollRun[] = [];
+    if (eligibleIds.length > 0) {
       const data: Prisma.PayrollRunUpdateManyMutationInput = {
         status: config.toStatus,
         [config.actorField]: actor.id,
         [config.atField]: new Date(),
       };
       await this.scopedPrisma.payrollRun.updateMany({
-        where: { id: run.id, organizationId },
+        where: { id: { in: eligibleIds }, organizationId },
         data,
       });
-      updated.push(
-        await this.scopedPrisma.payrollRun.findFirstOrThrow({
-          where: { id: run.id, organizationId },
-        }),
-      );
+      updated = await this.scopedPrisma.payrollRun.findMany({
+        where: { id: { in: eligibleIds }, organizationId },
+      });
     }
 
     const foundIds = new Set(runs.map((r) => r.id));
@@ -1178,23 +1228,18 @@ export class PayrollService {
   // final; mark it processed so it doesn't get picked up again by a
   // future run.
   private async afterLock(run: PayrollRun, organizationId: string) {
-    const encashments = await this.scopedPrisma.leaveEncashment.findMany({
+    await this.scopedPrisma.leaveEncashment.updateMany({
       where: {
         organizationId,
         employeeId: run.employeeId,
         status: LeaveEncashmentStatus.APPROVED,
       },
+      data: {
+        status: LeaveEncashmentStatus.PROCESSED,
+        payrollRunId: run.id,
+        processedAt: new Date(),
+      },
     });
-    for (const enc of encashments) {
-      await this.scopedPrisma.leaveEncashment.updateMany({
-        where: { id: enc.id, organizationId },
-        data: {
-          status: LeaveEncashmentStatus.PROCESSED,
-          payrollRunId: run.id,
-          processedAt: new Date(),
-        },
-      });
-    }
   }
 
   // Resolves a group of same-type components (all earnings, or all

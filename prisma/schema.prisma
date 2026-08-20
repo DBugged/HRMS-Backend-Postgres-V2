@@ -708,6 +708,8 @@ model Leave {
 
   @@index([organizationId])
   @@index([employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("leaves")
 }
 
@@ -746,6 +748,8 @@ model CompOff {
 
   @@index([organizationId])
   @@index([employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("comp_offs")
 }
 
@@ -1395,6 +1399,8 @@ model LeaveEncashment {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("leave_encashments")
 }
 
@@ -1518,6 +1524,8 @@ model Reimbursement {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("reimbursements")
 }
 
@@ -1561,6 +1569,8 @@ model Loan {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("loans")
 }
 
@@ -1641,6 +1651,8 @@ model Settlement {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("settlements")
 }
 
@@ -1695,6 +1707,8 @@ model OffboardingCase {
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, employeeId])
+  @@index([organizationId, status])
+  @@index([organizationId, createdAt])
   @@map("offboarding_cases")
 }
 
@@ -1739,6 +1753,7 @@ model AuditLog {
 
   @@index([organizationId, module])
   @@index([organizationId, actorId])
+  @@index([organizationId, module, createdAt])
   @@map("audit_logs")
 }
 

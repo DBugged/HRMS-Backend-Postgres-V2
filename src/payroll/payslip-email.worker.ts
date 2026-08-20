@@ -30,6 +30,9 @@ import {
 export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PayslipEmailWorker.name);
   private worker: Worker<PayslipEmailJobData> | null = null;
+  // See PayslipEmailQueueService's connection field — same BullMQ gotcha:
+  // worker.close() doesn't close an externally-supplied `connection`.
+  private connection: IORedis | null = null;
 
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
@@ -39,12 +42,13 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit() {
     if (!redisEnabled()) return;
+    this.connection = new IORedis(getRedisUrl(), {
+      maxRetriesPerRequest: null,
+    });
     this.worker = new Worker<PayslipEmailJobData>(
       PAYSLIP_EMAIL_QUEUE_NAME,
       (job) => this.process(job),
-      {
-        connection: new IORedis(getRedisUrl(), { maxRetriesPerRequest: null }),
-      },
+      { connection: this.connection },
     );
     this.worker.on('failed', (job, err) => {
       this.logger.error(
@@ -81,5 +85,6 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.worker?.close();
+    await this.connection?.quit();
   }
 }

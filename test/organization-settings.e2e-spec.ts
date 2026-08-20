@@ -210,6 +210,65 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     expect(body.pan).toBe('ABCDE1234F');
   });
 
+  it('deriving attendancePayrollPrefs: attendancePayroll section write updates the narrower field AttendanceService actually reads', async () => {
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/attendancePayroll')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: {
+          attendanceMethod: ['manual'],
+          defaultShiftStartTime: '10:00',
+          defaultShiftEndTime: '19:00',
+          defaultLateInThresholdMinutes: 20,
+          defaultEarlyOutThresholdMinutes: 20,
+          defaultMinHoursForPresent: 7,
+          defaultMinHoursForHalfDay: 3.5,
+          weekendDays: [0],
+          payrollCycle: 'monthly',
+        },
+      })
+      .expect(200);
+
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    expect(org.attendancePayrollPrefs).toEqual({
+      defaultShiftStartTime: '10:00',
+      defaultShiftEndTime: '19:00',
+      defaultLateInThresholdMinutes: 20,
+      defaultEarlyOutThresholdMinutes: 20,
+      defaultMinHoursForPresent: 7,
+      defaultMinHoursForHalfDay: 3.5,
+      weekendDays: [0],
+    });
+  });
+
+  it('a partial attendancePayroll write (missing all 7 shift keys) merges against the existing prefs instead of wiping attendancePayrollPrefs', async () => {
+    // Deliberately omits defaultShiftStartTime/etc. entirely — only a
+    // frontend that always sends the full blob would mask the bug this
+    // guards against.
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/attendancePayroll')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: { payrollCycle: 'weekly' },
+      })
+      .expect(200);
+
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    expect(org.attendancePayrollPrefs).toEqual({
+      defaultShiftStartTime: '10:00',
+      defaultShiftEndTime: '19:00',
+      defaultLateInThresholdMinutes: 20,
+      defaultEarlyOutThresholdMinutes: 20,
+      defaultMinHoursForPresent: 7,
+      defaultMinHoursForHalfDay: 3.5,
+      weekendDays: [0],
+    });
+  });
+
   it('rejects a malformed IFSC in the banking section', async () => {
     await request(app.getHttpServer())
       .patch('/organizations/settings/banking')

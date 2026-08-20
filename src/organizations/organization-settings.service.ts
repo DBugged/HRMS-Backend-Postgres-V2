@@ -39,6 +39,20 @@ const BRANDING_URL_FIELDS = [
 // ever written per section. `employeeTypes` and `workArrangement` are valid
 // sections but aren't part of the 9-step wizard flow — edited elsewhere
 // (Employees page / a settings toggle), same as before.
+// The 7 keys Organization.attendancePayrollPrefs and
+// orgPayrollAttendancePrefs both carry identically-named — see
+// updateSection's 'attendancePayroll' branch and
+// attendance-shift-config.ts's OrganizationAttendancePrefs.
+const ATTENDANCE_PREFS_KEYS = [
+  'defaultShiftStartTime',
+  'defaultShiftEndTime',
+  'defaultLateInThresholdMinutes',
+  'defaultEarlyOutThresholdMinutes',
+  'defaultMinHoursForPresent',
+  'defaultMinHoursForHalfDay',
+  'weekendDays',
+] as const;
+
 const SECTION_FIELDS: Record<string, string[]> = {
   profile: ['companyName', 'legalName', 'tagline', 'description'],
   registration: [
@@ -186,6 +200,30 @@ export class OrganizationSettingsService {
       if (banking?.ifscCode && !validateIfsc(banking.ifscCode)) {
         throw new BadRequestException('ifscCode is not in a valid format.');
       }
+    }
+    if (section === 'attendancePayroll' && data.orgPayrollAttendancePrefs) {
+      // attendancePayrollPrefs (read by AttendanceService.
+      // recalculateAttendanceForDay) had no write path at all before this
+      // — an admin editing shift timings/thresholds here via the Setup
+      // Wizard silently never reached actual attendance calculation,
+      // which kept using the schema's hardcoded defaults forever. Derive
+      // the narrower field from the 7 overlapping keys on every write.
+      // Merged against the org's *existing* orgPayrollAttendancePrefs
+      // first (not just this request's body) so a partial update that
+      // only touches an unrelated key (e.g. enableOvertime) can't
+      // overwrite attendancePayrollPrefs with an incomplete object.
+      const existingOrg = await this.findOrThrow(organizationId);
+      const effectivePrefs = {
+        ...(existingOrg.orgPayrollAttendancePrefs as Record<string, unknown>),
+        ...(data.orgPayrollAttendancePrefs as Record<string, unknown>),
+      };
+      data.attendancePayrollPrefs = ATTENDANCE_PREFS_KEYS.reduce(
+        (acc, key) => {
+          if (key in effectivePrefs) acc[key] = effectivePrefs[key];
+          return acc;
+        },
+        {} as Record<string, unknown>,
+      );
     }
 
     // Optional wizard-progress advancement, allowed alongside any section's

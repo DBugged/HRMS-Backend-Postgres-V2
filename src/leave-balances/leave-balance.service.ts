@@ -146,15 +146,35 @@ export class LeaveBalanceService {
     });
     const eligible = employees.filter((e) => isEligible(leaveType, e));
 
+    // Batched outside the transaction: which of these employees already
+    // have a current-year row, so the loop below can skip
+    // ensureBalanceRow's own existence read for the common case (already
+    // exists) instead of doing it per employee inside the held
+    // transaction — was up to ~8 queries/employee inside one long
+    // transaction, this cuts the read side to a single findMany upfront.
+    const existingRows = await this.scopedPrisma.leaveBalance.findMany({
+      where: {
+        organizationId,
+        leaveTypeId,
+        year,
+        employeeId: { in: eligible.map((e) => e.id) },
+      },
+    });
+    const existingByEmployeeId = new Map(
+      existingRows.map((r) => [r.employeeId, r]),
+    );
+
     await this.scopedPrisma.$transaction(async (tx) => {
       for (const employee of eligible) {
-        const row = await this.ensureBalanceRow(
-          tx,
-          employee.id,
-          leaveTypeId,
-          year,
-          organizationId,
-        );
+        const row =
+          existingByEmployeeId.get(employee.id) ??
+          (await this.ensureBalanceRow(
+            tx,
+            employee.id,
+            leaveTypeId,
+            year,
+            organizationId,
+          ));
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
           data: { credited: row.credited + leaveType.accrualAmountPerCycle },
@@ -181,13 +201,42 @@ export class LeaveBalanceService {
       (lt) => (lt.carryForward as unknown as CarryForwardShape).allowed,
     );
 
+    // Batched outside the transaction, same rationale as creditAccrual —
+    // the closing-year rows for every carry-forward-enabled leave type in
+    // one query, and whichever of their employees already have a
+    // next-year row in one more, instead of a findMany + a per-row
+    // existence read all inside the held transaction.
+    const carryForwardTypeIds = carryForwardTypes.map((lt) => lt.id);
+    const closingRows = await this.scopedPrisma.leaveBalance.findMany({
+      where: {
+        organizationId,
+        leaveTypeId: { in: carryForwardTypeIds },
+        year,
+      },
+    });
+    const nextYearRows = await this.scopedPrisma.leaveBalance.findMany({
+      where: {
+        organizationId,
+        leaveTypeId: { in: carryForwardTypeIds },
+        year: year + 1,
+        employeeId: { in: closingRows.map((r) => r.employeeId) },
+      },
+    });
+    const nextYearByKey = new Map(
+      nextYearRows.map((r) => [`${r.employeeId}:${r.leaveTypeId}`, r]),
+    );
+    const rowsByLeaveTypeId = new Map<string, typeof closingRows>();
+    for (const row of closingRows) {
+      const list = rowsByLeaveTypeId.get(row.leaveTypeId) ?? [];
+      list.push(row);
+      rowsByLeaveTypeId.set(row.leaveTypeId, list);
+    }
+
     let processed = 0;
     await this.scopedPrisma.$transaction(async (tx) => {
       for (const leaveType of carryForwardTypes) {
         const cf = leaveType.carryForward as unknown as CarryForwardShape;
-        const rows = await tx.leaveBalance.findMany({
-          where: { organizationId, leaveTypeId: leaveType.id, year },
-        });
+        const rows = rowsByLeaveTypeId.get(leaveType.id) ?? [];
 
         for (const row of rows) {
           const carryOut = computeCarryOut(row.closing, cf.maxDays);
@@ -196,13 +245,15 @@ export class LeaveBalanceService {
             data: { carriedForwardOut: carryOut },
           });
 
-          const nextRow = await this.ensureBalanceRow(
-            tx,
-            row.employeeId,
-            leaveType.id,
-            year + 1,
-            organizationId,
-          );
+          const nextRow =
+            nextYearByKey.get(`${row.employeeId}:${leaveType.id}`) ??
+            (await this.ensureBalanceRow(
+              tx,
+              row.employeeId,
+              leaveType.id,
+              year + 1,
+              organizationId,
+            ));
           await tx.leaveBalance.updateMany({
             where: { id: nextRow.id, organizationId },
             data: {

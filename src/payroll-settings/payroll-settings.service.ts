@@ -2,8 +2,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import { PayrollSettings, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { RedisCacheService } from '../common/redis-cache';
 import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
 import { resolveDayOfMonth } from './payroll-date';
+
+// Read once per employee inside a payroll batch, rarely written — same
+// caching rationale as StatutoryConfigService.getEffective.
+const SETTINGS_CACHE_TTL_SECONDS = 300;
 
 /**
  * The canonical accessor for an org's PayrollSettings — mirrors the old
@@ -16,16 +21,27 @@ import { resolveDayOfMonth } from './payroll-date';
 export class PayrollSettingsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly cache: RedisCacheService,
   ) {}
 
+  private cacheKey(organizationId: string): string {
+    return `payrollsettings:${organizationId}`;
+  }
+
   async getOrCreate(organizationId: string): Promise<PayrollSettings> {
-    const existing = await this.scopedPrisma.payrollSettings.findFirst({
-      where: { organizationId },
-    });
-    if (existing) return existing;
-    return this.scopedPrisma.payrollSettings.create({
-      data: { organizationId },
-    });
+    return this.cache.getOrSet(
+      this.cacheKey(organizationId),
+      SETTINGS_CACHE_TTL_SECONDS,
+      async () => {
+        const existing = await this.scopedPrisma.payrollSettings.findFirst({
+          where: { organizationId },
+        });
+        if (existing) return existing;
+        return this.scopedPrisma.payrollSettings.create({
+          data: { organizationId },
+        });
+      },
+    );
   }
 
   async getWithResolvedDates(organizationId: string) {
@@ -55,6 +71,7 @@ export class PayrollSettingsService {
         updatedById,
       },
     });
+    await this.cache.invalidate(this.cacheKey(organizationId));
     return this.getOrCreate(organizationId);
   }
 }

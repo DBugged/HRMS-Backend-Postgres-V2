@@ -25,6 +25,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate } from '../common/pagination';
+import { mapWithConcurrency } from '../common/concurrency';
 import {
   enumerateDateStrings,
   isWeeklyOff,
@@ -797,26 +798,36 @@ export class AttendanceService {
       ? AttendanceStatus.HALF_DAY
       : AttendanceStatus.ON_LEAVE;
 
-    for (const date of enumerateDateStrings(leave.startDate, leave.endDate)) {
-      const existing = await tx.attendance.findFirst({
-        where: { organizationId, employeeId: leave.employeeId, date },
+    const dates = enumerateDateStrings(leave.startDate, leave.endDate);
+    // One findMany + one updateMany + one createMany instead of a
+    // findFirst+update/create pair per date — a leave range is usually
+    // short, but this is free to batch regardless.
+    const existingRows = await tx.attendance.findMany({
+      where: {
+        organizationId,
+        employeeId: leave.employeeId,
+        date: { in: dates },
+      },
+    });
+    const existingDates = new Set(existingRows.map((r) => r.date));
+
+    if (existingRows.length > 0) {
+      await tx.attendance.updateMany({
+        where: { id: { in: existingRows.map((r) => r.id) }, organizationId },
+        data: { status, source: AttendanceSource.SYSTEM },
       });
-      if (existing) {
-        await tx.attendance.updateMany({
-          where: { id: existing.id, organizationId },
-          data: { status, source: AttendanceSource.SYSTEM },
-        });
-      } else {
-        await tx.attendance.create({
-          data: {
-            organizationId,
-            employeeId: leave.employeeId,
-            date,
-            status,
-            source: AttendanceSource.SYSTEM,
-          },
-        });
-      }
+    }
+    const missingDates = dates.filter((d) => !existingDates.has(d));
+    if (missingDates.length > 0) {
+      await tx.attendance.createMany({
+        data: missingDates.map((date) => ({
+          organizationId,
+          employeeId: leave.employeeId,
+          date,
+          status,
+          source: AttendanceSource.SYSTEM,
+        })),
+      });
     }
   }
 
@@ -830,21 +841,26 @@ export class AttendanceService {
     organizationId: string,
   ) {
     const today = todayStr();
-    for (const date of enumerateDateStrings(leave.startDate, leave.endDate)) {
-      if (date < today) continue;
-      const existing = await tx.attendance.findFirst({
-        where: { organizationId, employeeId: leave.employeeId, date },
-      });
-      if (existing && existing.source === AttendanceSource.SYSTEM) {
-        await tx.attendance.updateMany({
-          where: { id: existing.id, organizationId },
-          data: {
-            status: AttendanceStatus.ABSENT,
-            source: AttendanceSource.FACE_API,
-          },
-        });
-      }
-    }
+    const dates = enumerateDateStrings(leave.startDate, leave.endDate).filter(
+      (d) => d >= today,
+    );
+    if (dates.length === 0) return;
+
+    // Only reverts rows this integration itself wrote (source ===
+    // SYSTEM) — folded straight into the query instead of a per-date
+    // findFirst + a JS source check.
+    await tx.attendance.updateMany({
+      where: {
+        organizationId,
+        employeeId: leave.employeeId,
+        date: { in: dates },
+        source: AttendanceSource.SYSTEM,
+      },
+      data: {
+        status: AttendanceStatus.ABSENT,
+        source: AttendanceSource.FACE_API,
+      },
+    });
   }
 
   // Employee-initiated — no separate model, writes straight into the
@@ -1146,6 +1162,35 @@ export class AttendanceService {
     let skipped = 0;
     let errors = 0;
 
+    // Attendance has no unique constraint on (organizationId, employeeId,
+    // date), so two rows sharing a key can't safely run concurrently here
+    // (a naive parallel find-then-create could silently duplicate a row)
+    // — writes stay sequential, preserving exact per-row imported/
+    // skipped/errors counts even for a malformed file with repeated
+    // keys. Only the read side is batched: every touched (employeeId,
+    // date)'s existing row fetched in one findMany instead of N
+    // sequential findFirst calls, which was most of this loop's latency.
+    const rowKeys = rows
+      .map((row) => {
+        const empId = byCode.get(asString(row.employeeId).trim());
+        const date = asString(row.date).trim();
+        return empId && date ? { empId, date } : null;
+      })
+      .filter((k): k is { empId: string; date: string } => k !== null);
+    const existingRows =
+      rowKeys.length > 0
+        ? await this.scopedPrisma.attendance.findMany({
+            where: {
+              organizationId,
+              employeeId: { in: [...new Set(rowKeys.map((k) => k.empId))] },
+              date: { in: [...new Set(rowKeys.map((k) => k.date))] },
+            },
+          })
+        : [];
+    const existingByKey = new Map(
+      existingRows.map((r) => [`${r.employeeId}:${r.date}`, r]),
+    );
+
     for (const row of rows) {
       const empCode = asString(row.employeeId).trim();
       const empId = byCode.get(empCode);
@@ -1156,9 +1201,7 @@ export class AttendanceService {
       }
 
       try {
-        const existing = await this.scopedPrisma.attendance.findFirst({
-          where: { organizationId, employeeId: empId, date },
-        });
+        const existing = existingByKey.get(`${empId}:${date}`) ?? null;
         if (
           existing &&
           existing.source === AttendanceSource.FACE_API &&
@@ -1182,10 +1225,16 @@ export class AttendanceService {
             where: { id: existing.id, organizationId },
             data: fields,
           });
+          existingByKey.set(`${empId}:${date}`, { ...existing, ...fields });
         } else {
-          await this.scopedPrisma.attendance.create({
+          const createdRow = await this.scopedPrisma.attendance.create({
             data: { organizationId, employeeId: empId, date, ...fields },
           });
+          // Keeps a same-key later row in this same file (if any) seeing
+          // this write, exactly as the old per-row findFirst-in-loop
+          // would have — otherwise it would falsely see "no existing row"
+          // from the batched pre-fetch and create a duplicate.
+          existingByKey.set(`${empId}:${date}`, createdRow);
         }
         imported += 1;
       } catch {
@@ -1248,8 +1297,13 @@ export class AttendanceService {
       select: { id: true },
     });
 
+    // Bounded concurrency — each employee's own attendance row for this
+    // one date, no shared state between them, so this is safe to run
+    // several at a time instead of fully sequential (a few hundred
+    // employees × recalculateAttendanceForDay's several queries each is a
+    // slow admin action otherwise).
     const employeeIds: string[] = [];
-    for (const employee of employees) {
+    await mapWithConcurrency(employees, 8, async (employee) => {
       const row = await this.recalculateAttendanceForDay(
         this.scopedPrisma,
         employee.id,
@@ -1259,7 +1313,7 @@ export class AttendanceService {
       if (row.status === AttendanceStatus.ABSENT) {
         employeeIds.push(employee.id);
       }
-    }
+    });
 
     return { date, notifiedCount: employeeIds.length, employeeIds };
   }

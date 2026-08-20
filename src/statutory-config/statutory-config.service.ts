@@ -12,6 +12,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { RedisCacheService } from '../common/redis-cache';
 import {
   dayBefore,
   localDateStr,
@@ -22,11 +23,27 @@ import {
   validateModuleConfig,
 } from './statutory-config-validation';
 
+// getEffective() is hit once per statutory module (9) per employee inside
+// PayrollService.calculatePayroll — a full payroll batch does O(9xN)
+// lookups of data that changes maybe a few times a year. Cached briefly
+// with invalidation on every write (create/remove), so a batch run
+// collapses to effectively one DB read per distinct (module, date)
+// instead of one per employee.
+const EFFECTIVE_CACHE_TTL_SECONDS = 300;
+
 @Injectable()
 export class StatutoryConfigService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly cache: RedisCacheService,
   ) {}
+
+  private effectiveCacheKeyPrefix(
+    organizationId: string,
+    module: StatutoryModule,
+  ): string {
+    return `statconfig:${organizationId}:${module}:`;
+  }
 
   // Every new org gets all 9 modules pre-seeded (most disabled,
   // payroll_calendar/rounding always enabled) so the payroll engine's
@@ -63,16 +80,19 @@ export class StatutoryConfigService {
     date: string,
     organizationId: string,
   ) {
-    const version = await this.scopedPrisma.statutoryConfigVersion.findFirst({
-      where: {
-        organizationId,
-        module,
-        effectiveFrom: { lte: date },
-        OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
-      },
-      orderBy: { effectiveFrom: 'desc' },
+    const key = `${this.effectiveCacheKeyPrefix(organizationId, module)}${date}`;
+    return this.cache.getOrSet(key, EFFECTIVE_CACHE_TTL_SECONDS, async () => {
+      const version = await this.scopedPrisma.statutoryConfigVersion.findFirst({
+        where: {
+          organizationId,
+          module,
+          effectiveFrom: { lte: date },
+          OR: [{ effectiveTo: null }, { effectiveTo: { gte: date } }],
+        },
+        orderBy: { effectiveFrom: 'desc' },
+      });
+      return { date, version };
     });
-    return { date, version };
   }
 
   async create(
@@ -106,7 +126,7 @@ export class StatutoryConfigService {
       });
     }
 
-    return this.scopedPrisma.statutoryConfigVersion.create({
+    const created = await this.scopedPrisma.statutoryConfigVersion.create({
       data: {
         organizationId,
         module,
@@ -117,6 +137,10 @@ export class StatutoryConfigService {
         createdById: actorId,
       },
     });
+    await this.cache.invalidatePrefix(
+      this.effectiveCacheKeyPrefix(organizationId, module),
+    );
+    return created;
   }
 
   async remove(module: StatutoryModule, id: string, organizationId: string) {
@@ -157,6 +181,9 @@ export class StatutoryConfigService {
       data: { effectiveTo: null },
     });
 
+    await this.cache.invalidatePrefix(
+      this.effectiveCacheKeyPrefix(organizationId, module),
+    );
     return { message: 'Statutory config version deleted' };
   }
 }

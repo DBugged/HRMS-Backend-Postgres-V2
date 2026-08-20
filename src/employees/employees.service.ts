@@ -17,6 +17,7 @@ import { EmployeeIdService } from './employee-id.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
+import { mapWithConcurrency } from '../common/concurrency';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
@@ -189,7 +190,12 @@ export class EmployeesService {
     const created: string[] = [];
     const failed: { row: unknown; error: string }[] = [];
 
-    for (const row of rows) {
+    // Bounded concurrency — create()'s employeeId allocation is already
+    // safe under concurrent callers (a row-locked counter, see
+    // EmployeeIdService.generate's SELECT ... FOR UPDATE), so several
+    // rows in flight at once just overlaps each row's independent work
+    // (bcrypt hashing, etc.) instead of a fully sequential loop.
+    await mapWithConcurrency(rows, 5, async (row) => {
       try {
         const { employee } = await this.create(row, actor, organizationId);
         created.push(employee.employeeId);
@@ -199,7 +205,7 @@ export class EmployeesService {
           error: err instanceof Error ? err.message : 'Unknown error',
         });
       }
-    }
+    });
 
     return { created, failed };
   }

@@ -4,6 +4,10 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
 import { loggerModuleOptions } from './common/logger.config';
+import { redisEnabled } from './common/redis.config';
+import { RedisThrottlerStorage } from './common/redis-throttler-storage';
+import { RedisThrottlerStorageModule } from './common/redis-throttler-storage.module';
+import { RedisCacheModule } from './common/redis-cache.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
@@ -55,11 +59,26 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // Global default: 100 req / 60s per IP. Auth routes override this
     // much tighter via @Throttle() on the individual routes (see
     // auth.controller.ts) — this is just the floor for everything else.
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    // Storage is Redis-backed (shared across instances) when REDIS_URL is
+    // set, same opt-in-driver convention as everywhere else — unset falls
+    // back to @nestjs/throttler's own in-memory storage, unchanged.
+    // forRootAsync + inject (not a manually-`new`'d instance) so
+    // RedisThrottlerStorage is a real Nest-managed provider and its
+    // onModuleDestroy actually runs on app shutdown — see that class's
+    // own comment for why a manually-constructed one leaked connections.
+    RedisThrottlerStorageModule,
+    ThrottlerModule.forRootAsync({
+      inject: [RedisThrottlerStorage],
+      useFactory: (storage: RedisThrottlerStorage) => ({
+        throttlers: [{ ttl: 60_000, limit: 100 }],
+        storage: redisEnabled() ? storage : undefined,
+      }),
+    }),
     // Enables @Cron() handlers app-wide — currently only HrEventsModule's
     // daily birthday/work-anniversary email job.
     ScheduleModule.forRoot(),
     PrismaModule,
+    RedisCacheModule,
     AuthModule,
     UsersModule,
     OrganizationsModule,

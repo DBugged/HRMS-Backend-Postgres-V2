@@ -73,6 +73,7 @@ describe('Payroll (e2e)', () => {
   let deptEmployeeId: string;
   let organizationId: string;
   let otherEmployeeToken: string;
+  let otherEmployeeId: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -168,6 +169,7 @@ describe('Payroll (e2e)', () => {
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ name: 'Other Employee', email: 'pay-e2e-other@example.test' });
+    otherEmployeeId = (otherCreate.body as EmployeeCreateBody).employee.id;
     const otherLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -445,7 +447,7 @@ describe('Payroll (e2e)', () => {
         .expect(403);
     });
 
-    it('MANAGER is not blocked by the single-payslip endpoint (only the list is dept-scoped)', async () => {
+    it('MANAGER can view a single payslip for someone in their own department', async () => {
       const run = await prisma.payrollRun.findFirstOrThrow({
         where: { employeeId, month: MONTH, year: YEAR },
       });
@@ -453,6 +455,21 @@ describe('Payroll (e2e)', () => {
         .get(`/payroll/${run.id}`)
         .set('Authorization', `Bearer ${managerToken}`)
         .expect(200);
+    });
+
+    it('MANAGER gets 403 on a single payslip for someone outside their department', async () => {
+      await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: MONTH, year: YEAR, employeeId: otherEmployeeId })
+        .expect(201);
+      const run = await prisma.payrollRun.findFirstOrThrow({
+        where: { employeeId: otherEmployeeId, month: MONTH, year: YEAR },
+      });
+      await request(app.getHttpServer())
+        .get(`/payroll/${run.id}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(403);
     });
 
     it("MANAGER's list is scoped to their own department", async () => {

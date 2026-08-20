@@ -3,6 +3,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -47,6 +48,8 @@ export interface IssuedTokens {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   constructor(
     // The tenant-scope-extended client only, including for
     // $transaction() — see the identical comment on EmployeesService for
@@ -334,9 +337,9 @@ export class AuthService {
           html: `<p>Hello ${user.name},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address (${user.email}).</p>`,
         })
         .catch((err: Error) => {
-          console.error(
-            '[changePassword] Failed to send welcome email:',
-            err.message,
+          this.logger.error(
+            `Failed to send welcome email: ${err.message}`,
+            err.stack,
           );
         });
     }

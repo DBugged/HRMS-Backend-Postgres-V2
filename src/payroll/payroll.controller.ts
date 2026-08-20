@@ -61,9 +61,9 @@ export class PayrollController {
     return this.payrollService.getHistory(query, caller, caller.organizationId);
   }
 
-  // No @Roles() — 403 for an EMPLOYEE viewing someone else's payslip is
-  // enforced inline in the service; MANAGER/ADMIN/HR may view any single
-  // payslip by id (only the list endpoint above scopes MANAGER by dept).
+  // No @Roles() — self/dept/org scoping all enforced inline in the
+  // service: EMPLOYEE 403s on anyone else's payslip, MANAGER is
+  // dept-scoped (matches findAll above), ADMIN/HR unrestricted.
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.payrollService.findOne(id, caller, caller.organizationId);

@@ -23,13 +23,20 @@ export interface PayslipEmailJobData {
 @Injectable()
 export class PayslipEmailQueueService implements OnModuleDestroy {
   private readonly queue: Queue<PayslipEmailJobData> | null;
+  // Kept so onModuleDestroy can close it explicitly — BullMQ's
+  // queue.close() only closes a connection it created internally itself;
+  // an externally-supplied `connection` instance (as here) is the
+  // caller's responsibility to close, and was previously never closed at
+  // all, leaking one open Redis socket per app instance.
+  private readonly connection: IORedis | null;
 
   constructor() {
-    this.queue = redisEnabled()
+    this.connection = redisEnabled()
+      ? new IORedis(getRedisUrl(), { maxRetriesPerRequest: null })
+      : null;
+    this.queue = this.connection
       ? new Queue<PayslipEmailJobData>(PAYSLIP_EMAIL_QUEUE_NAME, {
-          connection: new IORedis(getRedisUrl(), {
-            maxRetriesPerRequest: null,
-          }),
+          connection: this.connection,
         })
       : null;
   }
@@ -52,5 +59,6 @@ export class PayslipEmailQueueService implements OnModuleDestroy {
 
   async onModuleDestroy() {
     await this.queue?.close();
+    await this.connection?.quit();
   }
 }

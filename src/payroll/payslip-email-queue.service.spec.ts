@@ -1,7 +1,11 @@
 // Mocked so `enabled: true` never attempts a real socket connection —
 // this is a unit test of the enabled/disabled branching, not an
 // integration test against a live Redis.
-jest.mock('ioredis', () => jest.fn().mockImplementation(() => ({})));
+jest.mock('ioredis', () =>
+  jest.fn().mockImplementation(() => ({
+    quit: jest.fn().mockResolvedValue(undefined),
+  })),
+);
 jest.mock('bullmq', () => ({
   Queue: jest.fn().mockImplementation(() => ({
     add: jest.fn().mockResolvedValue(undefined),
