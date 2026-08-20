@@ -19,6 +19,7 @@ import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { LeaveTypesService } from '../leave-types/leave-types.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
+import { HolidaysService } from '../holidays/holidays.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
@@ -63,6 +64,7 @@ export class AuthService {
     private readonly statutoryConfigService: StatutoryConfigService,
     private readonly leaveTypesService: LeaveTypesService,
     private readonly salaryComponentsService: SalaryComponentsService,
+    private readonly holidaysService: HolidaysService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly jwt: JwtService,
@@ -134,6 +136,9 @@ export class AuthService {
           organization.id,
           user.id,
         );
+        // Every new org also starts with the current year's 3 fixed
+        // National Holidays so the Holiday Calendar isn't empty on day one.
+        await this.holidaysService.seedDefaults(tx, organization.id);
         return { organization, user };
       },
     );

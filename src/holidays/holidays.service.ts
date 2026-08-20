@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Holiday, HolidayType } from '@prisma/client';
+import { Holiday, HolidayType, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateHolidayDto } from './dto/create-holiday.dto';
@@ -33,6 +33,41 @@ export class HolidaysService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
+
+  // India's 3 fixed National Holidays (Republic Day, Independence Day,
+  // Gandhi Jayanti) — same date every year, mandated for every
+  // establishment, distinct from festival/restricted holidays which shift
+  // by year and region. Seeded for the current year so the Holiday
+  // Calendar isn't empty on day one; fully editable/deletable afterward
+  // like any other holiday — nothing marks these as special/immutable.
+  // Same registration-time integration point as LeaveTypesService/
+  // SalaryComponentsService.seedDefaults.
+  async seedDefaults(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    year: number = new Date().getFullYear(),
+  ): Promise<void> {
+    const NATIONAL_HOLIDAYS = [
+      { name: 'Republic Day', month: 1, day: 26 },
+      { name: 'Independence Day', month: 8, day: 15 },
+      { name: 'Gandhi Jayanti', month: 10, day: 2 },
+    ];
+    for (const h of NATIONAL_HOLIDAYS) {
+      const date = `${year}-${String(h.month).padStart(2, '0')}-${String(h.day).padStart(2, '0')}`;
+      await tx.holiday.create({
+        data: {
+          organizationId,
+          name: h.name,
+          date,
+          year,
+          departmentId: null,
+          type: HolidayType.NATIONAL,
+          isOptional: false,
+          description: 'National Holiday',
+        },
+      });
+    }
+  }
 
   async create(dto: CreateHolidayDto, organizationId: string) {
     const name = dto.name.trim();

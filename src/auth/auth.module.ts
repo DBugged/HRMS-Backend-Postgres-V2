@@ -8,6 +8,7 @@ import { EmployeesModule } from '../employees/employees.module';
 import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
 import { LeaveTypesModule } from '../leave-types/leave-types.module';
 import { SalaryComponentsModule } from '../salary-components/salary-components.module';
+import { HolidaysModule } from '../holidays/holidays.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -29,6 +30,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // standard salary-component catalog at registration, same
     // integration point as LeaveTypesModule above.
     SalaryComponentsModule,
+    // For HolidaysService.seedDefaults — every new org gets the current
+    // year's 3 fixed National Holidays at registration, same integration
+    // point as SalaryComponentsModule above.
+    HolidaysModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService
