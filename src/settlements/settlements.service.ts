@@ -26,6 +26,8 @@ import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
+import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 
 type Actor = Omit<User, 'password'>;
 
@@ -136,11 +138,11 @@ export class SettlementsService {
     const basicMonthly =
       await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
         dto.employeeId,
-        'BASIC',
+        SALARY_COMPONENT_CODES.BASIC,
         dto.lastWorkingDay,
         organizationId,
       );
-    const ratePerDay = basicMonthly / 30;
+    const ratePerDay = dailyRateFromMonthly(basicMonthly);
 
     // Sums the closing balance (in days) across every LeaveType that
     // allows encashment — no minBalanceToRetain cap, since the employee is

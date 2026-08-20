@@ -28,6 +28,8 @@ import {
 } from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
+import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 
 type Actor = Omit<User, 'password'>;
 
@@ -133,11 +135,11 @@ export class LeaveEncashmentsService {
       const currentBasic =
         await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
           actor.id,
-          'BASIC',
+          SALARY_COMPONENT_CODES.BASIC,
           localDateStr(now),
           organizationId,
         );
-      const ratePerDay = currentBasic / 30;
+      const ratePerDay = dailyRateFromMonthly(currentBasic);
       const settings =
         await this.payrollSettingsService.getOrCreate(organizationId);
       const financialYear = getFinancialYear(

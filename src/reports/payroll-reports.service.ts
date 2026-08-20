@@ -15,6 +15,7 @@ import {
 import { Form16ReportQueryDto } from './dto/form16-report-query.dto';
 import { ReportPayload } from './reports.service';
 import { formatDateTimeDisplay } from '../payroll/format-date';
+import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 
 interface PayrollLine {
   code: string;
@@ -184,7 +185,7 @@ export class PayrollReportsService {
   ): Promise<ReportPayload> {
     const runs = await this.fetchRuns(query, organizationId);
     const rows = runs
-      .filter((r) => findLine(r.deductions, 'INCOME_TAX'))
+      .filter((r) => findLine(r.deductions, SALARY_COMPONENT_CODES.INCOME_TAX))
       .map((r) => {
         const taxDetails = r.taxDetails as TaxDetailsShape | null;
         return {
@@ -194,7 +195,10 @@ export class PayrollReportsService {
           year: r.year,
           regime: taxDetails?.regime ?? '-',
           taxableIncome: taxDetails?.taxableIncome ?? 0,
-          monthlyTDS: lineAmount(r.deductions, 'INCOME_TAX'),
+          monthlyTDS: lineAmount(
+            r.deductions,
+            SALARY_COMPONENT_CODES.INCOME_TAX,
+          ),
           annualTaxProjection: taxDetails?.totalAnnualTax ?? 0,
         };
       });
@@ -275,8 +279,8 @@ export class PayrollReportsService {
     return this.statutoryContributionReport(
       query,
       organizationId,
-      'PF',
-      'PF_EMPLOYER',
+      SALARY_COMPONENT_CODES.PF,
+      SALARY_COMPONENT_CODES.PF_EMPLOYER,
       'PF Report',
       'pf_report',
     );
@@ -286,8 +290,8 @@ export class PayrollReportsService {
     return this.statutoryContributionReport(
       query,
       organizationId,
-      'ESI',
-      'ESI_EMPLOYER',
+      SALARY_COMPONENT_CODES.ESI,
+      SALARY_COMPONENT_CODES.ESI_EMPLOYER,
       'ESI Report',
       'esi_report',
     );
@@ -297,7 +301,7 @@ export class PayrollReportsService {
     return this.statutoryContributionReport(
       query,
       organizationId,
-      'PT',
+      SALARY_COMPONENT_CODES.PT,
       null,
       'Professional Tax Report',
       'pt_report',
@@ -450,7 +454,10 @@ export class PayrollReportsService {
         taxableIncome: taxDetails?.taxableIncome ?? 0,
       };
       existing.grossSalary += r.grossSalary;
-      existing.totalTaxDeducted += lineAmount(r.deductions, 'INCOME_TAX');
+      existing.totalTaxDeducted += lineAmount(
+        r.deductions,
+        SALARY_COMPONENT_CODES.INCOME_TAX,
+      );
       byEmployee.set(r.employeeId, existing);
     }
 

@@ -72,6 +72,7 @@ import { assertManagerDeptScope } from '../common/dept-scope';
 import { mapWithConcurrency } from '../common/concurrency';
 import { issueDocumentNumber } from '../organizations/document-numbering';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
+import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 
 type Actor = Omit<User, 'password'>;
 
@@ -425,8 +426,12 @@ export class PayrollService {
         const taxableGross = earningsLines
           .filter((e) => e.taxable !== false)
           .reduce((s, e) => s + e.amount, 0);
-        const basicLine = earningsLines.find((e) => e.code === 'BASIC');
-        const hraLine = earningsLines.find((e) => e.code === 'HRA');
+        const basicLine = earningsLines.find(
+          (e) => e.code === SALARY_COMPONENT_CODES.BASIC,
+        );
+        const hraLine = earningsLines.find(
+          (e) => e.code === SALARY_COMPONENT_CODES.HRA,
+        );
 
         taxDetails = calculateTax({
           month,
@@ -451,7 +456,7 @@ export class PayrollService {
         });
         const incomeTaxAmount = Math.max(0, taxDetails.monthlyTDS || 0);
         deductionsResults.push({
-          code: 'INCOME_TAX',
+          code: SALARY_COMPONENT_CODES.INCOME_TAX,
           name: incomeTaxComponent.name,
           amount: incomeTaxAmount,
           component: incomeTaxComponent,
@@ -1389,7 +1394,9 @@ export class PayrollService {
         code: string;
         amount: number;
       }[];
-      const incomeTaxLine = deductions.find((d) => d.code === 'INCOME_TAX');
+      const incomeTaxLine = deductions.find(
+        (d) => d.code === SALARY_COMPONENT_CODES.INCOME_TAX,
+      );
       ytdTDS += incomeTaxLine ? incomeTaxLine.amount : 0;
     }
     return { ytdGross, ytdTDS };

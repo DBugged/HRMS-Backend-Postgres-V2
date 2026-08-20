@@ -18,6 +18,7 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
+import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
@@ -59,7 +60,7 @@ function deriveLeaveYear(startDate: string): number {
 
 function isCompOffType(leaveType: LeaveType): boolean {
   return (
-    leaveType.code === 'COMPOFF' ||
+    leaveType.code === LEAVE_TYPE_CODES.COMPOFF ||
     leaveType.allocationType === AllocationType.NONE
   );
 }
@@ -161,7 +162,7 @@ export class LeavesService {
     );
     const balanceEligible = eligible.filter(
       (lt) =>
-        lt.code !== 'COMPOFF' &&
+        lt.code !== LEAVE_TYPE_CODES.COMPOFF &&
         lt.allocationType !== AllocationType.NONE &&
         lt.allocationType !== AllocationType.UNLIMITED,
     );

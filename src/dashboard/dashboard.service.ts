@@ -11,6 +11,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { CompOffService } from '../comp-offs/comp-off.service';
+import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import {
   DashboardRange,
   MONTH_LABELS,
@@ -68,7 +69,10 @@ export class DashboardService {
         benefits: 0,
         deductions: 0,
       };
-      const taxAmount = findDeductionAmount(run.deductions, 'INCOME_TAX');
+      const taxAmount = findDeductionAmount(
+        run.deductions,
+        SALARY_COMPONENT_CODES.INCOME_TAX,
+      );
       agg.netPay += run.netPay;
       agg.benefits += run.totalEmployerContributions;
       agg.taxes += taxAmount;
@@ -275,18 +279,21 @@ export class DashboardService {
       );
 
     const taxCompliance = {
-      totalTDS: sumDeductionCode(currentMonthRuns, 'INCOME_TAX'),
+      totalTDS: sumDeductionCode(
+        currentMonthRuns,
+        SALARY_COMPONENT_CODES.INCOME_TAX,
+      ),
       totalPF: settings.pfEnabled
-        ? sumDeductionCode(currentMonthRuns, 'PF')
+        ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.PF)
         : null,
       totalESI: settings.esiEnabled
-        ? sumDeductionCode(currentMonthRuns, 'ESI')
+        ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.ESI)
         : null,
       totalPT: settings.ptEnabled
-        ? sumDeductionCode(currentMonthRuns, 'PT')
+        ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.PT)
         : null,
       totalLWF: settings.lwfEnabled
-        ? sumDeductionCode(currentMonthRuns, 'LWF')
+        ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.LWF)
         : null,
     };
 

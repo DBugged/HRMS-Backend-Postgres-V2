@@ -85,3 +85,15 @@ export function round(
   if (roundingRule === 'none') return value;
   return Math.round(value * factor) / factor; // nearest (default)
 }
+
+// A flat 30-day month for converting a monthly salary figure into a daily
+// rate (settlement pending-salary payout, leave encashment payout) —
+// ported verbatim from the old system, which used this same fixed divisor
+// rather than the actual number of calendar days in the relevant month.
+// Previously duplicated independently in settlements.service.ts and
+// leave-encashments.service.ts.
+export const MONTHLY_RATE_DAY_DIVISOR = 30;
+
+export function dailyRateFromMonthly(monthlyAmount: number): number {
+  return monthlyAmount / MONTHLY_RATE_DAY_DIVISOR;
+}
