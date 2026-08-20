@@ -36,7 +36,7 @@ export class UpdateEmployeeDto {
   // validation for undefined, not ''.
   @ApiPropertyOptional()
   @IsOptional()
-  @ValidateIf((o) => o.officialEmail !== '')
+  @ValidateIf((o: UpdateEmployeeDto) => o.officialEmail !== '')
   @IsEmail()
   officialEmail?: string;
 

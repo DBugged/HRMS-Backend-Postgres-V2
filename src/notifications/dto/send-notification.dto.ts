@@ -29,7 +29,7 @@ export class SendNotificationDto {
     description: 'Required when recipientType=department',
   })
   @IsOptional()
-  @ValidateIf((o) => o.department !== '')
+  @ValidateIf((o: SendNotificationDto) => o.department !== '')
   @IsUUID()
   department?: string;
 
