@@ -17,6 +17,7 @@ import { signPersonalDataFileUrls } from '../employees/personal-data';
 import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
+import { LeaveTypesService } from '../leave-types/leave-types.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
@@ -59,6 +60,7 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly employeeIdService: EmployeeIdService,
     private readonly statutoryConfigService: StatutoryConfigService,
+    private readonly leaveTypesService: LeaveTypesService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly jwt: JwtService,
@@ -116,6 +118,12 @@ export class AuthService {
             emailVerified: true,
           },
         });
+        // Every new org starts with the standard leave-type set (Casual,
+        // Sick, Earned, Maternity, etc.) instead of an empty Leave Types
+        // page — admin can edit/disable/add to these afterward, same
+        // registration-time integration point as the statutory defaults
+        // above.
+        await this.leaveTypesService.seedDefaults(tx, organization.id, user.id);
         return { organization, user };
       },
     );

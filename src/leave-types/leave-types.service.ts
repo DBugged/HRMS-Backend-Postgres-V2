@@ -13,6 +13,7 @@ import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
 import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
 import { wrapAll } from '../common/pagination';
+import { LEAVE_TYPE_DEFAULTS } from './leave-type-defaults';
 
 @Injectable()
 export class LeaveTypesService {
@@ -21,6 +22,34 @@ export class LeaveTypesService {
     private readonly leaveBalanceService: LeaveBalanceService,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  // Every new org starts with the standard leave-type set (Casual, Sick,
+  // Earned, Maternity, etc.) instead of an empty Leave Types page — admin
+  // can edit/disable/add to these from Leave Types afterward. Same
+  // registration-time integration point as StatutoryConfigService.seedDefaults.
+  async seedDefaults(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    createdById?: string,
+  ): Promise<void> {
+    for (const def of LEAVE_TYPE_DEFAULTS) {
+      const { carryForward, encashment, rules, ...rest } = def;
+      await tx.leaveType.create({
+        data: {
+          ...rest,
+          organizationId,
+          createdById,
+          rules: rules as unknown as Prisma.InputJsonValue,
+          ...(carryForward !== undefined && {
+            carryForward: carryForward,
+          }),
+          ...(encashment !== undefined && {
+            encashment: encashment,
+          }),
+        },
+      });
+    }
+  }
 
   async create(
     dto: CreateLeaveTypeDto,

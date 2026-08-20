@@ -8,5 +8,6 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
   imports: [LeaveBalancesModule, AuditLogModule],
   controllers: [LeaveTypesController],
   providers: [LeaveTypesService],
+  exports: [LeaveTypesService],
 })
 export class LeaveTypesModule {}

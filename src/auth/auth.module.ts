@@ -6,6 +6,7 @@ import { JwtAccessStrategy } from './strategies/jwt-access.strategy';
 import { UsersModule } from '../users/users.module';
 import { EmployeesModule } from '../employees/employees.module';
 import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
+import { LeaveTypesModule } from '../leave-types/leave-types.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -19,6 +20,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // statutory modules pre-seeded at registration, same integration
     // point as EmployeeIdService above.
     StatutoryConfigModule,
+    // For LeaveTypesService.seedDefaults — every new org gets the standard
+    // leave-type set (Casual, Sick, Earned, Maternity, etc.) at
+    // registration, same integration point as StatutoryConfigModule above.
+    LeaveTypesModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService
