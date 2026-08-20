@@ -70,6 +70,7 @@ import { EmailService } from '../notifications/email.service';
 import { paginate } from '../common/pagination';
 import { assertManagerDeptScope } from '../common/dept-scope';
 import { mapWithConcurrency } from '../common/concurrency';
+import { issueDocumentNumber } from '../organizations/document-numbering';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
 
 type Actor = Omit<User, 'password'>;
@@ -638,9 +639,18 @@ export class PayrollService {
           dto.year,
           organizationId,
         );
+        // Issued once (stable across recalculation before lock) from the
+        // org's documentNumbering.payslip config — a short transaction
+        // just for the row-locked issue, not the whole calculation.
+        const payslipNumber =
+          run?.payslipNumber ??
+          (await this.scopedPrisma.$transaction((tx) =>
+            issueDocumentNumber(tx, organizationId, 'payslip'),
+          ));
         const data = {
           financialYear: calc.financialYear,
           status: PayrollRunStatus.CALCULATED,
+          payslipNumber,
           attendanceSummary:
             calc.attendanceSummary as unknown as Prisma.InputJsonValue,
           earnings: calc.earnings as unknown as Prisma.InputJsonValue,

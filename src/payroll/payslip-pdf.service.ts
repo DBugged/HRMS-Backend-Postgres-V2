@@ -100,6 +100,7 @@ interface YtdTotals {
 // (Prisma-fetched) PayrollRun+employee and the dummy preview run below.
 interface PayslipRun {
   id: string;
+  payslipNumber: string | null;
   month: number;
   year: number;
   paidAt: Date | null;
@@ -128,6 +129,7 @@ function buildDummyRun(): PayslipRun {
   const now = new Date();
   return {
     id: 'preview',
+    payslipNumber: 'PS-PREVIEW',
     month: now.getMonth() + 1,
     year: now.getFullYear(),
     paidAt: now,
@@ -379,6 +381,13 @@ export class PayslipPdfService {
         54,
         { width: 220, align: 'right' },
       );
+      if (run.payslipNumber) {
+        doc.fontSize(7);
+        text(`Payslip No: ${run.payslipNumber}`, PAGE_W - MARGIN - 220, 66, {
+          width: 220,
+          align: 'right',
+        });
+      }
 
       // ── Three cards: Employee Details / Attendance Summary / Net Pay ──
       let y = headerH + 20;

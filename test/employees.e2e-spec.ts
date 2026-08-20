@@ -183,7 +183,11 @@ describe('Employees + Departments (e2e)', () => {
       })
       .expect(201);
     const managerBody = managerRes.body as EmployeeBody;
-    expect(managerBody.employee.employeeId).toMatch(/^EMP-\d{4}$/);
+    // Employee IDs are issued from the org's own documentNumbering.
+    // employeeId config (see EmployeeIdService/issueDocumentNumber), not a
+    // hardcoded "EMP-" prefix — a freshly-registered org's schema default
+    // for that entry is "DP-{0000}".
+    expect(managerBody.employee.employeeId).toMatch(/^DP-\d{4}$/);
 
     const managerLogin = await request(app.getHttpServer())
       .post('/auth/login')

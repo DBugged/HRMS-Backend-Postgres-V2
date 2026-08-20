@@ -59,11 +59,14 @@ model Organization {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Row-locked counter for employeeId generation (SELECT ... FOR UPDATE in
-  // EmployeeIdService) — deliberately simpler than the old system's
-  // generalized documentNumbering JSON (which covers many document types);
-  // this phase only needs the one counter. See the Phase 2 plan for why a
-  // per-document-type config system isn't ported yet.
+  // DEPRECATED — no longer read or written by anything. EmployeeIdService
+  // now issues employee IDs through documentNumbering.employeeId (see
+  // issueDocumentNumber in document-numbering.ts) instead of this
+  // separate, disconnected counter, which silently ignored whatever
+  // format an admin configured in the Setup Wizard's Document Numbering
+  // step. Left in place rather than dropped in a migration — genuinely
+  // dead now, but removing a column is a destructive change with no
+  // functional upside over just not touching it.
   employeeIdPrefix  String @default("EMP")
   employeeIdCounter Int    @default(0)
 
@@ -1445,6 +1448,13 @@ model PayrollRun {
   netPay                     Float  @default(0)
   ctcMonthly                 Float  @default(0)
   netPayInWords              String @default("")
+
+  // Issued once, the first time this run is calculated, from the org's
+  // documentNumbering.payslip config (see issueDocumentNumber) — stays
+  // fixed across recalculation so re-running a payroll before it's
+  // locked doesn't burn a new number each time. Null until first
+  // calculated.
+  payslipNumber String?
 
   calculatedAt   DateTime?
   calculatedById String?
