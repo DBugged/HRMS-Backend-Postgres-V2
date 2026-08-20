@@ -17,14 +17,22 @@ export class OrganizationsService {
       where: { id: organizationId },
     });
     if (!org) throw new NotFoundException('Organization not found.');
-    return org;
+    // faceApiKey is a webhook secret, shown once at generation time only
+    // (OrganizationSettingsService.regenerateFaceApiKey) — never on a
+    // read path, same as a generated employee password.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
+    const { faceApiKey, ...rest } = org;
+    return rest;
   }
 
   async updateOwn(organizationId: string, dto: UpdateOrganizationDto) {
     await this.findOwn(organizationId); // 404s before attempting the update if somehow missing
-    return this.prisma.organization.update({
+    const updated = await this.prisma.organization.update({
       where: { id: organizationId },
       data: dto,
     });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
+    const { faceApiKey, ...rest } = updated;
+    return rest;
   }
 }

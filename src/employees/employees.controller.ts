@@ -167,7 +167,11 @@ export class EmployeesController {
 
   @Get(':id/documents')
   listDocuments(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.employeeProfileService.listDocuments(id, caller.organizationId);
+    return this.employeeProfileService.listDocuments(
+      id,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Post(':id/documents')

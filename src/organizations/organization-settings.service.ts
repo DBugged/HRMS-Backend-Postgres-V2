@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { AuditModule, Organization, Role, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -113,7 +114,13 @@ export class OrganizationSettingsService {
   // file-token.ts), so every response that surfaces one signs it fresh,
   // same pattern as PolicyDocument's withSignedUrl in the documents module.
   private withSignedUrls(org: Organization) {
-    const signed: Record<string, unknown> = { ...org };
+    // faceApiKey is a webhook secret, not settings data — shown once at
+    // generation time only (regenerateFaceApiKey's return value), never on
+    // a read path, same "not retrievable afterwards" handling as a
+    // generated employee password.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
+    const { faceApiKey, ...rest } = org;
+    const signed: Record<string, unknown> = { ...rest };
     for (const field of BRANDING_URL_FIELDS) {
       const value = org[field];
       if (value) signed[field] = `/files/${signFileToken(org.id, value)}`;
@@ -256,6 +263,32 @@ export class OrganizationSettingsService {
     });
 
     return this.withSignedUrls(await this.findOrThrow(organizationId));
+  }
+
+  // Generates (or rotates) this org's own Face API webhook key — replaces
+  // the old single process-wide FACE_API_KEY env var that authenticated
+  // every organization's webhook with one shared secret (a cross-tenant
+  // forgery vector: anyone holding it could punch attendance for ANY org
+  // by setting an arbitrary organizationId in the payload). Shown once in
+  // the response, same "never shown again" pattern as a generated employee
+  // password — the hashed/plain value isn't retrievable afterwards, only
+  // regenerable.
+  async regenerateFaceApiKey(organizationId: string, actorId: string) {
+    await this.findOrThrow(organizationId);
+    const key = crypto.randomBytes(24).toString('base64url');
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { faceApiKey: key },
+    });
+
+    await this.auditLogService.log({
+      actorId,
+      action: 'ORGANIZATION_FACE_API_KEY_REGENERATED',
+      module: AuditModule.ORGANIZATION,
+      organizationId,
+    });
+
+    return { faceApiKey: key };
   }
 
   async previewDocumentNumber(organizationId: string, type: string) {

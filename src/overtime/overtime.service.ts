@@ -18,6 +18,10 @@ import { LogOvertimeDto } from './dto/log-overtime.dto';
 import { ReviewOvertimeDto } from './dto/review-overtime.dto';
 import { QueryOvertimeDto } from './dto/query-overtime.dto';
 import { paginate } from '../common/pagination';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 
@@ -67,6 +71,14 @@ export class OvertimeService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
+    } else if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -103,6 +115,12 @@ export class OvertimeService {
       where: { id, organizationId },
     });
     if (!record) throw new NotFoundException('Overtime record not found.');
+    await assertManagerDeptScope(
+      this.scopedPrisma,
+      actor,
+      organizationId,
+      record.employeeId,
+    );
     if (record.status !== OvertimeStatus.PENDING) {
       throw new BadRequestException(
         'This overtime record has already been reviewed.',

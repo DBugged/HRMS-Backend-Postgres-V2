@@ -67,6 +67,17 @@ model Organization {
   employeeIdPrefix  String @default("EMP")
   employeeIdCounter Int    @default(0)
 
+  // Per-org secret for the Face API attendance-punch webhook
+  // (POST /attendance/punch/ingest, @Public()). Previously a single
+  // process-wide FACE_API_KEY env var authenticated every organization's
+  // webhook, which let anyone holding that one shared key forge punches
+  // for ANY org by setting an arbitrary organizationId in the payload —
+  // a device secret is inherently more exposed than a user credential, so
+  // that was a real cross-tenant write vector. Null until an admin
+  // generates one (POST /organizations/settings/face-api-key/regenerate);
+  // the webhook is fail-closed for orgs that haven't set one.
+  faceApiKey String? @unique
+
   // Admin toggle for whether WFH is offered as a work-arrangement option on
   // Attendance — the column on Attendance always accepts WFH regardless, so
   // disabling this later doesn't orphan history.

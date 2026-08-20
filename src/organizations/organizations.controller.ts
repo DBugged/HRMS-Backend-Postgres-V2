@@ -112,6 +112,16 @@ export class OrganizationsController {
     );
   }
 
+  @Post('settings/face-api-key/regenerate')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  regenerateFaceApiKey(@CurrentUser() caller: Caller) {
+    return this.organizationSettingsService.regenerateFaceApiKey(
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
   @Get('settings/document-numbering/:type/preview')
   @Roles(Role.ADMIN)
   @UseGuards(RolesGuard)

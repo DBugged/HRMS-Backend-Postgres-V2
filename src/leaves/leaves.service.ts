@@ -28,6 +28,10 @@ import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import { checkLeaveRules, LeaveRules } from './leave-rules';
 import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
 import { paginate } from '../common/pagination';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
@@ -108,11 +112,13 @@ export class LeavesService {
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
     } else if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
-      where.employeeId = { in: deptEmployees.map((e) => e.id) };
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -142,7 +148,11 @@ export class LeavesService {
     actor: Actor,
     organizationId: string,
   ) {
-    const targetEmployeeId = this.resolveViewTarget(employeeIdParam, actor);
+    const targetEmployeeId = await this.resolveViewTarget(
+      employeeIdParam,
+      actor,
+      organizationId,
+    );
     const resolvedYear = year ?? new Date().getFullYear();
 
     const eligible = await this.leaveBalanceService.getEligibleLeaveTypes(
@@ -200,11 +210,13 @@ export class LeavesService {
       endDate: { gte: query.from },
     };
     if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
-      where.employeeId = { in: deptEmployees.map((e) => e.id) };
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     }
 
     return this.scopedPrisma.leave.findMany({
@@ -221,6 +233,14 @@ export class LeavesService {
     if (employeeId !== actor.id && !APPROVE_ROLES.includes(actor.role)) {
       throw new ForbiddenException(
         "You cannot view another employee's leave history.",
+      );
+    }
+    if (employeeId !== actor.id) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        employeeId,
       );
     }
 
@@ -714,16 +734,23 @@ export class LeavesService {
     );
   }
 
-  private resolveViewTarget(
+  private async resolveViewTarget(
     employeeIdParam: string | undefined,
     actor: Actor,
-  ): string {
+    organizationId: string,
+  ): Promise<string> {
     if (!employeeIdParam || employeeIdParam === actor.id) return actor.id;
     if (!APPROVE_ROLES.includes(actor.role)) {
       throw new ForbiddenException(
         "You cannot view another employee's leave balance.",
       );
     }
+    await assertManagerDeptScope(
+      this.scopedPrisma,
+      actor,
+      organizationId,
+      employeeIdParam,
+    );
     return employeeIdParam;
   }
 

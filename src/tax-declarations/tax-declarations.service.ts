@@ -11,6 +11,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxDeclarationDto } from './dto/upsert-tax-declaration.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { assertManagerDeptScope } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -42,6 +43,14 @@ export class TaxDeclarationsService {
         'employeeId and financialYear are required.',
       );
     }
+    if (employeeId !== actor.id) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        employeeId,
+      );
+    }
 
     const declaration =
       await this.scopedPrisma.employeeTaxDeclaration.findFirst({
@@ -66,6 +75,14 @@ export class TaxDeclarationsService {
     // someone else's declaration may set status; editing your own never
     // can, regardless of your role.
     const isOwnDeclaration = employeeId === actor.id;
+    if (!isOwnDeclaration) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        employeeId,
+      );
+    }
     const status = isOwnDeclaration ? undefined : dto.status;
 
     const data = {

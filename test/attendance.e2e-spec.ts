@@ -184,6 +184,16 @@ describe('Attendance (e2e)', () => {
   });
 
   describe('Face API ingest', () => {
+    let faceApiKey: string;
+
+    beforeAll(async () => {
+      const res = await request(app.getHttpServer())
+        .post('/organizations/settings/face-api-key/regenerate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      faceApiKey = (res.body as { faceApiKey: string }).faceApiKey;
+    });
+
     it('rejects a missing key', async () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/ingest')
@@ -199,10 +209,24 @@ describe('Attendance (e2e)', () => {
         .expect(401);
     });
 
+    it("rejects this org's key used against a different organizationId", async () => {
+      // Regression test for the cross-tenant forgery this per-org key
+      // model closes off: a key must only authenticate punches for the
+      // organization it was generated for.
+      await request(app.getHttpServer())
+        .post('/attendance/punch/ingest')
+        .set('x-face-api-key', faceApiKey)
+        .send({
+          employeeId: employeeHumanId,
+          organizationId: '00000000-0000-0000-0000-000000000000',
+        })
+        .expect(401);
+    });
+
     it('404s for an unknown employeeId', async () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/ingest')
-        .set('x-face-api-key', process.env.FACE_API_KEY!)
+        .set('x-face-api-key', faceApiKey)
         .send({ employeeId: 'NOPE', organizationId })
         .expect(404);
     });
@@ -210,7 +234,7 @@ describe('Attendance (e2e)', () => {
     it('accepts a correctly-keyed punch and creates/recalculates Attendance', async () => {
       const res = await request(app.getHttpServer())
         .post('/attendance/punch/ingest')
-        .set('x-face-api-key', process.env.FACE_API_KEY!)
+        .set('x-face-api-key', faceApiKey)
         .send({ employeeId: employeeHumanId, organizationId })
         .expect(201);
       const body = res.body as PunchIngestBody;

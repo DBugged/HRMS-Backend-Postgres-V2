@@ -22,6 +22,10 @@ import { RequestLeaveEncashmentDto } from './dto/request-leave-encashment.dto';
 import { ReviewLeaveEncashmentDto } from './dto/review-leave-encashment.dto';
 import { QueryLeaveEncashmentDto } from './dto/query-leave-encashment.dto';
 import { paginate } from '../common/pagination';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 
@@ -53,6 +57,14 @@ export class LeaveEncashmentsService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
+    } else if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -162,6 +174,12 @@ export class LeaveEncashmentsService {
     });
     if (!row)
       throw new NotFoundException('Leave encashment request not found.');
+    await assertManagerDeptScope(
+      this.scopedPrisma,
+      actor,
+      organizationId,
+      row.employeeId,
+    );
 
     const result = await this.scopedPrisma.$transaction(async (tx) => {
       await tx.leaveEncashment.updateMany({

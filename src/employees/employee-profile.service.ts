@@ -192,7 +192,8 @@ export class EmployeeProfileService {
 
   // -- Documents --
 
-  async listDocuments(id: string, organizationId: string) {
+  async listDocuments(id: string, actor: Actor, organizationId: string) {
+    this.assertSelfOrHr(actor, id);
     await this.findEmployeeOrThrow(id, organizationId);
     const docs = await this.scopedPrisma.employeeDocument.findMany({
       where: { organizationId, employeeId: id },

@@ -1,7 +1,11 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { LeaveStatus, Prisma } from '@prisma/client';
+import { LeaveStatus, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 import {
   formatDateDisplay,
   formatDateTimeDisplay,
@@ -17,6 +21,8 @@ import {
   LeaveReportQueryDto,
   PayrollReportQueryDto,
 } from './dto/report-queries.dto';
+
+type Actor = Omit<User, 'password'>;
 
 export interface ReportPayload {
   title: string;
@@ -34,6 +40,7 @@ export class ReportsService {
 
   async attendanceReport(
     query: AttendanceReportQueryDto,
+    actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
     const where: Prisma.AttendanceWhereInput = { organizationId };
@@ -42,7 +49,13 @@ export class ReportsService {
       if (query.from) where.date.gte = query.from;
       if (query.to) where.date.lte = query.to;
     }
-    if (query.department) where.employee = { departmentId: query.department };
+    if (actor.role === Role.MANAGER) {
+      // Ignore query.department for MANAGER — always their own, never a
+      // caller-chosen one, so a MANAGER can't request another dept's report.
+      where.employee = { departmentId: actor.departmentId };
+    } else if (query.department) {
+      where.employee = { departmentId: query.department };
+    }
 
     const records = await this.scopedPrisma.attendance.findMany({
       where,
@@ -80,10 +93,20 @@ export class ReportsService {
 
   async leaveReport(
     query: LeaveReportQueryDto,
+    actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
     const where: Prisma.LeaveWhereInput = { organizationId };
     if (query.status) where.status = query.status;
+    if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
+    }
 
     const leaves = await this.scopedPrisma.leave.findMany({
       where,
@@ -128,12 +151,27 @@ export class ReportsService {
 
   async leaveBalanceReport(
     query: LeaveBalanceReportQueryDto,
+    actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
     const targetYear = query.year ?? new Date().getFullYear();
 
+    const where: Prisma.LeaveBalanceWhereInput = {
+      organizationId,
+      year: targetYear,
+    };
+    if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
+    }
+
     const balances = await this.scopedPrisma.leaveBalance.findMany({
-      where: { organizationId, year: targetYear },
+      where,
       include: {
         employee: { select: { name: true, employeeId: true } },
         leaveType: { select: { name: true } },
@@ -175,8 +213,18 @@ export class ReportsService {
 
   async employeeLeaveHistoryReport(
     query: EmployeeLeaveHistoryReportQueryDto,
+    actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
+    if (actor.role === Role.MANAGER) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        query.employeeId,
+      );
+    }
+
     const leaves = await this.scopedPrisma.leave.findMany({
       where: { organizationId, employeeId: query.employeeId },
       include: { leaveType: { select: { name: true } } },
@@ -211,6 +259,7 @@ export class ReportsService {
 
   async departmentLeaveSummaryReport(
     query: DepartmentLeaveSummaryReportQueryDto,
+    actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
     const where: Prisma.LeaveWhereInput = {
@@ -219,6 +268,14 @@ export class ReportsService {
     };
     if (query.from) where.endDate = { gte: query.from };
     if (query.to) where.startDate = { lte: query.to };
+    if (actor.role === Role.MANAGER) {
+      where.employee = { departmentId: actor.departmentId };
+    }
+
+    const departmentWhere: Prisma.DepartmentWhereInput =
+      actor.role === Role.MANAGER
+        ? { organizationId, id: actor.departmentId ?? undefined }
+        : { organizationId };
 
     const [leaves, departments] = await Promise.all([
       this.scopedPrisma.leave.findMany({
@@ -229,7 +286,7 @@ export class ReportsService {
         },
       }),
       this.scopedPrisma.department.findMany({
-        where: { organizationId },
+        where: departmentWhere,
         select: { id: true, name: true },
       }),
     ]);

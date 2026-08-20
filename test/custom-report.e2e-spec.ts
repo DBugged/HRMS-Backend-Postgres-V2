@@ -32,6 +32,7 @@ describe('Custom Report Builder (e2e)', () => {
 
   let adminToken: string;
   let employeeToken: string;
+  let managerToken: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -61,10 +62,20 @@ describe('Custom Report Builder (e2e)', () => {
       .send({ email: 'cr-e2e-admin@example.test', password: PASSWORD });
     adminToken = (adminLogin.body as AuthBody).accessToken;
 
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Dept A', code: 'DEPTA' });
+    const departmentId = (dept.body as { id: string }).id;
+
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Plain Employee', email: 'cr-e2e-emp@example.test' });
+      .send({
+        name: 'Plain Employee',
+        email: 'cr-e2e-emp@example.test',
+        departmentId,
+      });
     const empBody = empCreate.body as EmployeeCreateBody;
     const empLogin = await request(app.getHttpServer())
       .post('/auth/login')
@@ -73,6 +84,23 @@ describe('Custom Report Builder (e2e)', () => {
         password: empBody.generatedPassword,
       });
     employeeToken = (empLogin.body as AuthBody).accessToken;
+
+    const managerCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Dept A Manager',
+        email: 'cr-e2e-manager@example.test',
+        role: 'MANAGER',
+        departmentId,
+      });
+    const managerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'cr-e2e-manager@example.test',
+        password: (managerCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    managerToken = (managerLogin.body as AuthBody).accessToken;
   });
 
   afterAll(async () => {
@@ -169,5 +197,28 @@ describe('Custom Report Builder (e2e)', () => {
     expect(res.headers['content-disposition']).toContain(
       'custom-report-payroll.csv',
     );
+  });
+
+  it('MANAGER is blocked from the payroll source (Admin/HR only, same as /reports/payroll)', async () => {
+    await request(app.getHttpServer())
+      .get('/reports/custom')
+      .query({ source: 'payroll' })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(403);
+  });
+
+  it("MANAGER's employees-source rows are restricted to their own department, ignoring a requested department filter", async () => {
+    const res = await request(app.getHttpServer())
+      .get('/reports/custom')
+      .query({ source: 'employees' })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+    const body = res.body as CustomReportBody;
+    const emails = body.rows.map((r) => r.email);
+    expect(emails).toContain('cr-e2e-emp@example.test');
+    // The admin (no department) and any other-department employee must not
+    // leak into a MANAGER's report, regardless of the department filter
+    // they pass — it's always forced to their own.
+    expect(emails).not.toContain('cr-e2e-admin@example.test');
   });
 });

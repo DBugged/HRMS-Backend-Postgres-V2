@@ -45,6 +45,7 @@ export class ReportsController {
   ) {
     const report = await this.reportsService.attendanceReport(
       query,
+      caller,
       caller.organizationId,
     );
     await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
@@ -58,6 +59,7 @@ export class ReportsController {
   ) {
     const report = await this.reportsService.leaveReport(
       query,
+      caller,
       caller.organizationId,
     );
     await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
@@ -71,6 +73,7 @@ export class ReportsController {
   ) {
     const report = await this.reportsService.leaveBalanceReport(
       query,
+      caller,
       caller.organizationId,
     );
     await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
@@ -84,6 +87,7 @@ export class ReportsController {
   ) {
     const report = await this.reportsService.employeeLeaveHistoryReport(
       query,
+      caller,
       caller.organizationId,
     );
     await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
@@ -97,6 +101,7 @@ export class ReportsController {
   ) {
     const report = await this.reportsService.departmentLeaveSummaryReport(
       query,
+      caller,
       caller.organizationId,
     );
     await sendReport(res, { ...report, format: query.format ?? 'xlsx' });

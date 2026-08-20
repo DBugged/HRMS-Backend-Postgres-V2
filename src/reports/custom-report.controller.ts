@@ -38,6 +38,7 @@ export class CustomReportController {
   ) {
     const report = await this.customReportService.run(
       query,
+      caller,
       caller.organizationId,
     );
     const format = query.format ?? 'json';

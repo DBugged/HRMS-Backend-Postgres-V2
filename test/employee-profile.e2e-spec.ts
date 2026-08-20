@@ -364,6 +364,13 @@ describe('Employee Rich Profile (e2e)', () => {
       expect(docs[0].fileUrl).toMatch(/^\/files\//);
     });
 
+    it("EMPLOYEE cannot list another employee's documents", async () => {
+      await request(app.getHttpServer())
+        .get(`/employees/${otherEmpId}/documents`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .expect(403);
+    });
+
     it('EMPLOYEE cannot review a document (HR/Admin-only)', async () => {
       await request(app.getHttpServer())
         .patch(`/employees/${empId}/documents/${docId}/review`)

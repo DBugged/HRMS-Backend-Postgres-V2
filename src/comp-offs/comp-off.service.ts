@@ -27,6 +27,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
 import { paginate } from '../common/pagination';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -86,11 +90,13 @@ export class CompOffService {
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
     } else if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
-      where.employeeId = { in: deptEmployees.map((e) => e.id) };
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -146,6 +152,12 @@ export class CompOffService {
     organizationId: string,
   ) {
     const compOff = await this.findByIdOrThrow(id, organizationId);
+    await assertManagerDeptScope(
+      this.scopedPrisma,
+      actor,
+      organizationId,
+      compOff.employeeId,
+    );
     if (compOff.status !== CompOffStatus.PENDING) {
       throw new BadRequestException(
         'This comp-off request has already been reviewed.',

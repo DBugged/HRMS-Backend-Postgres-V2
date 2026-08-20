@@ -15,6 +15,10 @@ import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
 import { paginate } from '../common/pagination';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -50,6 +54,14 @@ export class ReimbursementsService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
+    } else if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -105,6 +117,12 @@ export class ReimbursementsService {
       where: { id, organizationId },
     });
     if (!claim) throw new NotFoundException('Reimbursement claim not found.');
+    await assertManagerDeptScope(
+      this.scopedPrisma,
+      actor,
+      organizationId,
+      claim.employeeId,
+    );
 
     await this.scopedPrisma.reimbursement.updateMany({
       where: { id, organizationId },

@@ -18,6 +18,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollService } from '../payroll/payroll.service';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { paginate } from '../common/pagination';
+import { deptScopedEmployeeIds } from '../common/dept-scope';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { EmployeeSalaryComponentsService } from '../employee-salary-components/employee-salary-components.service';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
@@ -61,7 +62,17 @@ export class SettlementsService {
     organizationId: string,
   ) {
     const where: Prisma.SettlementWhereInput = { organizationId };
-    if (actor.role === Role.EMPLOYEE) where.employeeId = actor.id;
+    if (actor.role === Role.EMPLOYEE) {
+      where.employeeId = actor.id;
+    } else if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
+    }
 
     return paginate(
       () =>

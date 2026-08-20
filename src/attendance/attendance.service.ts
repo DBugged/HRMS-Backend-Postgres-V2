@@ -355,7 +355,20 @@ export class AttendanceService {
     dto: IngestPunchDto,
     providedKey: string | undefined,
   ) {
-    if (!providedKey || providedKey !== process.env.FACE_API_KEY) {
+    // Per-org key, not a single shared secret — a global key would let
+    // anyone holding it forge punches for ANY organization by setting an
+    // arbitrary organizationId in the payload (this webhook has no
+    // session; organizationId is caller-supplied by design). Fail-closed:
+    // an org with no key configured yet can't be punched into via this
+    // endpoint at all, rather than falling back to a shared secret.
+    if (!providedKey) {
+      throw new UnauthorizedException('Invalid or missing Face API key.');
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: dto.organizationId, faceApiKey: providedKey },
+      select: { id: true },
+    });
+    if (!org) {
       throw new UnauthorizedException('Invalid or missing Face API key.');
     }
 

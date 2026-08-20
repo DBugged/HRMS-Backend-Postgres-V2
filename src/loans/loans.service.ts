@@ -21,6 +21,7 @@ import { UpdateLoanStatusDto } from './dto/update-loan-status.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
 import { paginate } from '../common/pagination';
+import { deptScopedEmployeeIds } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -37,6 +38,14 @@ export class LoansService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
+    } else if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
