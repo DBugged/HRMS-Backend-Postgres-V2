@@ -126,6 +126,23 @@ export class StatutoryConfigService {
       );
     }
 
+    // Versioning is append-only: a new version must start strictly after
+    // every existing version's effectiveFrom for this module. Without this
+    // check, a backdated create() would still blindly close out whichever
+    // row currently has effectiveTo: null — even when that row's
+    // effectiveFrom is AFTER the new (earlier) date — producing an inverted
+    // range (effectiveFrom > effectiveTo) that can never resolve in
+    // getEffective() and silently orphans that version's data.
+    const latest = await this.scopedPrisma.statutoryConfigVersion.findFirst({
+      where: { organizationId, module },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    if (latest && dto.effectiveFrom < latest.effectiveFrom) {
+      throw new BadRequestException(
+        `New version must start after the most recent version's effective date (${latest.effectiveFrom}). Versions must be created in chronological order — backdating before the latest version is not supported.`,
+      );
+    }
+
     const current = await this.scopedPrisma.statutoryConfigVersion.findFirst({
       where: { organizationId, module, effectiveTo: null },
     });

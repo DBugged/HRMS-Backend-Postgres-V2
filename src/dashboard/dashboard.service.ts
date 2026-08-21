@@ -546,7 +546,13 @@ export class DashboardService {
       1,
     );
 
-    const [joiners, leavers, currentActiveHeadcount] = await Promise.all([
+    const [
+      joiners,
+      leavers,
+      currentActiveHeadcount,
+      joinedBeforeWindow,
+      leftBeforeWindow,
+    ] = await Promise.all([
       this.scopedPrisma.user.findMany({
         where: { organizationId, joiningDate: { gte: windowStart } },
         select: { joiningDate: true },
@@ -561,6 +567,16 @@ export class DashboardService {
       }),
       this.scopedPrisma.user.count({
         where: { organizationId, isActive: true },
+      }),
+      this.scopedPrisma.user.count({
+        where: { organizationId, joiningDate: { lt: windowStart } },
+      }),
+      this.scopedPrisma.offboardingCase.count({
+        where: {
+          organizationId,
+          status: OffboardingStatus.COMPLETED,
+          completedAt: { lt: windowStart },
+        },
       }),
     ]);
 
@@ -601,15 +617,24 @@ export class DashboardService {
 
     const totalJoiners = rows.reduce((s, r) => s + r.joiners, 0);
     const totalLeavers = rows.reduce((s, r) => s + r.leavers, 0);
-    // Simple average-headcount-based attrition rate over the window:
-    // leavers divided by the average of (current headcount) and
-    // (headcount at window start, estimated by working backward from
-    // current using net changes).
-    const estimatedStartHeadcount = Math.max(
-      0,
-      currentActiveHeadcount - (totalJoiners - totalLeavers),
-    );
-    const avgHeadcount = (currentActiveHeadcount + estimatedStartHeadcount) / 2;
+    // Average-headcount-based attrition rate over the window: leavers
+    // divided by the average of (current headcount) and (headcount at
+    // window start).
+    //
+    // Headcount at window start is queried directly (employees who joined
+    // before the window, minus those already offboarded before the
+    // window) rather than back-solved as `current - (joiners - leavers)`.
+    // The back-solved version breaks down for any organization younger
+    // than the trend window (very common — new/demo/QA orgs, or any
+    // startup under a year old): once joiners-in-window minus
+    // leavers-in-window reaches or exceeds current headcount, the
+    // back-solved start clamps to 0, which collapses avgHeadcount to
+    // roughly half of current headcount and inflates the attrition rate
+    // to well above what any standard formula would produce — e.g. 9
+    // active / 12 joiners / 3 leavers over 12mo back-solved to 66.7%
+    // instead of a sane figure.
+    const startHeadcount = Math.max(0, joinedBeforeWindow - leftBeforeWindow);
+    const avgHeadcount = (currentActiveHeadcount + startHeadcount) / 2;
     const attritionRatePercent =
       avgHeadcount > 0
         ? Math.round((totalLeavers / avgHeadcount) * 1000) / 10

@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { isEmail, isDateString } from 'class-validator';
 import { Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -89,40 +90,64 @@ export class EmployeesService {
       crypto.randomBytes(6).toString('base64url') + 'A1!';
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
 
-    const user = await this.scopedPrisma.$transaction(async (tx) => {
-      const employeeId = await this.employeeIdService.generate(
-        tx,
-        organizationId,
-      );
-      return tx.user.create({
-        data: {
+    let user: User;
+    try {
+      user = await this.scopedPrisma.$transaction(async (tx) => {
+        const employeeId = await this.employeeIdService.generate(
+          tx,
           organizationId,
-          employeeId,
-          email: dto.email,
-          password: hashedPassword,
-          name: dto.name,
-          role: requestedRole,
-          departmentId: dto.departmentId,
-          designation: dto.designation ?? '',
-          contactNumber: dto.contactNumber ?? '',
-          joiningDate: dto.joiningDate ? new Date(dto.joiningDate) : undefined,
-          reportingManagerId: dto.reportingManagerId,
-          employeeType: dto.employeeType ?? 'permanent',
-          employmentStatus:
-            dto.employeeType === 'probation' ? 'PROBATION' : 'ONBOARDING',
-          // personalEmail rides along at creation (rather than only via the
-          // later personal-data PATCH) specifically so the welcome email
-          // below always has somewhere to go on the interactive Add
-          // Employee path. Absent for bulk-imported rows — see the DTO.
-          personalData: dto.personalEmail
-            ? (mergePersonalData(
-                {},
-                { personalEmail: dto.personalEmail },
-              ) as Prisma.InputJsonValue)
-            : undefined,
-        },
+        );
+        return tx.user.create({
+          data: {
+            organizationId,
+            employeeId,
+            email: dto.email,
+            password: hashedPassword,
+            name: dto.name,
+            role: requestedRole,
+            departmentId: dto.departmentId,
+            designation: dto.designation ?? '',
+            contactNumber: dto.contactNumber ?? '',
+            joiningDate: dto.joiningDate
+              ? new Date(dto.joiningDate)
+              : undefined,
+            reportingManagerId: dto.reportingManagerId,
+            employeeType: dto.employeeType ?? 'permanent',
+            employmentStatus:
+              dto.employeeType === 'probation' ? 'PROBATION' : 'ONBOARDING',
+            // personalEmail rides along at creation (rather than only via the
+            // later personal-data PATCH) specifically so the welcome email
+            // below always has somewhere to go on the interactive Add
+            // Employee path. Absent for bulk-imported rows — see the DTO.
+            personalData: dto.personalEmail
+              ? (mergePersonalData(
+                  {},
+                  { personalEmail: dto.personalEmail },
+                ) as Prisma.InputJsonValue)
+              : undefined,
+          },
+        });
       });
-    });
+    } catch (err) {
+      // The findByEmail pre-check above is a TOCTOU race, not a guarantee —
+      // two rows with the same email in the same bulkCreate() batch (or two
+      // concurrent create() calls) can both pass it before either commits,
+      // so the DB's unique constraint on email is the real backstop. Without
+      // this catch, that race surfaced as a raw Prisma
+      // PrismaClientKnownRequestError with a full stack trace and local
+      // filesystem path leaking straight into the bulkCreate() per-row
+      // error / the create() 500 response. Normalize it to the same
+      // friendly, non-leaky message the pre-check already uses.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'An account with this email already exists.',
+        );
+      }
+      throw err;
+    }
 
     // Welcome email — login URL, employee ID, generated password — sent to
     // the personal email HR just entered, since the official/company email
@@ -212,13 +237,21 @@ export class EmployeesService {
   // one bad row (duplicate email, missing name) doesn't abort the rest of
   // the sheet. Reuses create() so seat limits, employeeId generation, and
   // role defaults all stay in exactly one place.
+  //
+  // Rows arrive untyped (BulkEmployeeRowDto only enforces they're present,
+  // same pattern as ImportRowDto/BulkImportHolidaysDto) specifically so a
+  // single malformed row — missing name, unparsable email — lands in
+  // `failed` below instead of class-validator's ValidateNested rejecting
+  // the *entire* batch with a 400 before any row-level logic ever runs,
+  // which would defeat the fail-but-continue contract this method promises.
   async bulkCreate(
-    rows: Array<
-      Pick<
-        CreateEmployeeDto,
-        'name' | 'email' | 'designation' | 'contactNumber' | 'joiningDate'
-      >
-    >,
+    rows: Array<{
+      name?: unknown;
+      email?: unknown;
+      designation?: unknown;
+      contactNumber?: unknown;
+      joiningDate?: unknown;
+    }>,
     actor: Actor & { id: string; role: Role },
     organizationId: string,
   ) {
@@ -231,8 +264,40 @@ export class EmployeesService {
     // rows in flight at once just overlaps each row's independent work
     // (bcrypt hashing, etc.) instead of a fully sequential loop.
     await mapWithConcurrency(rows, 5, async (row) => {
+      const name = asString(row.name).trim();
+      const email = asString(row.email).trim();
+      const designation = asString(row.designation).trim();
+      const contactNumber = asString(row.contactNumber).trim();
+      const joiningDate = asString(row.joiningDate).trim();
+
+      if (!name) {
+        failed.push({ row, error: 'Name is required.' });
+        return;
+      }
+      if (!email || !isEmail(email)) {
+        failed.push({ row, error: 'A valid email is required.' });
+        return;
+      }
+      if (joiningDate && !isDateString(joiningDate)) {
+        failed.push({
+          row,
+          error: 'Joining date must be a valid date (YYYY-MM-DD).',
+        });
+        return;
+      }
+
       try {
-        const { employee } = await this.create(row, actor, organizationId);
+        const { employee } = await this.create(
+          {
+            name,
+            email,
+            designation: designation || undefined,
+            contactNumber: contactNumber || undefined,
+            joiningDate: joiningDate || undefined,
+          },
+          actor,
+          organizationId,
+        );
         created.push(employee.employeeId);
       } catch (err) {
         failed.push({
@@ -481,6 +546,19 @@ export class EmployeesService {
     if (!employee) throw new NotFoundException('Employee not found.');
     return employee;
   }
+}
+
+// Bulk-import rows are untyped, client-parsed spreadsheet cells — this
+// coerces only actual strings/numbers/booleans (the values a spreadsheet
+// cell can realistically hold) rather than blindly calling String() on an
+// arbitrary unknown, which could stringify to "[object Object]". Same
+// helper as HolidaysService/AttendanceService use for the same reason.
+function asString(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return '';
 }
 
 // profileImage is stored as a durable relativeKey (never a signed URL —

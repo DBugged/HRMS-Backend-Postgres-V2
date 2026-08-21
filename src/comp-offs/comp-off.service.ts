@@ -63,6 +63,17 @@ export class CompOffService {
       dto.employeeId && APPROVE_ROLES.includes(actor.role)
         ? dto.employeeId
         : actor.id;
+    // A MANAGER may only earn comp-off on behalf of their own department's
+    // employees — ADMIN/HR are unrestricted, EMPLOYEE never reaches this
+    // branch since targetEmployeeId already collapses to actor.id above.
+    if (dto.employeeId && actor.role === Role.MANAGER) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        targetEmployeeId,
+      );
+    }
 
     const today = new Date().toISOString().slice(0, 10);
     if (dto.earnedForDate > today) {
@@ -132,6 +143,16 @@ export class CompOffService {
   ) {
     const targetEmployeeId =
       employeeId && APPROVE_ROLES.includes(actor.role) ? employeeId : actor.id;
+    // Same MANAGER-own-department restriction as earn() — a MANAGER must
+    // not be able to read another department's employee's comp-off balance.
+    if (employeeId && actor.role === Role.MANAGER) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        targetEmployeeId,
+      );
+    }
     return {
       available: await this.available(targetEmployeeId, organizationId),
     };

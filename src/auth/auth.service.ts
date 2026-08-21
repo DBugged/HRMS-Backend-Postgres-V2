@@ -355,10 +355,25 @@ export class AuthService {
 
     const wasFirstTimeChange = user.mustChangePassword;
     const hashedPassword = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
-    await this.scopedPrisma.user.updateMany({
-      where: { id: user.id, organizationId: user.organizationId },
-      data: { password: hashedPassword, mustChangePassword: false },
-    });
+    // Revoke every active refresh token on a voluntary password change too,
+    // same as resetPassword — otherwise a session hijacked via a leaked
+    // refresh token would survive the very password change meant to shut
+    // it out, since that token never expires on its own for
+    // REFRESH_TOKEN_TTL_DAYS.
+    await this.scopedPrisma.$transaction([
+      this.scopedPrisma.user.updateMany({
+        where: { id: user.id, organizationId: user.organizationId },
+        data: { password: hashedPassword, mustChangePassword: false },
+      }),
+      this.scopedPrisma.refreshToken.updateMany({
+        where: {
+          userId: user.id,
+          organizationId: user.organizationId,
+          revokedAt: null,
+        },
+        data: { revokedAt: new Date() },
+      }),
+    ]);
 
     if (wasFirstTimeChange) {
       // Best-effort, fire-and-forget — a send failure must never fail the

@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
   Min,
 } from 'class-validator';
 import { Role } from '@prisma/client';
@@ -18,11 +19,16 @@ export class ListEmployeesQueryDto {
   @Min(1)
   page: number = 1;
 
-  @ApiPropertyOptional({ default: 20 })
+  // No cap previously — a client could pass an arbitrarily large limit and
+  // force a fully unbounded findMany, same class of issue QueryPayrollDto/
+  // QueryAttendanceDto already guard against. Capped at 2000 to match the
+  // convention used by every other paginated list DTO in this codebase.
+  @ApiPropertyOptional({ default: 20, maximum: 2000 })
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(2000)
   limit: number = 20;
 
   @ApiPropertyOptional({

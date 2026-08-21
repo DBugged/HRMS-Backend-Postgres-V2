@@ -2,8 +2,8 @@
 // Responsibilities: Owns EMI calculation at creation (calculateEmi) and outstanding-balance bookkeeping on
 // each repayment; recordRepayment() is called by the payroll engine when an EMI is deducted, but is also
 // exposed for HR to record/adjust a repayment manually.
-// Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan check independently of findAll's
-// filter, since it's reached directly by loan id rather than through the pre-filtered list.
+// Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan and MANAGER-own-dept-only checks
+// independently of findAll's filter, since it's reached directly by loan id rather than through the pre-filtered list.
 import {
   ForbiddenException,
   Inject,
@@ -103,7 +103,7 @@ export class LoansService {
     });
     if (employee) {
       const title = 'Loan Sanctioned';
-      const message = `A ${dto.loanType} loan of ${dto.principal} has been sanctioned for you, repayable as ${emiAmount}/month over ${dto.tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
+      const message = `A ${loan.loanType} loan of ${dto.principal} has been sanctioned for you, repayable as ${emiAmount}/month over ${dto.tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -218,13 +218,20 @@ export class LoansService {
   async getRepayments(id: string, actor: Actor, organizationId: string) {
     const loan = await this.scopedPrisma.loan.findFirst({
       where: { id, organizationId },
+      include: { employee: true },
     });
     if (!loan) throw new NotFoundException('Loan not found.');
-    // findAll scopes an EMPLOYEE to their own loans via the `where` filter —
-    // this endpoint is reached by loan id rather than through that
-    // pre-filtered list, so it has to apply the same ownership check
-    // directly.
+    // findAll scopes an EMPLOYEE to their own loans, and a MANAGER to their
+    // own department's, via the `where` filter — this endpoint is reached
+    // by loan id rather than through that pre-filtered list, so it has to
+    // apply the same ownership/dept checks directly.
     if (actor.role === Role.EMPLOYEE && loan.employeeId !== actor.id) {
+      throw new ForbiddenException('Not authorized to view this loan.');
+    }
+    if (
+      actor.role === Role.MANAGER &&
+      loan.employee.departmentId !== actor.departmentId
+    ) {
       throw new ForbiddenException('Not authorized to view this loan.');
     }
 
