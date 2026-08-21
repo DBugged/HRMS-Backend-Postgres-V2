@@ -206,4 +206,114 @@ describe('Comp-Offs (e2e)', () => {
       .expect(201);
     expect((res.body as CompOffBody).employeeId).toBe(employeeId);
   });
+
+  // Approval-delegation wiring (same isActiveDelegate pattern as
+  // LeavesService.review(), now also applied to comp-off review via
+  // assertManagerScopeOrDelegate) — a delegate in a *different* department
+  // than the employee should still be able to review once an active
+  // delegation names them as the employee's manager's stand-in.
+  describe('approval-delegation wiring', () => {
+    let manager2Token: string;
+    let manager2Id: string;
+    let managerId: string;
+    let delegatedEmployeeToken: string;
+
+    beforeAll(async () => {
+      const managerMe = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      managerId = (managerMe.body as { id: string }).id;
+
+      const dept2 = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Sales', code: 'SALES-DEL' });
+      const dept2Id = (dept2.body as { id: string }).id;
+
+      const m2Create = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Sales Manager',
+          email: 'compoffs-e2e-manager2@example.test',
+          role: 'MANAGER',
+          departmentId: dept2Id,
+        });
+      manager2Id = (m2Create.body as { employee: { id: string } }).employee.id;
+      const m2Login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'compoffs-e2e-manager2@example.test',
+          password: (m2Create.body as { generatedPassword: string })
+            .generatedPassword,
+        });
+      manager2Token = (m2Login.body as AuthBody).accessToken;
+
+      // A fresh employee explicitly reporting to `managerId` (in
+      // Engineering), distinct from `employeeId` used above, so this
+      // sub-suite's delegation checks are self-contained.
+      const emp2Create = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Delegation Test Employee',
+          email: 'compoffs-e2e-emp2@example.test',
+          reportingManagerId: managerId,
+        });
+      const emp2Login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'compoffs-e2e-emp2@example.test',
+          password: (emp2Create.body as { generatedPassword: string })
+            .generatedPassword,
+        });
+      delegatedEmployeeToken = (emp2Login.body as AuthBody).accessToken;
+    });
+
+    it("without a delegation, manager2 (different department, not the direct manager) gets 403 reviewing the employee's comp-off", async () => {
+      const earn = await request(app.getHttpServer())
+        .post('/comp-offs')
+        .set('Authorization', `Bearer ${delegatedEmployeeToken}`)
+        .send({ earnedForDate: pastDate(), reason: 'Weekend work' })
+        .expect(201);
+      const coId = (earn.body as CompOffBody).id;
+
+      await request(app.getHttpServer())
+        .patch(`/comp-offs/${coId}/review`)
+        .set('Authorization', `Bearer ${manager2Token}`)
+        .send({ decision: 'APPROVED' })
+        .expect(403);
+    });
+
+    it("with an active ApprovalDelegation from the employee's manager to manager2, manager2 CAN review the comp-off", async () => {
+      const today = new Date().toISOString().slice(0, 10);
+      const tomorrow = new Date();
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+
+      await request(app.getHttpServer())
+        .post('/delegations')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({
+          delegate: manager2Id,
+          fromDate: today,
+          toDate: tomorrow.toISOString().slice(0, 10),
+        })
+        .expect(201);
+
+      const earn = await request(app.getHttpServer())
+        .post('/comp-offs')
+        .set('Authorization', `Bearer ${delegatedEmployeeToken}`)
+        .send({ earnedForDate: pastDate(), reason: 'Weekend work again' })
+        .expect(201);
+      const coId = (earn.body as CompOffBody).id;
+
+      const review = await request(app.getHttpServer())
+        .patch(`/comp-offs/${coId}/review`)
+        .set('Authorization', `Bearer ${manager2Token}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      expect((review.body as CompOffBody).status).toBe('APPROVED');
+    });
+  });
 });

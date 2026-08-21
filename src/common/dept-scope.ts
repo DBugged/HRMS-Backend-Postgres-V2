@@ -1,11 +1,16 @@
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import type { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 
 interface DeptScopeActor {
   id: string;
   role: Role;
   departmentId: string | null;
+}
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 // Employee ids a MANAGER's list/query endpoints must be constrained to —
@@ -42,4 +47,42 @@ export async function assertManagerDeptScope(
       'You can only act on employees in your own department.',
     );
   }
+}
+
+// Same guard as assertManagerDeptScope, but also lets a stand-in reviewer
+// act when the target employee's actual reporting manager has an active
+// ApprovalDelegation naming the actor — same isActiveDelegate pattern as
+// LeavesService.review(), applied to attendance regularization/WFH,
+// overtime, and comp-off review paths so delegation works consistently
+// across all review actions, not just leaves.
+export async function assertManagerScopeOrDelegate(
+  prisma: ExtendedPrismaClient,
+  delegationService: ApprovalDelegationService,
+  actor: DeptScopeActor,
+  organizationId: string,
+  targetEmployeeId: string,
+): Promise<void> {
+  if (actor.role !== Role.MANAGER) return;
+  const target = await prisma.user.findFirst({
+    where: { id: targetEmployeeId, organizationId },
+    select: { departmentId: true, reportingManagerId: true },
+  });
+  if (target && target.departmentId === actor.departmentId) return;
+
+  if (
+    target?.reportingManagerId &&
+    target.reportingManagerId !== actor.id &&
+    (await delegationService.isActiveDelegate(
+      target.reportingManagerId,
+      actor.id,
+      organizationId,
+      todayStr(),
+    ))
+  ) {
+    return;
+  }
+
+  throw new ForbiddenException(
+    'You can only act on employees in your own department (or whose manager has delegated to you).',
+  );
 }

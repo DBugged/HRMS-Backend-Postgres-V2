@@ -35,8 +35,10 @@ import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
 import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
+  assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
+import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -56,6 +58,7 @@ export class CompOffService {
     private readonly payrollSettingsService: PayrollSettingsService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly delegationService: ApprovalDelegationService,
   ) {}
 
   async earn(dto: CreateCompOffDto, actor: Actor, organizationId: string) {
@@ -179,8 +182,9 @@ export class CompOffService {
     organizationId: string,
   ) {
     const compOff = await this.findByIdOrThrow(id, organizationId);
-    await assertManagerDeptScope(
+    await assertManagerScopeOrDelegate(
       this.scopedPrisma,
+      this.delegationService,
       actor,
       organizationId,
       compOff.employeeId,

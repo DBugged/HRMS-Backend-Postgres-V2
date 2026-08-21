@@ -25,11 +25,12 @@ import { ReviewOvertimeDto } from './dto/review-overtime.dto';
 import { QueryOvertimeDto } from './dto/query-overtime.dto';
 import { paginate, skip } from '../common/pagination';
 import {
-  assertManagerDeptScope,
+  assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -56,6 +57,7 @@ export class OvertimeService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly delegationService: ApprovalDelegationService,
   ) {}
 
   async log(dto: LogOvertimeDto, actor: Actor, organizationId: string) {
@@ -121,8 +123,9 @@ export class OvertimeService {
       where: { id, organizationId },
     });
     if (!record) throw new NotFoundException('Overtime record not found.');
-    await assertManagerDeptScope(
+    await assertManagerScopeOrDelegate(
       this.scopedPrisma,
+      this.delegationService,
       actor,
       organizationId,
       record.employeeId,

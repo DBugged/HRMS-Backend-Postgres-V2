@@ -35,7 +35,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
-import { assertManagerDeptScope } from '../common/dept-scope';
+import { assertManagerScopeOrDelegate } from '../common/dept-scope';
+import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import {
   enumerateDateStrings,
   isWeeklyOff,
@@ -130,6 +131,7 @@ export class AttendanceService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly delegationService: ApprovalDelegationService,
   ) {}
 
   // The core engine — derives an Attendance row for one employee/day from
@@ -663,13 +665,16 @@ export class AttendanceService {
         'This Work From Home request has already been reviewed.',
       );
     }
-    if (actor.role === Role.MANAGER) {
-      if (row.employee.departmentId !== actor.departmentId) {
-        throw new ForbiddenException(
-          "You can only review your own department's requests.",
-        );
-      }
-    }
+    // Delegation-aware dept scope: same pattern as reviewRegularization /
+    // LeavesService.review() — a manager's active ApprovalDelegation stand-
+    // in can also review WFH requests outside their own department.
+    await assertManagerScopeOrDelegate(
+      this.scopedPrisma,
+      this.delegationService,
+      actor,
+      organizationId,
+      row.employeeId,
+    );
 
     const status =
       dto.decision === 'APPROVED'
@@ -958,7 +963,9 @@ export class AttendanceService {
   // write above, this SPREADS the existing regularization object (whole-
   // object reassignment, same as the old Sequelize JSON-column comment).
   // A MANAGER is restricted to their own department's employees, same as
-  // overtime/comp-off review — see assertManagerDeptScope.
+  // overtime/comp-off review — see assertManagerScopeOrDelegate. Also lets
+  // an active ApprovalDelegation stand-in reviewer act, same pattern as
+  // LeavesService.review().
   async reviewRegularization(
     id: string,
     dto: ReviewRegularizationDto,
@@ -969,8 +976,9 @@ export class AttendanceService {
       where: { id, organizationId },
     });
     if (!row) throw new NotFoundException('Attendance record not found.');
-    await assertManagerDeptScope(
+    await assertManagerScopeOrDelegate(
       this.scopedPrisma,
+      this.delegationService,
       actor,
       organizationId,
       row.employeeId,
