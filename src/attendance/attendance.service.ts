@@ -1113,10 +1113,30 @@ export class AttendanceService {
     const employees = employeeCodes.length
       ? await this.scopedPrisma.user.findMany({
           where: { organizationId, employeeId: { in: employeeCodes } },
-          select: { employeeId: true },
+          select: { employeeId: true, isActive: true },
         })
       : [];
-    const knownCodes = new Set(employees.map((e) => e.employeeId));
+    const knownCodes = new Map(employees.map((e) => [e.employeeId, e]));
+
+    // Sanity bounds on the imported date, mirroring the ±2y/1y window used
+    // elsewhere in this codebase for "is this date plausible" checks —
+    // format-only validation (DATE_RE) let 1900-01-01 / 2999-12-31 through
+    // silently, which is never a real attendance record.
+    const now = Date.now();
+    const MIN_DATE_MS = now - 2 * 365 * 24 * 60 * 60 * 1000;
+    const MAX_DATE_MS = now + 365 * 24 * 60 * 60 * 1000;
+
+    // Rows sharing employeeId+date collapse into a single Attendance row in
+    // executeImportBatch (upsert-by-key), so a duplicate pair here isn't a
+    // data-corruption risk — but letting it silently pass validation means
+    // the batch's later executionResult.imported count would be inflated
+    // by one per duplicate, misreporting what was actually written. Since
+    // this validate stage's whole contract is "flag anything that won't
+    // execute as expected and keep the batch fixable," duplicates are
+    // flagged as row errors here (on the second+ occurrence) rather than
+    // silently deduped, so the uploader corrects the source file instead of
+    // getting a mismatched count.
+    const seenKeys = new Map<string, number>();
 
     const failed: { row: number; error: string }[] = [];
     rows.forEach((row, i) => {
@@ -1126,8 +1146,16 @@ export class AttendanceService {
         failed.push({ row: rowNum, error: 'employeeId is required' });
         return;
       }
-      if (!knownCodes.has(empCode)) {
+      const employee = knownCodes.get(empCode);
+      if (!employee) {
         failed.push({ row: rowNum, error: `Employee not found: ${empCode}` });
+        return;
+      }
+      if (!employee.isActive) {
+        failed.push({
+          row: rowNum,
+          error: `Employee is not active: ${empCode}`,
+        });
         return;
       }
       const date = asString(row.date).trim();
@@ -1140,7 +1168,26 @@ export class AttendanceService {
           row: rowNum,
           error: 'Invalid or missing date (expected YYYY-MM-DD)',
         });
+        return;
       }
+      const dateMs = new Date(`${date}T00:00:00.000Z`).getTime();
+      if (dateMs < MIN_DATE_MS || dateMs > MAX_DATE_MS) {
+        failed.push({
+          row: rowNum,
+          error: `Date out of range: ${date} (must be within 2 years in the past and 1 year in the future)`,
+        });
+        return;
+      }
+      const key = `${empCode}:${date}`;
+      const firstRow = seenKeys.get(key);
+      if (firstRow !== undefined) {
+        failed.push({
+          row: rowNum,
+          error: `Duplicate employeeId+date within this batch (also appears in row ${firstRow})`,
+        });
+        return;
+      }
+      seenKeys.set(key, rowNum);
     });
 
     await this.scopedPrisma.attendanceImportBatch.updateMany({

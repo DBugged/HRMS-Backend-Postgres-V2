@@ -106,10 +106,35 @@ export class EmployeeSalaryComponentsService {
   ) {
     await this.assertEmployeeExists(employeeId, organizationId);
     const created: EmployeeSalaryComponent[] = [];
+    // Matches the fail-but-continue + per-row `failed` report convention
+    // used by HolidaysService.bulkImport: an unrecognized componentId/code
+    // used to be silently dropped (old system's "fault tolerance"), which
+    // left the caller seeing a lower `count` than `lines.length` with no
+    // indication why. Now every unresolved line is reported by name/index
+    // instead of vanishing silently, while still not aborting the whole
+    // batch over one bad line.
+    const failed: {
+      row: number;
+      componentId?: string;
+      componentCode?: string;
+      error: string;
+    }[] = [];
 
-    for (const line of dto.lines) {
+    for (const [i, line] of dto.lines.entries()) {
       const component = await this.resolveComponent(line, organizationId);
-      if (!component) continue; // matches the old system's per-line fault tolerance
+      if (!component) {
+        failed.push({
+          row: i + 1,
+          componentId: line.componentId,
+          componentCode: line.componentCode,
+          error: line.componentId
+            ? `Salary component not found: ${line.componentId}`
+            : line.componentCode
+              ? `Salary component not found: ${line.componentCode}`
+              : 'Either componentId or componentCode is required',
+        });
+        continue;
+      }
       const row = await this.applyRevision(
         employeeId,
         component,
@@ -120,7 +145,7 @@ export class EmployeeSalaryComponentsService {
       created.push(row);
     }
 
-    return { count: created.length, rows: created };
+    return { count: created.length, rows: created, failed };
   }
 
   // Shared revision logic — close out the current open row (effectiveTo
