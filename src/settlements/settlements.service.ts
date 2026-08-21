@@ -37,6 +37,7 @@ import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 
@@ -67,6 +68,7 @@ export class SettlementsService {
     private readonly leaveBalanceService: LeaveBalanceService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async findAll(
@@ -235,9 +237,19 @@ export class SettlementsService {
         where: { id: existing.id, organizationId },
       });
     }
-    return this.scopedPrisma.settlement.create({
+    const created = await this.scopedPrisma.settlement.create({
       data: { organizationId, employeeId: dto.employeeId, ...data },
     });
+    // FNF_INITIATED — only on the first calculate() for this employee (the
+    // `existing` branch above is a re-preview of the same in-flight draft,
+    // not a new initiation), so re-calculating doesn't spam the timeline.
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: dto.employeeId,
+      eventKey: 'FNF_INITIATED',
+      performedById: actor.id,
+    });
+    return created;
   }
 
   // Locks in the settlement: creates the linked PayrollRun (isFinalSettlement)
@@ -405,6 +417,12 @@ export class SettlementsService {
         html: message,
       });
     }
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: settlement.employeeId,
+      eventKey: 'FNF_COMPLETED',
+      performedById: actor.id,
+    });
 
     return result;
   }

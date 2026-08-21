@@ -38,4 +38,10 @@ describe('amountInWords', () => {
   it('accepts a custom currency label', () => {
     expect(amountInWords(100, 'Dollars')).toBe('Dollars One Hundred Only');
   });
+
+  it('prefixes "Minus" for a negative amount instead of silently dropping the sign', () => {
+    expect(amountInWords(-1700)).toBe(
+      'Minus Rupees One Thousand Seven Hundred Only',
+    );
+  });
 });

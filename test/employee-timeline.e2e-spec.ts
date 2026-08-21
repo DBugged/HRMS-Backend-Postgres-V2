@@ -250,9 +250,13 @@ describe('Employee Timeline (e2e)', () => {
   });
 
   it('a category with no matching events returns an empty list, not an error', async () => {
+    // COMPLIANCE (not RECRUITMENT) — employee creation now logs a real
+    // EMPLOYEE_RECORD_CREATED/RECRUITMENT event (see EmployeesService.create),
+    // so RECRUITMENT is no longer a category this fixture employee has zero
+    // events in; COMPLIANCE is untouched by anything this suite does.
     const res = await request(app.getHttpServer())
       .get(`/employees/${employeeId}/timeline`)
-      .query({ category: 'RECRUITMENT' })
+      .query({ category: 'COMPLIANCE' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect((res.body as TimelineListBody).data).toEqual([]);

@@ -274,7 +274,24 @@ describe('Offboarding (e2e)', () => {
     expect((res.body as OffboardingBody).settlementId).toBe(settlementId);
   });
 
+  it('complete is rejected while the linked settlement is still a DRAFT', async () => {
+    // A linked-but-unprocessed settlement must not be enough to let the
+    // exit finalize — completing the case deactivates the account, and an
+    // employee should never be relieved with their final payout still
+    // sitting unprocessed. See OffboardingService.complete()'s DRAFT check.
+    const res = await request(app.getHttpServer())
+      .patch(`/offboarding/${caseId}/complete`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    expect((res.body as { message: string }).message).toContain('DRAFT');
+  });
+
   it('completes the case: deactivates the employee and stamps completedBy', async () => {
+    await request(app.getHttpServer())
+      .post(`/settlements/${settlementId}/process`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+
     const res = await request(app.getHttpServer())
       .patch(`/offboarding/${caseId}/complete`)
       .set('Authorization', `Bearer ${adminToken}`)

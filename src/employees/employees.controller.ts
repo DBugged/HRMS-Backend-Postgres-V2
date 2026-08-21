@@ -95,7 +95,7 @@ export class EmployeesController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   deactivate(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.employeesService.deactivate(id, caller.organizationId);
+    return this.employeesService.deactivate(id, caller, caller.organizationId);
   }
 
   @Post(':id/resend-credentials')

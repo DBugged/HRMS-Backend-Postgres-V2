@@ -280,6 +280,12 @@ describe('Audit Log (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ settlementId })
       .expect(200);
+    // complete() now requires the linked settlement to actually be
+    // processed (not just linked as a DRAFT) — see OffboardingService.
+    await request(app.getHttpServer())
+      .post(`/settlements/${settlementId}/process`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
 
     await request(app.getHttpServer())
       .patch(`/offboarding/${caseId}/complete`)

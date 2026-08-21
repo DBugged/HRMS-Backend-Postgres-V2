@@ -26,6 +26,7 @@ import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from './employee-id.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { frontendUrl } from '../common/frontend-url';
 import { mapWithConcurrency } from '../common/concurrency';
 import { skip } from '../common/pagination';
@@ -61,11 +62,12 @@ export class EmployeesService {
     private readonly employeeIdService: EmployeeIdService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(
     dto: CreateEmployeeDto,
-    actor: Actor & { role: Role },
+    actor: Actor & { id: string; role: Role },
     organizationId: string,
   ) {
     const requestedRole = dto.role ?? Role.EMPLOYEE;
@@ -144,6 +146,28 @@ export class EmployeesService {
       });
     }
 
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_CREATED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: user.id,
+      details: { employeeId: user.employeeId, role: user.role },
+    });
+
+    // EMPLOYEE_RECORD_CREATED is the very first entry on a new employee's
+    // 360° Employee Timeline — same pairing convention as every other
+    // AuditLogService.log() call in this file (see the eventKey calls in
+    // logChangesIfAny below), just previously missing for creation itself,
+    // which left every new hire's timeline empty until their first
+    // subsequent role/designation/department/status change.
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: user.id,
+      eventKey: 'EMPLOYEE_RECORD_CREATED',
+      performedById: actor.id,
+    });
+
     return { employee: toSafe(user), generatedPassword };
   }
 
@@ -195,7 +219,7 @@ export class EmployeesService {
         'name' | 'email' | 'designation' | 'contactNumber' | 'joiningDate'
       >
     >,
-    actor: Actor & { role: Role },
+    actor: Actor & { id: string; role: Role },
     organizationId: string,
   ) {
     const created: string[] = [];
@@ -282,6 +306,20 @@ export class EmployeesService {
     const before = await this.findByIdOrThrow(id, organizationId);
     const clean = stripLockedFields(dto, actor.role);
 
+    // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
+    // decides whether HR/Admin *may* touch `role` at all (vs. a plain
+    // employee editing their own profile), it doesn't limit which role HR
+    // can set it to. Without this check, HR could PATCH an employee's role
+    // straight to ADMIN even though they're blocked from doing so at
+    // creation time.
+    if (
+      actor.role === Role.HR &&
+      clean.role !== undefined &&
+      !ROLES_HR_CAN_ASSIGN.includes(clean.role)
+    ) {
+      throw new ForbiddenException('Only an Admin can assign an Admin role.');
+    }
+
     // updateMany (not update) — its `where` accepts arbitrary filters, so
     // it can be organizationId-scoped directly, unlike update()'s unique-
     // only where (which the tenant-scope extension now forbids outright).
@@ -306,6 +344,19 @@ export class EmployeesService {
     });
 
     await this.logChangesIfAny(before, clean, actor.id, organizationId);
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_UPDATED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: id,
+      details: {
+        fields: Object.keys(clean).filter(
+          (key) => clean[key as keyof UpdateEmployeeDto] !== undefined,
+        ),
+      },
+    });
 
     return toSafe(await this.findByIdOrThrow(id, organizationId));
   }
@@ -399,11 +450,23 @@ export class EmployeesService {
     }
   }
 
-  async deactivate(id: string, organizationId: string) {
+  async deactivate(
+    id: string,
+    actor: Actor & { id: string },
+    organizationId: string,
+  ) {
     await this.findByIdOrThrow(id, organizationId);
     await this.scopedPrisma.user.updateMany({
       where: { id, organizationId },
       data: { isActive: false },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_DEACTIVATED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: id,
+      details: { reason: 'manual_deactivation' },
     });
     return toSafe(await this.findByIdOrThrow(id, organizationId));
   }

@@ -27,6 +27,7 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
+import { isEligible } from '../leave-balances/leave-eligibility';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { AttendanceService } from '../attendance/attendance.service';
@@ -68,8 +69,18 @@ function deriveLeaveYear(startDate: string): number {
 }
 
 function isCompOffType(leaveType: LeaveType): boolean {
+  return leaveType.code === LEAVE_TYPE_CODES.COMPOFF;
+}
+
+// True for any leave type with no balance ledger to check/debit at all —
+// UNLIMITED types (e.g. LWP), and NONE-allocation types other than
+// COMPOFF (e.g. SPL, which is HR-discretionary and has no ledger of its
+// own, unlike COMPOFF which is backed by the separate CompOff table).
+// isCompOffType() must be checked first by callers — COMPOFF itself is
+// also AllocationType.NONE but is handled by the comp-off ledger instead.
+function isUnbalancedType(leaveType: LeaveType): boolean {
   return (
-    leaveType.code === LEAVE_TYPE_CODES.COMPOFF ||
+    leaveType.allocationType === AllocationType.UNLIMITED ||
     leaveType.allocationType === AllocationType.NONE
   );
 }
@@ -404,7 +415,7 @@ export class LeavesService {
             leave.totalDays,
             organizationId,
           );
-        } else if (leaveType.allocationType !== AllocationType.UNLIMITED) {
+        } else if (!isUnbalancedType(leaveType)) {
           const year = deriveLeaveYear(leave.startDate);
           const row = await this.leaveBalanceService.ensureBalanceRow(
             tx,
@@ -426,10 +437,7 @@ export class LeavesService {
             organizationId,
           );
         }
-      } else if (
-        !isCompOffType(leaveType) &&
-        leaveType.allocationType !== AllocationType.UNLIMITED
-      ) {
+      } else if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
         // REJECTED/RETURNED — release the pending hold, nothing was ever
         // deducted from availed.
         const year = deriveLeaveYear(leave.startDate);
@@ -558,7 +566,7 @@ export class LeavesService {
       }
       return;
     }
-    if (leaveType.allocationType === AllocationType.UNLIMITED) return;
+    if (isUnbalancedType(leaveType)) return;
 
     const year = deriveLeaveYear(leave.startDate);
     const row = await this.leaveBalanceService.ensureBalanceRow(
@@ -592,6 +600,16 @@ export class LeavesService {
       where: { id: dto.leaveType, organizationId, isActive: true },
     });
     if (!leaveType) throw new NotFoundException('Leave type not found.');
+
+    // The applicableDepartments/applicableEmployeeTypes/applicableGenders/
+    // service-tenure rules that drive GET /leave-types/eligible/me and the
+    // balance list must also gate application itself — otherwise an
+    // ineligible employee (e.g. wrong gender/department, or below
+    // minServiceMonths) could apply directly by leaveType id and the
+    // request would silently proceed.
+    if (!isEligible(leaveType, actor)) {
+      throw new ForbiddenException('You are not eligible for this leave type.');
+    }
 
     const [holidays, priorLeaveOfType, otherLeaves] = await Promise.all([
       this.scopedPrisma.holiday.findMany({
@@ -655,10 +673,7 @@ export class LeavesService {
     }
 
     const created = await this.scopedPrisma.$transaction(async (tx) => {
-      if (
-        !isCompOffType(leaveType) &&
-        leaveType.allocationType !== AllocationType.UNLIMITED
-      ) {
+      if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
         const year = deriveLeaveYear(dto.startDate);
         const negativeBalance =
           leaveType.negativeBalance as unknown as NegativeBalanceRule;

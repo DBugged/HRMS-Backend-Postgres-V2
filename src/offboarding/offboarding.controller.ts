@@ -76,6 +76,7 @@ export class OffboardingController {
     return this.offboardingService.submitExitInterview(
       id,
       dto,
+      caller,
       caller.organizationId,
     );
   }

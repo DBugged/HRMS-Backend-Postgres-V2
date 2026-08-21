@@ -16,6 +16,7 @@ import {
   NotificationCategory,
   OffboardingStatus,
   Prisma,
+  SettlementStatus,
   User,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -131,6 +132,16 @@ export class OffboardingService {
       subject: title,
       html: message,
     });
+    // NOTICE_PERIOD_STARTED — same "log next to the notification" pattern
+    // used elsewhere in this file (see complete()'s RELIEVED event); the
+    // EXIT category on the timeline was otherwise silent until completion.
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: employee.id,
+      eventKey: 'NOTICE_PERIOD_STARTED',
+      performedById: actor.id,
+      description: dto.reason ?? '',
+    });
 
     return offboardingCase;
   }
@@ -164,6 +175,7 @@ export class OffboardingService {
   async submitExitInterview(
     id: string,
     dto: SubmitExitInterviewDto,
+    actor: Actor,
     organizationId: string,
   ) {
     const record = await this.assertOpenCase(id, organizationId);
@@ -186,6 +198,14 @@ export class OffboardingService {
     await this.scopedPrisma.offboardingCase.updateMany({
       where: { id, organizationId },
       data,
+    });
+    // EXIT_INTERVIEW_COMPLETED — same pairing convention as complete()'s
+    // RELIEVED event; previously this step left no timeline trace at all.
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: record.employeeId,
+      eventKey: 'EXIT_INTERVIEW_COMPLETED',
+      performedById: actor.id,
     });
     return this.findOne(id, organizationId);
   }
@@ -210,11 +230,22 @@ export class OffboardingService {
     return this.findOne(id, organizationId);
   }
 
-  // Requires the full checklist done and a settlement linked before an exit
-  // can be finalized — mirrors the "no critical issues remain" gate used
-  // elsewhere for other certification-style sign-offs. Completing it
+  // Requires the full checklist done and a *processed* settlement before an
+  // exit can be finalized — mirrors the "no critical issues remain" gate
+  // used elsewhere for other certification-style sign-offs. Completing it
   // deactivates the account.
+  // Important: linkSettlement() only requires the settlement to exist for
+  // this employee — it can still be sitting in DRAFT (never run through
+  // POST /settlements/:id/process, which is what actually books the
+  // PayrollRun/payslip, closes out loans, and emails the payout). Without
+  // this extra check, HR could link a draft, satisfy every checklist item,
+  // and complete() would happily deactivate the employee while the final
+  // payout was never processed — an account gone with an orphaned DRAFT
+  // settlement and no payslip behind it.
   async complete(id: string, actor: Actor, organizationId: string) {
+    // findOne() (via assertOpenCase) already includes the linked
+    // `settlement` relation, so its current status is available here
+    // without a second query.
     const record = await this.assertOpenCase(id, organizationId);
 
     const missing: string[] = [];
@@ -222,6 +253,10 @@ export class OffboardingService {
     if (!record.accessRevoked) missing.push('accessRevoked');
     if (!record.exitInterviewDone) missing.push('exitInterviewDone');
     if (!record.settlementId) missing.push('settlement');
+    else if (record.settlement?.status === SettlementStatus.DRAFT)
+      missing.push(
+        'settlement processing (still DRAFT — run POST /settlements/:id/process first)',
+      );
     if (missing.length > 0) {
       throw new BadRequestException(
         `Cannot complete offboarding — outstanding: ${missing.join(', ')}`,

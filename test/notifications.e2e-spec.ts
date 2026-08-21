@@ -46,6 +46,7 @@ describe('Notifications (e2e)', () => {
   let hrToken: string;
   let managerToken: string;
   let managerId: string;
+  let deptManagerToken: string;
   let employeeToken: string;
   let employeeId: string;
   let deptId: string;
@@ -99,6 +100,11 @@ describe('Notifications (e2e)', () => {
       });
     hrToken = (hrLogin.body as AuthBody).accessToken;
 
+    // Deliberately NOT in a department yet (set below) — the broadcast test
+    // relies on this manager being outside the employee's department to
+    // prove department-scoped broadcasts don't leak; the regularization
+    // review test instead uses a separate in-department manager (see
+    // deptManagerToken below).
     const mgrCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -121,6 +127,27 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ name: 'Engineering', code: 'ENG' });
     deptId = (dept.body as { id: string }).id;
+
+    // A MANAGER's regularization/WFH/overtime/comp-off review endpoints are
+    // dept-scoped (assertManagerDeptScope) — this manager shares the
+    // employee's department specifically so the regularization-review test
+    // below can exercise the real approval path.
+    const deptMgrCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Dept Manager',
+        email: 'notif-e2e-dept-mgr@example.test',
+        role: 'MANAGER',
+        departmentId: deptId,
+      });
+    const deptMgrLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'notif-e2e-dept-mgr@example.test',
+        password: (deptMgrCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    deptManagerToken = (deptMgrLogin.body as AuthBody).accessToken;
 
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
@@ -504,7 +531,7 @@ describe('Notifications (e2e)', () => {
     });
     await request(app.getHttpServer())
       .patch(`/attendance/regularization/${row.id}`)
-      .set('Authorization', `Bearer ${managerToken}`)
+      .set('Authorization', `Bearer ${deptManagerToken}`)
       .send({ decision: 'APPROVED' })
       .expect(200);
 

@@ -35,6 +35,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
+import { assertManagerDeptScope } from '../common/dept-scope';
 import {
   enumerateDateStrings,
   isWeeklyOff,
@@ -657,6 +658,11 @@ export class AttendanceService {
         'This attendance record has no Work From Home request.',
       );
     }
+    if (row.workArrangementStatus !== WfhApprovalStatus.PENDING) {
+      throw new BadRequestException(
+        'This Work From Home request has already been reviewed.',
+      );
+    }
     if (actor.role === Role.MANAGER) {
       if (row.employee.departmentId !== actor.departmentId) {
         throw new ForbiddenException(
@@ -951,6 +957,8 @@ export class AttendanceService {
   // Attendance row's id, not a separate request id. Unlike the request
   // write above, this SPREADS the existing regularization object (whole-
   // object reassignment, same as the old Sequelize JSON-column comment).
+  // A MANAGER is restricted to their own department's employees, same as
+  // overtime/comp-off review — see assertManagerDeptScope.
   async reviewRegularization(
     id: string,
     dto: ReviewRegularizationDto,
@@ -961,8 +969,19 @@ export class AttendanceService {
       where: { id, organizationId },
     });
     if (!row) throw new NotFoundException('Attendance record not found.');
+    await assertManagerDeptScope(
+      this.scopedPrisma,
+      actor,
+      organizationId,
+      row.employeeId,
+    );
 
     const existingReg = row.regularization as unknown as RegularizationState;
+    if (existingReg?.status !== 'pending') {
+      throw new BadRequestException(
+        'This regularization request has already been reviewed.',
+      );
+    }
     const regularization: RegularizationState = {
       ...existingReg,
       status: dto.decision === 'APPROVED' ? 'approved' : 'rejected',

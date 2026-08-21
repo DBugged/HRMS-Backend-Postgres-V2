@@ -952,6 +952,12 @@ export class PayrollService {
       deductions.reduce((s, d) => s + Number(d.amount || 0), 0),
     );
     const netPay = roundTwo(grossSalary - totalDeductions);
+    // ctcMonthly = grossSalary + employer contributions — employer
+    // contributions aren't part of this DTO (adjust only edits
+    // earnings/deductions), but ctcMonthly must still track the new
+    // grossSalary or it goes stale relative to every other figure this
+    // method just recomputed.
+    const ctcMonthly = roundTwo(grossSalary + run.totalEmployerContributions);
 
     const data: Prisma.PayrollRunUpdateManyMutationInput = {
       earnings: earnings as unknown as Prisma.InputJsonValue,
@@ -959,6 +965,7 @@ export class PayrollService {
       grossSalary,
       totalDeductions,
       netPay,
+      ctcMonthly,
       netPayInWords: amountInWords(netPay),
     };
     if (

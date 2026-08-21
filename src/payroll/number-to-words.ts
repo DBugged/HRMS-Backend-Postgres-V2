@@ -66,8 +66,17 @@ export function numberToIndianWords(num: number): string {
   return parts.join(' ');
 }
 
-// e.g. "Rupees Forty Five Thousand Six Hundred Only"
+// e.g. "Rupees Forty Five Thousand Six Hundred Only". numberToIndianWords()
+// deliberately renders the magnitude only (see its own "rounds and takes
+// the absolute value" test) — it's a pure digit-to-words formatter, not
+// currency-aware. A negative amount is a real, expected case here though:
+// a full & final settlement's netSettlementAmount can go negative when
+// recoveries/loan balance exceed what's owed (see SettlementsService),
+// and silently dropping the sign would tell an employee they're owed
+// money they in fact owe the company. So the sign is handled at this
+// level, not pushed down into the pure formatter.
 export function amountInWords(amount: number, currency = 'Rupees'): string {
   const rounded = Math.round(amount);
-  return `${currency} ${numberToIndianWords(rounded)} Only`;
+  const prefix = rounded < 0 ? 'Minus ' : '';
+  return `${prefix}${currency} ${numberToIndianWords(rounded)} Only`;
 }
