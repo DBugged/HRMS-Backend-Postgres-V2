@@ -6,6 +6,7 @@
 // must check availability before approving. sweepExpired() runs inline before reads, not on a cron.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -85,6 +86,40 @@ export class CompOffService {
     const today = new Date().toISOString().slice(0, 10);
     if (dto.earnedForDate > today) {
       throw new BadRequestException('earnedForDate cannot be in the future.');
+    }
+
+    // Duplicate-claim guard: block a new earn request when this employee
+    // already has a non-REJECTED CompOff for the same earnedForDate
+    // (PENDING/APPROVED/AVAILED/PARTIALLY_AVAILED/EXPIRED all count —
+    // any of those means a claim for that date was already accepted into
+    // the workflow at some point). REJECTED is deliberately excluded so a
+    // manager rejecting a bad/duplicate submission doesn't permanently
+    // block the employee from correctly resubmitting for that same date —
+    // that's a real, legitimate flow (e.g. reason text was wrong, or the
+    // first submission was itself the mistaken duplicate and got rejected
+    // to clear the way for the correct one).
+    //
+    // A DB-level `@@unique([organizationId, employeeId, earnedForDate])`
+    // (mirroring Attendance's own per-day uniqueness constraint) was
+    // considered and is simpler/race-safe, but it would treat a REJECTED
+    // row as a permanent lock on that date, which is the wrong business
+    // rule here — Attendance has no "rejected, please resubmit" workflow,
+    // so its constraint doesn't need to make this distinction. Hence an
+    // application-level check instead. This has a small race window under
+    // truly concurrent double-submits for the same date/employee, which is
+    // an acceptable trade-off for the correct one being blocked by default.
+    const duplicate = await this.scopedPrisma.compOff.findFirst({
+      where: {
+        organizationId,
+        employeeId: targetEmployeeId,
+        earnedForDate: dto.earnedForDate,
+        status: { not: CompOffStatus.REJECTED },
+      },
+    });
+    if (duplicate) {
+      throw new ConflictException(
+        'A comp-off request for this date already exists. If your previous request for this date was rejected, you may resubmit it.',
+      );
     }
 
     const settings =

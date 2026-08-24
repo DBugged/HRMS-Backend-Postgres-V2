@@ -117,9 +117,9 @@ describe('Comp-Offs (e2e)', () => {
     await app.close();
   });
 
-  const pastDate = () => {
+  const pastDate = (daysAgo = 2) => {
     const d = new Date();
-    d.setUTCDate(d.getUTCDate() - 2);
+    d.setUTCDate(d.getUTCDate() - daysAgo);
     return d.toISOString().slice(0, 10);
   };
 
@@ -199,12 +199,64 @@ describe('Comp-Offs (e2e)', () => {
   });
 
   it('MANAGER earns a comp-off on behalf of the employee', async () => {
+    // Distinct date from the earlier employee-earned comp-off (already
+    // APPROVED for pastDate()) — same employee + same date would now be
+    // rejected as a duplicate claim (see suite below).
     const res = await request(app.getHttpServer())
       .post('/comp-offs')
       .set('Authorization', `Bearer ${managerToken}`)
-      .send({ earnedForDate: pastDate(), employeeId, reason: 'Manager-raised' })
+      .send({
+        earnedForDate: pastDate(3),
+        employeeId,
+        reason: 'Manager-raised',
+      })
       .expect(201);
     expect((res.body as CompOffBody).employeeId).toBe(employeeId);
+  });
+
+  // Duplicate-claim guard — earn() previously had no check at all for
+  // (employeeId, earnedForDate), so an employee (or a manager on their
+  // behalf) could submit unlimited comp-off earn requests for the exact
+  // same worked date. This suite verifies the new ConflictException guard,
+  // and that it deliberately excludes REJECTED claims so a legitimate
+  // resubmission after rejection still works.
+  describe('duplicate-claim guard', () => {
+    const dupDate = () => pastDate(10);
+    let firstDupCompOffId: string;
+
+    it('a second earn request for the same employee+date is rejected with a clean 409', async () => {
+      const first = await request(app.getHttpServer())
+        .post('/comp-offs')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ earnedForDate: dupDate(), reason: 'Worked Saturday' })
+        .expect(201);
+      expect((first.body as CompOffBody).status).toBe('PENDING');
+      firstDupCompOffId = (first.body as CompOffBody).id;
+
+      const second = await request(app.getHttpServer())
+        .post('/comp-offs')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ earnedForDate: dupDate(), reason: 'Worked Saturday again?' })
+        .expect(409);
+      expect((second.body as { message: string }).message).toMatch(
+        /already exists/i,
+      );
+    });
+
+    it('resubmitting for the same date succeeds once the earlier claim was REJECTED', async () => {
+      await request(app.getHttpServer())
+        .patch(`/comp-offs/${firstDupCompOffId}/review`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ decision: 'REJECTED' })
+        .expect(200);
+
+      const resubmit = await request(app.getHttpServer())
+        .post('/comp-offs')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ earnedForDate: dupDate(), reason: 'Corrected resubmission' })
+        .expect(201);
+      expect((resubmit.body as CompOffBody).status).toBe('PENDING');
+    });
   });
 
   // Approval-delegation wiring (same isActiveDelegate pattern as
@@ -301,10 +353,13 @@ describe('Comp-Offs (e2e)', () => {
         })
         .expect(201);
 
+      // Distinct date from the earlier delegatedEmployeeToken earn above
+      // (same employee) — same employee + same date would now be rejected
+      // as a duplicate claim.
       const earn = await request(app.getHttpServer())
         .post('/comp-offs')
         .set('Authorization', `Bearer ${delegatedEmployeeToken}`)
-        .send({ earnedForDate: pastDate(), reason: 'Weekend work again' })
+        .send({ earnedForDate: pastDate(4), reason: 'Weekend work again' })
         .expect(201);
       const coId = (earn.body as CompOffBody).id;
 
