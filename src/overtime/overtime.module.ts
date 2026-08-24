@@ -3,9 +3,16 @@ import { OvertimeController } from './overtime.controller';
 import { OvertimeService } from './overtime.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ApprovalDelegationModule } from '../approval-delegation/approval-delegation.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 
 @Module({
-  imports: [NotificationsModule, ApprovalDelegationModule],
+  imports: [
+    NotificationsModule,
+    ApprovalDelegationModule,
+    AuditLogModule,
+    EmployeeTimelineModule,
+  ],
   controllers: [OvertimeController],
   providers: [OvertimeService],
   exports: [OvertimeService],

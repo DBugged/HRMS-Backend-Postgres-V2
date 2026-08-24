@@ -39,6 +39,8 @@ import {
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -59,6 +61,8 @@ export class CompOffService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly delegationService: ApprovalDelegationService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async earn(dto: CreateCompOffDto, actor: Actor, organizationId: string) {
@@ -87,7 +91,7 @@ export class CompOffService {
       await this.payrollSettingsService.getOrCreate(organizationId);
     const expiryDate = addDays(dto.earnedForDate, settings.compOffExpiryDays);
 
-    return this.scopedPrisma.compOff.create({
+    const compOff = await this.scopedPrisma.compOff.create({
       data: {
         organizationId,
         employeeId: targetEmployeeId,
@@ -97,6 +101,28 @@ export class CompOffService {
         expiryDate,
       },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'COMP_OFF_EARNED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: compOff.id,
+      details: {
+        employeeId: targetEmployeeId,
+        earnedForDate: dto.earnedForDate,
+        daysEarned: compOff.daysEarned,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: targetEmployeeId,
+      eventKey: 'COMP_OFF_GRANTED',
+      performedById: actor.id,
+      description: `Comp-off earned for ${dto.earnedForDate}.`,
+    });
+
+    return compOff;
   }
 
   async findAll(
@@ -225,6 +251,22 @@ export class CompOffService {
         html: message,
       });
     }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'COMP_OFF_REVIEWED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: { employeeId: compOff.employeeId, decision: dto.decision },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: compOff.employeeId,
+      eventKey: 'COMP_OFF_GRANTED',
+      performedById: actor.id,
+      description: `Comp-off request ${dto.decision.toLowerCase()}.`,
+    });
 
     return this.findByIdOrThrow(id, organizationId);
   }

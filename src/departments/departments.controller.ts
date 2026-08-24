@@ -34,7 +34,11 @@ export class DepartmentsController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   create(@Body() dto: CreateDepartmentDto, @CurrentUser() caller: Caller) {
-    return this.departmentsService.create(dto, caller.organizationId);
+    return this.departmentsService.create(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   // No @Roles() — any authenticated caller (needed for dropdowns on the
@@ -52,7 +56,12 @@ export class DepartmentsController {
     @Body() dto: UpdateDepartmentDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.departmentsService.update(id, dto, caller.organizationId);
+    return this.departmentsService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Post(':id/assign-head')
@@ -85,6 +94,6 @@ export class DepartmentsController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.departmentsService.remove(id, caller.organizationId);
+    return this.departmentsService.remove(id, caller.organizationId, caller.id);
   }
 }

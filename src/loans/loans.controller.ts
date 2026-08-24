@@ -66,7 +66,12 @@ export class LoansController {
     @Body() dto: RecordRepaymentDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.loansService.recordRepayment(id, dto, caller.organizationId);
+    return this.loansService.recordRepayment(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   // No @Roles() — self-scoped inline in the service (403 if an EMPLOYEE

@@ -707,15 +707,55 @@ export class PayrollService {
             where: { id: run.id, organizationId },
           });
         } else {
-          run = await this.scopedPrisma.payrollRun.create({
-            data: {
-              organizationId,
-              employeeId: employee.id,
-              month: dto.month,
-              year: dto.year,
-              ...data,
-            },
-          });
+          try {
+            run = await this.scopedPrisma.payrollRun.create({
+              data: {
+                organizationId,
+                employeeId: employee.id,
+                month: dto.month,
+                year: dto.year,
+                ...data,
+              },
+            });
+          } catch (createErr) {
+            // Two concurrent calculate() calls for the same employee+period
+            // can both pass the existingRunByEmployeeId lookup above with no
+            // row yet (it's a single findMany taken before this loop, not a
+            // lock), then both reach this create() — the
+            // @@unique([employeeId, month, year, isFinalSettlement])
+            // constraint lets exactly one win; the loser landed here with a
+            // raw Prisma constraint-violation error (a stack trace
+            // including a local filesystem path) that would otherwise leak
+            // straight into the API response's failures[].message. Treat
+            // the loss as "someone else just created it" and fall back to
+            // updating that row with this call's freshly computed data,
+            // same as the `run` (recalculation) branch above — a real
+            // upsert instead of a surfaced 500-shaped failure.
+            if (
+              createErr instanceof Prisma.PrismaClientKnownRequestError &&
+              createErr.code === 'P2002'
+            ) {
+              const winner = await this.scopedPrisma.payrollRun.findFirst({
+                where: {
+                  organizationId,
+                  employeeId: employee.id,
+                  month: dto.month,
+                  year: dto.year,
+                  isFinalSettlement: false,
+                },
+              });
+              if (!winner) throw createErr;
+              await this.scopedPrisma.payrollRun.updateMany({
+                where: { id: winner.id, organizationId },
+                data,
+              });
+              run = await this.scopedPrisma.payrollRun.findFirstOrThrow({
+                where: { id: winner.id, organizationId },
+              });
+            } else {
+              throw createErr;
+            }
+          }
         }
         results.push(run);
       } catch (err) {

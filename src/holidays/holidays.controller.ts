@@ -41,7 +41,7 @@ export class HolidaysController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   create(@Body() dto: CreateHolidayDto, @CurrentUser() caller: Caller) {
-    return this.holidaysService.create(dto, caller.organizationId);
+    return this.holidaysService.create(dto, caller.organizationId, caller.id);
   }
 
   @Post('bulk-import')
@@ -51,7 +51,11 @@ export class HolidaysController {
     @Body() dto: BulkImportHolidaysDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.holidaysService.bulkImport(dto, caller.organizationId);
+    return this.holidaysService.bulkImport(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Put(':id')
@@ -62,13 +66,18 @@ export class HolidaysController {
     @Body() dto: UpdateHolidayDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.holidaysService.update(id, dto, caller.organizationId);
+    return this.holidaysService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Delete(':id')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.holidaysService.remove(id, caller.organizationId);
+    return this.holidaysService.remove(id, caller.organizationId, caller.id);
   }
 }

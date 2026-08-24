@@ -7,6 +7,7 @@
 // read-then-maybe-create/read-then-write is atomic under concurrent callers. creditAccrual() has no
 // frequency gating or idempotency guard — calling it twice in the same period double-credits, ported as-is
 // from the old system.
+import { randomUUID } from 'crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -45,8 +46,32 @@ export class LeaveBalanceService {
 
   /**
    * Get-or-create for (employee, leaveType, year). Must be called with a
-   * transaction client so the read-then-maybe-create is atomic under
-   * concurrent callers, same reasoning as EmployeeIdService.generate.
+   * transaction client so this is atomic under concurrent callers, same
+   * reasoning as EmployeeIdService.generate.
+   *
+   * Two concurrent apply()/review()/getBalance() calls for the same
+   * employee+leaveType+year (its first time being touched, so no row
+   * exists yet) could both pass the findFirst "no row" check below before
+   * either commits, then both reach create(), and the
+   * @@unique([organizationId, employeeId, leaveTypeId, year]) constraint
+   * lets exactly one win. The loser used to throw an unhandled Prisma
+   * P2002 straight out of the surrounding `tx.$transaction` callback —
+   * and because that's an interactive transaction, catching it and
+   * retrying with another query on the same `tx` isn't an option (Postgres
+   * has already marked the transaction aborted), so the whole calling
+   * operation (leave apply, review, cancel, balance lookup) failed with a
+   * raw "already exists" 409/500 instead of just resolving to the row the
+   * winner created.
+   *
+   * Fixed with `INSERT ... ON CONFLICT DO NOTHING` via a raw query instead
+   * of Prisma's `create`/`upsert` — `upsert` is a forbidden op on
+   * tenant-scoped models here (see FORBIDDEN_UNIQUE_OPS in
+   * tenant-scope.guard-logic.ts: it takes a unique-only `where` that can't
+   * also carry an organizationId filter), and a plain `create` is exactly
+   * what raced in the first place. `ON CONFLICT DO NOTHING` never throws —
+   * the loser's INSERT just affects 0 rows — so the transaction stays
+   * healthy and the subsequent findFirst (below) reads whichever row won,
+   * same raw-query pattern issueDocumentNumber uses for its row lock.
    */
   async ensureBalanceRow(
     tx: Prisma.TransactionClient,
@@ -77,16 +102,18 @@ export class LeaveBalanceService {
       year,
     );
 
-    return tx.leaveBalance.create({
-      data: {
-        organizationId,
-        employeeId,
-        leaveTypeId,
-        year,
-        opening,
-        credited,
-        closing: opening + credited,
-      },
+    await tx.$executeRaw`
+      INSERT INTO leave_balances
+        (id, "organizationId", "employeeId", "leaveTypeId", "year", "opening", "credited", "closing", "createdAt", "updatedAt")
+      VALUES
+        (${randomUUID()}, ${organizationId}, ${employeeId}, ${leaveTypeId}, ${year}, ${opening}, ${credited}, ${opening + credited}, now(), now())
+      ON CONFLICT ("organizationId", "employeeId", "leaveTypeId", "year") DO NOTHING
+    `;
+
+    // Whichever of this call and its concurrent racers actually inserted
+    // (or, on the no-race path, this call itself) — read it back scoped.
+    return tx.leaveBalance.findFirstOrThrow({
+      where: { organizationId, employeeId, leaveTypeId, year },
     });
   }
 

@@ -31,6 +31,8 @@ import {
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -58,11 +60,13 @@ export class OvertimeService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly delegationService: ApprovalDelegationService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async log(dto: LogOvertimeDto, actor: Actor, organizationId: string) {
     const type = dto.type ?? OvertimeType.REGULAR;
-    return this.scopedPrisma.overtimeRecord.create({
+    const record = await this.scopedPrisma.overtimeRecord.create({
       data: {
         organizationId,
         employeeId: actor.id,
@@ -72,6 +76,24 @@ export class OvertimeService {
         rateMultiplier: RATE_MULTIPLIERS[type],
       },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'OVERTIME_LOGGED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: record.id,
+      details: { employeeId: actor.id, date: dto.date, hours: dto.hours, type },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: actor.id,
+      eventKey: 'OVERTIME_LOGGED',
+      performedById: actor.id,
+      description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${dto.date}.`,
+    });
+
+    return record;
   }
 
   async findAll(query: QueryOvertimeDto, actor: Actor, organizationId: string) {
@@ -143,6 +165,22 @@ export class OvertimeService {
 
     const updated = await this.scopedPrisma.overtimeRecord.findFirstOrThrow({
       where: { id, organizationId },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'OVERTIME_REVIEWED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: id,
+      details: { employeeId: record.employeeId, status: dto.status },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: record.employeeId,
+      eventKey: 'OVERTIME_REVIEWED',
+      performedById: actor.id,
+      description: `Overtime record ${dto.status.toLowerCase()}.`,
     });
 
     const employee = await this.scopedPrisma.user.findFirst({

@@ -74,7 +74,12 @@ export class SalaryComponentsController {
     @Body() dto: UpdateSalaryComponentDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.salaryComponentsService.update(id, dto, caller.organizationId);
+    return this.salaryComponentsService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Patch(':id/toggle')
@@ -84,6 +89,10 @@ export class SalaryComponentsController {
 
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.salaryComponentsService.remove(id, caller.organizationId);
+    return this.salaryComponentsService.remove(
+      id,
+      caller.organizationId,
+      caller.id,
+    );
   }
 }

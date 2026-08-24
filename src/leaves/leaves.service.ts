@@ -424,11 +424,14 @@ export class LeavesService {
             year,
             organizationId,
           );
+          // Atomic increment/decrement — see the comment on the apply()
+          // pending update above for why a JS-computed `row.field ± delta`
+          // here would lose an update under concurrent review calls.
           await tx.leaveBalance.updateMany({
             where: { id: row.id, organizationId },
             data: {
-              pending: row.pending - leave.totalDays,
-              availed: row.availed + leave.totalDays,
+              pending: { decrement: leave.totalDays },
+              availed: { increment: leave.totalDays },
             },
           });
           await this.leaveBalanceService.recalculate(
@@ -450,7 +453,7 @@ export class LeavesService {
         );
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
-          data: { pending: row.pending - leave.totalDays },
+          data: { pending: { decrement: leave.totalDays } },
         });
         await this.leaveBalanceService.recalculate(tx, row.id, organizationId);
       }
@@ -577,11 +580,14 @@ export class LeavesService {
       organizationId,
     );
 
+    // Atomic decrement — see the comment on the apply() pending update
+    // above for why `row.field - delta` here would lose an update under
+    // concurrent cancellations/reversals.
     const data: Prisma.LeaveBalanceUpdateManyMutationInput = {};
     if (leave.status === LeaveStatus.APPROVED) {
-      data.availed = row.availed - leave.totalDays;
+      data.availed = { decrement: leave.totalDays };
     } else {
-      data.pending = row.pending - leave.totalDays;
+      data.pending = { decrement: leave.totalDays };
     }
     await tx.leaveBalance.updateMany({
       where: { id: row.id, organizationId },
@@ -693,9 +699,19 @@ export class LeavesService {
         if (!affordability.ok) {
           throw new ForbiddenException('Insufficient leave balance.');
         }
+        // Atomic increment, not `row.pending + totalDays` — the latter is a
+        // read-modify-write against the JS-side value captured before this
+        // statement runs, so two concurrent apply() calls for the same
+        // employee+leaveType+year (each starting from the same stale read)
+        // would each overwrite rather than accumulate, losing one of the
+        // two pending holds. Prisma's `increment` compiles to `SET pending
+        // = pending + $1`, which Postgres applies against the row's
+        // current value under the row lock the UPDATE itself takes, so the
+        // second concurrent writer serializes behind the first instead of
+        // clobbering it.
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
-          data: { pending: row.pending + totalDays },
+          data: { pending: { increment: totalDays } },
         });
       }
 

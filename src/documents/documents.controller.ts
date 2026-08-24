@@ -66,14 +66,23 @@ export class DocumentsController {
     @Body() dto: UpdatePolicyDocumentDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.documentsService.updatePolicy(id, dto, caller.organizationId);
+    return this.documentsService.updatePolicy(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Delete('policies/:id')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   deletePolicy(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.documentsService.deletePolicy(id, caller.organizationId);
+    return this.documentsService.deletePolicy(
+      id,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   // No @Roles() — any authenticated caller can see what's expected of them.
@@ -108,6 +117,7 @@ export class DocumentsController {
       id,
       dto,
       caller.organizationId,
+      caller.id,
     );
   }
 }

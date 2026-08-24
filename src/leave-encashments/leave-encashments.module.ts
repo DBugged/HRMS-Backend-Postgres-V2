@@ -5,6 +5,8 @@ import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
 import { PayrollSettingsModule } from '../payroll-settings/payroll-settings.module';
 import { EmployeeSalaryComponentsModule } from '../employee-salary-components/employee-salary-components.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
+import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 
 @Module({
   imports: [
@@ -12,6 +14,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
     PayrollSettingsModule,
     EmployeeSalaryComponentsModule,
     NotificationsModule,
+    AuditLogModule,
+    EmployeeTimelineModule,
   ],
   controllers: [LeaveEncashmentsController],
   providers: [LeaveEncashmentsService],

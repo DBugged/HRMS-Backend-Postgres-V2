@@ -80,17 +80,30 @@ export class PayrollTemplatesController {
     @Body() dto: UpdatePayrollTemplateDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.payrollTemplatesService.update(id, dto, caller.organizationId);
+    return this.payrollTemplatesService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.payrollTemplatesService.remove(id, caller.organizationId);
+    return this.payrollTemplatesService.remove(
+      id,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Post(':id/set-default')
   setDefault(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.payrollTemplatesService.setDefault(id, caller.organizationId);
+    return this.payrollTemplatesService.setDefault(
+      id,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Post(':id/preview')

@@ -41,6 +41,13 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
     category: 'EMPLOYMENT',
     title: 'Employee Record Updated',
   },
+  ASSET_ALLOCATED: { category: 'EMPLOYMENT', title: 'Asset Allocated' },
+  ASSET_RETURNED: { category: 'EMPLOYMENT', title: 'Asset Returned' },
+  ASSET_STATUS_CHANGED: {
+    category: 'EMPLOYMENT',
+    title: 'Asset Status Changed',
+  },
+  ASSET_REMOVED: { category: 'EMPLOYMENT', title: 'Asset Removed' },
   // Organization
   DEPARTMENT_CHANGED: { category: 'ORGANIZATION', title: 'Department Changed' },
   DESIGNATION_CHANGED: {
@@ -74,6 +81,19 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   BANK_DETAILS_UPDATED: { category: 'PAYROLL', title: 'Bank Details Updated' },
   TAX_REGIME_CHANGED: { category: 'PAYROLL', title: 'Tax Regime Changed' },
   PAYROLL_PROCESSED: { category: 'PAYROLL', title: 'Payroll Processed' },
+  LOAN_ISSUED: { category: 'PAYROLL', title: 'Loan Issued' },
+  LOAN_REPAYMENT_RECORDED: {
+    category: 'PAYROLL',
+    title: 'Loan Repayment Recorded',
+  },
+  REIMBURSEMENT_SUBMITTED: {
+    category: 'PAYROLL',
+    title: 'Reimbursement Submitted',
+  },
+  REIMBURSEMENT_REVIEWED: {
+    category: 'PAYROLL',
+    title: 'Reimbursement Reviewed',
+  },
   // Attendance & Leave
   ATTENDANCE_REGULARIZED: {
     category: 'ATTENDANCE_LEAVE',
@@ -95,6 +115,19 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
     category: 'ATTENDANCE_LEAVE',
     title: 'Work From Home Rejected',
   },
+  LEAVE_ENCASHMENT_REQUESTED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Leave Encashment Requested',
+  },
+  LEAVE_ENCASHMENT_REVIEWED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Leave Encashment Reviewed',
+  },
+  OVERTIME_LOGGED: { category: 'ATTENDANCE_LEAVE', title: 'Overtime Logged' },
+  OVERTIME_REVIEWED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Overtime Reviewed',
+  },
   // Performance
   PERFORMANCE_REVIEW: { category: 'PERFORMANCE', title: 'Performance Review' },
   PROMOTION: { category: 'PERFORMANCE', title: 'Promotion' },
@@ -109,6 +142,10 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   UAN_UPDATED: { category: 'COMPLIANCE', title: 'UAN Updated' },
   PAN_UPDATED: { category: 'COMPLIANCE', title: 'PAN Updated' },
   AADHAAR_UPDATED: { category: 'COMPLIANCE', title: 'Aadhaar Updated' },
+  TAX_DECLARATION_UPDATED: {
+    category: 'COMPLIANCE',
+    title: 'Tax Declaration Updated',
+  },
   // Exit
   RESIGNATION_SUBMITTED: { category: 'EXIT', title: 'Resignation Submitted' },
   NOTICE_PERIOD_STARTED: { category: 'EXIT', title: 'Notice Period Started' },

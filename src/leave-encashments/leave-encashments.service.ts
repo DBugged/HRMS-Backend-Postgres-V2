@@ -37,6 +37,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -55,6 +57,8 @@ export class LeaveEncashmentsService {
     private readonly employeeSalaryComponentsService: EmployeeSalaryComponentsService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async findAll(
@@ -123,50 +127,73 @@ export class LeaveEncashmentsService {
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
 
-    return this.scopedPrisma.$transaction(async (tx) => {
-      const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
-        tx,
-        actor.id,
-        leaveType.id,
-        year,
-        organizationId,
-      );
-      const available = balanceRow.closing;
-      const minRetain = rule.minBalanceToRetain ?? 0;
-      if (!dto.days || dto.days > available - minRetain) {
-        throw new BadRequestException(
-          `Cannot encash more than ${Math.max(0, available - minRetain)} day(s) (must retain ${minRetain}).`,
-        );
-      }
-
-      const currentBasic =
-        await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
+    return this.scopedPrisma
+      .$transaction(async (tx) => {
+        const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
+          tx,
           actor.id,
-          SALARY_COMPONENT_CODES.BASIC,
-          localDateStr(now),
+          leaveType.id,
+          year,
           organizationId,
         );
-      const ratePerDay = dailyRateFromMonthly(currentBasic);
-      const settings =
-        await this.payrollSettingsService.getOrCreate(organizationId);
-      const financialYear = getFinancialYear(
-        month,
-        year,
-        settings.financialYearStartMonth,
-      );
+        const available = balanceRow.closing;
+        const minRetain = rule.minBalanceToRetain ?? 0;
+        if (!dto.days || dto.days > available - minRetain) {
+          throw new BadRequestException(
+            `Cannot encash more than ${Math.max(0, available - minRetain)} day(s) (must retain ${minRetain}).`,
+          );
+        }
 
-      return tx.leaveEncashment.create({
-        data: {
+        const currentBasic =
+          await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
+            actor.id,
+            SALARY_COMPONENT_CODES.BASIC,
+            localDateStr(now),
+            organizationId,
+          );
+        const ratePerDay = dailyRateFromMonthly(currentBasic);
+        const settings =
+          await this.payrollSettingsService.getOrCreate(organizationId);
+        const financialYear = getFinancialYear(
+          month,
+          year,
+          settings.financialYearStartMonth,
+        );
+
+        return tx.leaveEncashment.create({
+          data: {
+            organizationId,
+            employeeId: actor.id,
+            leaveTypeId: leaveType.id,
+            days: dto.days,
+            ratePerDay,
+            amount: Math.round(ratePerDay * dto.days),
+            financialYear,
+          },
+        });
+      })
+      .then(async (encashment) => {
+        await this.auditLogService.log({
+          actorId: actor.id,
+          action: 'LEAVE_ENCASHMENT_REQUESTED',
+          module: 'LEAVE',
+          organizationId,
+          targetId: encashment.id,
+          details: {
+            employeeId: actor.id,
+            days: dto.days,
+            amount: encashment.amount,
+          },
+        });
+        await this.timelineService.logEvent({
           organizationId,
           employeeId: actor.id,
-          leaveTypeId: leaveType.id,
-          days: dto.days,
-          ratePerDay,
-          amount: Math.round(ratePerDay * dto.days),
-          financialYear,
-        },
+          eventKey: 'LEAVE_ENCASHMENT_REQUESTED',
+          performedById: actor.id,
+          description: `Requested encashment of ${dto.days} day(s).`,
+        });
+        return encashment;
       });
-    });
   }
 
   // Single-level review, matching Overtime — no "already reviewed" guard,
@@ -222,6 +249,22 @@ export class LeaveEncashmentsService {
       return tx.leaveEncashment.findFirstOrThrow({
         where: { id, organizationId },
       });
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LEAVE_ENCASHMENT_REVIEWED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: { employeeId: row.employeeId, status: dto.status },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: row.employeeId,
+      eventKey: 'LEAVE_ENCASHMENT_REVIEWED',
+      performedById: actor.id,
+      description: `Leave encashment request ${dto.status.toLowerCase()}.`,
     });
 
     const employee = await this.scopedPrisma.user.findFirst({

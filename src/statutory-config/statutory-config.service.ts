@@ -32,6 +32,7 @@ import {
   SEED_DEFAULTS,
   validateModuleConfig,
 } from './statutory-config-validation';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 // getEffective() is hit once per statutory module (9) per employee inside
 // PayrollService.calculatePayroll — a full payroll batch does O(9xN)
@@ -46,6 +47,7 @@ export class StatutoryConfigService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly cache: RedisCacheService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private effectiveCacheKeyPrefix(
@@ -167,6 +169,16 @@ export class StatutoryConfigService {
     await this.cache.invalidatePrefix(
       this.effectiveCacheKeyPrefix(organizationId, module),
     );
+
+    await this.auditLogService.log({
+      actorId,
+      action: 'STATUTORY_CONFIG_VERSION_CREATED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: created.id,
+      details: { module: module, effectiveFrom: dto.effectiveFrom },
+    });
+
     return created;
   }
 

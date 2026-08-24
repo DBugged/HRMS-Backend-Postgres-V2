@@ -1,8 +1,10 @@
 import { Module } from '@nestjs/common';
 import { TaxSlabsController } from './tax-slabs.controller';
 import { TaxSlabsService } from './tax-slabs.service';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
+  imports: [AuditLogModule],
   controllers: [TaxSlabsController],
   providers: [TaxSlabsService],
 })

@@ -27,6 +27,7 @@ import { signFileToken } from '../files/file-token';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
@@ -69,6 +70,7 @@ export class EmployeeProfileService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private async findEmployeeOrThrow(id: string, organizationId: string) {
@@ -116,7 +118,7 @@ export class EmployeeProfileService {
         orderBy: { uploadedAt: 'desc' },
       }),
       this.scopedPrisma.employeeAsset.findMany({
-        where: { organizationId, employeeId: id },
+        where: { organizationId, employeeId: id, isActive: true },
         orderBy: { createdAt: 'desc' },
       }),
     ]);
@@ -302,7 +304,7 @@ export class EmployeeProfileService {
     this.assertSelfOrHr(actor, id);
     await this.findEmployeeOrThrow(id, organizationId);
     return this.scopedPrisma.employeeAsset.findMany({
-      where: { organizationId, employeeId: id },
+      where: { organizationId, employeeId: id, isActive: true },
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -314,7 +316,13 @@ export class EmployeeProfileService {
     organizationId: string,
   ) {
     await this.findEmployeeOrThrow(id, organizationId);
-    return this.scopedPrisma.employeeAsset.create({
+    // assetTag is @@unique([organizationId, assetTag]) at the DB level (NULLs
+    // exempt, same as officialEmail elsewhere), so a duplicate tag within
+    // this org throws Prisma P2002 here — the global AllExceptionsFilter
+    // turns that into a clean 409 automatically, same mechanism used for
+    // every other unique-constraint conflict in this app, so no manual
+    // pre-check or hand-rolled error is needed.
+    const asset = await this.scopedPrisma.employeeAsset.create({
       data: {
         organizationId,
         employeeId: id,
@@ -326,16 +334,40 @@ export class EmployeeProfileService {
         allocatedById: actor.id,
       },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'ASSET_ALLOCATED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: asset.id,
+      details: {
+        employeeId: id,
+        assetType: asset.assetType,
+        assetName: asset.assetName,
+        assetTag: asset.assetTag,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: id,
+      eventKey: 'ASSET_ALLOCATED',
+      performedById: actor.id,
+      description: `${asset.assetType}: ${asset.assetName}${asset.assetTag ? ` (${asset.assetTag})` : ''}`,
+    });
+
+    return asset;
   }
 
   async updateAssetStatus(
     id: string,
     assetId: string,
     dto: UpdateEmployeeAssetDto,
+    actor: Actor,
     organizationId: string,
   ) {
     const asset = await this.scopedPrisma.employeeAsset.findFirst({
-      where: { id: assetId, employeeId: id, organizationId },
+      where: { id: assetId, employeeId: id, organizationId, isActive: true },
     });
     if (!asset) throw new NotFoundException('Asset not found.');
     if (dto.status === 'RETURNED' && !dto.returnedDate) {
@@ -350,11 +382,90 @@ export class EmployeeProfileService {
         status: dto.status,
         returnedDate:
           dto.status === 'RETURNED' ? dto.returnedDate : asset.returnedDate,
+        // Only ever set (never cleared) on an actual RETURNED transition —
+        // records who processed the return, mirroring allocatedById, which
+        // is always set at creation time by contrast.
+        returnedById: dto.status === 'RETURNED' ? actor.id : asset.returnedById,
       },
     });
 
-    return this.scopedPrisma.employeeAsset.findFirstOrThrow({
+    const updated = await this.scopedPrisma.employeeAsset.findFirstOrThrow({
       where: { id: assetId, organizationId },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action:
+        dto.status === 'RETURNED' ? 'ASSET_RETURNED' : 'ASSET_STATUS_CHANGED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: assetId,
+      details: {
+        employeeId: id,
+        previousStatus: asset.status,
+        newStatus: dto.status,
+        returnedDate: updated.returnedDate,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: id,
+      eventKey:
+        dto.status === 'RETURNED' ? 'ASSET_RETURNED' : 'ASSET_STATUS_CHANGED',
+      performedById: actor.id,
+      description: `${asset.assetType}: ${asset.assetName} — ${asset.status} -> ${dto.status}`,
+    });
+
+    return updated;
+  }
+
+  // Soft delete only — the underlying row is kept for audit-trail
+  // integrity (matching removeDocument's hard-delete being fine there
+  // since documents carry no allocation/return audit history worth
+  // preserving, unlike assets). Deliberately not implemented as "just set
+  // status to RETURNED": RETURNED represents a real-world event (the
+  // physical asset came back, and requires a returnedDate), whereas delete
+  // is a record-management action — e.g. removing a mistaken entry for an
+  // asset that was never actually returned, or an ALLOCATED asset that
+  // should never have been logged. Reusing RETURNED for that would corrupt
+  // the return-workflow's own meaning, so isActive is a separate flag.
+  async removeAsset(
+    id: string,
+    assetId: string,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const asset = await this.scopedPrisma.employeeAsset.findFirst({
+      where: { id: assetId, employeeId: id, organizationId, isActive: true },
+    });
+    if (!asset) throw new NotFoundException('Asset not found.');
+
+    await this.scopedPrisma.employeeAsset.updateMany({
+      where: { id: assetId, organizationId },
+      data: { isActive: false },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'ASSET_REMOVED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: assetId,
+      details: {
+        employeeId: id,
+        assetType: asset.assetType,
+        assetName: asset.assetName,
+        assetTag: asset.assetTag,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: id,
+      eventKey: 'ASSET_REMOVED',
+      performedById: actor.id,
+      description: `${asset.assetType}: ${asset.assetName}${asset.assetTag ? ` (${asset.assetTag})` : ''}`,
+    });
+
+    return { success: true };
   }
 }

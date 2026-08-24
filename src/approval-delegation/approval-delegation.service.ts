@@ -16,6 +16,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateDelegationDto } from './dto/create-delegation.dto';
 import { QueryDelegationDto } from './dto/query-delegation.dto';
 import { wrapAll } from '../common/pagination';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -26,6 +27,7 @@ const VALID_DELEGATE_ROLES: Role[] = [Role.MANAGER, Role.HR, Role.ADMIN];
 export class ApprovalDelegationService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findMine(
@@ -71,7 +73,7 @@ export class ApprovalDelegationService {
       );
     }
 
-    return this.scopedPrisma.approvalDelegation.create({
+    const delegation = await this.scopedPrisma.approvalDelegation.create({
       data: {
         organizationId,
         delegatorId,
@@ -81,6 +83,22 @@ export class ApprovalDelegationService {
         createdById: actor.id,
       },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'APPROVAL_DELEGATION_CREATED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: delegation.id,
+      details: {
+        delegatorId,
+        delegateId: dto.delegate,
+        fromDate: dto.fromDate,
+        toDate: dto.toDate,
+      },
+    });
+
+    return delegation;
   }
 
   async cancel(id: string, actor: Actor, organizationId: string) {
@@ -98,6 +116,19 @@ export class ApprovalDelegationService {
       where: { id, organizationId },
       data: { isActive: false },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'APPROVAL_DELEGATION_CANCELLED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: id,
+      details: {
+        delegatorId: delegation.delegatorId,
+        delegateId: delegation.delegateId,
+      },
+    });
+
     return this.scopedPrisma.approvalDelegation.findFirstOrThrow({
       where: { id, organizationId },
     });

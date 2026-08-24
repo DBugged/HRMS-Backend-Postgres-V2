@@ -46,6 +46,9 @@ interface AssetBody {
   id: string;
   status: string;
   returnedDate: string | null;
+  returnedById: string | null;
+  assetTag: string | null;
+  isActive: boolean;
 }
 
 const PASSWORD = 'TestPass123!';
@@ -456,7 +459,7 @@ describe('Employee Rich Profile (e2e)', () => {
         .expect(400);
     });
 
-    it('HR marks the asset RETURNED with a returnedDate', async () => {
+    it('HR marks the asset RETURNED with a returnedDate, recording returnedById', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${empId}/assets/${assetId}`)
         .set('Authorization', `Bearer ${hrToken}`)
@@ -465,6 +468,7 @@ describe('Employee Rich Profile (e2e)', () => {
       const body = res.body as AssetBody;
       expect(body.status).toBe('RETURNED');
       expect(body.returnedDate).toBe('2026-02-01');
+      expect(body.returnedById).not.toBeNull();
     });
 
     it('EMPLOYEE cannot update asset status (HR/Admin-only)', async () => {
@@ -473,6 +477,106 @@ describe('Employee Rich Profile (e2e)', () => {
         .set('Authorization', `Bearer ${empToken}`)
         .send({ status: 'LOST' })
         .expect(403);
+    });
+
+    describe('duplicate assetTag', () => {
+      it('HR allocates an asset with a tag', async () => {
+        const res = await request(app.getHttpServer())
+          .post(`/employees/${empId}/assets`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            assetType: 'Monitor',
+            assetName: 'Dell 27"',
+            assetTag: 'TAG-DUP-001',
+            allocatedDate: '2026-01-15',
+          })
+          .expect(201);
+        expect((res.body as AssetBody).assetTag).toBe('TAG-DUP-001');
+      });
+
+      it('allocating a second asset with the same tag in the same org is rejected (409)', async () => {
+        const res = await request(app.getHttpServer())
+          .post(`/employees/${otherEmpId}/assets`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            assetType: 'Monitor',
+            assetName: 'Dell 27" (dup)',
+            assetTag: 'TAG-DUP-001',
+            allocatedDate: '2026-01-16',
+          })
+          .expect(409);
+        expect((res.body as { message: string }).message).toMatch(
+          /already exists/i,
+        );
+      });
+
+      it('allocating multiple assets with no assetTag at all is allowed', async () => {
+        await request(app.getHttpServer())
+          .post(`/employees/${empId}/assets`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            assetType: 'Keyboard',
+            assetName: 'Mechanical Keyboard',
+            allocatedDate: '2026-01-17',
+          })
+          .expect(201);
+        await request(app.getHttpServer())
+          .post(`/employees/${otherEmpId}/assets`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            assetType: 'Keyboard',
+            assetName: 'Mechanical Keyboard #2',
+            allocatedDate: '2026-01-17',
+          })
+          .expect(201);
+      });
+    });
+
+    describe('delete (soft)', () => {
+      let deletableAssetId: string;
+
+      beforeAll(async () => {
+        const res = await request(app.getHttpServer())
+          .post(`/employees/${empId}/assets`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            assetType: 'Mouse',
+            assetName: 'Wireless Mouse',
+            allocatedDate: '2026-01-18',
+          })
+          .expect(201);
+        deletableAssetId = (res.body as AssetBody).id;
+      });
+
+      it('EMPLOYEE cannot delete an asset (HR/Admin-only)', async () => {
+        await request(app.getHttpServer())
+          .delete(`/employees/${empId}/assets/${deletableAssetId}`)
+          .set('Authorization', `Bearer ${empToken}`)
+          .expect(403);
+      });
+
+      it('HR soft-deletes an asset', async () => {
+        await request(app.getHttpServer())
+          .delete(`/employees/${empId}/assets/${deletableAssetId}`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .expect(200);
+      });
+
+      it('deleted asset no longer appears in listAssets', async () => {
+        const res = await request(app.getHttpServer())
+          .get(`/employees/${empId}/assets`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .expect(200);
+        const ids = (res.body as AssetBody[]).map((a) => a.id);
+        expect(ids).not.toContain(deletableAssetId);
+      });
+
+      it('deleting an already-deleted (or unknown) asset 404s', async () => {
+        await request(app.getHttpServer())
+          .delete(`/employees/${empId}/assets/${deletableAssetId}`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .expect(404);
+      });
     });
   });
 });

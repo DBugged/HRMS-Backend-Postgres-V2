@@ -79,13 +79,22 @@ export class WorkLocationsController {
     @Body() dto: UpdateWorkLocationDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.workLocationsService.update(id, dto, caller.organizationId);
+    return this.workLocationsService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Delete(':id')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.workLocationsService.remove(id, caller.organizationId);
+    return this.workLocationsService.remove(
+      id,
+      caller.organizationId,
+      caller.id,
+    );
   }
 }

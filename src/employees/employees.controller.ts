@@ -261,6 +261,23 @@ export class EmployeesController {
       id,
       assetId,
       dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Delete(':id/assets/:assetId')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  removeAsset(
+    @Param('id') id: string,
+    @Param('assetId') assetId: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeeProfileService.removeAsset(
+      id,
+      assetId,
+      caller,
       caller.organizationId,
     );
   }

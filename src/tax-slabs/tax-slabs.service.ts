@@ -3,17 +3,19 @@
 // Responsibilities: Owns upsert-by-(financialYear, regime) and exposes getDefaults() (static slab data,
 // not persisted) for the frontend to pre-fill a new config.
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, TaxRegime } from '@prisma/client';
+import { Prisma, TaxRegime, TaxSlabConfig } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxSlabDto } from './dto/upsert-tax-slab.dto';
 import { getDefaultTaxSlabConfig } from './default-tax-slabs';
 import { wrapAll } from '../common/pagination';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class TaxSlabsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   getDefaults(regime: TaxRegime) {
@@ -28,7 +30,11 @@ export class TaxSlabsService {
     return wrapAll(data);
   }
 
-  async upsert(dto: UpsertTaxSlabDto, organizationId: string) {
+  async upsert(
+    dto: UpsertTaxSlabDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
     const existing = await this.scopedPrisma.taxSlabConfig.findFirst({
       where: {
         organizationId,
@@ -57,27 +63,41 @@ export class TaxSlabsService {
       ...(dto.isActive !== undefined && { isActive: dto.isActive }),
     };
 
+    let result: TaxSlabConfig;
     if (existing) {
       await this.scopedPrisma.taxSlabConfig.updateMany({
         where: { id: existing.id, organizationId },
         data,
       });
-      return this.scopedPrisma.taxSlabConfig.findFirstOrThrow({
+      result = await this.scopedPrisma.taxSlabConfig.findFirstOrThrow({
         where: { id: existing.id, organizationId },
+      });
+    } else {
+      result = await this.scopedPrisma.taxSlabConfig.create({
+        data: {
+          organizationId,
+          financialYear: dto.financialYear,
+          regime: dto.regime,
+          ...data,
+        },
       });
     }
 
-    return this.scopedPrisma.taxSlabConfig.create({
-      data: {
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: existing ? 'TAX_SLAB_UPDATED' : 'TAX_SLAB_CREATED',
+        module: 'PAYROLL',
         organizationId,
-        financialYear: dto.financialYear,
-        regime: dto.regime,
-        ...data,
-      },
-    });
+        targetId: result.id,
+        details: { financialYear: dto.financialYear, regime: dto.regime },
+      });
+    }
+
+    return result;
   }
 
-  async remove(id: string, organizationId: string) {
+  async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.scopedPrisma.taxSlabConfig.findFirst({
       where: { id, organizationId },
     });
@@ -85,6 +105,21 @@ export class TaxSlabsService {
     await this.scopedPrisma.taxSlabConfig.deleteMany({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'TAX_SLAB_DELETED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: id,
+        details: {
+          financialYear: existing.financialYear,
+          regime: existing.regime,
+        },
+      });
+    }
+
     return { message: 'Tax slab config deleted' };
   }
 }

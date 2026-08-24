@@ -19,6 +19,8 @@ import { UpsertTaxDeclarationDto } from './dto/upsert-tax-declaration.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { assertManagerDeptScope } from '../common/dept-scope';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -28,6 +30,8 @@ export class TaxDeclarationsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async get(
@@ -146,6 +150,22 @@ export class TaxDeclarationsService {
         },
       });
     }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: existing ? 'TAX_DECLARATION_UPDATED' : 'TAX_DECLARATION_CREATED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: declaration.id,
+      details: { employeeId, financialYear: dto.financialYear, status },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId,
+      eventKey: 'TAX_DECLARATION_UPDATED',
+      performedById: actor.id,
+      description: `Tax declaration for FY ${dto.financialYear} ${existing ? 'updated' : 'created'}.`,
+    });
 
     if (!isOwnDeclaration && status === TaxDeclarationStatus.VERIFIED) {
       const employee = await this.scopedPrisma.user.findFirst({

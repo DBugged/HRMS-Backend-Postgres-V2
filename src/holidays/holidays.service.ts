@@ -20,6 +20,7 @@ import { UpdateHolidayDto } from './dto/update-holiday.dto';
 import { ListHolidaysQueryDto } from './dto/list-holidays-query.dto';
 import { BulkImportHolidaysDto } from './dto/bulk-import-holidays.dto';
 import { wrapAll } from '../common/pagination';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 const VALID_TYPES = new Set(Object.values(HolidayType));
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -40,6 +41,7 @@ function asString(value: unknown): string {
 export class HolidaysService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // India's 3 fixed National Holidays (Republic Day, Independence Day,
@@ -77,13 +79,17 @@ export class HolidaysService {
     }
   }
 
-  async create(dto: CreateHolidayDto, organizationId: string) {
+  async create(
+    dto: CreateHolidayDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
     const name = dto.name.trim();
     const year = new Date(dto.date).getFullYear();
 
     await this.assertNoDuplicate(organizationId, dto.date, name);
 
-    return this.scopedPrisma.holiday.create({
+    const holiday = await this.scopedPrisma.holiday.create({
       data: {
         organizationId,
         name,
@@ -96,6 +102,19 @@ export class HolidaysService {
         description: dto.description ?? '',
       },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'HOLIDAY_CREATED',
+        module: 'HOLIDAY',
+        organizationId,
+        targetId: holiday.id,
+        details: { name: holiday.name, date: holiday.date },
+      });
+    }
+
+    return holiday;
   }
 
   async findAll(query: ListHolidaysQueryDto, organizationId: string) {
@@ -116,7 +135,12 @@ export class HolidaysService {
     return wrapAll(data);
   }
 
-  async update(id: string, dto: UpdateHolidayDto, organizationId: string) {
+  async update(
+    id: string,
+    dto: UpdateHolidayDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
     const nextName = (dto.name ?? existing.name).trim();
@@ -141,14 +165,36 @@ export class HolidaysService {
       },
     });
 
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'HOLIDAY_UPDATED',
+        module: 'HOLIDAY',
+        organizationId,
+        targetId: id,
+      });
+    }
+
     return this.findByIdOrThrow(id, organizationId);
   }
 
-  async remove(id: string, organizationId: string) {
-    await this.findByIdOrThrow(id, organizationId);
+  async remove(id: string, organizationId: string, actorId?: string) {
+    const existing = await this.findByIdOrThrow(id, organizationId);
     await this.scopedPrisma.holiday.deleteMany({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'HOLIDAY_DELETED',
+        module: 'HOLIDAY',
+        organizationId,
+        targetId: id,
+        details: { name: existing.name, date: existing.date },
+      });
+    }
+
     return { message: 'Holiday deleted' };
   }
 
@@ -156,7 +202,11 @@ export class HolidaysService {
   // each row is validated independently, invalid/duplicate rows are
   // collected into `failed` rather than aborting the whole batch, and only
   // the valid remainder is actually created.
-  async bulkImport(dto: BulkImportHolidaysDto, organizationId: string) {
+  async bulkImport(
+    dto: BulkImportHolidaysDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
     const failed: {
       row: number;
       name: string;
@@ -256,6 +306,16 @@ export class HolidaysService {
     const created = toCreate.length
       ? await this.scopedPrisma.holiday.createMany({ data: toCreate })
       : { count: 0 };
+
+    if (actorId && created.count > 0) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'HOLIDAY_BULK_IMPORTED',
+        module: 'HOLIDAY',
+        organizationId,
+        details: { created: created.count, failed: failed.length },
+      });
+    }
 
     return { created: created.count, failed };
   }

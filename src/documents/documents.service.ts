@@ -28,6 +28,7 @@ import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
 import { CreateDocumentRequirementDto } from './dto/create-document-requirement.dto';
 import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.dto';
 import { wrapAll } from '../common/pagination';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -39,6 +40,7 @@ const EXTERNAL_URL_RE = /^https?:\/\//i;
 export class DocumentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // HR/Admin bypass visibility entirely (they manage the library, not just
@@ -146,6 +148,15 @@ export class DocumentsService {
       });
     }
 
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'DOCUMENT_POLICY_CREATED',
+      module: 'DOCUMENT',
+      organizationId,
+      targetId: policy.id,
+      details: { title: policy.title, version: policy.version },
+    });
+
     return this.withSignedUrl(policy);
   }
 
@@ -185,6 +196,7 @@ export class DocumentsService {
     id: string,
     dto: UpdatePolicyDocumentDto,
     organizationId: string,
+    actorId?: string,
   ) {
     const existing = await this.scopedPrisma.policyDocument.findFirst({
       where: { id, organizationId },
@@ -210,10 +222,21 @@ export class DocumentsService {
     const updated = await this.scopedPrisma.policyDocument.findFirstOrThrow({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'DOCUMENT_POLICY_UPDATED',
+        module: 'DOCUMENT',
+        organizationId,
+        targetId: id,
+      });
+    }
+
     return this.withSignedUrl(updated);
   }
 
-  async deletePolicy(id: string, organizationId: string) {
+  async deletePolicy(id: string, organizationId: string, actorId?: string) {
     const policy = await this.scopedPrisma.policyDocument.findFirst({
       where: { id, organizationId },
     });
@@ -228,6 +251,18 @@ export class DocumentsService {
     await this.scopedPrisma.policyDocument.deleteMany({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'DOCUMENT_POLICY_DELETED',
+        module: 'DOCUMENT',
+        organizationId,
+        targetId: id,
+        details: { title: policy.title },
+      });
+    }
+
     return { success: true, message: 'Policy deleted' };
   }
 
@@ -251,7 +286,7 @@ export class DocumentsService {
       where: { organizationId },
     });
 
-    return this.scopedPrisma.documentRequirement.create({
+    const requirement = await this.scopedPrisma.documentRequirement.create({
       data: {
         organizationId,
         name,
@@ -260,12 +295,24 @@ export class DocumentsService {
         createdById: actor.id,
       },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'DOCUMENT_REQUIREMENT_CREATED',
+      module: 'DOCUMENT',
+      organizationId,
+      targetId: requirement.id,
+      details: { name: requirement.name },
+    });
+
+    return requirement;
   }
 
   async updateRequirement(
     id: string,
     dto: UpdateDocumentRequirementDto,
     organizationId: string,
+    actorId?: string,
   ) {
     const existing = await this.scopedPrisma.documentRequirement.findFirst({
       where: { id, organizationId },
@@ -284,6 +331,16 @@ export class DocumentsService {
         }),
       },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'DOCUMENT_REQUIREMENT_UPDATED',
+        module: 'DOCUMENT',
+        organizationId,
+        targetId: id,
+      });
+    }
 
     return this.scopedPrisma.documentRequirement.findFirstOrThrow({
       where: { id, organizationId },

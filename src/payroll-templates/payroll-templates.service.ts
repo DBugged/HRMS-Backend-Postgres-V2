@@ -21,6 +21,7 @@ import { CreatePayrollTemplateDto } from './dto/create-payroll-template.dto';
 import { UpdatePayrollTemplateDto } from './dto/update-payroll-template.dto';
 import { PayslipPdfService } from '../payroll/payslip-pdf.service';
 import { wrapAll } from '../common/pagination';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 // Defaults for whatever the "draft" preview body leaves unset — mirrors the
 // Prisma column defaults so the rendered preview always has every field the
@@ -68,6 +69,7 @@ export class PayrollTemplatesService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly payslipPdfService: PayslipPdfService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async findAll(organizationId: string) {
@@ -104,6 +106,16 @@ export class PayrollTemplatesService {
     if (template.isDefault) {
       await this.unsetOtherDefaults(template.id, organizationId);
     }
+
+    await this.auditLogService.log({
+      actorId: createdById,
+      action: 'PAYROLL_TEMPLATE_CREATED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: template.id,
+      details: { name: template.name },
+    });
+
     return template;
   }
 
@@ -111,6 +123,7 @@ export class PayrollTemplatesService {
     id: string,
     dto: UpdatePayrollTemplateDto,
     organizationId: string,
+    actorId?: string,
   ) {
     await this.findByIdOrThrow(id, organizationId);
     // isDefault is deliberately absent from UpdatePayrollTemplateDto — only
@@ -119,10 +132,21 @@ export class PayrollTemplatesService {
       where: { id, organizationId },
       data: dto,
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'PAYROLL_TEMPLATE_UPDATED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: id,
+      });
+    }
+
     return this.findByIdOrThrow(id, organizationId);
   }
 
-  async remove(id: string, organizationId: string) {
+  async remove(id: string, organizationId: string, actorId?: string) {
     const template = await this.findByIdOrThrow(id, organizationId);
     if (template.isDefault) {
       throw new BadRequestException(
@@ -132,16 +156,39 @@ export class PayrollTemplatesService {
     await this.scopedPrisma.payrollTemplate.deleteMany({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'PAYROLL_TEMPLATE_DELETED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: id,
+        details: { name: template.name },
+      });
+    }
+
     return { message: 'Template deleted' };
   }
 
-  async setDefault(id: string, organizationId: string) {
+  async setDefault(id: string, organizationId: string, actorId?: string) {
     await this.findByIdOrThrow(id, organizationId);
     await this.unsetOtherDefaults(id, organizationId);
     await this.scopedPrisma.payrollTemplate.updateMany({
       where: { id, organizationId },
       data: { isDefault: true },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'PAYROLL_TEMPLATE_SET_DEFAULT',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: id,
+      });
+    }
+
     return this.findByIdOrThrow(id, organizationId);
   }
 

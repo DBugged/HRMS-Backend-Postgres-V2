@@ -19,6 +19,7 @@ import { ListWorkLocationsQueryDto } from './dto/list-work-locations-query.dto';
 import { deriveCircleSummary, isInsideGeoFence } from './geo-fence';
 import { validateGeometry } from './geometry-validation';
 import { wrapAll } from '../common/pagination';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 type Boundary = { bounds?: [number, number][]; vertices?: [number, number][] };
 
@@ -26,6 +27,7 @@ type Boundary = { bounds?: [number, number][]; vertices?: [number, number][] };
 export class WorkLocationsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async create(
@@ -46,7 +48,7 @@ export class WorkLocationsService {
       dto.radiusMeters ?? 200,
     );
 
-    return this.scopedPrisma.workLocation.create({
+    const location = await this.scopedPrisma.workLocation.create({
       data: {
         organizationId,
         name: dto.name,
@@ -66,6 +68,17 @@ export class WorkLocationsService {
         createdById,
       },
     });
+
+    await this.auditLogService.log({
+      actorId: createdById,
+      action: 'WORK_LOCATION_CREATED',
+      module: 'ORGANIZATION',
+      organizationId,
+      targetId: location.id,
+      details: { name: location.name },
+    });
+
+    return location;
   }
 
   async findAll(query: ListWorkLocationsQueryDto, organizationId: string) {
@@ -105,7 +118,12 @@ export class WorkLocationsService {
     return { inside, fenceType: location.fenceType };
   }
 
-  async update(id: string, dto: UpdateWorkLocationDto, organizationId: string) {
+  async update(
+    id: string,
+    dto: UpdateWorkLocationDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
     const GEOMETRY_KEYS = [
@@ -170,14 +188,36 @@ export class WorkLocationsService {
       },
     });
 
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'WORK_LOCATION_UPDATED',
+        module: 'ORGANIZATION',
+        organizationId,
+        targetId: id,
+      });
+    }
+
     return this.findByIdOrThrow(id, organizationId);
   }
 
-  async remove(id: string, organizationId: string) {
-    await this.findByIdOrThrow(id, organizationId);
+  async remove(id: string, organizationId: string, actorId?: string) {
+    const existing = await this.findByIdOrThrow(id, organizationId);
     await this.scopedPrisma.workLocation.deleteMany({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'WORK_LOCATION_DELETED',
+        module: 'ORGANIZATION',
+        organizationId,
+        targetId: id,
+        details: { name: existing.name },
+      });
+    }
+
     return { message: 'Work location deleted' };
   }
 

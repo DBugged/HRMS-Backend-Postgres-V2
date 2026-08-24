@@ -411,6 +411,7 @@ model User {
   employeeDocumentsReviewed        EmployeeDocument[]        @relation("EmployeeDocumentReviewedBy")
   assets                           EmployeeAsset[]           @relation("EmployeeAssetEmployee")
   assetsAllocated                  EmployeeAsset[]           @relation("EmployeeAssetAllocatedBy")
+  assetsReturned                   EmployeeAsset[]           @relation("EmployeeAssetReturnedBy")
   roleHistoryEntries               EmployeeRoleHistory[]     @relation("RoleHistoryEmployee")
   roleHistoryChangedBy             EmployeeRoleHistory[]     @relation("RoleHistoryChangedBy")
   employmentStatusHistoryEntries   EmploymentStatusHistory[] @relation("StatusHistoryEmployee")
@@ -2034,12 +2035,34 @@ model EmployeeAsset {
   returnedDate  String?
   notes         String?
 
+  // Soft-delete flag — a "removed" asset record (e.g. entered in error, or
+  // an org wants to archive an old row) stays in the table for audit-trail
+  // integrity but drops out of listAssets()/getFullProfile(). Deliberately
+  // separate from AssetStatus: RETURNED/LOST describe what happened to the
+  // physical asset, not whether the record itself should still be visible
+  // — an ALLOCATED asset can also be soft-deleted (e.g. a mistaken entry)
+  // without that meaning it was returned. Same isActive convention used
+  // throughout this schema (User, Department, etc.).
+  isActive Boolean @default(true)
+
   allocatedById String
   allocatedBy   User   @relation("EmployeeAssetAllocatedBy", fields: [allocatedById], references: [id])
+
+  // Nullable — only set once the asset is actually marked RETURNED, unlike
+  // allocatedById which is always present from creation. Mirrors the
+  // allocatedById/allocatedBy pattern exactly.
+  returnedById String?
+  returnedBy   User?   @relation("EmployeeAssetReturnedBy", fields: [returnedById], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // Scoped per-org, not global — assetTag (e.g. a serial/inventory tag) is
+  // only meaningful within one org's inventory, and two different orgs may
+  // legitimately reuse the same tag. NULLs are exempt from Postgres unique
+  // indexes (same as officialEmail elsewhere in this schema), so this only
+  // enforces uniqueness when assetTag is actually provided.
+  @@unique([organizationId, assetTag])
   @@index([organizationId, employeeId])
   @@map("employee_assets")
 }

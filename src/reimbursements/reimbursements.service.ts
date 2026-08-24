@@ -23,6 +23,8 @@ import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -34,6 +36,8 @@ export class ReimbursementsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   // receiptUrl is stored as the relativeKey from POST /files/upload/documents
@@ -108,6 +112,27 @@ export class ReimbursementsService {
         receiptUrl: dto.receiptUrl ?? '',
       },
     });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'REIMBURSEMENT_SUBMITTED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: claim.id,
+      details: {
+        employeeId: actor.id,
+        category: dto.category,
+        amount: dto.amount,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: actor.id,
+      eventKey: 'REIMBURSEMENT_SUBMITTED',
+      performedById: actor.id,
+      description: `Submitted a reimbursement claim of ${dto.amount} for ${dto.category}.`,
+    });
+
     return this.withSignedReceipt(claim);
   }
 
@@ -138,6 +163,22 @@ export class ReimbursementsService {
     });
     const updated = await this.scopedPrisma.reimbursement.findFirstOrThrow({
       where: { id, organizationId },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'REIMBURSEMENT_REVIEWED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { employeeId: claim.employeeId, status: dto.status },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: claim.employeeId,
+      eventKey: 'REIMBURSEMENT_REVIEWED',
+      performedById: actor.id,
+      description: `Reimbursement claim ${dto.status.toLowerCase()}.`,
     });
 
     const employee = await this.scopedPrisma.user.findFirst({

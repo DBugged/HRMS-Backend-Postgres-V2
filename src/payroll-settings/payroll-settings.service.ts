@@ -5,6 +5,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { RedisCacheService } from '../common/redis-cache';
 import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
 import { resolveDayOfMonth } from './payroll-date';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 // Read once per employee inside a payroll batch, rarely written — same
 // caching rationale as StatutoryConfigService.getEffective.
@@ -22,6 +23,7 @@ export class PayrollSettingsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly cache: RedisCacheService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   private cacheKey(organizationId: string): string {
@@ -72,6 +74,15 @@ export class PayrollSettingsService {
       },
     });
     await this.cache.invalidate(this.cacheKey(organizationId));
+
+    await this.auditLogService.log({
+      actorId: updatedById,
+      action: 'PAYROLL_SETTINGS_UPDATED',
+      module: 'PAYROLL',
+      organizationId,
+      details: { ...dto },
+    });
+
     return this.getOrCreate(organizationId);
   }
 }

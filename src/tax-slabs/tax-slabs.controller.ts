@@ -49,11 +49,11 @@ export class TaxSlabsController {
 
   @Post()
   upsert(@Body() dto: UpsertTaxSlabDto, @CurrentUser() caller: Caller) {
-    return this.taxSlabsService.upsert(dto, caller.organizationId);
+    return this.taxSlabsService.upsert(dto, caller.organizationId, caller.id);
   }
 
   @Delete(':id')
   remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.taxSlabsService.remove(id, caller.organizationId);
+    return this.taxSlabsService.remove(id, caller.organizationId, caller.id);
   }
 }

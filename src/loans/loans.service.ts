@@ -28,6 +28,8 @@ import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
 import { paginate, skip } from '../common/pagination';
 import { deptScopedEmployeeIds } from '../common/dept-scope';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -37,6 +39,8 @@ export class LoansService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async findAll(query: QueryLoanDto, actor: Actor, organizationId: string) {
@@ -118,6 +122,26 @@ export class LoansService {
       });
     }
 
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LOAN_ISSUED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: loan.id,
+      details: {
+        employeeId: dto.employeeId,
+        principal: dto.principal,
+        tenureMonths: dto.tenureMonths,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: dto.employeeId,
+      eventKey: 'LOAN_ISSUED',
+      performedById: actor.id,
+      description: `${loan.loanType} loan of ${dto.principal} sanctioned.`,
+    });
+
     return loan;
   }
 
@@ -177,6 +201,7 @@ export class LoansService {
     id: string,
     dto: RecordRepaymentDto,
     organizationId: string,
+    actorId?: string,
   ) {
     const loan = await this.scopedPrisma.loan.findFirst({
       where: { id, organizationId },
@@ -190,7 +215,7 @@ export class LoansService {
     );
     const status = outstandingBalance === 0 ? LoanStatus.CLOSED : loan.status;
 
-    return this.scopedPrisma.$transaction(async (tx) => {
+    const result = await this.scopedPrisma.$transaction(async (tx) => {
       await tx.loan.updateMany({
         where: { id, organizationId },
         data: { outstandingBalance, status },
@@ -213,6 +238,28 @@ export class LoansService {
       });
       return { repayment, loan: updatedLoan };
     });
+
+    await this.auditLogService.log({
+      actorId: actorId ?? loan.approvedById ?? loan.employeeId,
+      action: 'LOAN_REPAYMENT_RECORDED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: loan.employeeId,
+        amount: dto.amount,
+        outstandingBalance,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: loan.employeeId,
+      eventKey: 'LOAN_REPAYMENT_RECORDED',
+      performedById: actorId ?? loan.approvedById,
+      description: `Loan repayment of ${dto.amount} recorded.`,
+    });
+
+    return result;
   }
 
   async getRepayments(id: string, actor: Actor, organizationId: string) {

@@ -17,6 +17,8 @@ import { QueryPerformanceRatingDto } from './dto/query-performance-rating.dto';
 import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -26,6 +28,8 @@ export class PerformanceRatingsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async findAll(
@@ -114,6 +118,28 @@ export class PerformanceRatingsService {
         },
       });
     }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: existing
+        ? 'PERFORMANCE_RATING_UPDATED'
+        : 'PERFORMANCE_RATING_CREATED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: rating.id,
+      details: {
+        employeeId: dto.employeeId,
+        financialYear: dto.financialYear,
+        rating: dto.rating,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: dto.employeeId,
+      eventKey: 'PERFORMANCE_REVIEW',
+      performedById: actor.id,
+      description: `Performance rating for FY ${dto.financialYear} recorded: ${dto.rating}.`,
+    });
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: dto.employeeId, organizationId },

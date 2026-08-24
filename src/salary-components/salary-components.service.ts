@@ -28,6 +28,7 @@ import {
   isValidPercentage,
 } from './salary-component-validation';
 import { SALARY_COMPONENT_DEFAULTS } from './salary-component-defaults';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 function slugify(name: string): string {
   return name
@@ -40,6 +41,7 @@ function slugify(name: string): string {
 export class SalaryComponentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // Every new org starts with the standard component set (Basic, HRA,
@@ -105,7 +107,7 @@ export class SalaryComponentsService {
       },
     ]);
 
-    return this.scopedPrisma.salaryComponent.create({
+    const component = await this.scopedPrisma.salaryComponent.create({
       data: {
         organizationId,
         name: dto.name,
@@ -129,6 +131,17 @@ export class SalaryComponentsService {
         createdById,
       },
     });
+
+    await this.auditLogService.log({
+      actorId: createdById,
+      action: 'SALARY_COMPONENT_CREATED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: component.id,
+      details: { code: component.code, name: component.name },
+    });
+
+    return component;
   }
 
   async findAll(organizationId: string) {
@@ -185,6 +198,7 @@ export class SalaryComponentsService {
     id: string,
     dto: UpdateSalaryComponentDto,
     organizationId: string,
+    actorId?: string,
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
     // code is immutable — stripped from the update payload even if sent.
@@ -255,6 +269,17 @@ export class SalaryComponentsService {
       },
     });
 
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'SALARY_COMPONENT_UPDATED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: id,
+        details: { code: existing.code },
+      });
+    }
+
     return this.findByIdOrThrow(id, organizationId);
   }
 
@@ -267,7 +292,7 @@ export class SalaryComponentsService {
     return this.findByIdOrThrow(id, organizationId);
   }
 
-  async remove(id: string, organizationId: string) {
+  async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
     const inUse = await this.scopedPrisma.employeeSalaryComponent.count({
@@ -282,6 +307,18 @@ export class SalaryComponentsService {
     await this.scopedPrisma.salaryComponent.deleteMany({
       where: { id, organizationId },
     });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'SALARY_COMPONENT_DELETED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: id,
+        details: { code: existing.code, name: existing.name },
+      });
+    }
+
     return { message: 'Component deleted' };
   }
 
