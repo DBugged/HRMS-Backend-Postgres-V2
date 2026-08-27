@@ -100,3 +100,42 @@ export function relativeKeyFor(
 ): string {
   return `${organizationId}/${category}/${file.filename}`;
 }
+
+// Reads a stored file's bytes as a Buffer, from whichever driver is
+// configured — for server-side consumers that need the actual bytes (e.g.
+// payslip-pdf.service.ts embedding a company logo), as opposed to
+// file-serve.controller.ts, which streams straight to an HTTP response.
+// Returns null instead of throwing on a missing/unreadable file, since
+// every caller treats "no logo" as a normal, non-fatal case.
+export async function readStoredFile(
+  relativeKey: string,
+): Promise<Buffer | null> {
+  if (fileStorageDriver() === 's3') {
+    try {
+      // Deferred imports — s3-client.ts throws if AWS_REGION/AWS_S3_BUCKET
+      // aren't set, which would otherwise break every local-disk deployment
+      // (the default) the moment this module loads.
+      const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+      const { getS3Client, getS3Bucket } = await import('./s3-client.js');
+      const object = await getS3Client().send(
+        new GetObjectCommand({ Bucket: getS3Bucket(), Key: relativeKey }),
+      );
+      const body = object.Body as NodeJS.ReadableStream | undefined;
+      if (!body) return null;
+      const chunks: Buffer[] = [];
+      for await (const chunk of body) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      }
+      return Buffer.concat(chunks);
+    } catch {
+      return null;
+    }
+  }
+  const filePath = path.join(UPLOAD_ROOT, relativeKey);
+  if (!filePath.startsWith(UPLOAD_ROOT + path.sep)) return null;
+  try {
+    return await fs.promises.readFile(filePath);
+  } catch {
+    return null;
+  }
+}

@@ -7,6 +7,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { formatDateDisplay, formatDateTimeDisplay } from './format-date';
+import { readStoredFile } from '../files/file-storage.config';
 
 /**
  * Pure port of the old backend's payslipPdfController.js — THE universal
@@ -16,10 +17,8 @@ import { formatDateDisplay, formatDateTimeDisplay } from './format-date';
  * simply never appears, since the payroll engine never generated a line
  * for it) and the *branding/toggles* come from the active PayrollTemplate.
  *
- * Two deliberate scope reductions vs. the old system, both because the
+ * One remaining deliberate scope reduction vs. the old system, because the
  * underlying data source doesn't exist anywhere in backend-v2 yet:
- * - No company-logo embedding — no file-storage infrastructure exists
- *   (same deferral as PayrollTemplate.companyLogoUrl elsewhere).
  * - PAN/UAN/PF Number/ESIC/Bank Details rows always render '-' — no
  *   employee statutory/bank-details fields exist on User yet. The
  *   template's own showPAN/showUAN/etc. toggles are preserved so a future
@@ -321,6 +320,17 @@ export class PayslipPdfService {
     const headerColor = safeHex(template.headerColor, primary);
     const fonts = FONT_MAP[template.fontFamily] ?? FONT_MAP.HELVETICA;
 
+    // companyLogoUrl is a durable relativeKey (see payroll-templates.service.ts's
+    // withSignedLogo — signing only ever happens at the API-response
+    // boundary, never here), so it's read straight off disk/S3 rather than
+    // fetched over HTTP. PNG/JPEG only — pdfkit's image embedding doesn't
+    // support SVG, and a logo uploaded as SVG (branding uploads accept any
+    // image/* mime) just silently skips embedding rather than erroring the
+    // whole payslip render.
+    const logoBuffer = template.companyLogoUrl
+      ? await readStoredFile(template.companyLogoUrl).catch(() => null)
+      : null;
+
     const deptName = run.employee.department?.name || '-';
     const earnings = run.earnings as PayrollLine[];
     const deductions = run.deductions as PayrollLine[];
@@ -381,17 +391,35 @@ export class PayslipPdfService {
       // ── Header band ──────────────────────────────────────────────────
       const headerH = 78;
       doc.rect(0, 0, PAGE_W, headerH).fill(headerColor);
-      const textX = MARGIN;
+      const logoSize = 44;
+      let textX = MARGIN;
+      if (logoBuffer) {
+        try {
+          doc.image(logoBuffer, MARGIN, 17, {
+            fit: [logoSize, logoSize],
+            align: 'center',
+            valign: 'center',
+          });
+          textX = MARGIN + logoSize + 12;
+        } catch {
+          // Unsupported image format (e.g. a logo uploaded as SVG) — skip
+          // embedding rather than fail the whole payslip render.
+        }
+      }
+      const infoWidth = 280 - (textX - MARGIN);
       doc.font(fonts.bold).fontSize(15).fillColor('#FFFFFF');
-      text(template.companyName, textX, 15, { width: 280 });
+      text(template.companyName, textX, 15, { width: infoWidth });
       let infoY = 34;
       if (template.showCompanyAddress && template.companyAddress) {
         doc.font(fonts.regular).fontSize(7.5).fillColor('#FFFFFF');
         text(template.companyAddress, textX, infoY, {
-          width: 280,
+          width: infoWidth,
           lineBreak: true,
         });
-        infoY = doc.y + 1;
+        // A flush +1 gap here previously ran the address's descenders
+        // straight into the contact-info line whenever the address wrapped
+        // to two lines — a real line-spacing bug, not a stylistic choice.
+        infoY = doc.y + 4;
       }
       const contactBits = [
         template.companyEmail,
@@ -402,7 +430,7 @@ export class PayslipPdfService {
         .join('   |   ');
       if (contactBits) {
         doc.font(fonts.regular).fontSize(7.5).fillColor('#FFFFFF');
-        text(contactBits, textX, infoY, { width: 280 });
+        text(contactBits, textX, infoY, { width: infoWidth });
       }
 
       doc.font(fonts.bold).fontSize(18).fillColor('#FFFFFF');
