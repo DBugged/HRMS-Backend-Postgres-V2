@@ -22,7 +22,7 @@ import { UpdatePayrollTemplateDto } from './dto/update-payroll-template.dto';
 import { PayslipPdfService } from '../payroll/payslip-pdf.service';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { signFileToken } from '../files/file-token';
+import { signFileToken, resolveIncomingFileValue } from '../files/file-token';
 
 // Defaults for whatever the "draft" preview body leaves unset — mirrors the
 // Prisma column defaults so the rendered preview always has every field the
@@ -108,9 +108,19 @@ export class PayrollTemplatesService {
     });
     const isFirst = count === 0;
 
+    // See resolveIncomingFileValue's comment — dto.companyLogoUrl is
+    // whatever the client's form state held, which is a signed (expiring)
+    // URL unless the logo was *just* freshly uploaded this session.
+    const companyLogoUrl = resolveIncomingFileValue(
+      organizationId,
+      dto.companyLogoUrl ?? null,
+      null,
+    );
+
     const template = await this.scopedPrisma.payrollTemplate.create({
       data: {
         ...dto,
+        companyLogoUrl,
         organizationId,
         isDefault: isFirst ? true : (dto.isDefault ?? false),
         createdById,
@@ -139,12 +149,25 @@ export class PayrollTemplatesService {
     organizationId: string,
     actorId?: string,
   ) {
-    await this.findByIdOrThrow(id, organizationId);
+    const existing = await this.findByIdOrThrow(id, organizationId);
     // isDefault is deliberately absent from UpdatePayrollTemplateDto — only
     // setDefault() can flip it, matching the old controller.
+    // See resolveIncomingFileValue's comment on why this can't just trust
+    // dto.companyLogoUrl as-is.
+    const data =
+      'companyLogoUrl' in dto
+        ? {
+            ...dto,
+            companyLogoUrl: resolveIncomingFileValue(
+              organizationId,
+              dto.companyLogoUrl ?? null,
+              existing.companyLogoUrl,
+            ),
+          }
+        : dto;
     await this.scopedPrisma.payrollTemplate.updateMany({
       where: { id, organizationId },
-      data: dto,
+      data,
     });
 
     if (actorId) {

@@ -54,6 +54,35 @@ export function signFileToken(
   return `${json}.${sig}`;
 }
 
+// Every write path that accepts one of these URL fields back from the
+// client (Organization Settings' updateSection, PayrollTemplate create/
+// update) faces the same trap: the client's own state for the field is
+// whatever the last GET response signed it into (a `/files/<token>` URL,
+// per the "never store a signed URL" rule above), and most edits never
+// touch that specific field — so the signed, expiring form gets silently
+// persisted right back into the DB, corrupting the durable key it was
+// supposed to stay. This decodes a client-submitted value back to the
+// durable relativeKey when it's one of these signed URLs; a plain
+// relativeKey (from a fresh upload) or null (explicit clear) passes
+// through unchanged. If the token can't be decoded (expired — same
+// 5-minute TTL as any other file link — or tampered), `existing` is
+// returned instead of the bad value, so a stale token in the client's
+// state can never overwrite a still-good stored key.
+export function resolveIncomingFileValue(
+  organizationId: string,
+  incoming: unknown,
+  existing: string | null,
+): string | null {
+  if (incoming === null) return null;
+  if (typeof incoming !== 'string' || !incoming) return existing;
+  if (!incoming.startsWith('/files/')) return incoming;
+  const claim = verifyFileToken(incoming.slice('/files/'.length));
+  if (claim && claim.organizationId === organizationId) {
+    return claim.relativeKey;
+  }
+  return existing;
+}
+
 export function verifyFileToken(token: string): FileTokenClaim | null {
   try {
     const [json, sig] = String(token).split('.');

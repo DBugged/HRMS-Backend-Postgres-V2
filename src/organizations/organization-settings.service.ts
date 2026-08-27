@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
-import { signFileToken } from '../files/file-token';
+import { signFileToken, resolveIncomingFileValue } from '../files/file-token';
 import { validateOrgFields, validateIfsc } from './org-validators';
 import {
   previewDocumentNumber,
@@ -227,6 +227,41 @@ export class OrganizationSettingsService {
     const data: Record<string, unknown> = {};
     for (const field of allowedFields) {
       if (field in body) data[field] = body[field];
+    }
+
+    // Same trap resolveIncomingFileValue's comment describes for Payroll
+    // Templates — the client's own state for a logo/signature field is
+    // whatever the last GET response signed it into, and most saves never
+    // touch that specific field, so a stale signed URL would otherwise
+    // silently overwrite the durable key on every unrelated save.
+    const needsBrandingFix = BRANDING_URL_FIELDS.some((f) => f in data);
+    const signatoriesIncoming = data.signatories as
+      | SignatoryEntry[]
+      | undefined;
+    if (needsBrandingFix || signatoriesIncoming) {
+      const existingOrg = await this.findOrThrow(organizationId);
+      for (const field of BRANDING_URL_FIELDS) {
+        if (field in data) {
+          data[field] = resolveIncomingFileValue(
+            organizationId,
+            data[field],
+            existingOrg[field] as string | null,
+          );
+        }
+      }
+      if (signatoriesIncoming) {
+        const existingByI = existingOrg.signatories as unknown as
+          | SignatoryEntry[]
+          | null;
+        data.signatories = signatoriesIncoming.map((s, i) => ({
+          ...s,
+          signatureUrl: resolveIncomingFileValue(
+            organizationId,
+            s.signatureUrl ?? null,
+            existingByI?.[i]?.signatureUrl ?? null,
+          ),
+        }));
+      }
     }
 
     if (section === 'registration' || section === 'contact') {
