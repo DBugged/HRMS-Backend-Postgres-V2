@@ -120,6 +120,8 @@ const SECTION_FIELDS: Record<string, string[]> = {
 
 const REQUIRED_FOR_COMPLETION = [
   'companyName',
+  'legalName',
+  'companyLogoUrl',
   'contactEmail',
   'phone',
   'registeredAddress',
