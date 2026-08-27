@@ -160,15 +160,31 @@ export class AuthService {
       },
     );
 
-    // Welcome email for the founder account — the org's very first user,
-    // created outside the employees.create() path (which already sends its
-    // own welcome email), so this is otherwise the one account-creation
-    // path with no email at all. EmailService.send() never throws, so a
-    // bad SMTP/Resend config can't fail registration.
+    // Welcome email for the founder account — sent synchronously, right
+    // after the account+org transaction commits and before the response
+    // goes out, so it's dispatched the moment the account actually exists.
+    // The org's very first user, created outside the employees.create()
+    // path (which already sends its own welcome email), so this is
+    // otherwise the one account-creation path with no email at all.
+    // EmailService.send() never throws, so a bad SMTP/Resend config can't
+    // fail registration.
+    const loginUrl = `${frontendUrl()}/login`;
     await this.emailService.send({
       to: user.email,
       subject: "Welcome to D'Bugged Programmers HRMS — your account is ready",
-      html: `<p>Hello ${user.name},</p><p>Your account for <strong>${organization.name}</strong> is ready to use. Please log in and complete your organization's setup details.</p><p><a href="${frontendUrl()}/login">${frontendUrl()}/login</a></p>`,
+      html: `
+        <p>Hi ${user.name},</p>
+        <p>Thank you for creating your account with D'Bugged Programmers HRMS.</p>
+        <p>Your organization, <strong>${organization.name}</strong>, is now set up and ready to go. Here's what to do next:</p>
+        <ol>
+          <li><strong>Log in</strong> using the email and password you just created.</li>
+          <li><strong>Complete your Organization Setup</strong> — company profile, registration details, contact info, branding, and a few other one-time steps.</li>
+          <li>Once that's done, you're all set to start using the HRMS — add employees, manage attendance, run payroll, and more.</li>
+        </ol>
+        <p><a href="${loginUrl}">Log in to your account →</a></p>
+        <p>If you didn't create this account, you can safely ignore this email.</p>
+        <p>— The D'Bugged Programmers Team</p>
+      `,
     });
 
     return {
