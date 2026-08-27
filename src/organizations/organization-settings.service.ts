@@ -191,7 +191,10 @@ export class OrganizationSettingsService {
   async getPublicBranding(organizationId: string) {
     const org = await this.findOrThrow(organizationId);
     const signed = this.withSignedUrls(org);
-    const policies = (org.policies ?? {}) as { currencySymbol?: string };
+    const policies = (org.policies ?? {}) as {
+      currencySymbol?: string;
+      defaultNoticeDays?: number;
+    };
     return {
       isInitialized: org.isInitialized,
       companyName: org.companyName,
@@ -212,6 +215,10 @@ export class OrganizationSettingsService {
       // symbol so switching it in Setup/Organization Settings changes the
       // symbol everywhere, not just the Policies tab itself.
       currencySymbol: policies.currencySymbol || '₹',
+      // Lets Offboarding suggest a Last Working Day (resignation date +
+      // this many days) without every caller needing ADMIN-only access to
+      // the full /organizations/settings payload.
+      defaultNoticeDays: Number(policies.defaultNoticeDays) || 30,
     };
   }
 
