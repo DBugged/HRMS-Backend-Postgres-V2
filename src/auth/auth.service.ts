@@ -1,8 +1,8 @@
 // Purpose: Handles registration (org + founder bootstrap), login, token refresh/rotation, logout, and
 // password reset/change.
 // Responsibilities: Owns JWT access/refresh token issuance and hashing; delegates default-data seeding on
-// registration to StatutoryConfigService, LeaveTypesService, SalaryComponentsService and HolidaysService,
-// and employeeId generation to EmployeeIdService, all inside one transaction.
+// registration to StatutoryConfigService, LeaveTypesService, SalaryComponentsService, HolidaysService and
+// EmailTemplatesService, and employeeId generation to EmployeeIdService, all inside one transaction.
 // Important: register() and resetPassword() must run on the tenant-scope-extended client's own
 // $transaction (see constructor comment) or the tx writes silently bypass tenant scoping. Refresh tokens
 // rotate on every use (revoke-and-reissue) to limit replay of a leaked token. forgotPassword() and
@@ -30,6 +30,7 @@ import { StatutoryConfigService } from '../statutory-config/statutory-config.ser
 import { LeaveTypesService } from '../leave-types/leave-types.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
 import { HolidaysService } from '../holidays/holidays.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
@@ -75,6 +76,7 @@ export class AuthService {
     private readonly leaveTypesService: LeaveTypesService,
     private readonly salaryComponentsService: SalaryComponentsService,
     private readonly holidaysService: HolidaysService,
+    private readonly emailTemplatesService: EmailTemplatesService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly jwt: JwtService,
@@ -149,6 +151,11 @@ export class AuthService {
         // Every new org also starts with the current year's 3 fixed
         // National Holidays so the Holiday Calendar isn't empty on day one.
         await this.holidaysService.seedDefaults(tx, organization.id);
+        // Every new org also starts with the standard occasion-based email
+        // templates (Birthday, Work Anniversary) so HrEventsService has a
+        // real template to render from day one, same registration-time
+        // integration point as the seeds above.
+        await this.emailTemplatesService.seedDefaults(tx, organization.id);
         return { organization, user };
       },
     );

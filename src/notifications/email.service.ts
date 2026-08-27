@@ -17,6 +17,7 @@ export interface SendEmailInput {
   to: string;
   subject: string;
   html: string;
+  cc?: string[];
   attachments?: EmailAttachment[];
 }
 
@@ -72,17 +73,19 @@ export class EmailService {
     to,
     subject,
     html,
+    cc,
     attachments,
   }: SendEmailInput): Promise<{ dryRun: boolean }> {
     const attachmentNote = attachments?.length
       ? ` | Attachments: ${attachments.map((a) => a.filename).join(', ')}`
       : '';
+    const ccNote = cc?.length ? ` | Cc: ${cc.join(', ')}` : '';
     const from = process.env.EMAIL_FROM || 'no-reply@dbuggedprogrammers.com';
 
     if (emailDriver() === 'resend') {
       if (!process.env.RESEND_API_KEY) {
         this.logger.log(
-          `[Email - DRY RUN, EMAIL_DRIVER=resend but RESEND_API_KEY not set] To: ${to} | Subject: ${subject}${attachmentNote}\n${stripHtml(html)}`,
+          `[Email - DRY RUN, EMAIL_DRIVER=resend but RESEND_API_KEY not set] To: ${to}${ccNote} | Subject: ${subject}${attachmentNote}\n${stripHtml(html)}`,
         );
         return { dryRun: true };
       }
@@ -92,6 +95,7 @@ export class EmailService {
           to,
           subject,
           html,
+          ...(cc?.length && { cc }),
           attachments: attachments?.map((a) => ({
             filename: a.filename,
             content: a.content,
@@ -110,7 +114,7 @@ export class EmailService {
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
       this.logger.log(
-        `[Email - DRY RUN, SMTP not configured] To: ${to} | Subject: ${subject}${attachmentNote}\n${stripHtml(html)}`,
+        `[Email - DRY RUN, SMTP not configured] To: ${to}${ccNote} | Subject: ${subject}${attachmentNote}\n${stripHtml(html)}`,
       );
       return { dryRun: true };
     }
@@ -121,6 +125,7 @@ export class EmailService {
         to,
         subject,
         html,
+        ...(cc?.length && { cc }),
         attachments,
       });
       return { dryRun: false };

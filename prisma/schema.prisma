@@ -221,6 +221,7 @@ model Organization {
   employeeAssets           EmployeeAsset[]
   employeeRoleHistory      EmployeeRoleHistory[]
   employmentStatusHistory  EmploymentStatusHistory[]
+  emailTemplates           EmailTemplate[]
 
   @@map("organizations")
 }
@@ -488,6 +489,44 @@ model Holiday {
 
   @@index([organizationId])
   @@map("holidays")
+}
+
+// Org-scoped, occasion-based email templates (birthday wishes, work
+// anniversaries, and future occasions) — subject/bodyHtml support
+// {{placeholder}} substitution, rendered by EmailTemplatesService.render().
+// occasionKey is a free-form string, not a Prisma enum, so a new occasion
+// (e.g. 'WORK_ANNIVERSARY_MILESTONE') never needs a migration to add — only
+// a new default row and a caller that looks it up. v1 keeps one active
+// template per occasion per org (@@unique below); versioning/multiple
+// templates per occasion is deferred — see email-template-defaults.ts.
+model EmailTemplate {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // e.g. 'BIRTHDAY', 'WORK_ANNIVERSARY' — deliberately a plain string, not
+  // an enum, so new occasions are trivially addable later.
+  occasionKey String
+  name        String
+
+  // Both support {{employeeName}}, {{years}}, {{companyName}},
+  // {{companyPhone}}, {{companyWebsite}}, {{companyEmail}},
+  // {{companyAddress}} — see render() for the substitution rules.
+  subject  String
+  bodyHtml String @db.Text
+
+  // Whether sendWishesForOrg's cc list (all other active employees) is
+  // applied when this template is used — an admin can opt an occasion out
+  // of the org-wide cc without disabling the template entirely.
+  ccAllActive Boolean @default(true)
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, occasionKey])
+  @@index([organizationId])
+  @@map("email_templates")
 }
 
 // Mirrors the old MySQL backend's WorkLocation.fenceType ENUM exactly.

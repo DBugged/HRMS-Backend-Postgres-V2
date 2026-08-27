@@ -9,6 +9,7 @@ import { StatutoryConfigModule } from '../statutory-config/statutory-config.modu
 import { LeaveTypesModule } from '../leave-types/leave-types.module';
 import { SalaryComponentsModule } from '../salary-components/salary-components.module';
 import { HolidaysModule } from '../holidays/holidays.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -34,6 +35,10 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // year's 3 fixed National Holidays at registration, same integration
     // point as SalaryComponentsModule above.
     HolidaysModule,
+    // For EmailTemplatesService.seedDefaults — every new org gets the
+    // standard occasion-based email templates (Birthday, Work Anniversary)
+    // at registration, same integration point as HolidaysModule above.
+    EmailTemplatesModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService

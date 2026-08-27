@@ -11,6 +11,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { HrEventsService } from '../src/hr-events/hr-events.service';
+import { EmailService } from '../src/notifications/email.service';
 
 interface AuthBody {
   accessToken: string;
@@ -33,6 +34,11 @@ describe('HrEventsService (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let hrEventsService: HrEventsService;
+  let emailService: EmailService;
+  let sendSpy: jest.SpyInstance<
+    ReturnType<EmailService['send']>,
+    Parameters<EmailService['send']>
+  >;
 
   let adminToken: string;
   let organizationId: string;
@@ -58,6 +64,8 @@ describe('HrEventsService (e2e)', () => {
     await app.init();
     prisma = app.get(PrismaService);
     hrEventsService = app.get(HrEventsService);
+    emailService = app.get(EmailService);
+    sendSpy = jest.spyOn(emailService, 'send');
 
     const registerRes = await request(app.getHttpServer())
       .post('/auth/register')
@@ -78,6 +86,23 @@ describe('HrEventsService (e2e)', () => {
       .post('/auth/login')
       .send({ email: 'hr-events-admin@example.com', password: PASSWORD });
     adminToken = (loginRes.body as AuthBody).accessToken;
+
+    // Set org variables so the rendered email body's {{companyName}} etc.
+    // placeholders (from the seeded BIRTHDAY/WORK_ANNIVERSARY templates)
+    // have something real to substitute.
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/profile')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ companyName: 'HR Events Test Co' });
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/contact')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        phone: '+91-9999999999',
+        contactEmail: 'contact@hr-events-test.example',
+        website: 'https://hr-events-test.example',
+        registeredAddress: '123 Test Street, Test City',
+      });
 
     const todayMonthDay = todayMonthDayUtc();
 
@@ -151,6 +176,35 @@ describe('HrEventsService (e2e)', () => {
     expect(unrelatedNotifications).toHaveLength(0);
   });
 
+  it('sends the birthday email to the employee, cc-ing every other active employee but not themselves, rendered from the seeded template', () => {
+    const birthdayCall = sendSpy.mock.calls.find(
+      (call) => call[0].to === 'birthday.hr-events@example.com',
+    );
+    expect(birthdayCall).toBeDefined();
+    const arg = birthdayCall![0] as {
+      to: string;
+      subject: string;
+      html: string;
+      cc?: string[];
+    };
+    expect(arg.subject).toBe('Happy Birthday!');
+    // Rendered from the seeded BIRTHDAY template — real employee name and
+    // org variables substituted in, not the raw {{placeholder}} tokens.
+    expect(arg.html).toContain('Birthday Employee');
+    expect(arg.html).toContain('HR Events Test Co');
+    expect(arg.html).toContain('+91-9999999999');
+    expect(arg.html).not.toContain('{{');
+    // cc = every other active employee, excluding the birthday person.
+    expect(arg.cc).toEqual(
+      expect.arrayContaining([
+        'hr-events-admin@example.com',
+        'anniversary.hr-events@example.com',
+        'unrelated.hr-events@example.com',
+      ]),
+    );
+    expect(arg.cc).not.toContain('birthday.hr-events@example.com');
+  });
+
   it('sends a work-anniversary wish only to the employee who joined N years ago today', async () => {
     const anniversaryNotifications = await prisma.notification.findMany({
       where: {
@@ -172,6 +226,24 @@ describe('HrEventsService (e2e)', () => {
       },
     });
     expect(unrelatedAnniversary).toHaveLength(0);
+  });
+
+  it('sends the anniversary email rendered from the seeded template, with {{years}} substituted', () => {
+    const anniversaryCall = sendSpy.mock.calls.find(
+      (call) => call[0].to === 'anniversary.hr-events@example.com',
+    );
+    expect(anniversaryCall).toBeDefined();
+    const arg = anniversaryCall![0] as {
+      to: string;
+      subject: string;
+      html: string;
+      cc?: string[];
+    };
+    expect(arg.subject).toBe('Happy Work Anniversary!');
+    expect(arg.html).toContain('3rd work anniversary');
+    expect(arg.html).toContain('Anniversary Employee');
+    expect(arg.html).not.toContain('{{');
+    expect(arg.cc).not.toContain('anniversary.hr-events@example.com');
   });
 
   it('does not send a work-anniversary wish for an employee who joined today (0 years)', async () => {

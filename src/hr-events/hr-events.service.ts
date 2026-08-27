@@ -1,6 +1,8 @@
 // Purpose: Sends birthday and work-anniversary wishes (notification + email) to employees, org-wide.
 // Responsibilities: Owns the daily cron trigger (sendDailyWishes) and per-org wish logic (sendWishesForOrg);
-// delegates actual delivery to NotificationsService/EmailService.
+// delegates actual delivery to NotificationsService/EmailService, and email subject/body content to
+// EmailTemplatesService (falls back to the old hardcoded strings when an org has no active template for the
+// occasion, so nothing breaks for orgs that predate email-templates seeding).
 // Important: matches month/day in UTC to stay consistent with how joiningDate/dateOfBirth are stored
 // elsewhere, and is not deduped against a same-day re-run (e.g. after a restart) — wishes simply resend,
 // same accepted precedent as the Marked Absent email in AttendanceService.
@@ -11,6 +13,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 
 // joiningDate/dateOfBirth are entered as plain calendar dates (no
 // meaningful time-of-day) and stored/read as UTC-anchored values
@@ -44,6 +47,7 @@ export class HrEventsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   // Once a day is enough granularity for a calendar-date match. Not
@@ -76,6 +80,20 @@ export class HrEventsService {
       },
     });
 
+    // Fetched once per org run (not once per matching employee) — the cc
+    // list and org variables are identical for every wish sent this run.
+    const activeEmails = employees.map((e) => e.email);
+    const organization = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        companyName: true,
+        phone: true,
+        website: true,
+        contactEmail: true,
+        registeredAddress: true,
+      },
+    });
+
     for (const employee of employees) {
       const personalData = (employee.personalData ?? {}) as Record<
         string,
@@ -86,22 +104,84 @@ export class HrEventsService {
           ? personalData.dateOfBirth
           : null;
       if (dob && dob.length >= 10 && dob.slice(5, 10) === todayMonthDay) {
-        await this.sendBirthdayWish(organizationId, employee);
+        await this.sendBirthdayWish(
+          organizationId,
+          employee,
+          organization,
+          activeEmails,
+        );
       }
 
       if (monthDay(employee.joiningDate) === todayMonthDay) {
         const years =
           today.getUTCFullYear() - employee.joiningDate.getUTCFullYear();
         if (years >= 1) {
-          await this.sendAnniversaryWish(organizationId, employee, years);
+          await this.sendAnniversaryWish(
+            organizationId,
+            employee,
+            years,
+            organization,
+            activeEmails,
+          );
         }
       }
     }
   }
 
+  // Renders the org's active email template for `occasionKey`, falling
+  // back to the hardcoded subject/html when none is active (an org
+  // predating email-templates seeding, or one that's disabled the
+  // template) — so a missing/disabled template degrades gracefully rather
+  // than silently dropping the wish email.
+  private async renderOccasionEmail(
+    organizationId: string,
+    occasionKey: string,
+    variables: Record<string, string>,
+    fallback: { subject: string; html: string },
+  ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
+    const template = await this.emailTemplatesService.findActiveByOccasion(
+      occasionKey,
+      organizationId,
+    );
+    if (!template) {
+      return { ...fallback, ccAllActive: true };
+    }
+    return {
+      subject: this.emailTemplatesService.render(template.subject, variables),
+      html: this.emailTemplatesService.render(template.bodyHtml, variables),
+      ccAllActive: template.ccAllActive,
+    };
+  }
+
+  private orgVariables(
+    organization: {
+      companyName: string | null;
+      phone: string | null;
+      website: string | null;
+      contactEmail: string | null;
+      registeredAddress: string | null;
+    } | null,
+  ): Record<string, string> {
+    return {
+      companyName: organization?.companyName ?? '',
+      companyPhone: organization?.phone ?? '',
+      companyWebsite: organization?.website ?? '',
+      companyEmail: organization?.contactEmail ?? '',
+      companyAddress: organization?.registeredAddress ?? '',
+    };
+  }
+
   private async sendBirthdayWish(
     organizationId: string,
     employee: { id: string; name: string; email: string },
+    organization: {
+      companyName: string | null;
+      phone: string | null;
+      website: string | null;
+      contactEmail: string | null;
+      registeredAddress: string | null;
+    } | null,
+    activeEmails: string[],
   ) {
     const title = 'Happy Birthday!';
     const message = `Happy Birthday, ${employee.name}! Wishing you a wonderful year ahead, from everyone here.`;
@@ -112,10 +192,25 @@ export class HrEventsService {
       message,
       category: NotificationCategory.GENERAL,
     });
+
+    const variables = {
+      employeeName: employee.name,
+      ...this.orgVariables(organization),
+    };
+    const { subject, html, ccAllActive } = await this.renderOccasionEmail(
+      organizationId,
+      'BIRTHDAY',
+      variables,
+      { subject: title, html: `<p>${message}</p>` },
+    );
+    const cc = ccAllActive
+      ? activeEmails.filter((email) => email !== employee.email)
+      : undefined;
     await this.emailService.send({
       to: employee.email,
-      subject: title,
-      html: `<p>${message}</p>`,
+      subject,
+      html,
+      ...(cc?.length && { cc }),
     });
   }
 
@@ -123,6 +218,14 @@ export class HrEventsService {
     organizationId: string,
     employee: { id: string; name: string; email: string },
     years: number,
+    organization: {
+      companyName: string | null;
+      phone: string | null;
+      website: string | null;
+      contactEmail: string | null;
+      registeredAddress: string | null;
+    } | null,
+    activeEmails: string[],
   ) {
     const title = `Happy Work Anniversary!`;
     const message = `Congratulations on your ${years}${ORDINAL_SUFFIX(years)} work anniversary, ${employee.name}! Thank you for everything you've contributed.`;
@@ -133,10 +236,26 @@ export class HrEventsService {
       message,
       category: NotificationCategory.GENERAL,
     });
+
+    const variables = {
+      employeeName: employee.name,
+      years: `${years}${ORDINAL_SUFFIX(years)}`,
+      ...this.orgVariables(organization),
+    };
+    const { subject, html, ccAllActive } = await this.renderOccasionEmail(
+      organizationId,
+      'WORK_ANNIVERSARY',
+      variables,
+      { subject: title, html: `<p>${message}</p>` },
+    );
+    const cc = ccAllActive
+      ? activeEmails.filter((email) => email !== employee.email)
+      : undefined;
     await this.emailService.send({
       to: employee.email,
-      subject: title,
-      html: `<p>${message}</p>`,
+      subject,
+      html,
+      ...(cc?.length && { cc }),
     });
   }
 }
