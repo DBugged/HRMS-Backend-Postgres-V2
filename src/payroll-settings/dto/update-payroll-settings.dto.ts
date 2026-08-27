@@ -6,18 +6,15 @@ import {
   IsInt,
   IsNumber,
   IsOptional,
-  IsString,
   Max,
   Min,
 } from 'class-validator';
 
 export class UpdatePayrollSettingsDto {
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsInt()
-  @Min(1)
-  @Max(12)
-  financialYearStartMonth?: number;
+  // financialYearStartMonth, currency, and currencySymbol are NOT here —
+  // Organization Settings > Policies is their single source of truth
+  // (PayrollSettingsService.getOrCreate overlays those onto every read),
+  // so this endpoint deliberately can't write them.
 
   @ApiPropertyOptional({
     description: '0 = last working day of month, 1-31 = fixed day',
@@ -34,16 +31,6 @@ export class UpdatePayrollSettingsDto {
   @Min(0)
   @Max(31)
   paymentDay?: number;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  currency?: string;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  currencySymbol?: string;
 
   @ApiPropertyOptional({ enum: ['nearest', 'up', 'down', 'none'] })
   @IsOptional()

@@ -30,18 +30,42 @@ export class PayrollSettingsService {
     return `payrollsettings:${organizationId}`;
   }
 
+  // financialYearStartMonth/currency/currencySymbol live on PayrollSettings
+  // as columns (payroll math and the payslip PDF read a plain object, not
+  // two joined tables), but Organization Settings > Policies is their
+  // actual source of truth — the same fields the rest of the app (web +
+  // mobile currency symbol, Setup Wizard) reads. Overlaying them here,
+  // once, on every read is what keeps a change in Policies from silently
+  // failing to reach real payroll calculations.
   async getOrCreate(organizationId: string): Promise<PayrollSettings> {
     return this.cache.getOrSet(
       this.cacheKey(organizationId),
       SETTINGS_CACHE_TTL_SECONDS,
       async () => {
-        const existing = await this.scopedPrisma.payrollSettings.findFirst({
-          where: { organizationId },
-        });
-        if (existing) return existing;
-        return this.scopedPrisma.payrollSettings.create({
-          data: { organizationId },
-        });
+        const [existing, org] = await Promise.all([
+          this.scopedPrisma.payrollSettings.findFirst({
+            where: { organizationId },
+          }),
+          this.scopedPrisma.organization.findFirst({
+            where: { id: organizationId },
+            select: { policies: true },
+          }),
+        ]);
+        const base =
+          existing ??
+          (await this.scopedPrisma.payrollSettings.create({
+            data: { organizationId },
+          }));
+        const policies = (org?.policies as Record<string, unknown>) || {};
+        return {
+          ...base,
+          currency: (policies.currency as string) || base.currency,
+          currencySymbol:
+            (policies.currencySymbol as string) || base.currencySymbol,
+          financialYearStartMonth:
+            Number(policies.financialYearStartMonth) ||
+            base.financialYearStartMonth,
+        };
       },
     );
   }

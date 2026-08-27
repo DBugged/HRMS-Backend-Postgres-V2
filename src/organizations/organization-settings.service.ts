@@ -19,6 +19,7 @@ import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
 import { signFileToken, resolveIncomingFileValue } from '../files/file-token';
 import { validateOrgFields, validateIfsc } from './org-validators';
+import { RedisCacheService } from '../common/redis-cache';
 import {
   previewDocumentNumber,
   type DocumentNumberingEntry,
@@ -140,6 +141,7 @@ export class OrganizationSettingsService {
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
+    private readonly cache: RedisCacheService,
   ) {}
 
   private async findOrThrow(organizationId: string) {
@@ -320,6 +322,14 @@ export class OrganizationSettingsService {
       organizationId,
       details: { section, fields: Object.keys(data) },
     });
+
+    if (section === 'policies') {
+      // PayrollSettingsService.getOrCreate overlays currency/currency
+      // Symbol/financialYearStartMonth from this same policies JSON on
+      // every read, cached for 5 minutes — without this, a Policies save
+      // wouldn't reach real payroll calculations for up to that long.
+      await this.cache.invalidate(`payrollsettings:${organizationId}`);
+    }
 
     return this.withSignedUrls(await this.findOrThrow(organizationId));
   }
