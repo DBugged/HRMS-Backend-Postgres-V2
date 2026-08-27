@@ -195,6 +195,12 @@ export class OrganizationSettingsService {
       companyName: org.companyName,
       tagline: org.tagline,
       companyLogoUrl: signed.companyLogoUrl,
+      // Durable relativeKey (never a signed URL — see file-token.ts),
+      // alongside the ready-to-display signed companyLogoUrl above — needed
+      // by anything that wants to *persist* the org's logo elsewhere (e.g.
+      // Payroll Templates prefilling a new template), since storing the
+      // signed form would silently expire and 404 later.
+      companyLogoKey: org.companyLogoUrl,
       faviconUrl: signed.faviconUrl,
       primaryColor: org.primaryColor,
       secondaryColor: org.secondaryColor,

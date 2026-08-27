@@ -22,6 +22,7 @@ import { UpdatePayrollTemplateDto } from './dto/update-payroll-template.dto';
 import { PayslipPdfService } from '../payroll/payslip-pdf.service';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { signFileToken } from '../files/file-token';
 
 // Defaults for whatever the "draft" preview body leaves unset — mirrors the
 // Prisma column defaults so the rendered preview always has every field the
@@ -77,11 +78,24 @@ export class PayrollTemplatesService {
       where: { organizationId },
       orderBy: [{ isDefault: 'desc' }, { createdAt: 'asc' }],
     });
-    return wrapAll(data);
+    return wrapAll(data.map((t) => this.withSignedLogo(t)));
   }
 
   async findOne(id: string, organizationId: string) {
-    return this.findByIdOrThrow(id, organizationId);
+    return this.withSignedLogo(await this.findByIdOrThrow(id, organizationId));
+  }
+
+  // companyLogoUrl is stored as a durable relativeKey (same convention as
+  // Organization.companyLogoUrl — see organization-settings.service.ts's
+  // withSignedUrls), never a signed URL — signing only ever happens here,
+  // fresh on every read, so a template saved once doesn't end up with a
+  // logo link that silently expires and 404s weeks later.
+  private withSignedLogo(template: PayrollTemplate): PayrollTemplate {
+    if (!template.companyLogoUrl) return template;
+    return {
+      ...template,
+      companyLogoUrl: `/files/${signFileToken(template.organizationId, template.companyLogoUrl)}`,
+    };
   }
 
   async create(
@@ -116,7 +130,7 @@ export class PayrollTemplatesService {
       details: { name: template.name },
     });
 
-    return template;
+    return this.withSignedLogo(template);
   }
 
   async update(
@@ -143,7 +157,7 @@ export class PayrollTemplatesService {
       });
     }
 
-    return this.findByIdOrThrow(id, organizationId);
+    return this.withSignedLogo(await this.findByIdOrThrow(id, organizationId));
   }
 
   async remove(id: string, organizationId: string, actorId?: string) {
@@ -189,7 +203,7 @@ export class PayrollTemplatesService {
       });
     }
 
-    return this.findByIdOrThrow(id, organizationId);
+    return this.withSignedLogo(await this.findByIdOrThrow(id, organizationId));
   }
 
   async previewDraft(dto: CreatePayrollTemplateDto, organizationId: string) {
