@@ -7,6 +7,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { formatDateDisplay, formatDateTimeDisplay } from './format-date';
+import { lastDayOfMonth } from './payroll-date-math';
 import { readStoredFile } from '../files/file-storage.config';
 
 /**
@@ -389,38 +390,14 @@ export class PayslipPdfService {
       }
 
       // ── Header band ──────────────────────────────────────────────────
-      const headerH = 78;
-      doc.rect(0, 0, PAGE_W, headerH).fill(headerColor);
+      // Height is measured from the actual content, not hardcoded — a
+      // fixed 78px band clipped (or worse, silently overflowed white-on-
+      // white past its own dark background) for any org whose address or
+      // "email | phone | website" line was long enough to wrap to 2-3
+      // lines, which is a real address, not an edge case.
       const logoSize = 44;
-      let textX = MARGIN;
-      if (logoBuffer) {
-        try {
-          doc.image(logoBuffer, MARGIN, 17, {
-            fit: [logoSize, logoSize],
-            align: 'center',
-            valign: 'center',
-          });
-          textX = MARGIN + logoSize + 12;
-        } catch {
-          // Unsupported image format (e.g. a logo uploaded as SVG) — skip
-          // embedding rather than fail the whole payslip render.
-        }
-      }
+      const textX = logoBuffer ? MARGIN + logoSize + 12 : MARGIN;
       const infoWidth = 280 - (textX - MARGIN);
-      doc.font(fonts.bold).fontSize(15).fillColor('#FFFFFF');
-      text(template.companyName, textX, 15, { width: infoWidth });
-      let infoY = 34;
-      if (template.showCompanyAddress && template.companyAddress) {
-        doc.font(fonts.regular).fontSize(7.5).fillColor('#FFFFFF');
-        text(template.companyAddress, textX, infoY, {
-          width: infoWidth,
-          lineBreak: true,
-        });
-        // A flush +1 gap here previously ran the address's descenders
-        // straight into the contact-info line whenever the address wrapped
-        // to two lines — a real line-spacing bug, not a stylistic choice.
-        infoY = doc.y + 4;
-      }
       const contactBits = [
         template.companyEmail,
         template.companyContactNumber,
@@ -428,9 +405,58 @@ export class PayslipPdfService {
       ]
         .filter(Boolean)
         .join('   |   ');
+
+      const nameH = doc
+        .font(fonts.bold)
+        .fontSize(15)
+        .heightOfString(template.companyName, { width: infoWidth });
+      const addressH =
+        template.showCompanyAddress && template.companyAddress
+          ? doc
+              .font(fonts.regular)
+              .fontSize(7.5)
+              .heightOfString(template.companyAddress, {
+                width: infoWidth,
+                lineBreak: true,
+              }) + 4
+          : 0;
+      const contactH = contactBits
+        ? doc
+            .font(fonts.regular)
+            .fontSize(7.5)
+            .heightOfString(contactBits, { width: infoWidth, lineBreak: true })
+        : 0;
+      const leftColH = 15 + nameH + addressH + contactH;
+      const rightColH = 16 + 22 + 16 + (run.payslipNumber ? 12 : 0) + 10;
+      const headerH = Math.max(78, leftColH + 17, rightColH);
+
+      doc.rect(0, 0, PAGE_W, headerH).fill(headerColor);
+      if (logoBuffer) {
+        try {
+          doc.image(logoBuffer, MARGIN, 17, {
+            fit: [logoSize, logoSize],
+            align: 'center',
+            valign: 'center',
+          });
+        } catch {
+          // Unsupported image format (e.g. a logo uploaded as SVG) — skip
+          // embedding rather than fail the whole payslip render.
+        }
+      }
+      doc.font(fonts.bold).fontSize(15).fillColor('#FFFFFF');
+      text(template.companyName, textX, 15, { width: infoWidth });
+      let infoY = 15 + nameH + 4;
+      if (template.showCompanyAddress && template.companyAddress) {
+        doc.font(fonts.regular).fontSize(7.5).fillColor('#FFFFFF');
+        text(template.companyAddress, textX, infoY, {
+          width: infoWidth,
+          lineBreak: true,
+        });
+        infoY = doc.y + 4;
+      }
       if (contactBits) {
         doc.font(fonts.regular).fontSize(7.5).fillColor('#FFFFFF');
-        text(contactBits, textX, infoY, { width: infoWidth });
+        text(contactBits, textX, infoY, { width: infoWidth, lineBreak: true });
       }
 
       doc.font(fonts.bold).fontSize(18).fillColor('#FFFFFF');
@@ -445,9 +471,11 @@ export class PayslipPdfService {
         align: 'right',
       });
       const payDate = run.paidAt ? formatDateDisplay(run.paidAt) : '-';
+      const periodStart = formatDateDisplay(`${run.year}-${String(run.month).padStart(2, '0')}-01`);
+      const periodEnd = formatDateDisplay(lastDayOfMonth(run.month, run.year));
       doc.fontSize(7.5);
       text(
-        `Pay Period: ${MONTHS[run.month]} ${run.year}  |  Pay Date: ${payDate}`,
+        `Pay Period: ${periodStart} to ${periodEnd}  |  Pay Date: ${payDate}`,
         PAGE_W - MARGIN - 220,
         54,
         { width: 220, align: 'right' },
