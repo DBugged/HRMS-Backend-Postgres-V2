@@ -124,7 +124,6 @@ const REQUIRED_FOR_COMPLETION = [
   'companyLogoUrl',
   'contactEmail',
   'phone',
-  'mobile',
   'website',
   'registeredAddress',
   'corporateAddress',
