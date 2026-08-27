@@ -160,6 +160,17 @@ export class AuthService {
       },
     );
 
+    // Welcome email for the founder account — the org's very first user,
+    // created outside the employees.create() path (which already sends its
+    // own welcome email), so this is otherwise the one account-creation
+    // path with no email at all. EmailService.send() never throws, so a
+    // bad SMTP/Resend config can't fail registration.
+    await this.emailService.send({
+      to: user.email,
+      subject: "Welcome to D'Bugged Programmers HRMS — your account is ready",
+      html: `<p>Hello ${user.name},</p><p>Your account for <strong>${organization.name}</strong> is ready to use. Please log in and complete your organization's setup details.</p><p><a href="${frontendUrl()}/login">${frontendUrl()}/login</a></p>`,
+    });
+
     return {
       organizationId: organization.id,
       userId: user.id,

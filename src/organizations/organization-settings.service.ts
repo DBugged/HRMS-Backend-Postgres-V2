@@ -15,6 +15,7 @@ import * as crypto from 'crypto';
 import { AuditModule, Organization, Role, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmailService } from '../notifications/email.service';
 import { signFileToken } from '../files/file-token';
 import { validateOrgFields, validateIfsc } from './org-validators';
 import {
@@ -133,6 +134,7 @@ export class OrganizationSettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async findOrThrow(organizationId: string) {
@@ -301,6 +303,29 @@ export class OrganizationSettingsService {
       module: AuditModule.ORGANIZATION,
       organizationId,
     });
+
+    // Fire-and-forget confirmation email once the wizard is done — to the
+    // admin who completed it, cc'ing every other active employee (same
+    // "notify everyone" convention as the HR-events birthday/anniversary
+    // mail). EmailService.send() never throws, so this can't fail
+    // completeSetup itself.
+    const activeUsers = await this.prisma.user.findMany({
+      where: { organizationId, isActive: true },
+      select: { id: true, email: true },
+    });
+    const actorEmail = activeUsers.find((u) => u.id === actorId)?.email;
+    if (actorEmail) {
+      const finalOrg = await this.findOrThrow(organizationId);
+      const cc = activeUsers
+        .map((u) => u.email)
+        .filter((email) => email !== actorEmail);
+      await this.emailService.send({
+        to: actorEmail,
+        subject: `${finalOrg.companyName || 'Your organization'} setup is complete`,
+        html: `<p>Setup for <strong>${finalOrg.companyName || 'your organization'}</strong> is now complete. All required details have been saved and the workspace is ready to use.</p>`,
+        ...(cc.length && { cc }),
+      });
+    }
 
     return this.withSignedUrls(await this.findOrThrow(organizationId));
   }
