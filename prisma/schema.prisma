@@ -989,6 +989,11 @@ enum PayslipFontFamily {
   HELVETICA
   TIMES_ROMAN
   COURIER
+  // Custom-embedded (not PDFKit standard fonts) — see payslip-pdf.service.ts's
+  // registerCustomFonts()/assets/fonts/.
+  ROBOTO
+  MERRIWEATHER
+  ROBOTO_MONO
 }
 
 // Pure payslip-PDF branding/layout config — NOT linked to SalaryComponent

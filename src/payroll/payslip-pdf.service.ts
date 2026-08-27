@@ -1,4 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import * as QRCode from 'qrcode';
 import { PayrollRunStatus, PayrollTemplate } from '@prisma/client';
@@ -76,7 +77,48 @@ const FONT_MAP: Record<
     bold: 'Courier-Bold',
     oblique: 'Courier-Oblique',
   },
+  // Not among PDFKit's 14 built-in standard fonts — embedded from bundled
+  // .woff files (assets/fonts/) and registered on each doc instance below,
+  // under these same names, before any doc.font() call can reference them.
+  ROBOTO: {
+    regular: 'Roboto',
+    bold: 'Roboto-Bold',
+    oblique: 'Roboto-Italic',
+  },
+  MERRIWEATHER: {
+    regular: 'Merriweather',
+    bold: 'Merriweather-Bold',
+    oblique: 'Merriweather-Italic',
+  },
+  ROBOTO_MONO: {
+    regular: 'RobotoMono',
+    bold: 'RobotoMono-Bold',
+    oblique: 'RobotoMono-Italic',
+  },
 };
+
+const FONTS_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
+
+// Registers every bundled custom font onto one PDFDocument instance, under
+// the exact names FONT_MAP's ROBOTO/MERRIWEATHER/ROBOTO_MONO entries
+// reference — cheap (a handful of small .woff files), so registered
+// unconditionally rather than only for the template's chosen family.
+function registerCustomFonts(doc: PDFKit.PDFDocument): void {
+  const files: Record<string, string> = {
+    Roboto: 'Roboto-Regular.woff',
+    'Roboto-Bold': 'Roboto-Bold.woff',
+    'Roboto-Italic': 'Roboto-Italic.woff',
+    Merriweather: 'Merriweather-Regular.woff',
+    'Merriweather-Bold': 'Merriweather-Bold.woff',
+    'Merriweather-Italic': 'Merriweather-Italic.woff',
+    RobotoMono: 'RobotoMono-Regular.woff',
+    'RobotoMono-Bold': 'RobotoMono-Bold.woff',
+    'RobotoMono-Italic': 'RobotoMono-Italic.woff',
+  };
+  for (const [name, file] of Object.entries(files)) {
+    doc.registerFont(name, path.join(FONTS_DIR, file));
+  }
+}
 
 const safeHex = (hex: string | null | undefined, fallback: string) =>
   /^#[0-9a-fA-F]{6}$/.test(hex || '') ? (hex as string) : fallback;
@@ -306,6 +348,7 @@ export class PayslipPdfService {
         size: 'A4',
         bufferPages: true,
       });
+      registerCustomFonts(doc);
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
