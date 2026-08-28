@@ -40,9 +40,18 @@ type Actor = Omit<User, 'password'>;
 
 const HR_ROLES: Role[] = [Role.ADMIN, Role.HR];
 
+// profileImage is stored as a durable relativeKey (never a signed URL —
+// see file-token.ts), so every response that surfaces one signs it fresh.
+// This toSafe (separate copy from employees.service.ts's) was missing
+// this — updatePersonalData's response carried the raw relativeKey
+// straight through, which 404s when used as an <img src>, making the
+// profile photo appear to vanish right after Save Profile.
 function toSafe(user: User) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
   const { password, ...safe } = user;
+  if (safe.profileImage) {
+    safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage)}`;
+  }
   if (safe.personalData && typeof safe.personalData === 'object') {
     safe.personalData = signPersonalDataFileUrls(
       safe.personalData as Record<string, unknown>,
