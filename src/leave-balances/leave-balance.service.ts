@@ -26,10 +26,22 @@ interface CarryForwardShape {
   expiryMonths: number | null;
 }
 
-// Roles eligible for leave accrual/balance tracking — old system's
-// 'employee'/'department_head' → backend-v2's EMPLOYEE/MANAGER, per the
-// established role-mapping table (administrator→ADMIN, hr_admin→HR).
-const ACCRUAL_ELIGIBLE_ROLES: Role[] = [Role.EMPLOYEE, Role.MANAGER];
+// Roles eligible for leave accrual/balance tracking. Originally ported as
+// just EMPLOYEE/MANAGER (old system's 'employee'/'department_head' —
+// administrator/hr_admin were never included), but backend-v2's My Leave
+// is self-service for every role, including ADMIN and HR — an Admin or
+// HR user can apply for leave and see a balance, so excluding them here
+// silently starved their own balance of the same accrual runs everyone
+// else's leave depends on. Every role now goes through the same
+// isEligible() department/employeeType/gender/service-month filter below,
+// so this list is just "which roles have leave tracked at all," not a
+// second layer of eligibility.
+const ACCRUAL_ELIGIBLE_ROLES: Role[] = [
+  Role.ADMIN,
+  Role.HR,
+  Role.MANAGER,
+  Role.EMPLOYEE,
+];
 
 /**
  * Orchestrating service for the leave-balance engine — wraps the pure
