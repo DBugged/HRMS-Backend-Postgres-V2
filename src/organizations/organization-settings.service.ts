@@ -17,7 +17,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
-import { signFileToken, resolveIncomingFileValue } from '../files/file-token';
+import { signFileToken, resolveIncomingFileValue, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { validateOrgFields, validateIfsc } from './org-validators';
 import { RedisCacheService } from '../common/redis-cache';
 import {
@@ -165,14 +165,16 @@ export class OrganizationSettingsService {
     const signed: Record<string, unknown> = { ...rest };
     for (const field of BRANDING_URL_FIELDS) {
       const value = org[field];
-      if (value) signed[field] = `/files/${signFileToken(org.id, value)}`;
+      if (value) {
+        signed[field] = `/files/${signFileToken(org.id, value, SESSION_ASSET_TTL_SECONDS)}`;
+      }
     }
     const signatories = org.signatories as unknown as SignatoryEntry[];
     if (Array.isArray(signatories)) {
       signed.signatories = signatories.map((s) => ({
         ...s,
         signatureUrl: s.signatureUrl
-          ? `/files/${signFileToken(org.id, s.signatureUrl)}`
+          ? `/files/${signFileToken(org.id, s.signatureUrl, SESSION_ASSET_TTL_SECONDS)}`
           : s.signatureUrl,
       }));
     }

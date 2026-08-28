@@ -17,6 +17,15 @@ import * as crypto from 'crypto';
 
 const DEFAULT_TTL_SECONDS = 300; // 5 minutes — long enough for a page load/PDF render, short enough that a leaked link goes stale fast
 
+// For URLs that get parked in long-lived client state (the sidebar org
+// logo, the header avatar — anything from OrgContext/AuthContext, held in
+// memory for the whole session rather than fetched right before a single
+// use) — the default 300s TTL was expiring mid-session, since neither
+// context polls or re-signs in the background. A leaked link here is a
+// company logo or profile photo, not a private document, so the longer
+// window is an acceptable trade for "stays valid all session."
+export const SESSION_ASSET_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+
 export interface FileTokenClaim {
   organizationId: string;
   relativeKey: string;

@@ -22,7 +22,7 @@ import * as crypto from 'crypto';
 import { Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { signFileToken } from '../files/file-token';
+import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { signPersonalDataFileUrls } from '../employees/personal-data';
 import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from '../employees/employee-id.service';
@@ -291,9 +291,12 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
     const { password, ...safe } = user;
     // profileImage is a durable relativeKey (never a signed URL — see
-    // file-token.ts), so it's signed fresh on every read.
+    // file-token.ts), so it's signed fresh on every read. This is what
+    // AuthContext's `user` (and so the header avatar) holds for the whole
+    // session — SESSION_ASSET_TTL_SECONDS, not the short-lived default,
+    // or it silently 404s mid-session.
     if (safe.profileImage) {
-      safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage)}`;
+      safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage, SESSION_ASSET_TTL_SECONDS)}`;
     }
     if (safe.personalData && typeof safe.personalData === 'object') {
       safe.personalData = signPersonalDataFileUrls(

@@ -23,7 +23,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { signFileToken } from '../files/file-token';
+import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
@@ -50,7 +50,9 @@ function toSafe(user: User) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
   const { password, ...safe } = user;
   if (safe.profileImage) {
-    safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage)}`;
+    // Held in AuthContext for the whole session — see
+    // SESSION_ASSET_TTL_SECONDS' comment.
+    safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage, SESSION_ASSET_TTL_SECONDS)}`;
   }
   if (safe.personalData && typeof safe.personalData === 'object') {
     safe.personalData = signPersonalDataFileUrls(
