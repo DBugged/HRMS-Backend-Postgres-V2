@@ -83,6 +83,12 @@ export class ReimbursementsService {
       where.employeeId = query.employeeId;
     }
     if (query.status) where.status = query.status;
+    if (query.from || query.to) {
+      where.claimDate = {
+        ...(query.from && { gte: query.from }),
+        ...(query.to && { lte: query.to }),
+      };
+    }
 
     const result = await paginate(
       () =>
@@ -171,6 +177,11 @@ export class ReimbursementsService {
         'Only an approved claim can be marked as paid.',
       );
     }
+    if (dto.status === 'PAID' && !dto.paymentMode) {
+      throw new BadRequestException(
+        'Payment mode (cash, cheque, or transfer) is required to mark a claim as paid.',
+      );
+    }
 
     await this.scopedPrisma.reimbursement.updateMany({
       where: { id, organizationId },
@@ -179,13 +190,18 @@ export class ReimbursementsService {
           ? {
               status: dto.status,
               reviewComments: dto.reviewComments ?? claim.reviewComments,
-              paidDate: todayStr(),
+              // A free-form date, not always "today" — approval can land on
+              // the last day of a month while the actual payout is recorded
+              // a day (or more) later, or backdated to match a real payout.
+              paidDate: dto.paidDate ?? todayStr(),
               paidById: actor.id,
+              paymentMode: dto.paymentMode,
             }
           : {
               status: dto.status,
               reviewComments: dto.reviewComments ?? '',
               approvedById: actor.id,
+              ...(dto.status === 'APPROVED' && { approvedDate: todayStr() }),
             },
     });
     const updated = await this.scopedPrisma.reimbursement.findFirstOrThrow({
@@ -213,7 +229,11 @@ export class ReimbursementsService {
     });
     if (employee) {
       const title = `Reimbursement Claim ${dto.status}`;
-      const message = `Your reimbursement claim of ${claim.amount} for ${claim.category} has been ${dto.status.toLowerCase()}.${dto.reviewComments ? ` Comments: ${dto.reviewComments}` : ''}`;
+      const paidSuffix =
+        dto.status === 'PAID' && dto.paymentMode
+          ? ` (via ${dto.paymentMode.toLowerCase()})`
+          : '';
+      const message = `Your reimbursement claim of ${claim.amount} for ${claim.category} has been ${dto.status.toLowerCase()}${paidSuffix}.${dto.reviewComments ? ` Comments: ${dto.reviewComments}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -229,5 +249,38 @@ export class ReimbursementsService {
     }
 
     return this.withSignedReceipt(updated);
+  }
+
+  // Bulk approve/mark-paid — loops the single-claim review() above (same
+  // Promise.allSettled-per-item isolation idiom used by
+  // PayrollService.calculate()) so one claim's failure (wrong dept scope,
+  // already-reviewed, wrong status for a PAID transition) doesn't abort the
+  // rest of the batch. Returns which ids actually succeeded vs failed with
+  // why, so the frontend can report a partial result truthfully.
+  async bulkReview(
+    ids: string[],
+    dto: ReviewReimbursementDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const results = await Promise.allSettled(
+      ids.map((id) => this.review(id, dto, actor, organizationId)),
+    );
+    const succeeded: string[] = [];
+    const failed: { id: string; message: string }[] = [];
+    results.forEach((result, idx) => {
+      if (result.status === 'fulfilled') {
+        succeeded.push(ids[idx]);
+      } else {
+        failed.push({
+          id: ids[idx],
+          message:
+            result.reason instanceof Error
+              ? result.reason.message
+              : 'Failed to review claim.',
+        });
+      }
+    });
+    return { succeeded, failed };
   }
 }

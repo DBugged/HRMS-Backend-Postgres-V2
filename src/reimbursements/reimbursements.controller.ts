@@ -16,6 +16,7 @@ import { Role, User } from '@prisma/client';
 import { ReimbursementsService } from './reimbursements.service';
 import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
+import { BulkReviewReimbursementDto } from './dto/bulk-review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -67,6 +68,22 @@ export class ReimbursementsController {
     return this.reimbursementsService.review(
       id,
       dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Patch('bulk-review')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkReview(
+    @Body() dto: BulkReviewReimbursementDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    const { ids, ...rest } = dto;
+    return this.reimbursementsService.bulkReview(
+      ids,
+      rest,
       caller,
       caller.organizationId,
     );

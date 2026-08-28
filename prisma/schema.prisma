@@ -1557,6 +1557,12 @@ enum ReimbursementStatus {
   PAID
 }
 
+enum ReimbursementPaymentMode {
+  CASH
+  CHEQUE
+  TRANSFER
+}
+
 model Reimbursement {
   id             String       @id @default(uuid())
   organizationId String
@@ -1576,16 +1582,25 @@ model Reimbursement {
   receiptUrl  String                @default("")
   status      ReimbursementStatus   @default(PENDING)
 
-  approvedById   String?
-  approvedBy     User?   @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+  approvedById String?
+  approvedBy   User?   @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+  // Set alongside approvedById — kept as its own field (not read off
+  // updatedAt) because a later PAID transition updates the row again and
+  // would otherwise clobber the moment it was actually approved. YYYY-MM-DD.
+  approvedDate String?
   reviewComments String  @default("")
   // Set together when HR marks an APPROVED claim PAID — a manual step,
   // independent of the PayrollRun-driven payout integration below (which
-  // still isn't built). YYYY-MM-DD, same plain-string convention as
-  // claimDate.
-  paidDate String?
-  paidById String?
-  paidBy   User?   @relation("ReimbursementPaidBy", fields: [paidById], references: [id])
+  // still isn't built). Deliberately separate from approvedDate: approval
+  // can land on the last day of a month while the actual payout happens the
+  // next day (or later) once cash/cheque/transfer is actually processed.
+  // paidDate defaults to today if the reviewer doesn't pick one, but is a
+  // free-form date so a backdated payout can be recorded accurately.
+  // YYYY-MM-DD, same plain-string convention as claimDate.
+  paidDate    String?
+  paidById    String?
+  paidBy      User?                     @relation("ReimbursementPaidBy", fields: [paidById], references: [id])
+  paymentMode ReimbursementPaymentMode?
   // Stamped once a PayrollRun pays this out — payroll deduction/payout
   // integration for reimbursements isn't built yet, same deferral as
   // LeaveEncashment.payrollRunId.
