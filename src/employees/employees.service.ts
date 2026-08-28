@@ -369,6 +369,22 @@ export class EmployeesService {
     organizationId: string,
   ) {
     const before = await this.findByIdOrThrow(id, organizationId);
+
+    // An HR/Admin/Manager record is editable only by an Admin (or by the
+    // employee themselves, via self-service My Profile) — HR managing HR
+    // or Admin's data was an unintended gap the plain SelfOrRoles(ADMIN,
+    // HR) guard on this route didn't close, since it only checks the
+    // caller's own role, never the target's.
+    if (
+      actor.id !== id &&
+      actor.role !== Role.ADMIN &&
+      (before.role === Role.ADMIN || before.role === Role.HR)
+    ) {
+      throw new ForbiddenException(
+        'Only an Admin can edit an HR or Admin employee record.',
+      );
+    }
+
     const clean = stripLockedFields(dto, actor.role);
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only

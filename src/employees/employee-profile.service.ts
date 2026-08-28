@@ -98,6 +98,23 @@ export class EmployeeProfileService {
     }
   }
 
+  // An HR/Admin employee's personal data is editable only by an Admin (or
+  // by that employee themselves) — same gap, same fix, as
+  // employees.service.ts's update(): assertSelfOrHr only ever checked the
+  // caller's own role, never the target's, so HR could edit another HR's
+  // (or an Admin's) personal data freely.
+  private assertMaySetPersonalDataFor(actor: Actor, employee: User) {
+    if (
+      actor.id !== employee.id &&
+      actor.role !== Role.ADMIN &&
+      (employee.role === Role.ADMIN || employee.role === Role.HR)
+    ) {
+      throw new ForbiddenException(
+        'Only an Admin can edit an HR or Admin employee record.',
+      );
+    }
+  }
+
   async updatePersonalData(
     id: string,
     dto: UpdatePersonalDataDto,
@@ -106,6 +123,7 @@ export class EmployeeProfileService {
   ) {
     this.assertSelfOrHr(actor, id);
     const employee = await this.findEmployeeOrThrow(id, organizationId);
+    this.assertMaySetPersonalDataFor(actor, employee);
     const merged = mergePersonalData(
       employee.personalData as Record<string, unknown>,
       dto.personalData,
