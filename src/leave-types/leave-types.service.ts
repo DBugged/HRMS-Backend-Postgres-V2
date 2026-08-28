@@ -230,10 +230,8 @@ export class LeaveTypesService {
 
   async runAccrual(id: string, actorId: string, organizationId: string) {
     const leaveType = await this.findByIdOrThrow(id, organizationId);
-    const { matched } = await this.leaveBalanceService.creditAccrual(
-      id,
-      organizationId,
-    );
+    const { matched, credited, alreadyAccrued } =
+      await this.leaveBalanceService.creditAccrual(id, organizationId);
     await this.auditLogService.log({
       actorId,
       action: 'LEAVE_ACCRUAL_RUN',
@@ -244,9 +242,17 @@ export class LeaveTypesService {
         leaveType: leaveType.code,
         amount: leaveType.accrualAmountPerCycle,
         matched,
+        credited,
+        alreadyAccrued,
       },
     });
-    return { message: `Accrual credited to ${matched} employee(s)`, matched };
+    const message =
+      credited === 0 && alreadyAccrued > 0
+        ? `Already accrued for this period — nothing to credit (${alreadyAccrued} employee(s) already up to date).`
+        : alreadyAccrued > 0
+          ? `Credited ${credited} employee(s); ${alreadyAccrued} already up to date for this period.`
+          : `Accrual credited to ${credited} employee(s).`;
+    return { message, matched, credited, alreadyAccrued };
   }
 
   async runCarryForward(

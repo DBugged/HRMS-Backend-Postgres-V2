@@ -684,6 +684,13 @@ model LeaveBalance {
   // Maintained-on-write by LeaveBalanceService.recalculate(), never
   // computed-on-read.
   closing            Float   @default(0)
+  // Period key of the last successful creditAccrual() run for this row —
+  // e.g. "2026-08" for MONTHLY, "2026-Q3" for QUARTERLY, "2026" for
+  // YEARLY (see accrual-period.ts). Lets creditAccrual skip an employee
+  // it already credited for the current cycle instead of unconditionally
+  // re-adding accrualAmountPerCycle on every call (a double-click used to
+  // double-credit silently).
+  lastAccrualPeriod String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -1,4 +1,4 @@
-import { AllocationType } from '@prisma/client';
+import { AllocationType, AccrualFrequency } from '@prisma/client';
 
 /**
  * Pure port of the balance-math formulas in the old backend's
@@ -46,6 +46,31 @@ export function computeUpfrontCredit(
   return (
     Math.round(((leaveType.annualQuota * remainingMonths) / 12) * 100) / 100
   );
+}
+
+// Identifies "which accrual cycle does `asOf` fall in" for a given
+// frequency — creditAccrual() compares this against a balance row's
+// stored lastAccrualPeriod to tell a genuinely new cycle apart from a
+// repeat call (double-click, retry) within the same one. UTC throughout,
+// matching monthsOfService's convention above.
+export function computeAccrualPeriodKey(
+  frequency: AccrualFrequency,
+  asOf: Date,
+): string {
+  const year = asOf.getUTCFullYear();
+  const month = asOf.getUTCMonth(); // 0-indexed
+  switch (frequency) {
+    case AccrualFrequency.YEARLY:
+      return `${year}`;
+    case AccrualFrequency.HALF_YEARLY:
+      return `${year}-H${Math.floor(month / 6) + 1}`;
+    case AccrualFrequency.QUARTERLY:
+      return `${year}-Q${Math.floor(month / 3) + 1}`;
+    case AccrualFrequency.BI_MONTHLY:
+      return `${year}-B${Math.floor(month / 2) + 1}`;
+    case AccrualFrequency.MONTHLY:
+      return `${year}-${String(month + 1).padStart(2, '0')}`;
+  }
 }
 
 export interface BalanceRowLike {

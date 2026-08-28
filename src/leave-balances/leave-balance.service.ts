@@ -14,6 +14,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isEligible } from './leave-eligibility';
 import {
+  computeAccrualPeriodKey,
   computeCarriedInExpiry,
   computeCarryOut,
   computeUpfrontCredit,
@@ -171,14 +172,17 @@ export class LeaveBalanceService {
   }
 
   // HR-triggered, on-demand (no cron infra, same as the old system) —
-  // credits accrualAmountPerCycle to every currently-eligible EMPLOYEE/
-  // MANAGER's current-year balance for this leave type. No frequency
-  // gating or idempotency guard, ported as-is: calling this twice in the
-  // same period double-credits, exactly like the old backend.
+  // credits accrualAmountPerCycle to every currently-eligible employee's
+  // current-year balance for this leave type. Idempotent per accrual
+  // period (see computeAccrualPeriodKey): an employee whose row's
+  // lastAccrualPeriod already matches the current cycle is skipped
+  // instead of re-credited — a double-click (or an HR admin re-running it
+  // "just in case") no longer silently double-credits, unlike the old
+  // system this was originally ported from as-is.
   async creditAccrual(
     leaveTypeId: string,
     organizationId: string,
-  ): Promise<{ matched: number }> {
+  ): Promise<{ matched: number; credited: number; alreadyAccrued: number }> {
     const leaveType = await this.scopedPrisma.leaveType.findFirst({
       where: { id: leaveTypeId, organizationId },
     });
@@ -212,6 +216,13 @@ export class LeaveBalanceService {
       existingRows.map((r) => [r.employeeId, r]),
     );
 
+    const periodKey = computeAccrualPeriodKey(
+      leaveType.accrualFrequency,
+      new Date(),
+    );
+    let credited = 0;
+    let alreadyAccrued = 0;
+
     await this.scopedPrisma.$transaction(async (tx) => {
       for (const employee of eligible) {
         const row =
@@ -223,15 +234,25 @@ export class LeaveBalanceService {
             year,
             organizationId,
           ));
+
+        if (row.lastAccrualPeriod === periodKey) {
+          alreadyAccrued += 1;
+          continue;
+        }
+
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
-          data: { credited: row.credited + leaveType.accrualAmountPerCycle },
+          data: {
+            credited: row.credited + leaveType.accrualAmountPerCycle,
+            lastAccrualPeriod: periodKey,
+          },
         });
         await this.recalculate(tx, row.id, organizationId);
+        credited += 1;
       }
     });
 
-    return { matched: eligible.length };
+    return { matched: eligible.length, credited, alreadyAccrued };
   }
 
   // HR-triggered year-end rollover across every leave type with
