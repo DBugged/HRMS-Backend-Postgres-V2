@@ -2,7 +2,12 @@
 // Responsibilities: Owns receipt-URL signing (withSignedReceipt, same relativeKey pattern as
 // DocumentsService.withSignedUrl) on every read, and department-scoped review authorization via
 // assertManagerDeptScope.
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   NotificationCategory,
   Prisma,
@@ -29,6 +34,10 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 type Actor = Omit<User, 'password'>;
 
 const EXTERNAL_URL_RE = /^https?:\/\//i;
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 @Injectable()
 export class ReimbursementsService {
@@ -153,13 +162,31 @@ export class ReimbursementsService {
       claim.employeeId,
     );
 
+    // PAID is a separate step from the initial Approve/Reject decision — a
+    // claim must already be APPROVED before it can be marked PAID (mirrors
+    // Leave Encashment's PENDING -> APPROVED -> PROCESSED chain, which has
+    // the same single-direction-forward-only shape).
+    if (dto.status === 'PAID' && claim.status !== 'APPROVED') {
+      throw new BadRequestException(
+        'Only an approved claim can be marked as paid.',
+      );
+    }
+
     await this.scopedPrisma.reimbursement.updateMany({
       where: { id, organizationId },
-      data: {
-        status: dto.status,
-        reviewComments: dto.reviewComments ?? '',
-        approvedById: actor.id,
-      },
+      data:
+        dto.status === 'PAID'
+          ? {
+              status: dto.status,
+              reviewComments: dto.reviewComments ?? claim.reviewComments,
+              paidDate: todayStr(),
+              paidById: actor.id,
+            }
+          : {
+              status: dto.status,
+              reviewComments: dto.reviewComments ?? '',
+              approvedById: actor.id,
+            },
     });
     const updated = await this.scopedPrisma.reimbursement.findFirstOrThrow({
       where: { id, organizationId },
