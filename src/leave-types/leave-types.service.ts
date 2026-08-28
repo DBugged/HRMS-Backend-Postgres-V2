@@ -8,9 +8,11 @@ import {
   ConflictException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { LeaveType, Prisma } from '@prisma/client';
+import { Cron } from '@nestjs/schedule';
+import { AllocationType, LeaveType, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
@@ -23,11 +25,48 @@ import { DEFAULT_RULES, LEAVE_TYPE_DEFAULTS } from './leave-type-defaults';
 
 @Injectable()
 export class LeaveTypesService {
+  private readonly logger = new Logger(LeaveTypesService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly leaveBalanceService: LeaveBalanceService,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  // Auto-credits every EARNED_MONTHLY leave type, org-wide, once a day —
+  // no HR click required. Safe to run daily regardless of each leave
+  // type's own accrualFrequency (MONTHLY/QUARTERLY/etc.): creditAccrual is
+  // idempotent per period (see computeAccrualPeriodKey/lastAccrualPeriod),
+  // so a day that isn't a new cycle's start is just a no-op for that
+  // employee. Same daily-sweep-across-orgs shape as HrEventsService's
+  // sendDailyWishes; one org or leave type failing doesn't abort the rest.
+  @Cron('0 2 * * *')
+  async autoRunAccrualsDaily() {
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const org of organizations) {
+      const leaveTypes = await this.scopedPrisma.leaveType.findMany({
+        where: {
+          organizationId: org.id,
+          isActive: true,
+          allocationType: AllocationType.EARNED_MONTHLY,
+          accrualAmountPerCycle: { gt: 0 },
+        },
+        select: { id: true, code: true },
+      });
+      for (const lt of leaveTypes) {
+        try {
+          await this.leaveBalanceService.creditAccrual(lt.id, org.id);
+        } catch (err) {
+          this.logger.error(
+            `Auto accrual failed for org ${org.id} leave type ${lt.code}: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+    }
+  }
 
   // Every new org starts with the standard leave-type set (Casual, Sick,
   // Earned, Maternity, etc.) instead of an empty Leave Types page — admin
