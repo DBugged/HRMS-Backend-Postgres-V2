@@ -763,6 +763,12 @@ export class AttendanceService {
       };
     }
     if (query.status) where.status = query.status;
+    if (query.regularizationStatus) {
+      where.regularization = {
+        path: ['status'],
+        equals: query.regularizationStatus,
+      };
+    }
 
     const result = await paginate(
       () =>

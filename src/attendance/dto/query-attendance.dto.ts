@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsUUID,
@@ -59,4 +60,14 @@ export class QueryAttendanceDto {
   @IsOptional()
   @IsEnum(AttendanceStatus)
   status?: AttendanceStatus;
+
+  // Filters on the `regularization.status` JSON field — lets HR/Manager
+  // pull a dedicated "awaiting my approval" queue (regularizationStatus=
+  // pending) independent of whatever date/status filters the main
+  // attendance table currently has applied, since a regularization can be
+  // requested for a date well outside today's default view.
+  @ApiPropertyOptional({ enum: ['pending', 'approved', 'rejected'] })
+  @IsOptional()
+  @IsIn(['pending', 'approved', 'rejected'])
+  regularizationStatus?: 'pending' | 'approved' | 'rejected';
 }
