@@ -897,16 +897,49 @@ export class AttendanceService {
       );
     }
 
+    // Admin is above HR/Manager in the review chain — reviewRegularization
+    // is @Roles(HR, MANAGER) only, so an Admin's own request would otherwise
+    // have no one left who could ever approve it and would sit stuck at
+    // "pending" forever. Auto-approve it on submit instead, applying the
+    // same requested-time/status effects reviewRegularization would.
+    const isSelfApproving = actor.role === Role.ADMIN;
+    const requestedInTime = dto.requestedInTime
+      ? new Date(dto.requestedInTime)
+      : null;
+    const requestedOutTime = dto.requestedOutTime
+      ? new Date(dto.requestedOutTime)
+      : null;
+
     const regularization: RegularizationState = {
       requested: true,
       reason: dto.reason,
       requestedInTime: dto.requestedInTime ?? null,
       requestedOutTime: dto.requestedOutTime ?? null,
-      status: 'pending',
-      reviewedBy: null,
-      reviewedAt: null,
-      reviewComments: '',
+      status: isSelfApproving ? 'approved' : 'pending',
+      reviewedBy: isSelfApproving ? actor.id : null,
+      reviewedAt: isSelfApproving ? new Date().toISOString() : null,
+      reviewComments: isSelfApproving ? 'Self-approved (Admin).' : '',
     };
+
+    let inTime: Date | undefined;
+    let outTime: Date | undefined;
+    let workDurationMinutes: number | undefined;
+    let status: AttendanceStatus = AttendanceStatus.ABSENT;
+    let source: AttendanceSource = AttendanceSource.SYSTEM;
+    if (isSelfApproving) {
+      if (requestedInTime) inTime = requestedInTime;
+      if (requestedOutTime) outTime = requestedOutTime;
+      if (requestedInTime && requestedOutTime) {
+        workDurationMinutes = Math.max(
+          0,
+          Math.round(
+            (requestedOutTime.getTime() - requestedInTime.getTime()) / 60000,
+          ),
+        );
+        status = AttendanceStatus.PRESENT;
+      }
+      source = AttendanceSource.REGULARIZED;
+    }
 
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dto.date },
@@ -917,6 +950,13 @@ export class AttendanceService {
         where: { id: existing.id, organizationId },
         data: {
           regularization: regularization as unknown as Prisma.InputJsonValue,
+          ...(isSelfApproving && {
+            inTime,
+            outTime,
+            workDurationMinutes,
+            status,
+            source,
+          }),
         },
       });
     } else {
@@ -925,14 +965,19 @@ export class AttendanceService {
           organizationId,
           employeeId: actor.id,
           date: dto.date,
-          status: AttendanceStatus.ABSENT,
-          source: AttendanceSource.SYSTEM,
+          status,
+          source,
+          workDurationMinutes,
+          inTime,
+          outTime,
           regularization: regularization as unknown as Prisma.InputJsonValue,
         },
       });
     }
 
-    await this.notifyRegularizationRequested(actor, dto.date, organizationId);
+    if (!isSelfApproving) {
+      await this.notifyRegularizationRequested(actor, dto.date, organizationId);
+    }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({
       where: { organizationId, employeeId: actor.id, date: dto.date },
