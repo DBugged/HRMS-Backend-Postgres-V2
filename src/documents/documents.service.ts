@@ -27,6 +27,8 @@ import { CreatePolicyDocumentDto } from './dto/create-policy-document.dto';
 import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
 import { CreateDocumentRequirementDto } from './dto/create-document-requirement.dto';
 import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.dto';
+import { BulkDeleteDocumentRequirementsDto } from './dto/bulk-delete-document-requirements.dto';
+import { BulkImportDocumentRequirementsDto } from './dto/bulk-import-document-requirements.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
 
@@ -345,5 +347,135 @@ export class DocumentsService {
     return this.scopedPrisma.documentRequirement.findFirstOrThrow({
       where: { id, organizationId },
     });
+  }
+
+  // A hard delete, not the isActive soft-disable updateRequirement already
+  // supports — deliberately, since the user asked for real delete alongside
+  // the existing Disable toggle. Doesn't touch any EmployeeDocument rows:
+  // those are matched by name string, not a foreign key, so removing the
+  // requirement definition never deletes or orphans an employee's actual
+  // uploaded file — it just stops being tracked as "required" going
+  // forward, same non-destructive characteristic the Disable toggle has.
+  async deleteRequirement(
+    id: string,
+    organizationId: string,
+    actorId?: string,
+  ) {
+    const existing = await this.scopedPrisma.documentRequirement.findFirst({
+      where: { id, organizationId },
+    });
+    if (!existing)
+      throw new NotFoundException('Document requirement not found.');
+
+    await this.scopedPrisma.documentRequirement.deleteMany({
+      where: { id, organizationId },
+    });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'DOCUMENT_REQUIREMENT_DELETED',
+        module: 'DOCUMENT',
+        organizationId,
+        targetId: id,
+        details: { name: existing.name },
+      });
+    }
+
+    return { success: true, message: 'Document requirement deleted' };
+  }
+
+  async bulkDeleteRequirements(
+    dto: BulkDeleteDocumentRequirementsDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
+    const existing = await this.scopedPrisma.documentRequirement.findMany({
+      where: { id: { in: dto.ids }, organizationId },
+    });
+    if (existing.length === 0) {
+      return { deleted: 0 };
+    }
+
+    await this.scopedPrisma.documentRequirement.deleteMany({
+      where: { id: { in: existing.map((r) => r.id) }, organizationId },
+    });
+
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'DOCUMENT_REQUIREMENT_BULK_DELETED',
+        module: 'DOCUMENT',
+        organizationId,
+        details: { names: existing.map((r) => r.name) },
+      });
+    }
+
+    return { deleted: existing.length };
+  }
+
+  // Rows are parsed client-side from the uploaded Excel/CSV (same xlsx
+  // library the export path already uses) — this only ever receives plain
+  // {name, isMandatory} JSON. Each row is created independently
+  // (Promise.allSettled, same per-item isolation idiom used by
+  // PayrollService.calculate() and ReimbursementsService.bulkReview()) so
+  // one bad/duplicate row doesn't abort the whole import; a name that
+  // collides with an existing requirement (the @@unique constraint) is
+  // reported back as skipped rather than as a hard failure.
+  async bulkImportRequirements(
+    dto: BulkImportDocumentRequirementsDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const count = await this.scopedPrisma.documentRequirement.count({
+      where: { organizationId },
+    });
+
+    const results = await Promise.allSettled(
+      dto.rows.map((row, idx) => {
+        const name = row.name?.trim();
+        if (!name) {
+          return Promise.reject(new Error('Row has no document name.'));
+        }
+        return this.scopedPrisma.documentRequirement.create({
+          data: {
+            organizationId,
+            name,
+            isMandatory: row.isMandatory ?? false,
+            displayOrder: count + idx,
+            createdById: actor.id,
+          },
+        });
+      }),
+    );
+
+    const created: string[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+    results.forEach((result, idx) => {
+      if (result.status === 'fulfilled') {
+        created.push(result.value.name);
+      } else {
+        const reason =
+          result.reason instanceof Error &&
+          result.reason.message.includes('Unique constraint')
+            ? 'A requirement with this name already exists.'
+            : result.reason instanceof Error
+              ? result.reason.message
+              : 'Failed to create.';
+        skipped.push({ name: dto.rows[idx].name || '(blank)', reason });
+      }
+    });
+
+    if (created.length > 0) {
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'DOCUMENT_REQUIREMENT_BULK_IMPORTED',
+        module: 'DOCUMENT',
+        organizationId,
+        details: { names: created },
+      });
+    }
+
+    return { created, skipped };
   }
 }

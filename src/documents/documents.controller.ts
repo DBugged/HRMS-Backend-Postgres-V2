@@ -18,6 +18,8 @@ import { CreatePolicyDocumentDto } from './dto/create-policy-document.dto';
 import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
 import { CreateDocumentRequirementDto } from './dto/create-document-requirement.dto';
 import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.dto';
+import { BulkDeleteDocumentRequirementsDto } from './dto/bulk-delete-document-requirements.dto';
+import { BulkImportDocumentRequirementsDto } from './dto/bulk-import-document-requirements.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -116,6 +118,50 @@ export class DocumentsController {
     return this.documentsService.updateRequirement(
       id,
       dto,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  // POST, not DELETE — 'bulk-delete' as a literal path segment would
+  // otherwise collide with DELETE requirements/:id (Nest would treat
+  // "bulk-delete" as the :id param on the same HTTP method); a request
+  // body for the id list also isn't standard on DELETE. Same idiom as
+  // ReimbursementsService's bulk-review endpoint.
+  @Post('requirements/bulk-delete')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkDeleteRequirements(
+    @Body() dto: BulkDeleteDocumentRequirementsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.documentsService.bulkDeleteRequirements(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  @Post('requirements/bulk-import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkImportRequirements(
+    @Body() dto: BulkImportDocumentRequirementsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.documentsService.bulkImportRequirements(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Delete('requirements/:id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  deleteRequirement(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.documentsService.deleteRequirement(
+      id,
       caller.organizationId,
       caller.id,
     );
