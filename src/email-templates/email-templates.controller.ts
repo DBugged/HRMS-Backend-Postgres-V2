@@ -2,11 +2,22 @@
 // Responsibilities: Validates DTOs and delegates all logic to EmailTemplatesService.
 // Important: findAll/findOne have no @Roles() — any authenticated caller can view the templates in effect;
 // update is ADMIN/HR only, same split as HolidaysController.
-import { Body, Controller, Get, Param, Put, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { EmailTemplatesService } from './email-templates.service';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
+import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
+import { SendEmailTemplateDto } from './dto/send-email-template.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -49,6 +60,44 @@ export class EmailTemplatesController {
       dto,
       caller.organizationId,
       caller.id,
+    );
+  }
+
+  @Post()
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  create(@Body() dto: CreateEmailTemplateDto, @CurrentUser() caller: Caller) {
+    return this.emailTemplatesService.create(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  @Delete(':id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  remove(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.emailTemplatesService.delete(
+      id,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  @Post(':id/send')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  send(
+    @Param('id') id: string,
+    @Body() dto: SendEmailTemplateDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.emailTemplatesService.sendManual(
+      id,
+      dto,
+      caller.organizationId,
+      caller,
     );
   }
 }
