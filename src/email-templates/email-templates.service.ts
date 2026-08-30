@@ -244,7 +244,14 @@ export class EmailTemplatesService {
       );
     }
 
-    const [organization, employees] = await Promise.all([
+    // CC ids that are also in the "to" list are dropped — that recipient
+    // already gets the email as a primary "to", so CCing them too would
+    // just duplicate the address on the same message.
+    const ccIds = (dto.ccEmployeeIds ?? []).filter(
+      (id) => !dto.employeeIds.includes(id),
+    );
+
+    const [organization, employees, ccEmployees] = await Promise.all([
       this.scopedPrisma.organization.findFirst({
         where: { id: organizationId },
         select: {
@@ -259,6 +266,12 @@ export class EmailTemplatesService {
         where: { id: { in: dto.employeeIds }, organizationId },
         select: { id: true, name: true, email: true },
       }),
+      ccIds.length
+        ? this.scopedPrisma.user.findMany({
+            where: { id: { in: ccIds }, organizationId },
+            select: { email: true },
+          })
+        : Promise.resolve([]),
     ]);
     const orgVariables = {
       companyName: organization?.companyName ?? '',
@@ -267,6 +280,7 @@ export class EmailTemplatesService {
       companyEmail: organization?.contactEmail ?? '',
       companyAddress: organization?.registeredAddress ?? '',
     };
+    const cc = ccEmployees.map((e) => e.email);
 
     const results = await Promise.allSettled(
       employees.map((employee) => {
@@ -275,6 +289,7 @@ export class EmailTemplatesService {
           to: employee.email,
           subject: renderTemplate(template.subject, variables),
           html: renderTemplate(template.bodyHtml, variables),
+          ...(cc.length && { cc }),
         });
       }),
     );
@@ -292,6 +307,7 @@ export class EmailTemplatesService {
       details: {
         name: template.name,
         recipientCount: employees.length,
+        ccCount: cc.length,
         sent,
         failed: failed.length,
       },
