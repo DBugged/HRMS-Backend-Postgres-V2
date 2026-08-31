@@ -59,6 +59,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EmploymentStatusHistory',
   'EmailTemplate',
   'OrgListItem',
+  'WorkSchedule',
 ]);
 
 // Operations whose `where` accepts arbitrary filters (so organizationId

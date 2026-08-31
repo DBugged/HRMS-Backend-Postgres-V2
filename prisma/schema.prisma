@@ -188,6 +188,7 @@ model Organization {
   refreshTokens            RefreshToken[]
   holidays                 Holiday[]
   workLocations            WorkLocation[]
+  workSchedules            WorkSchedule[]
   leaveTypes               LeaveType[]
   leaveBalances            LeaveBalance[]
   leaves                   Leave[]
@@ -247,6 +248,16 @@ model Department {
   // per department, not per-employee. Null = no enforcement for this dept.
   workLocationId String?
   workLocation   WorkLocation? @relation(fields: [workLocationId], references: [id])
+
+  // Named shift template this department was last assigned from Work
+  // Schedules (Organization Structure > Work Configuration). Assigning one
+  // copies its startTime/endTime/workingDays onto shiftStartTime/
+  // shiftEndTime/weeklyOffs below (so AttendanceService needs no separate
+  // read path) and keeps this FK purely for "which departments use this
+  // schedule" traceability in the Work Schedules screen — editing the
+  // department's shift fields directly afterward doesn't clear it.
+  workScheduleId String?
+  workSchedule   WorkSchedule? @relation(fields: [workScheduleId], references: [id])
 
   // Per-department shift/attendance policy, read by
   // AttendanceService.recalculateAttendanceForDay. Falls back to
@@ -590,6 +601,46 @@ model WorkLocation {
 
   @@index([organizationId])
   @@map("work_locations")
+}
+
+// Named shift template (Organization Structure > Work Configuration >
+// Work Schedules) — "General Shift, Mon-Fri 09:30-18:30, 1hr break".
+// Assigning one to a department (WorkSchedulesService.assign) copies
+// startTime/endTime/workingDays onto that Department's own
+// shiftStartTime/shiftEndTime/weeklyOffs fields, which is what
+// AttendanceService actually reads — this model itself is never read by
+// attendance calculation, only by this management screen and the
+// Department.workScheduleId traceability link.
+model WorkSchedule {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+
+  // Days actually worked, 0=Sunday ... 6=Saturday — the inverse of
+  // Department.weeklyOffs (which lists days off instead). Kept as the
+  // "positive" list here since a schedule is naturally described by what
+  // days it covers, not what it excludes.
+  workingDays Json @default("[1,2,3,4,5]")
+
+  startTime String
+  endTime   String
+  // Not currently propagated anywhere — Department has no break-time field
+  // for AttendanceService to read, so this is definitional/display-only
+  // until (if) that's added.
+  breakMinutes Int @default(60)
+
+  isActive Boolean @default(true)
+
+  departments Department[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("work_schedules")
 }
 
 enum AllocationType {
