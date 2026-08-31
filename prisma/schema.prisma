@@ -189,6 +189,8 @@ model Organization {
   holidays                 Holiday[]
   workLocations            WorkLocation[]
   workSchedules            WorkSchedule[]
+  shifts                   Shift[]
+  weeklyOffPatterns        WeeklyOffPattern[]
   leaveTypes               LeaveType[]
   leaveBalances            LeaveBalance[]
   leaves                   Leave[]
@@ -648,6 +650,53 @@ model WorkSchedule {
   @@unique([organizationId, name])
   @@index([organizationId])
   @@map("work_schedules")
+}
+
+// Standalone reference catalog (Organization Structure > Work Configuration
+// > Shifts) — deliberately NOT assigned to departments and has no effect on
+// attendance calculation, unlike WorkSchedule above. Overlapping concepts
+// (a shift is "start/end time", a work schedule already has that plus
+// working days/break and is the thing that's actually assigned) were kept
+// separate on purpose per explicit product decision, rather than wiring
+// this into Department too and creating two disagreeing sources of truth.
+model Shift {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name      String
+  startTime String
+  endTime   String
+  isActive  Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("shifts")
+}
+
+// Standalone reference catalog (Organization Structure > Work Configuration
+// > Weekly Offs) — same "reference list only, not assigned anywhere" choice
+// as Shift above. Department.weeklyOffs (and WorkSchedule.workingDays) stay
+// the only things that actually affect attendance.
+model WeeklyOffPattern {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name String
+  // 0=Sunday ... 6=Saturday — days off under this named pattern.
+  daysOff Json @default("[0]")
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("weekly_off_patterns")
 }
 
 enum AllocationType {
