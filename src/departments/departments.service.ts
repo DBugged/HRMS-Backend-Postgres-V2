@@ -19,6 +19,8 @@ import { MapEmployeesDto } from './dto/map-employees.dto';
 import { BulkImportDepartmentsDto } from './dto/bulk-import-departments.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { computeWeeklyOffs } from '../work-schedules/work-schedules.service';
+import type { AlternateWeeklyOffDto } from '../work-schedules/dto/create-work-schedule.dto';
 
 // Mirrors the frontend's own NON_DEMOTABLE_ROLES — these roles already
 // carry broader-than-department authority, so assigning one of these users
@@ -31,6 +33,7 @@ const DEPARTMENT_INCLUDE = {
     select: { id: true, name: true, employeeId: true, email: true },
   },
   workLocation: true,
+  workSchedule: { select: { id: true, name: true } },
 } satisfies Prisma.DepartmentInclude;
 
 @Injectable()
@@ -149,9 +152,43 @@ export class DepartmentsService {
     actorId?: string,
   ) {
     await this.findOrThrow(id, organizationId);
+    const { workScheduleId, ...rest } = dto;
+
+    // workScheduleId rides separately from the raw spread below because
+    // assigning one (unlike every other field here) also copies that
+    // schedule's hours/working-days/off-pattern/break minutes onto this
+    // department — same propagation WorkSchedulesService.assign() does,
+    // just triggered from the Department side instead of the Work
+    // Schedules page. Unassigning (null) only clears the link; it
+    // deliberately leaves whatever shift fields the department already
+    // has alone rather than resetting them.
+    let scheduleFields: Prisma.DepartmentUncheckedUpdateManyInput = {};
+    if (workScheduleId !== undefined) {
+      if (workScheduleId === null) {
+        scheduleFields = { workScheduleId: null };
+      } else {
+        const schedule = await this.scopedPrisma.workSchedule.findFirst({
+          where: { id: workScheduleId, organizationId },
+        });
+        if (!schedule) {
+          throw new NotFoundException('Work schedule not found.');
+        }
+        scheduleFields = {
+          workScheduleId,
+          shiftStartTime: schedule.startTime,
+          shiftEndTime: schedule.endTime,
+          weeklyOffs: computeWeeklyOffs(
+            schedule.workingDays as number[],
+            schedule.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[],
+          ),
+          breakMinutes: schedule.breakMinutes,
+        };
+      }
+    }
+
     await this.scopedPrisma.department.updateMany({
       where: { id, organizationId },
-      data: dto,
+      data: { ...rest, ...scheduleFields },
     });
 
     if (actorId) {

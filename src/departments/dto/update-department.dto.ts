@@ -72,4 +72,12 @@ export class UpdateDepartmentDto {
   @IsOptional()
   @IsUUID()
   workLocationId?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      "null unassigns the work schedule (keeps whatever shift fields the department already has); a valid id copies that schedule's hours/working-days/off-pattern/break minutes onto this department, same as assigning from the Work Schedules page.",
+  })
+  @IsOptional()
+  @IsUUID()
+  workScheduleId?: string | null;
 }

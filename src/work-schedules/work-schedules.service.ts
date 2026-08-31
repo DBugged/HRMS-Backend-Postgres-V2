@@ -24,7 +24,7 @@ type Actor = { id: string };
 // days) is a plain number entry; an alternate day becomes the richer
 // { day, occurrences } entry instead of "off every week" — see
 // attendance-shift-config.ts's WeeklyOffEntry.
-function computeWeeklyOffs(
+export function computeWeeklyOffs(
   workingDays: number[],
   alternateWeeklyOffs: AlternateWeeklyOffDto[],
 ): WeeklyOffEntry[] {
