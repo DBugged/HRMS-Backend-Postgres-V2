@@ -31,7 +31,7 @@ import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
 import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
-import { formatDateDisplay } from '../payroll/format-date';
+import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -119,8 +119,9 @@ export class OffboardingService {
       },
     });
 
+    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
     const title = 'Offboarding Process Initiated';
-    const message = `Your offboarding has been initiated with a last working day of ${formatDateDisplay(dto.lastWorkingDay)}. HR will reach out with the exit checklist.`;
+    const message = `Your offboarding has been initiated with a last working day of ${formatDateDisplay(dto.lastWorkingDay, '', dateFormat)}. HR will reach out with the exit checklist.`;
     await this.notificationsService.create({
       organizationId,
       userId: employee.id,

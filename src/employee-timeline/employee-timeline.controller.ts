@@ -1,7 +1,7 @@
 // Purpose: Exposes an employee's activity timeline and its Excel/PDF export, mounted at /employees/:id/timeline.
 // Responsibilities: Validates the query DTO, streams exports via sendReport, and delegates data fetching to EmployeeTimelineService.
 // Important: Self-or-role scoped (self, or ADMIN/HR/MANAGER — MANAGER further restricted to own department in the service).
-import { Controller, Get, Param, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -14,7 +14,9 @@ import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
-import { formatDateTimeDisplay } from '../payroll/format-date';
+import { formatDateTimeDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 
 type Caller = Omit<User, 'password'>;
 
@@ -25,7 +27,10 @@ type Caller = Omit<User, 'password'>;
 @ApiBearerAuth('access-token')
 @Controller('employees/:id/timeline')
 export class EmployeeTimelineController {
-  constructor(private readonly timelineService: EmployeeTimelineService) {}
+  constructor(
+    private readonly timelineService: EmployeeTimelineService,
+    @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+  ) {}
 
   @Get()
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
@@ -54,12 +59,10 @@ export class EmployeeTimelineController {
     @CurrentUser() caller: Caller,
     @Res() res: Response,
   ) {
-    const { employee, events } = await this.timelineService.fetchForExport(
-      id,
-      query,
-      caller,
-      caller.organizationId,
-    );
+    const [{ employee, events }, { dateFormat, timeFormat }] = await Promise.all([
+      this.timelineService.fetchForExport(id, query, caller, caller.organizationId),
+      resolveOrgDateTimeFormat(this.scopedPrisma, caller.organizationId),
+    ]);
     await sendReport(res, {
       title: 'Employee Timeline',
       columns: [
@@ -72,7 +75,7 @@ export class EmployeeTimelineController {
         { header: 'Remarks', key: 'remarks', width: 30 },
       ],
       rows: events.map((e) => ({
-        occurredAt: formatDateTimeDisplay(e.occurredAt),
+        occurredAt: formatDateTimeDisplay(e.occurredAt, '', dateFormat, timeFormat),
         category: e.category,
         title: e.title,
         description: e.description ?? '',
@@ -95,12 +98,10 @@ export class EmployeeTimelineController {
     @CurrentUser() caller: Caller,
     @Res() res: Response,
   ) {
-    const { employee, events } = await this.timelineService.fetchForExport(
-      id,
-      query,
-      caller,
-      caller.organizationId,
-    );
+    const [{ employee, events }, { dateFormat, timeFormat }] = await Promise.all([
+      this.timelineService.fetchForExport(id, query, caller, caller.organizationId),
+      resolveOrgDateTimeFormat(this.scopedPrisma, caller.organizationId),
+    ]);
     await sendReport(res, {
       title: `Employee Timeline — ${employee.name} (${employee.employeeId})`,
       columns: [
@@ -113,7 +114,7 @@ export class EmployeeTimelineController {
         { header: 'Remarks', key: 'remarks', width: 30 },
       ],
       rows: events.map((e) => ({
-        occurredAt: formatDateTimeDisplay(e.occurredAt),
+        occurredAt: formatDateTimeDisplay(e.occurredAt, '', dateFormat, timeFormat),
         category: e.category,
         title: e.title,
         description: e.description ?? '',

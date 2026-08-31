@@ -42,7 +42,7 @@ import {
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
-import { formatDateDisplay } from '../payroll/format-date';
+import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -150,12 +150,13 @@ export class CompOffService {
         daysEarned: compOff.daysEarned,
       },
     });
+    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
     await this.timelineService.logEvent({
       organizationId,
       employeeId: targetEmployeeId,
       eventKey: 'COMP_OFF_GRANTED',
       performedById: actor.id,
-      description: `Comp-off earned for ${formatDateDisplay(dto.earnedForDate)}.`,
+      description: `Comp-off earned for ${formatDateDisplay(dto.earnedForDate, '', dateFormat)}.`,
     });
 
     return compOff;
@@ -270,8 +271,9 @@ export class CompOffService {
       where: { id: compOff.employeeId, organizationId },
     });
     if (employee) {
+      const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
       const title = `Comp-Off Request ${dto.decision}`;
-      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate)} has been ${dto.decision.toLowerCase()}.`;
+      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat)} has been ${dto.decision.toLowerCase()}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,

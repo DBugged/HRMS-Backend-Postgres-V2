@@ -33,7 +33,7 @@ import { EmailService } from '../notifications/email.service';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
-import { formatDateDisplay } from '../payroll/format-date';
+import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -86,12 +86,13 @@ export class OvertimeService {
       targetId: record.id,
       details: { employeeId: actor.id, date: dto.date, hours: dto.hours, type },
     });
+    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
     await this.timelineService.logEvent({
       organizationId,
       employeeId: actor.id,
       eventKey: 'OVERTIME_LOGGED',
       performedById: actor.id,
-      description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date)}.`,
+      description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat)}.`,
     });
 
     return record;
@@ -188,8 +189,9 @@ export class OvertimeService {
       where: { id: record.employeeId, organizationId },
     });
     if (employee) {
+      const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
       const title = `Overtime Request ${dto.status}`;
-      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date)} has been ${dto.status.toLowerCase()}.`;
+      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat)} has been ${dto.status.toLowerCase()}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,

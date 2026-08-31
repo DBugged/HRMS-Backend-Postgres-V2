@@ -196,6 +196,8 @@ export class OrganizationSettingsService {
     const policies = (org.policies ?? {}) as {
       currencySymbol?: string;
       defaultNoticeDays?: number;
+      dateFormat?: string;
+      timeFormat?: string;
     };
     return {
       isInitialized: org.isInitialized,
@@ -221,6 +223,16 @@ export class OrganizationSettingsService {
       // this many days) without every caller needing ADMIN-only access to
       // the full /organizations/settings payload.
       defaultNoticeDays: Number(policies.defaultNoticeDays) || 30,
+      // Drives every date/time display across the app (see
+      // frontend/src/utils/date.js and backend-v2/src/payroll/format-date.ts)
+      // — same "read from Policies, apply everywhere" pattern as
+      // currencySymbol above, not hardcoded to DD-MM-YYYY/12-hour.
+      dateFormat: ['DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD'].includes(
+        policies.dateFormat ?? '',
+      )
+        ? policies.dateFormat
+        : 'DD-MM-YYYY',
+      timeFormat: policies.timeFormat === '24' ? '24' : '12',
     };
   }
 
