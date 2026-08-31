@@ -220,6 +220,7 @@ model Organization {
   employeeRoleHistory      EmployeeRoleHistory[]
   employmentStatusHistory  EmploymentStatusHistory[]
   emailTemplates           EmailTemplate[]
+  letterTemplates          LetterTemplate[]
   orgListItems             OrgListItem[]
 
   @@map("organizations")
@@ -558,6 +559,66 @@ model EmailTemplate {
   @@unique([organizationId, occasionKey])
   @@index([organizationId])
   @@map("email_templates")
+}
+
+// Which extra data source a letter template needs beyond the always-
+// available employee/org variables — the one thing about a letter's
+// content that genuinely can't be admin-authored (it names a real
+// prerequisite record: OffboardingCase/PayrollRun/Settlement), everything
+// else (name, key, title, body text, addressing style) is fully
+// admin-configurable. See LettersService.generate()'s per-profile fetch.
+enum LetterDataProfile {
+  BASIC // just employee/org/date variables
+  EXIT // + lastWorkingDay, from the employee's latest OffboardingCase
+  PAYROLL // + salary figures, from the employee's latest processed PayrollRun
+  SETTLEMENT // + settlement breakdown, from the employee's latest Settlement
+}
+
+// Org-scoped, admin/HR-authored letter templates — Offer Letter/
+// Appointment Letter/Relieving Letter/Experience Letter/Experience
+// Certificate/Salary Certificate/Full & Final Settlement start out
+// seeded (isCustom: false, same convention as EmailTemplate's Birthday/
+// Work Anniversary), but every field including body text is editable, and
+// an admin can create entirely new custom letter types beyond those 7 —
+// `key` doubles as the Document Numbering entry name (organizations/
+// document-numbering.ts's issueDocumentNumber already accepts an
+// arbitrary key) and the GET /employees/:id/letters/:key route param, so
+// a new custom template is immediately numbered and downloadable with no
+// other configuration required.
+model LetterTemplate {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  key   String
+  name  String
+  // PDF heading — supports the same {{placeholder}} substitution as
+  // bodyText.
+  title String
+
+  // true ("Dear {{employeeName}},") vs false ("This is to certify..." /
+  // "To Whomsoever It May Concern") — see letter-pdf.service.ts.
+  addressedToEmployee Boolean           @default(true)
+  dataProfile         LetterDataProfile @default(BASIC)
+
+  // Paragraphs are plain lines separated by a blank line; {{placeholder}}
+  // tokens substituted at generation time (see LettersService for the
+  // full variable list, which depends on dataProfile).
+  bodyText String @db.Text
+
+  isActive Boolean @default(true)
+  // False only for the 7 seeded built-in keys — can't be deleted (Document
+  // Numbering and this app's own onboarding/exit flows point at those
+  // exact keys), only disabled/re-edited. A custom template can be
+  // deleted freely.
+  isCustom Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@map("letter_templates")
 }
 
 // Mirrors the old MySQL backend's WorkLocation.fenceType ENUM exactly.

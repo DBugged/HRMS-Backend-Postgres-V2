@@ -1,6 +1,6 @@
-// Purpose: Shared formal-letter PDF layout — one renderer for all 7 LetterTypes (Offer/Appointment/
-//   Relieving/Experience Letter/Experience Certificate/Salary Certificate/Full & Final Settlement), same
-//   "one universal layout, only the data varies" approach payslip-pdf.service.ts already uses for payslips.
+// Purpose: Shared formal-letter PDF layout — one renderer for every LetterTemplate (built-in or
+//   admin-created custom), same "one universal layout, only the data varies" approach
+//   payslip-pdf.service.ts already uses for payslips.
 // Responsibilities: Letterhead (logo/company name/address), Ref No + Date, title, addressee block, body
 //   paragraphs, and a signature block (from the org's primary Authorized Signatory, if set).
 import { Injectable } from '@nestjs/common';
@@ -8,7 +8,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import { formatDateDisplay } from '../payroll/format-date';
-import type { LetterContent } from './letter-content';
+
+// A rendered LetterTemplate — title/paragraphs are already {{placeholder}}-
+// substituted plain text by the time they get here (see LettersService).
+export interface LetterContent {
+  title: string;
+  paragraphs: string[];
+}
 
 const PAGE_W = 595.28; // A4 portrait, points
 const MARGIN = 56;

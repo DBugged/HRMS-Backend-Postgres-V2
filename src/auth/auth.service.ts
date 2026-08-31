@@ -31,6 +31,7 @@ import { LeaveTypesService } from '../leave-types/leave-types.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { LetterTemplatesService } from '../letter-templates/letter-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
@@ -77,6 +78,7 @@ export class AuthService {
     private readonly salaryComponentsService: SalaryComponentsService,
     private readonly holidaysService: HolidaysService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly letterTemplatesService: LetterTemplatesService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly jwt: JwtService,
@@ -156,6 +158,7 @@ export class AuthService {
         // real template to render from day one, same registration-time
         // integration point as the seeds above.
         await this.emailTemplatesService.seedDefaults(tx, organization.id);
+        await this.letterTemplatesService.seedDefaults(tx, organization.id);
         return { organization, user };
       },
     );

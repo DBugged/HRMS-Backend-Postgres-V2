@@ -10,6 +10,7 @@ import { LeaveTypesModule } from '../leave-types/leave-types.module';
 import { SalaryComponentsModule } from '../salary-components/salary-components.module';
 import { HolidaysModule } from '../holidays/holidays.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
+import { LetterTemplatesModule } from '../letter-templates/letter-templates.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
@@ -39,6 +40,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // standard occasion-based email templates (Birthday, Work Anniversary)
     // at registration, same integration point as HolidaysModule above.
     EmailTemplatesModule,
+    // For LetterTemplatesService.seedDefaults — every new org gets the 7
+    // built-in letter templates (Offer/Appointment/Relieving/Experience
+    // Letter/Experience Certificate/Salary Certificate/Full & Final
+    // Settlement) at registration, same integration point as
+    // EmailTemplatesModule above.
+    LetterTemplatesModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService

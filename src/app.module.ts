@@ -51,6 +51,7 @@ import { EmailTemplatesModule } from './email-templates/email-templates.module';
 import { OrgListItemsModule } from './org-list-items/org-list-items.module';
 import { WorkSchedulesModule } from './work-schedules/work-schedules.module';
 import { LettersModule } from './letters/letters.module';
+import { LetterTemplatesModule } from './letter-templates/letter-templates.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -123,6 +124,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     OrgListItemsModule,
     WorkSchedulesModule,
     LettersModule,
+    LetterTemplatesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -3,9 +3,10 @@ import { LettersController } from './letters.controller';
 import { LettersService } from './letters.service';
 import { LetterPdfService } from './letter-pdf.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { LetterTemplatesModule } from '../letter-templates/letter-templates.module';
 
 @Module({
-  imports: [AuditLogModule],
+  imports: [AuditLogModule, LetterTemplatesModule],
   controllers: [LettersController],
   providers: [LettersService, LetterPdfService],
 })

@@ -1,6 +1,6 @@
-// Purpose: Exposes letter generation (Offer/Appointment/Relieving/Experience Letter/Experience
-//   Certificate/Salary Certificate/Full & Final Settlement) as a PDF download, mounted at
-//   /employees/:id/letters/:type.
+// Purpose: Exposes letter generation as a PDF download, mounted at /employees/:id/letters/:key — key is a
+//   LetterTemplate's key (see letter-templates module), not a fixed set: any active template, built-in or
+//   admin-created custom, is downloadable here.
 // Important: Self-or-role scoped (self, or ADMIN/HR/MANAGER — MANAGER further restricted to own
 //   department in the service), same pattern as /employees/:id/timeline.
 import { Controller, Get, Param, Res, UseGuards } from '@nestjs/common';
@@ -22,19 +22,19 @@ type Caller = Omit<User, 'password'>;
 export class LettersController {
   constructor(private readonly lettersService: LettersService) {}
 
-  @Get(':type')
+  @Get(':key')
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   async generate(
     @Param('id') id: string,
-    @Param('type') type: string,
+    @Param('key') key: string,
     @CurrentUser() caller: Caller,
     @Res() res: Response,
   ) {
     const { buffer, filename } = await this.lettersService.generate(
       id,
-      type,
+      key,
       caller,
       caller.organizationId,
     );
