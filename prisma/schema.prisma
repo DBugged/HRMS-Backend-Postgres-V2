@@ -222,6 +222,7 @@ model Organization {
   employeeRoleHistory      EmployeeRoleHistory[]
   employmentStatusHistory  EmploymentStatusHistory[]
   emailTemplates           EmailTemplate[]
+  orgListItems             OrgListItem[]
 
   @@map("organizations")
 }
@@ -312,6 +313,13 @@ model User {
   // users_org_employee_id_unique index exactly.
   employeeId       String
   designation      String           @default("")
+  // Free-text, same as designation — sourced from OrgListItem
+  // (type=GRADE/EMPLOYEE_CATEGORY) in the Employee form's dropdown, but
+  // stored as a plain string here (no FK) so renaming/removing a master
+  // list entry never orphans an existing employee's value, matching how
+  // designation already works.
+  gradeLevel       String           @default("")
+  employeeCategory String           @default("")
   contactNumber    String           @default("")
   joiningDate      DateTime         @default(now())
   employeeType     String           @default("permanent")
@@ -2011,6 +2019,37 @@ model DocumentRequirement {
 
   @@unique([organizationId, name])
   @@map("document_requirements")
+}
+
+enum OrgListType {
+  DESIGNATION
+  GRADE
+  EMPLOYEE_CATEGORY
+}
+
+// Simple org-scoped named lists (Designations, Grades/Levels, Employee
+// Categories) — each row's `name` is the exact string an Employee's
+// designation/gradeLevel/employeeCategory field stores, no FK, matching
+// how designation already worked before this list existed. Employment
+// Type deliberately isn't a fourth OrgListType here — it already has its
+// own mechanism (Organization.customEmployeeTypes), reused rather than
+// duplicated, since business logic (employmentStatus assignment) compares
+// against its exact slug values.
+model OrgListItem {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  type     OrgListType
+  name     String
+  isActive Boolean     @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, type, name])
+  @@index([organizationId, type])
+  @@map("org_list_items")
 }
 
 enum NotificationCategory {

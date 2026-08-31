@@ -52,6 +52,19 @@ export class UpdateEmployeeDto {
   @IsString()
   designation?: string;
 
+  // Locked for self-update (see employee-field-lock.ts) but, unlike
+  // designation, HR can set these too — no old-system precedent restricting
+  // them to Admin-only.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  gradeLevel?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  employeeCategory?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

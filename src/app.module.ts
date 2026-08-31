@@ -48,6 +48,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { HrEventsModule } from './hr-events/hr-events.module';
 import { EmailTemplatesModule } from './email-templates/email-templates.module';
+import { OrgListItemsModule } from './org-list-items/org-list-items.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -117,6 +118,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     NotificationsModule,
     HrEventsModule,
     EmailTemplatesModule,
+    OrgListItemsModule,
   ],
   controllers: [AppController],
   providers: [

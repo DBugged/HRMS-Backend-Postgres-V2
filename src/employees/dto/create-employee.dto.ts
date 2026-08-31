@@ -51,6 +51,16 @@ export class CreateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  gradeLevel?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  employeeCategory?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
   contactNumber?: string;
 
   @ApiPropertyOptional()

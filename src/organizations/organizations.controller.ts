@@ -4,6 +4,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -14,7 +15,10 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationSettingsService } from './organization-settings.service';
+import { EmployeeTypesService } from './employee-types.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
+import { CreateEmployeeTypeDto } from './dto/create-employee-type.dto';
+import { BulkImportEmployeeTypesDto } from './dto/bulk-import-employee-types.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -32,6 +36,7 @@ export class OrganizationsController {
   constructor(
     private readonly organizationsService: OrganizationsService,
     private readonly organizationSettingsService: OrganizationSettingsService,
+    private readonly employeeTypesService: EmployeeTypesService,
   ) {}
 
   @Get('me')
@@ -135,6 +140,60 @@ export class OrganizationsController {
     return this.organizationSettingsService.previewDocumentNumber(
       caller.organizationId,
       type,
+    );
+  }
+
+  // -- Employee Types --
+  // Own ADMIN/HR-scoped endpoints (rather than the broad ADMIN-only
+  // settings/:section route) so the Employment Types management screen has
+  // the same role split as Departments/OrgListItems — reads/writes the
+  // same Organization.customEmployeeTypes field the Setup Wizard section
+  // and Employees.tsx's inline "add new type" flow already use.
+
+  @Get('employee-types')
+  listEmployeeTypes(@CurrentUser() caller: Caller) {
+    return this.employeeTypesService.findAll(caller.organizationId);
+  }
+
+  @Post('employee-types')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  createEmployeeType(
+    @Body() dto: CreateEmployeeTypeDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeeTypesService.create(
+      dto.label,
+      caller.organizationId,
+      caller,
+    );
+  }
+
+  @Delete('employee-types/:value')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  removeEmployeeType(
+    @Param('value') value: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeeTypesService.delete(
+      value,
+      caller.organizationId,
+      caller,
+    );
+  }
+
+  @Post('employee-types/bulk-import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkImportEmployeeTypes(
+    @Body() dto: BulkImportEmployeeTypesDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeeTypesService.bulkImport(
+      dto.labels,
+      caller.organizationId,
+      caller,
     );
   }
 }

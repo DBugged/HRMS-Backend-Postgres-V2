@@ -107,6 +107,8 @@ export class EmployeesService {
             role: requestedRole,
             departmentId: dto.departmentId,
             designation: dto.designation ?? '',
+            gradeLevel: dto.gradeLevel ?? '',
+            employeeCategory: dto.employeeCategory ?? '',
             contactNumber: dto.contactNumber ?? '',
             joiningDate: dto.joiningDate
               ? new Date(dto.joiningDate)
