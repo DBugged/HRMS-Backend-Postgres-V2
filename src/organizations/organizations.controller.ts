@@ -18,6 +18,7 @@ import { OrganizationSettingsService } from './organization-settings.service';
 import { EmployeeTypesService } from './employee-types.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { CreateEmployeeTypeDto } from './dto/create-employee-type.dto';
+import { UpdateEmployeeTypeDto } from './dto/update-employee-type.dto';
 import { BulkImportEmployeeTypesDto } from './dto/bulk-import-employee-types.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -163,6 +164,22 @@ export class OrganizationsController {
     @CurrentUser() caller: Caller,
   ) {
     return this.employeeTypesService.create(
+      dto.label,
+      caller.organizationId,
+      caller,
+    );
+  }
+
+  @Patch('employee-types/:value')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  updateEmployeeType(
+    @Param('value') value: string,
+    @Body() dto: UpdateEmployeeTypeDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeeTypesService.update(
+      value,
       dto.label,
       caller.organizationId,
       caller,

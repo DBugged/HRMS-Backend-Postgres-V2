@@ -6,7 +6,7 @@
 //   management-screen equivalent of Departments/OrgListItems, kept consistent with their role split.
 // Important: doesn't introduce a second source of truth — reads/writes the exact same JSON array
 //   useEmployeeTypes() and the old inline flow already use, so all three surfaces stay in sync.
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditModule, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -68,6 +68,46 @@ export class EmployeeTypesService {
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'EMPLOYEE_TYPE_CREATED',
+      module: AuditModule.ORGANIZATION,
+      organizationId,
+      details: { value, label: trimmed },
+    });
+
+    return this.findAll(organizationId);
+  }
+
+  // Renames a custom type's display label only — `value` (the slug
+  // actually stored on Employee.employeeType) never changes, so existing
+  // employees already set to this type keep working. Built-in types can't
+  // be renamed either, same guard as delete — their labels are the ones
+  // business logic docs/UI copy already reference.
+  async update(
+    value: string,
+    label: string,
+    organizationId: string,
+    actor: Actor,
+  ) {
+    if (DEFAULT_EMPLOYEE_TYPES.some((t) => t.value === value)) {
+      throw new BadRequestException(
+        "Built-in employee types can't be edited.",
+      );
+    }
+    const trimmed = label.trim();
+    if (!trimmed) throw new BadRequestException('Label is required.');
+
+    const custom = await this.getCustomTypes(organizationId);
+    if (!custom.some((t) => t.value === value)) {
+      throw new NotFoundException('Employee type not found.');
+    }
+    const next = custom.map((t) => (t.value === value ? { ...t, label: trimmed } : t));
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { customEmployeeTypes: next as unknown as Prisma.InputJsonValue },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_TYPE_UPDATED',
       module: AuditModule.ORGANIZATION,
       organizationId,
       details: { value, label: trimmed },
