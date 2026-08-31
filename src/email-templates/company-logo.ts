@@ -19,7 +19,11 @@ export function companyLogoImgTag(
   emailLogoUrl: string | null | undefined,
 ): string {
   if (!emailLogoUrl) return '';
-  const token = signFileToken(organizationId, emailLogoUrl, SESSION_ASSET_TTL_SECONDS);
+  const token = signFileToken(
+    organizationId,
+    emailLogoUrl,
+    SESSION_ASSET_TTL_SECONDS,
+  );
   const url = `${backendPublicUrl()}/files/${token}`;
   return `<img src="${url}" alt="" style="max-height:48px;max-width:220px;" />`;
 }
