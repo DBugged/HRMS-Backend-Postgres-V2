@@ -16,6 +16,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { MapEmployeesDto } from './dto/map-employees.dto';
+import { BulkImportDepartmentsDto } from './dto/bulk-import-departments.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
 
@@ -79,6 +80,49 @@ export class DepartmentsService {
     }
 
     return department;
+  }
+
+  // Client-parsed Excel/CSV import — same Promise.allSettled per-row
+  // isolation as OrgListItemsService/DocumentRequirementsService's bulk
+  // imports. Reuses create() itself for each row rather than duplicating
+  // its duplicate-check/audit-log logic.
+  async bulkImport(
+    dto: BulkImportDepartmentsDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
+    const results = await Promise.allSettled(
+      dto.rows.map((row) => {
+        const name = row.name?.trim();
+        const code = row.code?.trim();
+        if (!name || !code) {
+          return Promise.reject(new Error('Row needs both a name and a code.'));
+        }
+        return this.create(
+          { name, code, description: row.description?.trim() },
+          organizationId,
+          actorId,
+        );
+      }),
+    );
+
+    const created: string[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+    results.forEach((result, idx) => {
+      if (result.status === 'fulfilled') {
+        created.push(result.value.name);
+      } else {
+        const reason =
+          result.reason instanceof ConflictException
+            ? 'A department with this name or code already exists.'
+            : result.reason instanceof Error
+              ? result.reason.message
+              : 'Failed to import row.';
+        skipped.push({ name: dto.rows[idx]?.name ?? '(unknown)', reason });
+      }
+    });
+
+    return { created, skipped };
   }
 
   async findAll(organizationId: string) {

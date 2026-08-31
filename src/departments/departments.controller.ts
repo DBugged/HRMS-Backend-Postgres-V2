@@ -18,6 +18,7 @@ import { CreateDepartmentDto } from './dto/create-department.dto';
 import { UpdateDepartmentDto } from './dto/update-department.dto';
 import { AssignDepartmentHeadDto } from './dto/assign-department-head.dto';
 import { MapEmployeesDto } from './dto/map-employees.dto';
+import { BulkImportDepartmentsDto } from './dto/bulk-import-departments.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -46,6 +47,20 @@ export class DepartmentsController {
   @Get()
   findAll(@CurrentUser() caller: Caller) {
     return this.departmentsService.findAll(caller.organizationId);
+  }
+
+  @Post('bulk-import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkImport(
+    @Body() dto: BulkImportDepartmentsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.departmentsService.bulkImport(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Patch(':id')
