@@ -50,8 +50,6 @@ import { HrEventsModule } from './hr-events/hr-events.module';
 import { EmailTemplatesModule } from './email-templates/email-templates.module';
 import { OrgListItemsModule } from './org-list-items/org-list-items.module';
 import { WorkSchedulesModule } from './work-schedules/work-schedules.module';
-import { ShiftsModule } from './shifts/shifts.module';
-import { WeeklyOffPatternsModule } from './weekly-off-patterns/weekly-off-patterns.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
@@ -123,8 +121,6 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     EmailTemplatesModule,
     OrgListItemsModule,
     WorkSchedulesModule,
-    ShiftsModule,
-    WeeklyOffPatternsModule,
   ],
   controllers: [AppController],
   providers: [

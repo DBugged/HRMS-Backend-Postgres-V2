@@ -60,8 +60,6 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EmailTemplate',
   'OrgListItem',
   'WorkSchedule',
-  'Shift',
-  'WeeklyOffPattern',
 ]);
 
 // Operations whose `where` accepts arbitrary filters (so organizationId
