@@ -18,7 +18,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { frontendUrl } from '../common/frontend-url';
 import { signFileToken, resolveIncomingFileValue, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
-import { validateOrgFields, validateIfsc } from './org-validators';
+import { validateOrgFields } from './org-validators';
 import { RedisCacheService } from '../common/redis-cache';
 import {
   previewDocumentNumber,
@@ -112,7 +112,6 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'assetMeta',
   ],
   signatory: ['signatories', 'sealUrl'],
-  banking: ['banking'],
   policies: ['policies'],
   attendancePayroll: ['orgPayrollAttendancePrefs'],
   documentNumbering: ['documentNumbering'],
@@ -186,7 +185,7 @@ export class OrganizationSettingsService {
     return { ...this.withSignedUrls(org), canEdit: actor.role === Role.ADMIN };
   }
 
-  // Deliberately never exposes registration/banking/contact data — safe to
+  // Deliberately never exposes registration/contact data — safe to
   // read by any authenticated user (used for in-app branding, e.g. logo in
   // the header), unlike the old system's stale "public" naming (it's
   // actually authenticated too, see org-validators research notes).
@@ -290,12 +289,6 @@ export class OrganizationSettingsService {
     if (section === 'registration' || section === 'contact') {
       const error = validateOrgFields(data);
       if (error) throw new BadRequestException(error);
-    }
-    if (section === 'banking') {
-      const banking = data.banking as { ifscCode?: string } | undefined;
-      if (banking?.ifscCode && !validateIfsc(banking.ifscCode)) {
-        throw new BadRequestException('ifscCode is not in a valid format.');
-      }
     }
     if (section === 'attendancePayroll' && data.orgPayrollAttendancePrefs) {
       // attendancePayrollPrefs (read by AttendanceService.

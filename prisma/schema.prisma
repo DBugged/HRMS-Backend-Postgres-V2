@@ -159,10 +159,7 @@ model Organization {
   signatories Json    @default("[]")
   sealUrl     String?
 
-  // Step 6 — Banking Details (optional)
-  banking Json @default("{\"bankName\":\"\",\"accountName\":\"\",\"accountNumber\":\"\",\"ifscCode\":\"\",\"branchName\":\"\"}")
-
-  // Step 7 — Company Policies
+  // Step 7 — General Settings
   policies Json @default("{\"financialYearStartMonth\":4,\"leaveYearStartMonth\":1,\"workingHoursStart\":\"09:00\",\"workingHoursEnd\":\"18:00\",\"timezone\":\"Asia/Kolkata\",\"currency\":\"INR\",\"currencySymbol\":\"₹\",\"dateFormat\":\"DD-MM-YYYY\",\"timeFormat\":\"24\",\"language\":\"English\",\"defaultProbationDays\":90,\"defaultNoticeDays\":30,\"defaultRetirementAge\":58}")
 
   // Step 8 — Payroll & Attendance Preferences (admin-facing, much broader

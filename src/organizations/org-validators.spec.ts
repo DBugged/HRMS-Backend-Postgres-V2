@@ -1,4 +1,4 @@
-import { validateOrgFields, validateIfsc } from './org-validators';
+import { validateOrgFields } from './org-validators';
 
 describe('validateOrgFields', () => {
   it('passes when all recognized fields are absent or empty', () => {
@@ -33,20 +33,5 @@ describe('validateOrgFields', () => {
 
   it('rejects a malformed pincode', () => {
     expect(validateOrgFields({ pincode: '123' })).toMatch(/pincode/);
-  });
-});
-
-describe('validateIfsc', () => {
-  it('accepts empty/absent values', () => {
-    expect(validateIfsc(undefined)).toBe(true);
-    expect(validateIfsc('')).toBe(true);
-  });
-
-  it('accepts a valid IFSC', () => {
-    expect(validateIfsc('HDFC0001234')).toBe(true);
-  });
-
-  it('rejects a malformed IFSC', () => {
-    expect(validateIfsc('not-ifsc')).toBe(false);
   });
 });

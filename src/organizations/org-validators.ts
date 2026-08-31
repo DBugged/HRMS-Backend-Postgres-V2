@@ -15,8 +15,6 @@ export const ORG_FIELD_PATTERNS: Record<string, RegExp> = {
   pincode: /^\d{6}$/,
 };
 
-export const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
-
 export function validateOrgFields(
   data: Record<string, unknown>,
 ): string | null {
@@ -27,8 +25,4 @@ export function validateOrgFields(
     }
   }
   return null;
-}
-
-export function validateIfsc(value: unknown): boolean {
-  return typeof value !== 'string' || !value.trim() || IFSC_PATTERN.test(value);
 }
