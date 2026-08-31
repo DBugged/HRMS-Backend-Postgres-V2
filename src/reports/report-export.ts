@@ -18,12 +18,26 @@ export function buildWorkbook(
   title: string,
   columns: ReportColumn[],
   rows: Record<string, unknown>[],
+  subtitle?: string,
 ): ExcelJS.Workbook {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(title);
   sheet.columns = columns;
   rows.forEach((row) => sheet.addRow(row));
   sheet.getRow(1).font = { bold: true };
+  if (subtitle) {
+    // Inserted above the (already-written) header row — insertRow shifts
+    // the header and every data row down by one, same as the old system's
+    // report exports carrying a "which establishment this belongs to" line.
+    // Deliberately NOT merged across columns — mergeCells is an Excel-only
+    // concept, and this same worksheet also backs the CSV export, whose
+    // writer repeats a merged cell's value into every column instead of
+    // leaving them blank. A single-cell first column reads fine in Excel
+    // too, just without the visual merge.
+    sheet.insertRow(1, [subtitle]);
+    sheet.getRow(1).font = { italic: true, bold: false };
+    sheet.getRow(2).font = { bold: true };
+  }
   return workbook;
 }
 
@@ -35,6 +49,7 @@ export function renderPdfTable(
   columns: ReportColumn[],
   rows: Record<string, unknown>[],
   filename: string,
+  subtitle?: string,
 ): void {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename=${filename}.pdf`);
@@ -43,6 +58,10 @@ export function renderPdfTable(
   doc.pipe(res);
 
   doc.fontSize(16).text(title, { align: 'center' });
+  if (subtitle) {
+    doc.fontSize(9).font('Helvetica-Oblique').text(subtitle, { align: 'center' });
+    doc.font('Helvetica');
+  }
   doc.moveDown(0.5);
 
   const pageWidth = doc.page.width - 60;
@@ -90,6 +109,7 @@ export function renderPdfTable(
 
 export interface SendReportInput {
   title: string;
+  subtitle?: string;
   columns: ReportColumn[];
   rows: Record<string, unknown>[];
   filename: string;
@@ -99,13 +119,13 @@ export interface SendReportInput {
 // Single entry point used by every report in this module.
 export async function sendReport(
   res: Response,
-  { title, columns, rows, filename, format }: SendReportInput,
+  { title, subtitle, columns, rows, filename, format }: SendReportInput,
 ): Promise<void> {
   if (format === 'pdf') {
-    renderPdfTable(res, title, columns, rows, filename);
+    renderPdfTable(res, title, columns, rows, filename, subtitle);
     return;
   }
-  const workbook = buildWorkbook(title, columns, rows);
+  const workbook = buildWorkbook(title, columns, rows, subtitle);
   if (format === 'csv') {
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader(

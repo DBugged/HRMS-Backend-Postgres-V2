@@ -234,6 +234,25 @@ export class PayrollReportsService {
     };
   }
 
+  // These reports are meant to be handed to (or filed with) the
+  // corresponding government body — without the org's own establishment/
+  // registration number printed on them, there's nothing tying the report
+  // to a specific employer. Returns undefined (no subtitle line at all)
+  // when the org hasn't filled that field in yet, rather than printing a
+  // misleading "Not set".
+  private async registrationSubtitle(
+    organizationId: string,
+    label: string,
+    field: 'epfoEstablishmentCode' | 'esicEmployerCode' | 'ptRegistrationNumber' | 'tan' | 'pan',
+  ): Promise<string | undefined> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { [field]: true },
+    });
+    const value = (org as Record<string, string | null> | null)?.[field];
+    return value ? `${label}: ${value}` : undefined;
+  }
+
   // Shared shape for PF / ESI / PT — each just filters on a different
   // deduction/employer-contribution code pair, including only runs that
   // actually carry that line (same reasoning as incomeTaxReport).
@@ -244,6 +263,7 @@ export class PayrollReportsService {
     employerCode: string | null,
     title: string,
     filename: string,
+    subtitle?: string,
   ): Promise<ReportPayload> {
     const runs = await this.fetchRuns(query, organizationId);
     const rows = runs
@@ -280,10 +300,10 @@ export class PayrollReportsService {
       },
     ];
 
-    return { title, columns, rows, filename };
+    return { title, subtitle, columns, rows, filename };
   }
 
-  pfReport(query: PayrollReportQueryDto, organizationId: string) {
+  async pfReport(query: PayrollReportQueryDto, organizationId: string) {
     return this.statutoryContributionReport(
       query,
       organizationId,
@@ -291,10 +311,11 @@ export class PayrollReportsService {
       SALARY_COMPONENT_CODES.PF_EMPLOYER,
       'PF Report',
       'pf_report',
+      await this.registrationSubtitle(organizationId, 'EPFO Establishment Code', 'epfoEstablishmentCode'),
     );
   }
 
-  esiReport(query: PayrollReportQueryDto, organizationId: string) {
+  async esiReport(query: PayrollReportQueryDto, organizationId: string) {
     return this.statutoryContributionReport(
       query,
       organizationId,
@@ -302,10 +323,11 @@ export class PayrollReportsService {
       SALARY_COMPONENT_CODES.ESI_EMPLOYER,
       'ESI Report',
       'esi_report',
+      await this.registrationSubtitle(organizationId, 'ESIC Employer Code', 'esicEmployerCode'),
     );
   }
 
-  ptReport(query: PayrollReportQueryDto, organizationId: string) {
+  async ptReport(query: PayrollReportQueryDto, organizationId: string) {
     return this.statutoryContributionReport(
       query,
       organizationId,
@@ -313,6 +335,7 @@ export class PayrollReportsService {
       null,
       'Professional Tax Report',
       'pt_report',
+      await this.registrationSubtitle(organizationId, 'PT Registration Number', 'ptRegistrationNumber'),
     );
   }
 
@@ -428,15 +451,29 @@ export class PayrollReportsService {
     query: Form16ReportQueryDto,
     organizationId: string,
   ): Promise<ReportPayload> {
-    const runs = await this.scopedPrisma.payrollRun.findMany({
-      where: {
-        organizationId,
-        financialYear: query.financialYear,
-        isFinalSettlement: false,
-        status: { in: PAID_OUT_STATUSES },
-      },
-      include: { employee: { select: { name: true, employeeId: true } } },
-    });
+    // Form 16 requires the deductor's TAN and PAN printed alongside the
+    // figures — without them there's no way to verify which employer
+    // deducted the tax being summarized here.
+    const [runs, deductor] = await Promise.all([
+      this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          financialYear: query.financialYear,
+          isFinalSettlement: false,
+          status: { in: PAID_OUT_STATUSES },
+        },
+        include: { employee: { select: { name: true, employeeId: true } } },
+      }),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { tan: true, pan: true },
+      }),
+    ]);
+    const deductorBits = [
+      deductor?.tan && `Deductor TAN: ${deductor.tan}`,
+      deductor?.pan && `Deductor PAN: ${deductor.pan}`,
+    ].filter(Boolean);
+    const subtitle = deductorBits.length > 0 ? deductorBits.join('  |  ') : undefined;
 
     const byEmployee = new Map<
       string,
@@ -482,6 +519,7 @@ export class PayrollReportsService {
 
     return {
       title: `Form 16 Summary — FY ${query.financialYear}`,
+      subtitle,
       columns,
       rows,
       filename: 'form16_summary',

@@ -31,6 +31,14 @@ type Actor = Omit<User, 'password'>;
 
 export interface ReportPayload {
   title: string;
+  // Printed under the title (Excel: a merged row above the column
+  // headers; PDF: a line under the title). Used by the statutory
+  // compliance reports (PF/ESI/PT/Form 16) to carry the org's own
+  // establishment/employer/registration number — the government needs to
+  // know which establishment a filing belongs to, so these can't just be
+  // a bare table of employee rows. Omitted entirely for reports that
+  // don't need it.
+  subtitle?: string;
   columns: ReportColumn[];
   rows: Record<string, unknown>[];
   filename: string;
