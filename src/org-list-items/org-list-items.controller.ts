@@ -9,6 +9,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -17,6 +18,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { OrgListType, Role, User } from '@prisma/client';
 import { OrgListItemsService } from './org-list-items.service';
 import { CreateOrgListItemDto } from './dto/create-org-list-item.dto';
+import { UpdateOrgListItemDto } from './dto/update-org-list-item.dto';
 import { BulkImportOrgListItemsDto } from './dto/bulk-import-org-list-items.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -40,6 +42,17 @@ export class OrgListItemsController {
   @UseGuards(RolesGuard)
   create(@Body() dto: CreateOrgListItemDto, @CurrentUser() caller: Caller) {
     return this.orgListItemsService.create(dto, caller.organizationId, caller);
+  }
+
+  @Patch(':id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  update(
+    @Param('id') id: string,
+    @Body() dto: UpdateOrgListItemDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.orgListItemsService.update(id, dto.name, caller.organizationId, caller);
   }
 
   @Delete(':id')

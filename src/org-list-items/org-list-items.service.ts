@@ -48,6 +48,38 @@ export class OrgListItemsService {
     return item;
   }
 
+  async update(
+    id: string,
+    name: string,
+    organizationId: string,
+    actor: Actor,
+  ) {
+    const item = await this.scopedPrisma.orgListItem.findFirst({
+      where: { id, organizationId },
+    });
+    if (!item) throw new NotFoundException('List item not found.');
+
+    const trimmed = name.trim();
+    // updateMany (not update) — its `where` accepts arbitrary filters, so
+    // it can be organizationId-scoped directly, matching the same
+    // tenant-scope pattern DepartmentsService.update() uses.
+    await this.scopedPrisma.orgListItem.updateMany({
+      where: { id, organizationId },
+      data: { name: trimmed },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'ORG_LIST_ITEM_UPDATED',
+      module: AuditModule.ORGANIZATION,
+      organizationId,
+      targetId: id,
+      details: { type: item.type, from: item.name, to: trimmed },
+    });
+
+    return this.scopedPrisma.orgListItem.findFirst({ where: { id, organizationId } });
+  }
+
   async delete(id: string, organizationId: string, actor: Actor) {
     const item = await this.scopedPrisma.orgListItem.findFirst({
       where: { id, organizationId },
