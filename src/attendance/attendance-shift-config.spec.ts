@@ -95,6 +95,27 @@ describe('isWeeklyOff', () => {
     expect(isWeeklyOff('2026-08-16', [0, 6])).toBe(true); // Sunday
     expect(isWeeklyOff('2026-08-22', [0, 6])).toBe(true); // Saturday
   });
+
+  // August 2026 Saturdays: 1st (1st), 8th (2nd), 15th (3rd), 22nd (4th),
+  // 29th (5th) — same weekday for all five, only the occurrence differs.
+  it('treats 2nd/4th Saturday as off and 1st/3rd/5th as worked', () => {
+    const sundayOffAlternateSaturdays = [0, { day: 6, occurrences: [2, 4] }];
+    expect(isWeeklyOff('2026-08-01', sundayOffAlternateSaturdays)).toBe(false); // 1st Sat
+    expect(isWeeklyOff('2026-08-08', sundayOffAlternateSaturdays)).toBe(true); // 2nd Sat
+    expect(isWeeklyOff('2026-08-15', sundayOffAlternateSaturdays)).toBe(false); // 3rd Sat
+    expect(isWeeklyOff('2026-08-22', sundayOffAlternateSaturdays)).toBe(true); // 4th Sat
+    expect(isWeeklyOff('2026-08-29', sundayOffAlternateSaturdays)).toBe(false); // 5th Sat
+    expect(isWeeklyOff('2026-08-16', sundayOffAlternateSaturdays)).toBe(true); // Sunday still off every week
+  });
+
+  it('treats 1st/3rd/5th Saturday as off and 2nd/4th as worked', () => {
+    const alt = [{ day: 6, occurrences: [1, 3, 5] }];
+    expect(isWeeklyOff('2026-08-01', alt)).toBe(true); // 1st Sat
+    expect(isWeeklyOff('2026-08-08', alt)).toBe(false); // 2nd Sat
+    expect(isWeeklyOff('2026-08-15', alt)).toBe(true); // 3rd Sat
+    expect(isWeeklyOff('2026-08-22', alt)).toBe(false); // 4th Sat
+    expect(isWeeklyOff('2026-08-29', alt)).toBe(true); // 5th Sat
+  });
 });
 
 describe('enumerateDateStrings', () => {

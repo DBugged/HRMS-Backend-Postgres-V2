@@ -635,10 +635,16 @@ model WorkSchedule {
 
   startTime String
   endTime   String
-  // Not currently propagated anywhere — Department has no break-time field
-  // for AttendanceService to read, so this is definitional/display-only
-  // until (if) that's added.
   breakMinutes Int @default(60)
+
+  // Days in this list are excluded from workingDays' plain "off every
+  // week" treatment and instead off only on the given occurrence(s) of the
+  // month — e.g. [{"day":6,"occurrences":[2,4]}] = 2nd/4th Saturday off,
+  // 1st/3rd/5th worked. Empty by default (every non-working day is off
+  // every week, the original behavior). Shape matches
+  // attendance-shift-config.ts's WeeklyOffEntry (object form only — a day
+  // here is never also in workingDays; see WorkSchedulesService.assign).
+  alternateWeeklyOffs Json @default("[]")
 
   isActive Boolean @default(true)
 

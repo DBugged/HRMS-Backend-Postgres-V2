@@ -1,23 +1,54 @@
 // Purpose: Named shift templates (Organization Structure > Work Configuration > Work Schedules) and
 //   assigning one to a set of departments.
-// Responsibilities: CRUD for WorkSchedule; assign() copies startTime/endTime/workingDays/breakMinutes
-//   onto each selected department's own shiftStartTime/shiftEndTime/weeklyOffs/breakMinutes (what
-//   AttendanceService actually reads — see attendance-shift-config.ts) and sets Department.workScheduleId
-//   for traceability, replace semantics (exact target set).
+// Responsibilities: CRUD for WorkSchedule; assign() copies startTime/endTime/workingDays/
+//   alternateWeeklyOffs/breakMinutes onto each selected department's own shiftStartTime/shiftEndTime/
+//   weeklyOffs/breakMinutes (what AttendanceService actually reads — see attendance-shift-config.ts) and
+//   sets Department.workScheduleId for traceability, replace semantics (exact target set).
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditModule } from '@prisma/client';
+import { AuditModule, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { CreateWorkScheduleDto } from './dto/create-work-schedule.dto';
+import type { WeeklyOffEntry } from '../attendance/attendance-shift-config';
+import {
+  CreateWorkScheduleDto,
+  AlternateWeeklyOffDto,
+} from './dto/create-work-schedule.dto';
 import { UpdateWorkScheduleDto } from './dto/update-work-schedule.dto';
 import { AssignWorkScheduleDto } from './dto/assign-work-schedule.dto';
 import { wrapAll } from '../common/pagination';
 
 type Actor = { id: string };
 
-const WEEKLY_OFFS_FROM_WORKING_DAYS = (workingDays: number[]): number[] =>
-  [0, 1, 2, 3, 4, 5, 6].filter((day) => !workingDays.includes(day));
+// A day off every week (not in workingDays, and not one of the alternate
+// days) is a plain number entry; an alternate day becomes the richer
+// { day, occurrences } entry instead of "off every week" — see
+// attendance-shift-config.ts's WeeklyOffEntry.
+function computeWeeklyOffs(
+  workingDays: number[],
+  alternateWeeklyOffs: AlternateWeeklyOffDto[],
+): WeeklyOffEntry[] {
+  const alternateDays = new Set(alternateWeeklyOffs.map((a) => a.day));
+  const plainOffs = [0, 1, 2, 3, 4, 5, 6].filter(
+    (day) => !workingDays.includes(day) && !alternateDays.has(day),
+  );
+  return [...plainOffs, ...alternateWeeklyOffs];
+}
+
+// A day can't simultaneously be "always worked" (in workingDays) and
+// "alternately off" (in alternateWeeklyOffs) — that's a direct
+// contradiction, so reject it rather than silently picking a winner.
+function validateNoOverlap(
+  workingDays: number[],
+  alternateWeeklyOffs: AlternateWeeklyOffDto[],
+) {
+  const overlap = alternateWeeklyOffs.find((a) => workingDays.includes(a.day));
+  if (overlap) {
+    throw new BadRequestException(
+      `Day ${overlap.day} can't be both a working day and an alternate off day.`,
+    );
+  }
+}
 
 @Injectable()
 export class WorkSchedulesService {
@@ -46,6 +77,9 @@ export class WorkSchedulesService {
   }
 
   async create(dto: CreateWorkScheduleDto, organizationId: string, actor: Actor) {
+    const alternateWeeklyOffs = dto.alternateWeeklyOffs ?? [];
+    validateNoOverlap(dto.workingDays, alternateWeeklyOffs);
+
     const schedule = await this.scopedPrisma.workSchedule.create({
       data: {
         organizationId,
@@ -54,6 +88,7 @@ export class WorkSchedulesService {
         startTime: dto.startTime,
         endTime: dto.endTime,
         breakMinutes: dto.breakMinutes ?? 60,
+        alternateWeeklyOffs: alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
         isActive: dto.isActive ?? true,
       },
     });
@@ -76,7 +111,18 @@ export class WorkSchedulesService {
     organizationId: string,
     actor: Actor,
   ) {
-    await this.findOrThrow(id, organizationId);
+    const existing = await this.findOrThrow(id, organizationId);
+
+    // Validate against the *final* merged shape (existing fields the
+    // caller didn't touch, layered under whatever they did send) — a
+    // partial update that only changes workingDays still needs to be
+    // checked against the schedule's current alternateWeeklyOffs, and
+    // vice versa.
+    const workingDays = dto.workingDays ?? (existing.workingDays as number[]);
+    const alternateWeeklyOffs =
+      dto.alternateWeeklyOffs ??
+      (existing.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[]);
+    validateNoOverlap(workingDays, alternateWeeklyOffs);
 
     await this.scopedPrisma.workSchedule.updateMany({
       where: { id, organizationId },
@@ -86,18 +132,22 @@ export class WorkSchedulesService {
         ...(dto.startTime !== undefined && { startTime: dto.startTime }),
         ...(dto.endTime !== undefined && { endTime: dto.endTime }),
         ...(dto.breakMinutes !== undefined && { breakMinutes: dto.breakMinutes }),
+        ...(dto.alternateWeeklyOffs !== undefined && {
+          alternateWeeklyOffs: dto.alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
+        }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },
     });
 
     // Departments already assigned this schedule keep following it — if
-    // the shift times/working days changed, re-propagate so they don't
-    // silently drift from what the schedule now says.
+    // the shift times/working days/alternate pattern changed, re-propagate
+    // so they don't silently drift from what the schedule now says.
     const updated = await this.findOrThrow(id, organizationId);
     if (
       dto.startTime !== undefined ||
       dto.endTime !== undefined ||
       dto.workingDays !== undefined ||
+      dto.alternateWeeklyOffs !== undefined ||
       dto.breakMinutes !== undefined
     ) {
       await this.scopedPrisma.department.updateMany({
@@ -105,7 +155,10 @@ export class WorkSchedulesService {
         data: {
           shiftStartTime: updated.startTime,
           shiftEndTime: updated.endTime,
-          weeklyOffs: WEEKLY_OFFS_FROM_WORKING_DAYS(updated.workingDays as number[]),
+          weeklyOffs: computeWeeklyOffs(
+            updated.workingDays as number[],
+            updated.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[],
+          ) as unknown as Prisma.InputJsonValue,
           breakMinutes: updated.breakMinutes,
         },
       });
@@ -167,7 +220,10 @@ export class WorkSchedulesService {
       }
     }
 
-    const weeklyOffs = WEEKLY_OFFS_FROM_WORKING_DAYS(schedule.workingDays as number[]);
+    const weeklyOffs = computeWeeklyOffs(
+      schedule.workingDays as number[],
+      schedule.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[],
+    );
 
     // Replace semantics: unassign every department currently on this
     // schedule that isn't in the new list, then assign (+ propagate shift
@@ -189,7 +245,7 @@ export class WorkSchedulesService {
           workScheduleId: id,
           shiftStartTime: schedule.startTime,
           shiftEndTime: schedule.endTime,
-          weeklyOffs,
+          weeklyOffs: weeklyOffs as unknown as Prisma.InputJsonValue,
           breakMinutes: schedule.breakMinutes,
         },
       });
