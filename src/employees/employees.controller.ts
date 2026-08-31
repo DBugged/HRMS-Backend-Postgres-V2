@@ -73,6 +73,24 @@ export class EmployeesController {
     return this.employeesService.findAll(query, caller, caller.organizationId);
   }
 
+  // Org-wide variants — must come before the :id routes below, or Nest
+  // would match "assets"/"role-history" as an :id value instead.
+  @Get('assets')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  listAllAssets(@CurrentUser() caller: Caller) {
+    return this.employeeProfileService.listAllAssets(caller.organizationId);
+  }
+
+  @Get('role-history')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  listAllRoleHistory(@CurrentUser() caller: Caller) {
+    return this.employeeProfileService.listAllRoleHistory(
+      caller.organizationId,
+    );
+  }
+
   @Get(':id')
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)

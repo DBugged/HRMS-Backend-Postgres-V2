@@ -174,6 +174,22 @@ export class EmployeeProfileService {
     });
   }
 
+  // Org-wide variant of getRoleHistory — backs the standalone Employee
+  // History screen (Employees > Employee History), which browses every
+  // employee's role/designation/department changes in one place rather
+  // than one profile at a time.
+  async listAllRoleHistory(organizationId: string) {
+    return this.scopedPrisma.employeeRoleHistory.findMany({
+      where: { organizationId },
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+        changedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { changedAt: 'desc' },
+      take: 500,
+    });
+  }
+
   async probationDecision(
     id: string,
     dto: ProbationDecisionDto,
@@ -335,6 +351,20 @@ export class EmployeeProfileService {
     return this.scopedPrisma.employeeAsset.findMany({
       where: { organizationId, employeeId: id, isActive: true },
       orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  // Org-wide variant of listAssets — backs the standalone Employee Assets
+  // screen (Employees > Employee Assets), which browses every employee's
+  // allocated assets in one place rather than one profile at a time.
+  async listAllAssets(organizationId: string) {
+    return this.scopedPrisma.employeeAsset.findMany({
+      where: { organizationId, isActive: true },
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 500,
     });
   }
 
