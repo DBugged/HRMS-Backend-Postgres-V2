@@ -1,14 +1,16 @@
 // Purpose: Exposes attendance/leave/payroll/employee/department/headcount/attrition reports as file exports.
 // Responsibilities: Validates each query DTO and delegates report generation/export to ReportsService.
 // Important: Base gate is ADMIN/HR/MANAGER, but payroll/employee/department/headcount/attrition routes further restrict to ADMIN/HR.
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { ReportsService } from './reports.service';
 import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
-import { sendReport } from './report-export';
+import { sendReportBranded } from './report-branding';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import {
   AttendanceReportQueryDto,
   DepartmentLeaveSummaryReportQueryDto,
@@ -38,7 +40,10 @@ type Caller = Omit<User, 'password'>;
 // full history — a much tighter cap than the 100/min global default.
 @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
 export class ReportsController {
-  constructor(private readonly reportsService: ReportsService) {}
+  constructor(
+    private readonly reportsService: ReportsService,
+    @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+  ) {}
 
   @Get('attendance')
   async attendance(
@@ -51,7 +56,7 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('leave')
@@ -65,7 +70,7 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('leave/balance')
@@ -79,7 +84,7 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('leave/employee-history')
@@ -93,7 +98,7 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('leave/department-summary')
@@ -107,7 +112,7 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('payroll')
@@ -122,7 +127,7 @@ export class ReportsController {
       query,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('employees')
@@ -136,7 +141,7 @@ export class ReportsController {
     const report = await this.reportsService.employeeReport(
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format });
   }
 
   @Get('departments')
@@ -150,7 +155,7 @@ export class ReportsController {
     const report = await this.reportsService.departmentReport(
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format });
   }
 
   @Get('headcount-trend')
@@ -165,7 +170,7 @@ export class ReportsController {
       query,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 
   @Get('attrition')
@@ -180,6 +185,6 @@ export class ReportsController {
       query,
       caller.organizationId,
     );
-    await sendReport(res, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
   }
 }

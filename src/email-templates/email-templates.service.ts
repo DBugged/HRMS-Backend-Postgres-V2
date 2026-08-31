@@ -25,6 +25,7 @@ import { SendEmailTemplateDto } from './dto/send-email-template.dto';
 import { EMAIL_TEMPLATE_DEFAULTS } from './email-template-defaults';
 import { renderTemplate } from './render-template';
 import { wrapAll } from '../common/pagination';
+import { companyLogoImgTag } from './company-logo';
 
 type Actor = { id: string };
 
@@ -260,6 +261,7 @@ export class EmailTemplatesService {
           website: true,
           contactEmail: true,
           registeredAddress: true,
+          emailLogoUrl: true,
         },
       }),
       this.scopedPrisma.user.findMany({
@@ -279,6 +281,7 @@ export class EmailTemplatesService {
       companyWebsite: organization?.website ?? '',
       companyEmail: organization?.contactEmail ?? '',
       companyAddress: organization?.registeredAddress ?? '',
+      companyLogo: companyLogoImgTag(organizationId, organization?.emailLogoUrl),
     };
     const cc = ccEmployees.map((e) => e.email);
 

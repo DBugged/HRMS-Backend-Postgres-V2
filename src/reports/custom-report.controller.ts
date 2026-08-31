@@ -1,7 +1,7 @@
 // Purpose: Exposes the ad-hoc/custom report builder — listing available data sources and running a report to JSON or file export.
 // Responsibilities: Validates the query DTO, branches JSON vs. file response, and delegates all query logic to CustomReportService.
 // Important: Entire controller is gated to ADMIN/HR/MANAGER and throttled as an expensive operation.
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -9,7 +9,9 @@ import { Role, User } from '@prisma/client';
 import { CustomReportService } from './custom-report.service';
 import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 import { CustomReportQueryDto } from './dto/custom-report-query.dto';
-import { sendReport } from './report-export';
+import { sendReportBranded } from './report-branding';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -26,7 +28,10 @@ type Caller = Omit<User, 'password'>;
 @UseGuards(RolesGuard)
 @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
 export class CustomReportController {
-  constructor(private readonly customReportService: CustomReportService) {}
+  constructor(
+    private readonly customReportService: CustomReportService,
+    @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+  ) {}
 
   @Get('sources')
   getSources() {
@@ -53,7 +58,7 @@ export class CustomReportController {
       });
       return;
     }
-    await sendReport(res, {
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
       title: report.title,
       columns: report.exportColumns,
       rows: report.rows,

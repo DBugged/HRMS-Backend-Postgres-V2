@@ -9,7 +9,7 @@ import { Role, User } from '@prisma/client';
 import { EmployeeTimelineService } from './employee-timeline.service';
 import { QueryTimelineDto } from './dto/query-timeline.dto';
 import { TIMELINE_CATEGORIES } from './timeline-events';
-import { sendReport } from '../reports/report-export';
+import { sendReportBranded } from '../reports/report-branding';
 import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -63,7 +63,7 @@ export class EmployeeTimelineController {
       this.timelineService.fetchForExport(id, query, caller, caller.organizationId),
       resolveOrgDateTimeFormat(this.scopedPrisma, caller.organizationId),
     ]);
-    await sendReport(res, {
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
       title: 'Employee Timeline',
       columns: [
         { header: 'Date & Time', key: 'occurredAt', width: 22 },
@@ -102,7 +102,7 @@ export class EmployeeTimelineController {
       this.timelineService.fetchForExport(id, query, caller, caller.organizationId),
       resolveOrgDateTimeFormat(this.scopedPrisma, caller.organizationId),
     ]);
-    await sendReport(res, {
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
       title: `Employee Timeline — ${employee.name} (${employee.employeeId})`,
       columns: [
         { header: 'Date & Time', key: 'occurredAt', width: 22 },

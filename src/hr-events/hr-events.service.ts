@@ -14,6 +14,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { companyLogoImgTag } from '../email-templates/company-logo';
 
 // joiningDate/dateOfBirth are entered as plain calendar dates (no
 // meaningful time-of-day) and stored/read as UTC-anchored values
@@ -91,6 +92,7 @@ export class HrEventsService {
         website: true,
         contactEmail: true,
         registeredAddress: true,
+        emailLogoUrl: true,
       },
     });
 
@@ -154,12 +156,14 @@ export class HrEventsService {
   }
 
   private orgVariables(
+    organizationId: string,
     organization: {
       companyName: string | null;
       phone: string | null;
       website: string | null;
       contactEmail: string | null;
       registeredAddress: string | null;
+      emailLogoUrl: string | null;
     } | null,
   ): Record<string, string> {
     return {
@@ -168,6 +172,7 @@ export class HrEventsService {
       companyWebsite: organization?.website ?? '',
       companyEmail: organization?.contactEmail ?? '',
       companyAddress: organization?.registeredAddress ?? '',
+      companyLogo: companyLogoImgTag(organizationId, organization?.emailLogoUrl),
     };
   }
 
@@ -180,6 +185,7 @@ export class HrEventsService {
       website: string | null;
       contactEmail: string | null;
       registeredAddress: string | null;
+      emailLogoUrl: string | null;
     } | null,
     activeEmails: string[],
   ) {
@@ -195,7 +201,7 @@ export class HrEventsService {
 
     const variables = {
       employeeName: employee.name,
-      ...this.orgVariables(organization),
+      ...this.orgVariables(organizationId, organization),
     };
     const { subject, html, ccAllActive } = await this.renderOccasionEmail(
       organizationId,
@@ -224,6 +230,7 @@ export class HrEventsService {
       website: string | null;
       contactEmail: string | null;
       registeredAddress: string | null;
+      emailLogoUrl: string | null;
     } | null,
     activeEmails: string[],
   ) {
@@ -240,7 +247,7 @@ export class HrEventsService {
     const variables = {
       employeeName: employee.name,
       years: `${years}${ORDINAL_SUFFIX(years)}`,
-      ...this.orgVariables(organization),
+      ...this.orgVariables(organizationId, organization),
     };
     const { subject, html, ccAllActive } = await this.renderOccasionEmail(
       organizationId,
