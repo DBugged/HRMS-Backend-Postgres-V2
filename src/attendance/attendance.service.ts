@@ -56,6 +56,7 @@ import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { formatDateDisplay } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 // Either the plain scoped client or a $transaction callback's tx client —
@@ -322,8 +323,9 @@ export class AttendanceService {
     isLate: boolean,
     organizationId: string,
   ) {
+    const displayDate = formatDateDisplay(dateStr);
     if (status === AttendanceStatus.ABSENT) {
-      const title = `Marked Absent — ${dateStr}`;
+      const title = `Marked Absent — ${displayDate}`;
       const alreadyNotified = await this.scopedPrisma.notification.findFirst({
         where: { organizationId, userId: employeeId, title },
       });
@@ -332,7 +334,7 @@ export class AttendanceService {
           organizationId,
           userId: employeeId,
           title,
-          message: `You were marked absent for ${dateStr}. Contact HR if this looks wrong.`,
+          message: `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`,
           category: NotificationCategory.ATTENDANCE,
         });
       }
@@ -345,14 +347,14 @@ export class AttendanceService {
         await this.emailService.send({
           to: employee.email,
           subject: title,
-          html: `You were marked absent for ${dateStr}. Contact HR if this looks wrong.`,
+          html: `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`,
         });
       }
       return;
     }
 
     if (isLate) {
-      const title = `Marked Late — ${dateStr}`;
+      const title = `Marked Late — ${displayDate}`;
       const alreadyNotified = await this.scopedPrisma.notification.findFirst({
         where: { organizationId, userId: employeeId, title },
       });
@@ -361,7 +363,7 @@ export class AttendanceService {
           organizationId,
           userId: employeeId,
           title,
-          message: `You were marked late for ${dateStr}.`,
+          message: `You were marked late for ${displayDate}.`,
           category: NotificationCategory.ATTENDANCE,
         });
       }
@@ -584,7 +586,7 @@ export class AttendanceService {
         employeeId: actor.id,
         eventKey: 'WFH_REQUESTED',
         performedById: actor.id,
-        description: `Requested Work From Home for ${dateStr}.`,
+        description: `Requested Work From Home for ${formatDateDisplay(dateStr)}.`,
       });
       await this.notifyWfhRequested(actor, dateStr, organizationId);
     }
@@ -609,7 +611,7 @@ export class AttendanceService {
       organizationId,
       userId: actor.reportingManagerId,
       title: 'Work From Home Requested',
-      message: `${actor.name} requested Work From Home for ${date}, pending your approval.`,
+      message: `${actor.name} requested Work From Home for ${formatDateDisplay(date)}, pending your approval.`,
       category: NotificationCategory.ATTENDANCE,
     });
   }
@@ -704,7 +706,7 @@ export class AttendanceService {
     });
 
     const title = `Work From Home Request ${dto.decision}`;
-    const message = `Your Work From Home request for ${row.date} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+    const message = `Your Work From Home request for ${formatDateDisplay(row.date)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
     await this.notificationsService.create({
       organizationId,
       userId: row.employeeId,
@@ -1008,7 +1010,7 @@ export class AttendanceService {
       organizationId,
       userId: actor.reportingManagerId,
       title: 'Attendance Regularization Requested',
-      message: `${actor.name} requested attendance regularization for ${date}.`,
+      message: `${actor.name} requested attendance regularization for ${formatDateDisplay(date)}.`,
       category: NotificationCategory.REGULARIZATION,
     });
   }
@@ -1089,7 +1091,7 @@ export class AttendanceService {
     });
     if (employee) {
       const title = `Regularization Request ${dto.decision}`;
-      const message = `Your attendance regularization request for ${row.date} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+      const message = `Your attendance regularization request for ${formatDateDisplay(row.date)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,

@@ -47,6 +47,7 @@ import { ApprovalDelegationService } from '../approval-delegation/approval-deleg
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { formatDateDisplay } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -473,7 +474,7 @@ export class LeavesService {
         organizationId,
         userId: u.id,
         title: 'Leave Application Pending Final Approval',
-        message: `A leave request (${leave.startDate} to ${leave.endDate}) has been level-1 approved and needs your final decision.`,
+        message: `A leave request (${formatDateDisplay(leave.startDate)} to ${formatDateDisplay(leave.endDate)}) has been level-1 approved and needs your final decision.`,
         category: NotificationCategory.LEAVE,
       })),
     );
@@ -490,7 +491,7 @@ export class LeavesService {
     if (!employee) return;
 
     const title = `Leave Request ${dto.decision}`;
-    const message = `Your leave request from ${leave.startDate} to ${leave.endDate} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+    const message = `Your leave request from ${formatDateDisplay(leave.startDate)} to ${formatDateDisplay(leave.endDate)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
 
     await this.notificationsService.create({
       organizationId,
@@ -747,7 +748,7 @@ export class LeavesService {
     organizationId: string,
   ) {
     const title = 'New Leave Application';
-    const message = `${actor.name} applied for leave from ${leave.startDate} to ${leave.endDate}.`;
+    const message = `${actor.name} applied for leave from ${formatDateDisplay(leave.startDate)} to ${formatDateDisplay(leave.endDate)}.`;
 
     if (actor.reportingManagerId && actor.reportingManagerId !== actor.id) {
       await this.notificationsService.create({

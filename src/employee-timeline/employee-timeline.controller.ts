@@ -14,6 +14,7 @@ import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
+import { formatDateTimeDisplay } from '../payroll/format-date';
 
 type Caller = Omit<User, 'password'>;
 
@@ -71,7 +72,7 @@ export class EmployeeTimelineController {
         { header: 'Remarks', key: 'remarks', width: 30 },
       ],
       rows: events.map((e) => ({
-        occurredAt: e.occurredAt.toLocaleString(),
+        occurredAt: formatDateTimeDisplay(e.occurredAt),
         category: e.category,
         title: e.title,
         description: e.description ?? '',
@@ -112,7 +113,7 @@ export class EmployeeTimelineController {
         { header: 'Remarks', key: 'remarks', width: 30 },
       ],
       rows: events.map((e) => ({
-        occurredAt: e.occurredAt.toLocaleString(),
+        occurredAt: formatDateTimeDisplay(e.occurredAt),
         category: e.category,
         title: e.title,
         description: e.description ?? '',
