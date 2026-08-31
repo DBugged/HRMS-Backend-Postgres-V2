@@ -13,6 +13,10 @@ export interface ShiftConfig {
   minHoursForPresent: number;
   minHoursForHalfDay: number;
   weeklyOffs: number[];
+  // Subtracted from punch-in-to-punch-out duration before comparing
+  // against minHoursForPresent/minHoursForHalfDay — an unpaid lunch break
+  // doesn't count as working time. 0 (the schema default) is a no-op.
+  breakMinutes: number;
 }
 
 // Subset of Department's shift-config columns (all present with schema
@@ -27,6 +31,7 @@ export interface DepartmentShiftFields {
   minHoursForPresent: number;
   minHoursForHalfDay: number;
   weeklyOffs: unknown;
+  breakMinutes: number;
 }
 
 export interface OrganizationAttendancePrefs {
@@ -37,6 +42,7 @@ export interface OrganizationAttendancePrefs {
   defaultMinHoursForPresent?: number;
   defaultMinHoursForHalfDay?: number;
   weekendDays?: number[];
+  defaultBreakMinutes?: number;
 }
 
 const HARDCODED_FALLBACK: ShiftConfig = {
@@ -47,6 +53,7 @@ const HARDCODED_FALLBACK: ShiftConfig = {
   minHoursForPresent: 8,
   minHoursForHalfDay: 4,
   weeklyOffs: [0],
+  breakMinutes: 0,
 };
 
 function asIntArray(value: unknown, fallback: number[]): number[] {
@@ -75,6 +82,7 @@ export function resolveShiftConfig(
         department.weeklyOffs,
         HARDCODED_FALLBACK.weeklyOffs,
       ),
+      breakMinutes: department.breakMinutes,
     };
   }
 
@@ -99,6 +107,7 @@ export function resolveShiftConfig(
       orgPrefs?.weekendDays,
       HARDCODED_FALLBACK.weeklyOffs,
     ),
+    breakMinutes: orgPrefs?.defaultBreakMinutes ?? HARDCODED_FALLBACK.breakMinutes,
   };
 }
 

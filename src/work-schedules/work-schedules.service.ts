@@ -1,10 +1,9 @@
 // Purpose: Named shift templates (Organization Structure > Work Configuration > Work Schedules) and
 //   assigning one to a set of departments.
-// Responsibilities: CRUD for WorkSchedule; assign() copies startTime/endTime/workingDays onto each
-//   selected department's own shiftStartTime/shiftEndTime/weeklyOffs (what AttendanceService actually
-//   reads) and sets Department.workScheduleId for traceability, replace semantics (exact target set).
-// Important: breakMinutes is definitional/display-only — Department has no break-time field for
-//   AttendanceService to read yet, so it's never propagated on assign.
+// Responsibilities: CRUD for WorkSchedule; assign() copies startTime/endTime/workingDays/breakMinutes
+//   onto each selected department's own shiftStartTime/shiftEndTime/weeklyOffs/breakMinutes (what
+//   AttendanceService actually reads — see attendance-shift-config.ts) and sets Department.workScheduleId
+//   for traceability, replace semantics (exact target set).
 import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { AuditModule } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -98,7 +97,8 @@ export class WorkSchedulesService {
     if (
       dto.startTime !== undefined ||
       dto.endTime !== undefined ||
-      dto.workingDays !== undefined
+      dto.workingDays !== undefined ||
+      dto.breakMinutes !== undefined
     ) {
       await this.scopedPrisma.department.updateMany({
         where: { organizationId, workScheduleId: id },
@@ -106,6 +106,7 @@ export class WorkSchedulesService {
           shiftStartTime: updated.startTime,
           shiftEndTime: updated.endTime,
           weeklyOffs: WEEKLY_OFFS_FROM_WORKING_DAYS(updated.workingDays as number[]),
+          breakMinutes: updated.breakMinutes,
         },
       });
     }
@@ -189,6 +190,7 @@ export class WorkSchedulesService {
           shiftStartTime: schedule.startTime,
           shiftEndTime: schedule.endTime,
           weeklyOffs,
+          breakMinutes: schedule.breakMinutes,
         },
       });
     }

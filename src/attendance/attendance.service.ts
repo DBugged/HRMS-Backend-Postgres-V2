@@ -219,7 +219,11 @@ export class AttendanceService {
         shiftEnd.getTime() - outTime.getTime() >
         shiftConfig.earlyOutThresholdMinutes * 60000;
 
-      const hours = workDurationMinutes / 60;
+      // Break time is unpaid — doesn't count toward Present/Half-Day
+      // thresholds, only the raw punch-in-to-punch-out span still does
+      // (workDurationMinutes itself stays the full span, unadjusted, since
+      // that's what's actually displayed/exported elsewhere).
+      const hours = Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
       if (hours >= shiftConfig.minHoursForPresent) {
         status = AttendanceStatus.PRESENT;
       } else if (hours >= shiftConfig.minHoursForHalfDay) {

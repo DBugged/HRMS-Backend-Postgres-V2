@@ -271,6 +271,13 @@ model Department {
   minHoursForHalfDay       Float  @default(4)
   // [0]=Sunday ... 6=Saturday.
   weeklyOffs               Json   @default("[0]")
+  // Defaults to 0 (not WorkSchedule's own 60) so existing departments'
+  // attendance calculation is unaffected until a schedule is actually
+  // assigned — see attendance-shift-config.ts's resolveShiftConfig and
+  // AttendanceService.recalculateAttendanceForDay, which subtracts this
+  // from punch-in-to-punch-out duration before comparing against
+  // minHoursForPresent/minHoursForHalfDay.
+  breakMinutes             Int    @default(0)
 
   employees User[]    @relation("EmployeeDepartment")
   holidays  Holiday[]
