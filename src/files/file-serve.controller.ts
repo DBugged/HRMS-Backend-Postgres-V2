@@ -46,6 +46,18 @@ export class FileServeController {
     if (!fs.existsSync(filePath)) {
       throw new NotFoundException('File not found.');
     }
+    // Explicit inline Content-Disposition — without it, some browsers (seen
+    // with Safari/WKWebView) fall back to an OS "Save As" prompt for a PDF
+    // instead of rendering it, and since the token in the URL carries no
+    // file extension, that prompt suggests the raw signed token itself as
+    // the filename. The stored key (a generated UUID + real extension, not
+    // the original upload's fileName — that lives only in the DB row this
+    // controller never sees) at least gives a sane, correctly-extensioned
+    // suggested name either way.
+    res.setHeader(
+      'Content-Disposition',
+      `inline; filename="${path.basename(filePath)}"`,
+    );
     res.sendFile(filePath);
   }
 
@@ -55,6 +67,10 @@ export class FileServeController {
         new GetObjectCommand({ Bucket: getS3Bucket(), Key: relativeKey }),
       );
       if (object.ContentType) res.setHeader('Content-Type', object.ContentType);
+      res.setHeader(
+        'Content-Disposition',
+        `inline; filename="${path.basename(relativeKey)}"`,
+      );
       // Body is a Node Readable in the Node runtime (not a web
       // ReadableStream/Blob, which the SDK's types also allow for
       // browser/other runtimes) — this controller only ever runs on Node.
