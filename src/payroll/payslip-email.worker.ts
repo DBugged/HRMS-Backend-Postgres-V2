@@ -12,6 +12,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayslipPdfService } from './payslip-pdf.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import {
   PAYSLIP_EMAIL_QUEUE_NAME,
   PayslipEmailJobData,
@@ -38,6 +39,7 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly payslipPdfService: PayslipPdfService,
     private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   onModuleInit() {
@@ -75,10 +77,16 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
         run.id,
         organizationId,
       );
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      organizationId,
+      'PAYSLIP_ISSUED',
+      { employeeName: employee.name, month: String(run.month), year: String(run.year), netPay: String(run.netPay) },
+      { subject: title, html: `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.` },
+    );
     await this.emailService.send({
       to: employee.email,
-      subject: title,
-      html: `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.`,
+      subject: rendered.subject,
+      html: rendered.html,
       attachments: [{ filename, content: buffer }],
     });
   }

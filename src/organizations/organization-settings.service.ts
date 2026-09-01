@@ -16,6 +16,7 @@ import { AuditModule, Organization, Role, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { frontendUrl } from '../common/frontend-url';
 import { signFileToken, resolveIncomingFileValue, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { validateOrgFields } from './org-validators';
@@ -143,6 +144,7 @@ export class OrganizationSettingsService {
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly cache: RedisCacheService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   private async findOrThrow(organizationId: string) {
@@ -397,13 +399,21 @@ export class OrganizationSettingsService {
       const cc = activeUsers
         .map((u) => u.email)
         .filter((email) => email !== actor.email);
+      const companyName = finalOrg.companyName || 'your organization';
+      const fallbackHtml = setupCompleteEmailHtml({
+        recipientName: actor.name,
+        organizationName: companyName,
+      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'SETUP_COMPLETE',
+        { employeeName: actor.name, companyName },
+        { subject: `Your ${companyName} HRMS Setup Is Complete`, html: fallbackHtml },
+      );
       await this.emailService.send({
         to: actor.email,
-        subject: "Your D'Bugged Programmers HRMS Setup Is Complete",
-        html: setupCompleteEmailHtml({
-          recipientName: actor.name,
-          organizationName: finalOrg.companyName || 'your organization',
-        }),
+        subject: rendered.subject,
+        html: rendered.html,
         ...(cc.length && { cc }),
       });
     }

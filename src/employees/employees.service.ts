@@ -27,6 +27,7 @@ import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from './employee-id.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { frontendUrl } from '../common/frontend-url';
 import { mapWithConcurrency } from '../common/concurrency';
@@ -64,6 +65,7 @@ export class EmployeesService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async create(
@@ -161,16 +163,32 @@ export class EmployeesService {
     // the password is also still returned in the response either way, same
     // as the no-email fallback this replaces.
     if (dto.personalEmail) {
-      await this.emailService.send({
-        to: dto.personalEmail,
-        subject: "Welcome to D'Bugged Programmers HRMS",
-        html: welcomeEmailHtml({
-          name: user.name,
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { companyName: true },
+      });
+      const companyName = org?.companyName || 'the company';
+      const fallbackHtml = welcomeEmailHtml({
+        companyName,
+        name: user.name,
+        employeeId: user.employeeId,
+        email: user.email,
+        password: generatedPassword,
+      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'WELCOME_EMAIL',
+        {
+          employeeName: user.name,
+          companyName,
           employeeId: user.employeeId,
           email: user.email,
           password: generatedPassword,
-        }),
-      });
+          loginUrl: `${frontendUrl()}/login`,
+        },
+        { subject: `Welcome to ${companyName} HRMS`, html: fallbackHtml },
+      );
+      await this.emailService.send({ to: dto.personalEmail, subject: rendered.subject, html: rendered.html });
     }
 
     await this.auditLogService.log({
@@ -221,16 +239,32 @@ export class EmployeesService {
       data: { password: hashedPassword, mustChangePassword: true },
     });
 
-    await this.emailService.send({
-      to: employee.officialEmail,
-      subject: "Your D'Bugged Programmers HRMS login credentials",
-      html: welcomeEmailHtml({
-        name: employee.name,
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { companyName: true },
+    });
+    const companyName = org?.companyName || 'the company';
+    const fallbackHtml = welcomeEmailHtml({
+      companyName,
+      name: employee.name,
+      employeeId: employee.employeeId,
+      email: employee.email,
+      password: generatedPassword,
+    });
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      organizationId,
+      'LOGIN_CREDENTIALS_RESENT',
+      {
+        employeeName: employee.name,
+        companyName,
         employeeId: employee.employeeId,
         email: employee.email,
         password: generatedPassword,
-      }),
-    });
+        loginUrl: `${frontendUrl()}/login`,
+      },
+      { subject: `Your ${companyName} HRMS login credentials`, html: fallbackHtml },
+    );
+    await this.emailService.send({ to: employee.officialEmail, subject: rendered.subject, html: rendered.html });
 
     return { success: true, sentTo: employee.officialEmail };
   }
@@ -604,6 +638,7 @@ function toSafe(user: User) {
 // resendCredentials() — same content either way, just a different
 // recipient address and (for a resend) a freshly-generated password.
 function welcomeEmailHtml(params: {
+  companyName: string;
   name: string;
   employeeId: string;
   email: string;
@@ -612,7 +647,7 @@ function welcomeEmailHtml(params: {
   const loginUrl = `${frontendUrl()}/login`;
   return `
     <p>Hello ${params.name},</p>
-    <p>Your account on D'Bugged Programmers HRMS is ready. Here are your login details:</p>
+    <p>Your account on ${params.companyName} HRMS is ready. Here are your login details:</p>
     <p>
       Login URL: <a href="${loginUrl}">${loginUrl}</a><br>
       Employee ID: <strong>${params.employeeId}</strong><br>

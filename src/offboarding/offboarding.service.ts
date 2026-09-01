@@ -31,6 +31,7 @@ import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
 import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
@@ -52,6 +53,7 @@ export class OffboardingService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async findAll(query: ListOffboardingQueryDto, organizationId: string) {
@@ -129,11 +131,13 @@ export class OffboardingService {
       message,
       category: NotificationCategory.GENERAL,
     });
-    await this.emailService.send({
-      to: employee.email,
-      subject: title,
-      html: message,
-    });
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      organizationId,
+      'OFFBOARDING_INITIATED',
+      { employeeName: employee.name, lastWorkingDay: formatDateDisplay(dto.lastWorkingDay, '', dateFormat) },
+      { subject: title, html: message },
+    );
+    await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     // NOTICE_PERIOD_STARTED — same "log next to the notification" pattern
     // used elsewhere in this file (see complete()'s RELIEVED event); the
     // EXIT category on the timeline was otherwise silent until completion.

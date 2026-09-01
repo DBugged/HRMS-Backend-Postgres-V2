@@ -18,6 +18,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxDeclarationDto } from './dto/upsert-tax-declaration.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { assertManagerDeptScope } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
@@ -32,6 +33,7 @@ export class TaxDeclarationsService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async get(
@@ -181,11 +183,13 @@ export class TaxDeclarationsService {
           message,
           category: NotificationCategory.GENERAL,
         });
-        await this.emailService.send({
-          to: employee.email,
-          subject: title,
-          html: message,
-        });
+        const rendered = await this.emailTemplatesService.renderOccasion(
+          organizationId,
+          'TAX_DECLARATION_VERIFIED',
+          { employeeName: employee.name, financialYear: dto.financialYear },
+          { subject: title, html: message },
+        );
+        await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
       }
     }
 

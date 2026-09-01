@@ -30,6 +30,7 @@ import { paginate, skip } from '../common/pagination';
 import { deptScopedEmployeeIds } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -41,6 +42,7 @@ export class LoansService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async findAll(query: QueryLoanDto, actor: Actor, organizationId: string) {
@@ -115,11 +117,13 @@ export class LoansService {
         message,
         category: NotificationCategory.GENERAL,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'LOAN_SANCTIONED',
+        { employeeName: employee.name, loanType: loan.loanType, principal: String(dto.principal), emiAmount: String(emiAmount), tenureMonths: String(dto.tenureMonths) },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     await this.auditLogService.log({
@@ -182,11 +186,13 @@ export class LoansService {
           message,
           category: NotificationCategory.GENERAL,
         });
-        await this.emailService.send({
-          to: employee.email,
-          subject: title,
-          html: message,
-        });
+        const rendered = await this.emailTemplatesService.renderOccasion(
+          organizationId,
+          'LOAN_STATUS_UPDATE',
+          { employeeName: employee.name, loanType: loan.loanType, status: dto.status },
+          { subject: title, html: message },
+        );
+        await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
       }
     }
 

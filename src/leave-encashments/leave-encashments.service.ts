@@ -35,6 +35,7 @@ import {
 } from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -59,6 +60,7 @@ export class LeaveEncashmentsService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async findAll(
@@ -280,11 +282,13 @@ export class LeaveEncashmentsService {
         message,
         category: NotificationCategory.LEAVE,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'LEAVE_ENCASHMENT_STATUS',
+        { employeeName: employee.name, days: String(row.days), amount: String(row.amount), status: dto.status },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     return result;

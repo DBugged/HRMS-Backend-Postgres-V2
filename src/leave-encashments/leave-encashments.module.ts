@@ -7,6 +7,7 @@ import { EmployeeSalaryComponentsModule } from '../employee-salary-components/em
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.m
     NotificationsModule,
     AuditLogModule,
     EmployeeTimelineModule,
+    EmailTemplatesModule,
   ],
   controllers: [LeaveEncashmentsController],
   providers: [LeaveEncashmentsService],

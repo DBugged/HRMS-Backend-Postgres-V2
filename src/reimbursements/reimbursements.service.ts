@@ -20,6 +20,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken } from '../files/file-token';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
@@ -47,6 +48,7 @@ export class ReimbursementsService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   // receiptUrl is stored as the relativeKey from POST /files/upload/documents
@@ -241,11 +243,13 @@ export class ReimbursementsService {
         message,
         category: NotificationCategory.GENERAL,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'REIMBURSEMENT_STATUS',
+        { employeeName: employee.name, amount: String(claim.amount), category: claim.category, status: dto.status, comments: dto.reviewComments ?? '' },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     return this.withSignedReceipt(updated);

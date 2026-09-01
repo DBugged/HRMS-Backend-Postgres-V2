@@ -327,6 +327,31 @@ export class EmailTemplatesService {
     return renderTemplate(template, variables);
   }
 
+  // Renders the org's active email template for `occasionKey`, falling back
+  // to the caller's hardcoded subject/html when none is active (an org
+  // predating this occasion's seeding, or one that's disabled the
+  // template) — so a missing/disabled template degrades gracefully rather
+  // than silently dropping the email. Generalized out of HrEventsService's
+  // original private method (same name/shape) once every notification
+  // email in the app started going through this, not just Birthday/Work
+  // Anniversary.
+  async renderOccasion(
+    organizationId: string,
+    occasionKey: string,
+    variables: Record<string, string>,
+    fallback: { subject: string; html: string },
+  ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
+    const template = await this.findActiveByOccasion(occasionKey, organizationId);
+    if (!template) {
+      return { ...fallback, ccAllActive: false };
+    }
+    return {
+      subject: this.render(template.subject, variables),
+      html: this.render(template.bodyHtml, variables),
+      ccAllActive: template.ccAllActive,
+    };
+  }
+
   private async findByOccasionOrThrow(
     occasionKey: string,
     organizationId: string,

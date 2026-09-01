@@ -55,6 +55,7 @@ import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
 
@@ -133,6 +134,7 @@ export class AttendanceService {
     private readonly emailService: EmailService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly delegationService: ApprovalDelegationService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   // The core engine — derives an Attendance row for one employee/day from
@@ -345,11 +347,14 @@ export class AttendanceService {
         where: { id: employeeId, organizationId },
       });
       if (employee) {
-        await this.emailService.send({
-          to: employee.email,
-          subject: title,
-          html: `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`,
-        });
+        const fallbackHtml = `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`;
+        const { subject, html } = await this.emailTemplatesService.renderOccasion(
+          organizationId,
+          'ABSENT_MARKED',
+          { employeeName: employee.name, date: displayDate },
+          { subject: title, html: fallbackHtml },
+        );
+        await this.emailService.send({ to: employee.email, subject, html });
       }
       return;
     }
@@ -718,11 +723,15 @@ export class AttendanceService {
       message,
       category: NotificationCategory.ATTENDANCE,
     });
-    await this.emailService.send({
-      to: row.employee.email,
-      subject: title,
-      html: message,
-    });
+    {
+      const { subject, html } = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'WFH_DECISION',
+        { employeeName: row.employee.name, decision: dto.decision, date: formatDateDisplay(row.date, '', dateFormat), comments: dto.comments ?? '' },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: row.employee.email, subject, html });
+    }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({
       where: { id, organizationId },
@@ -1105,11 +1114,13 @@ export class AttendanceService {
         message,
         category: NotificationCategory.REGULARIZATION,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const { subject, html } = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'REGULARIZATION_DECISION',
+        { employeeName: employee.name, decision: dto.decision, date: formatDateDisplay(row.date, '', dateFormat), comments: dto.comments ?? '' },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject, html });
     }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({

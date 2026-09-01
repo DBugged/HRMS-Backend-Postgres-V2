@@ -9,6 +9,7 @@ import { StatutoryConfigModule } from '../statutory-config/statutory-config.modu
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AuditLogModule,
     EmployeeTimelineModule,
     NotificationsModule,
+    EmailTemplatesModule,
   ],
   controllers: [PayrollController],
   providers: [

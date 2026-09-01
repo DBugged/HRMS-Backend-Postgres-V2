@@ -27,6 +27,7 @@ import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
@@ -82,6 +83,7 @@ export class EmployeeProfileService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   private async findEmployeeOrThrow(id: string, organizationId: string) {
@@ -333,11 +335,13 @@ export class EmployeeProfileService {
         message,
         category: NotificationCategory.GENERAL,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'DOCUMENT_STATUS',
+        { employeeName: employee.name, fileName: doc.fileName, status: dto.status, reason: dto.reason ?? '' },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     return withSignedFileUrl(updated);

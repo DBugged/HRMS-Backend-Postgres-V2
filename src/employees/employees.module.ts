@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     EmployeeTimelineModule,
     NotificationsModule,
     AuditLogModule,
+    EmailTemplatesModule,
   ],
   controllers: [EmployeesController],
   providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],

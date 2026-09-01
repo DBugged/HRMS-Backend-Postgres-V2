@@ -17,6 +17,7 @@ import { QueryPerformanceRatingDto } from './dto/query-performance-rating.dto';
 import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
@@ -30,6 +31,7 @@ export class PerformanceRatingsService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async findAll(
@@ -154,11 +156,13 @@ export class PerformanceRatingsService {
         message,
         category: NotificationCategory.GENERAL,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'PERFORMANCE_RATING_PUBLISHED',
+        { employeeName: employee.name, financialYear: dto.financialYear, rating: String(dto.rating) },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     return rating;

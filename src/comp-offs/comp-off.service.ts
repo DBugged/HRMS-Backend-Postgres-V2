@@ -32,6 +32,7 @@ import {
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
 import { paginate, skip } from '../common/pagination';
 import {
@@ -65,6 +66,7 @@ export class CompOffService {
     private readonly delegationService: ApprovalDelegationService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async earn(dto: CreateCompOffDto, actor: Actor, organizationId: string) {
@@ -283,11 +285,13 @@ export class CompOffService {
         message,
         category: NotificationCategory.LEAVE,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'COMP_OFF_DECISION',
+        { employeeName: employee.name, decision: dto.decision, earnedForDate: formatDateDisplay(compOff.earnedForDate, '', dateFormat) },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     await this.auditLogService.log({

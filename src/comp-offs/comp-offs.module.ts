@@ -6,6 +6,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { ApprovalDelegationModule } from '../approval-delegation/approval-delegation.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.m
     ApprovalDelegationModule,
     AuditLogModule,
     EmployeeTimelineModule,
+    EmailTemplatesModule,
   ],
   controllers: [CompOffController],
   providers: [CompOffService],

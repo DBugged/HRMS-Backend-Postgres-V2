@@ -37,6 +37,7 @@ import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
@@ -69,6 +70,7 @@ export class SettlementsService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async findAll(
@@ -411,11 +413,13 @@ export class SettlementsService {
         message,
         category: NotificationCategory.PAYROLL,
       });
-      await this.emailService.send({
-        to: personalEmail,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'SETTLEMENT_PROCESSED',
+        { employeeName: employee.name, netSettlementAmount: String(settlement.netSettlementAmount), netSettlementAmountInWords: amountInWords(settlement.netSettlementAmount) },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: personalEmail, subject: rendered.subject, html: rendered.html });
     }
     await this.timelineService.logEvent({
       organizationId,

@@ -78,6 +78,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { PayslipPdfService } from './payslip-pdf.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { paginate, skip } from '../common/pagination';
 import { assertManagerDeptScope } from '../common/dept-scope';
 import { mapWithConcurrency } from '../common/concurrency';
@@ -195,6 +196,7 @@ export class PayrollService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly payslipEmailQueueService: PayslipEmailQueueService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   // Computes a full payroll snapshot for one employee for one month/year.
@@ -1154,10 +1156,16 @@ export class PayrollService {
             run.id,
             organizationId,
           );
+        const rendered = await this.emailTemplatesService.renderOccasion(
+          organizationId,
+          'PAYSLIP_ISSUED',
+          { employeeName: employee.name, month: String(run.month), year: String(run.year), netPay: String(run.netPay) },
+          { subject: title, html: message },
+        );
         await this.emailService.send({
           to: employee.email,
-          subject: title,
-          html: message,
+          subject: rendered.subject,
+          html: rendered.html,
           attachments: [{ filename, content: buffer }],
         });
       }

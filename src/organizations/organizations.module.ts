@@ -5,9 +5,10 @@ import { OrganizationSettingsService } from './organization-settings.service';
 import { EmployeeTypesService } from './employee-types.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
-  imports: [AuditLogModule, NotificationsModule],
+  imports: [AuditLogModule, NotificationsModule, EmailTemplatesModule],
   controllers: [OrganizationsController],
   providers: [OrganizationsService, OrganizationSettingsService, EmployeeTypesService],
 })

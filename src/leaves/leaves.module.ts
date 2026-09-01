@@ -7,6 +7,7 @@ import { AttendanceModule } from '../attendance/attendance.module';
 import { ApprovalDelegationModule } from '../approval-delegation/approval-delegation.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -16,6 +17,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     ApprovalDelegationModule,
     NotificationsModule,
     AuditLogModule,
+    EmailTemplatesModule,
   ],
   controllers: [LeavesController],
   providers: [LeavesService],

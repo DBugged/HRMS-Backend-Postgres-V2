@@ -46,6 +46,7 @@ import {
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
 
@@ -97,6 +98,7 @@ export class LeavesService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async apply(dto: ApplyLeaveDto, actor: Actor, organizationId: string) {
@@ -505,11 +507,13 @@ export class LeavesService {
       category: NotificationCategory.LEAVE,
     });
 
-    await this.emailService.send({
-      to: employee.email,
-      subject: title,
-      html: message,
-    });
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      organizationId,
+      'LEAVE_DECISION',
+      { employeeName: employee.name, decision: dto.decision, startDate: formatDateDisplay(leave.startDate, '', dateFormat), endDate: formatDateDisplay(leave.endDate, '', dateFormat), comments: dto.comments ?? '' },
+      { subject: title, html: message },
+    );
+    await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
   }
 
   async cancel(id: string, actor: Actor, organizationId: string) {

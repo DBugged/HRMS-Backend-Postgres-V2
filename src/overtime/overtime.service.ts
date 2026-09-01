@@ -30,6 +30,7 @@ import {
 } from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
@@ -63,6 +64,7 @@ export class OvertimeService {
     private readonly delegationService: ApprovalDelegationService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   async log(dto: LogOvertimeDto, actor: Actor, organizationId: string) {
@@ -199,11 +201,13 @@ export class OvertimeService {
         message,
         category: NotificationCategory.ATTENDANCE,
       });
-      await this.emailService.send({
-        to: employee.email,
-        subject: title,
-        html: message,
-      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'OVERTIME_STATUS',
+        { employeeName: employee.name, hours: String(record.hours), date: formatDateDisplay(record.date, '', dateFormat), status: dto.status },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
 
     return updated;

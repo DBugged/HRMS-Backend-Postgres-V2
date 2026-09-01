@@ -172,12 +172,9 @@ export class AuthService {
     // EmailService.send() never throws, so a bad SMTP/Resend config can't
     // fail registration.
     const loginUrl = `${frontendUrl()}/login`;
-    await this.emailService.send({
-      to: user.email,
-      subject: "Welcome to D'Bugged Programmers HRMS — your account is ready",
-      html: `
+    const fallbackHtml = `
         <p>Hi ${user.name},</p>
-        <p>Thank you for creating your account with D'Bugged Programmers HRMS.</p>
+        <p>Thank you for creating your account with ${organization.name} HRMS.</p>
         <p>Your organization, <strong>${organization.name}</strong>, is now set up and ready to go. Here's what to do next:</p>
         <ol>
           <li><strong>Log in</strong> using the email and password you just created.</li>
@@ -186,8 +183,20 @@ export class AuthService {
         </ol>
         <p><a href="${loginUrl}">Log in to your account →</a></p>
         <p>If you didn't create this account, you can safely ignore this email.</p>
-        <p>— The D'Bugged Programmers Team</p>
-      `,
+      `;
+    // Note: the org's Email Templates were just seeded above in the same
+    // transaction, so this immediately has a real (default) template to
+    // render from rather than needing its own bootstrap special-case.
+    const founderRendered = await this.emailTemplatesService.renderOccasion(
+      organization.id,
+      'FOUNDER_ACCOUNT_WELCOME',
+      { employeeName: user.name, companyName: organization.name, loginUrl },
+      { subject: `Welcome to ${organization.name} HRMS — your account is ready`, html: fallbackHtml },
+    );
+    await this.emailService.send({
+      to: user.email,
+      subject: founderRendered.subject,
+      html: founderRendered.html,
     });
 
     return {
@@ -326,11 +335,19 @@ export class AuthService {
       });
 
       const resetUrl = `${frontendUrl()}/reset-password/${rawToken}`;
-      await this.emailService.send({
-        to: user.email,
-        subject: "D'Bugged Programmers HRMS - Password Reset",
-        html: `<p>Hello ${user.name},</p><p>Click the link below to reset your password. This link expires in 30 minutes.</p><p><a href="${resetUrl}">${resetUrl}</a></p>`,
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: user.organizationId },
+        select: { companyName: true },
       });
+      const companyName = org?.companyName || 'the company';
+      const fallbackHtml = `<p>Hello ${user.name},</p><p>Click the link below to reset your password. This link expires in 30 minutes.</p><p><a href="${resetUrl}">${resetUrl}</a></p>`;
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        user.organizationId,
+        'PASSWORD_RESET',
+        { employeeName: user.name, companyName, resetUrl },
+        { subject: `${companyName} HRMS - Password Reset`, html: fallbackHtml },
+      );
+      await this.emailService.send({ to: user.email, subject: rendered.subject, html: rendered.html });
     }
     return { message: FORGOT_PASSWORD_GENERIC_MESSAGE };
   }
@@ -417,19 +434,25 @@ export class AuthService {
 
     if (wasFirstTimeChange) {
       // Best-effort, fire-and-forget — a send failure must never fail the
-      // password change itself, same as the old system.
-      this.emailService
-        .send({
-          to: user.email,
-          subject: 'Welcome to your HRMS account',
-          html: `<p>Hello ${user.name},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address (${user.email}).</p>`,
-        })
-        .catch((err: Error) => {
-          this.logger.error(
-            `Failed to send welcome email: ${err.message}`,
-            err.stack,
-          );
-        });
+      // password change itself, same as the old system. Wrapped in an
+      // async IIFE (rather than a plain .then chain) since rendering the
+      // occasion template is itself async, but the outer call still isn't
+      // awaited — same fire-and-forget shape as before.
+      (async () => {
+        const fallbackHtml = `<p>Hello ${user.name},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address (${user.email}).</p>`;
+        const rendered = await this.emailTemplatesService.renderOccasion(
+          user.organizationId,
+          'ACCOUNT_ACTIVATED',
+          { employeeName: user.name, email: user.email },
+          { subject: 'Welcome to your HRMS account', html: fallbackHtml },
+        );
+        await this.emailService.send({ to: user.email, subject: rendered.subject, html: rendered.html });
+      })().catch((err: Error) => {
+        this.logger.error(
+          `Failed to send welcome email: ${err.message}`,
+          err.stack,
+        );
+      });
     }
 
     return { message: 'Password changed successfully.' };
