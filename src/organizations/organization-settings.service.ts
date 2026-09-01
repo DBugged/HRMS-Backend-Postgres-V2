@@ -2,7 +2,7 @@
 // branding/logo URL signing, setup completion/reset, and the Face API webhook key.
 // Responsibilities: Owns SECTION_FIELDS as the real security boundary (a client can send any JSON body, only
 // whitelisted keys per section are ever written) and derives the narrower attendancePayrollPrefs from
-// orgPayrollAttendancePrefs on every attendancePayroll-section write.
+// orgPayrollAttendancePrefs on every policies-section write that includes it.
 // Important: regenerateFaceApiKey() replaces the old single process-wide FACE_API_KEY that let anyone
 // holding it forge attendance webhooks for ANY organization; the generated key is shown once and never
 // exposed again on a read path, same as a generated employee password.
@@ -52,8 +52,8 @@ const BRANDING_URL_FIELDS = [
 // (Employees page / a settings toggle), same as before.
 // The 7 keys Organization.attendancePayrollPrefs and
 // orgPayrollAttendancePrefs both carry identically-named — see
-// updateSection's 'attendancePayroll' branch and
-// attendance-shift-config.ts's OrganizationAttendancePrefs.
+// updateSection's 'policies' branch and attendance-shift-config.ts's
+// OrganizationAttendancePrefs.
 const ATTENDANCE_PREFS_KEYS = [
   'defaultShiftStartTime',
   'defaultShiftEndTime',
@@ -112,8 +112,10 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'assetMeta',
   ],
   signatory: ['signatories', 'sealUrl'],
-  policies: ['policies'],
-  attendancePayroll: ['orgPayrollAttendancePrefs'],
+  // Combined General Settings tab — org.policies and the shift-default
+  // blob save together from one PATCH now (previously a separate
+  // 'attendancePayroll' section/tab).
+  policies: ['policies', 'orgPayrollAttendancePrefs'],
   documentNumbering: ['documentNumbering'],
   employeeTypes: ['customEmployeeTypes'],
   workArrangement: ['enableWFH'],
@@ -290,7 +292,7 @@ export class OrganizationSettingsService {
       const error = validateOrgFields(data);
       if (error) throw new BadRequestException(error);
     }
-    if (section === 'attendancePayroll' && data.orgPayrollAttendancePrefs) {
+    if (section === 'policies' && data.orgPayrollAttendancePrefs) {
       // attendancePayrollPrefs (read by AttendanceService.
       // recalculateAttendanceForDay) had no write path at all before this
       // — an admin editing shift timings/thresholds here via the Setup
