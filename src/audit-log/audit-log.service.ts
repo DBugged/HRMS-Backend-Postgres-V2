@@ -59,6 +59,23 @@ export class AuditLogService {
     }
   }
 
+  // Deletes every AuditLog row for the org, then writes a fresh one
+  // recording who cleared it — the one entry that survives its own clear,
+  // so "the trail was wiped" is itself traceable rather than a silent gap.
+  async clearAll(actor: Actor, organizationId: string): Promise<{ deleted: number }> {
+    const { count } = await this.scopedPrisma.auditLog.deleteMany({
+      where: { organizationId },
+    });
+    await this.log({
+      actorId: actor.id,
+      action: 'AUDIT_LOG_CLEARED',
+      module: AuditModule.ORGANIZATION,
+      organizationId,
+      details: { deletedCount: count },
+    });
+    return { deleted: count };
+  }
+
   async findAll(query: QueryAuditLogDto, actor: Actor, organizationId: string) {
     const where: Prisma.AuditLogWhereInput = { organizationId };
     if (query.module) where.module = query.module;
