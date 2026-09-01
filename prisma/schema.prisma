@@ -160,7 +160,7 @@ model Organization {
   sealUrl     String?
 
   // Step 7 — General Settings
-  policies Json @default("{\"financialYearStartMonth\":4,\"timezone\":\"Asia/Kolkata\",\"currency\":\"INR\",\"currencySymbol\":\"₹\",\"dateFormat\":\"DD-MM-YYYY\",\"timeFormat\":\"24\",\"defaultNoticeDays\":30}")
+  policies Json @default("{\"financialYearStartMonth\":4,\"timezone\":\"Asia/Kolkata\",\"currency\":\"INR\",\"currencySymbol\":\"₹\",\"dateFormat\":\"DD-MM-YYYY\",\"timeFormat\":\"24\",\"defaultNoticeDays\":30,\"language\":\"English\"}")
 
   // Step 8 — Payroll & Attendance Preferences (admin-facing, much broader
   // than attendancePayrollPrefs above — see that field's comment).
