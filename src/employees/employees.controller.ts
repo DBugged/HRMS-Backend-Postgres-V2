@@ -143,6 +143,7 @@ export class EmployeesController {
   getFullProfile(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.employeeProfileService.getFullProfile(
       id,
+      caller,
       caller.organizationId,
     );
   }

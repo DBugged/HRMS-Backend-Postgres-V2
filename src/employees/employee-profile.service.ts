@@ -142,13 +142,28 @@ export class EmployeeProfileService {
 
   // HR/Admin-only — everything, including personalData/bank details/
   // documents/assets, unlike findOne() which strips the password only.
-  async getFullProfile(id: string, organizationId: string) {
+  async getFullProfile(id: string, actor: Actor, organizationId: string) {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
+    // The full profile itself stays viewable by any ADMIN/HR (the
+    // controller's @Roles already gates that) — only the Documents section
+    // within it follows the stricter tier (see assertMayAccessDocumentsFor):
+    // an HR viewer looking at an HR/Admin peer's profile just sees no
+    // documents, rather than the whole profile 403ing.
+    const canSeeDocuments = (() => {
+      try {
+        this.assertMayAccessDocumentsFor(actor, employee);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
     const [documents, assets] = await Promise.all([
-      this.scopedPrisma.employeeDocument.findMany({
-        where: { organizationId, employeeId: id },
-        orderBy: { uploadedAt: 'desc' },
-      }),
+      canSeeDocuments
+        ? this.scopedPrisma.employeeDocument.findMany({
+            where: { organizationId, employeeId: id },
+            orderBy: { uploadedAt: 'desc' },
+          })
+        : Promise.resolve([]),
       this.scopedPrisma.employeeAsset.findMany({
         where: { organizationId, employeeId: id, isActive: true },
         orderBy: { createdAt: 'desc' },
@@ -252,7 +267,8 @@ export class EmployeeProfileService {
 
   async listDocuments(id: string, actor: Actor, organizationId: string) {
     this.assertSelfOrHr(actor, id);
-    await this.findEmployeeOrThrow(id, organizationId);
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    this.assertMayAccessDocumentsFor(actor, employee);
     const docs = await this.scopedPrisma.employeeDocument.findMany({
       where: { organizationId, employeeId: id },
       orderBy: { uploadedAt: 'desc' },
@@ -274,7 +290,7 @@ export class EmployeeProfileService {
     // an Admin in this hierarchy to approve them — so they're stamped
     // approved immediately instead of sitting PENDING forever. HR and
     // Employee documents still go through the normal review flow (see
-    // assertMayReviewDocumentFor).
+    // assertMayAccessDocumentsFor).
     const isFounderDoc = employee.role === Role.ADMIN;
     const doc = await this.scopedPrisma.employeeDocument.create({
       data: {
@@ -310,18 +326,21 @@ export class EmployeeProfileService {
     return { success: true };
   }
 
-  // One tier up the hierarchy reviews the one below — a Founder/Admin's own
-  // documents are auto-approved on upload (see addDocument) and never reach
-  // here in practice; an HR document needs an Admin specifically (another
-  // HR can't approve a peer's document); an Employee/Manager document keeps
-  // the existing ADMIN-or-HR review the controller's @Roles already gates.
-  private assertMayReviewDocumentFor(actor: Actor, employee: User) {
+  // One tier up the hierarchy views/reviews the one below — an HR/Admin
+  // employee's documents are only visible to an Admin (or the employee
+  // themselves); another HR can't view or approve a peer's documents. A
+  // Founder/Admin's own documents are auto-approved on upload (see
+  // addDocument) and never sit PENDING for anyone to review in practice.
+  // An Employee/Manager's documents keep the existing ADMIN-or-HR access
+  // the controller's @Roles (review) / assertSelfOrHr (list) already gate.
+  private assertMayAccessDocumentsFor(actor: Actor, employee: User) {
+    if (actor.id === employee.id) return;
     if (
       (employee.role === Role.ADMIN || employee.role === Role.HR) &&
       actor.role !== Role.ADMIN
     ) {
       throw new ForbiddenException(
-        'Only an Admin can review an HR or Admin employee’s document.',
+        'Only an Admin can view or review an HR or Admin employee’s documents.',
       );
     }
   }
@@ -334,7 +353,7 @@ export class EmployeeProfileService {
     organizationId: string,
   ) {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
-    this.assertMayReviewDocumentFor(actor, employee);
+    this.assertMayAccessDocumentsFor(actor, employee);
     const doc = await this.scopedPrisma.employeeDocument.findFirst({
       where: { id: docId, employeeId: id, organizationId },
     });
