@@ -24,4 +24,11 @@ export class CreateEmailTemplateDto {
   @IsOptional()
   @IsBoolean()
   ccAllActive?: boolean;
+
+  // Which of the org's named signatures (see Organization.emailSignatures)
+  // this template uses — omitted/empty means "whichever has isDefault:true".
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  signatureId?: string;
 }

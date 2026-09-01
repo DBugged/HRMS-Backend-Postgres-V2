@@ -29,4 +29,12 @@ export class UpdateEmailTemplateDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  // Which of the org's named signatures (see Organization.emailSignatures)
+  // this template uses — '' clears it back to "whichever has
+  // isDefault:true"; omitted leaves the current value unchanged.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  signatureId?: string;
 }

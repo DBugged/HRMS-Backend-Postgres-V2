@@ -29,6 +29,13 @@ import { companyLogoImgTag } from './company-logo';
 
 type Actor = { id: string };
 
+export interface EmailSignature {
+  id: string;
+  name: string;
+  html: string;
+  isDefault: boolean;
+}
+
 @Injectable()
 export class EmailTemplatesService {
   constructor(
@@ -101,6 +108,9 @@ export class EmailTemplatesService {
           ccAllActive: dto.ccAllActive,
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        // '' from the frontend's "Use default" option means "clear it back
+        // to null" — undefined (the key omitted) means "leave unchanged".
+        ...(dto.signatureId !== undefined && { signatureId: dto.signatureId || null }),
       },
     });
 
@@ -174,6 +184,7 @@ export class EmailTemplatesService {
         bodyHtml: dto.bodyHtml,
         ccAllActive: dto.ccAllActive ?? false,
         isCustom: true,
+        signatureId: dto.signatureId || null,
       },
     });
 
@@ -291,7 +302,7 @@ export class EmailTemplatesService {
         return this.emailService.send({
           to: employee.email,
           subject: renderTemplate(template.subject, variables),
-          html: await this.appendSignature(renderTemplate(template.bodyHtml, variables), organizationId, variables),
+          html: await this.appendSignature(renderTemplate(template.bodyHtml, variables), organizationId, variables, template.signatureId),
           ...(cc.length && { cc }),
         });
       }),
@@ -334,8 +345,9 @@ export class EmailTemplatesService {
   // than silently dropping the email. Generalized out of HrEventsService's
   // original private method (same name/shape) once every notification
   // email in the app started going through this, not just Birthday/Work
-  // Anniversary. The org's shared signature (if any) is appended below the
-  // body either way — see appendSignature().
+  // Anniversary. Whichever signature the template (or the fallback's
+  // implicit "no template") resolves to is appended below the body — see
+  // appendSignature().
   async renderOccasion(
     organizationId: string,
     occasionKey: string,
@@ -346,37 +358,40 @@ export class EmailTemplatesService {
     if (!template) {
       return {
         subject: fallback.subject,
-        html: await this.appendSignature(fallback.html, organizationId, variables),
+        html: await this.appendSignature(fallback.html, organizationId, variables, null),
         ccAllActive: false,
       };
     }
     return {
       subject: this.render(template.subject, variables),
-      html: await this.appendSignature(this.render(template.bodyHtml, variables), organizationId, variables),
+      html: await this.appendSignature(this.render(template.bodyHtml, variables), organizationId, variables, template.signatureId),
       ccAllActive: template.ccAllActive,
     };
   }
 
-  // One shared HTML sign-off, set once from the Email Templates screen and
-  // appended below every template's rendered body when it's actually sent
-  // — not stored as part of any individual EmailTemplate row, so editing it
-  // doesn't mean touching all 24 templates. Renders {{placeholder}}s the
-  // same way the body itself does, but the signature's own variable needs
-  // (companyPhone/companyWebsite/companyEmail/companyAddress/companyLogo)
-  // are broader than what most occasion call sites bother building for
-  // their own body — a leave-decision email, say, only ever passes
-  // employeeName/decision/dates — so this fetches the full company
+  // Appends the resolved signature (the template's own signatureId, or —
+  // when null/not found in the org's current list — whichever one has
+  // isDefault:true) below the rendered body. Not every org has one team
+  // sending all mail (HR vs Payroll vs IT, say), so this is a *list* of
+  // named signatures (Organization.emailSignatures), not one shared block
+  // — each EmailTemplate picks which one it uses. Renders {{placeholder}}s
+  // the same way the body itself does, but the signature's own variable
+  // needs (companyPhone/companyWebsite/companyEmail/companyAddress/
+  // companyLogo) are broader than what most occasion call sites bother
+  // building for their own body — a leave-decision email, say, only ever
+  // passes employeeName/decision/dates — so this fetches the full company
   // variable set itself rather than relying on the caller to have included
   // it. Caller-supplied `variables` win on any key overlap.
   private async appendSignature(
     html: string,
     organizationId: string,
     variables: Record<string, string>,
+    signatureId: string | null,
   ): Promise<string> {
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
       select: {
-        emailSignatureHtml: true,
+        emailSignatures: true,
         companyName: true,
         phone: true,
         website: true,
@@ -385,8 +400,13 @@ export class EmailTemplatesService {
         emailLogoUrl: true,
       },
     });
-    const signature = org?.emailSignatureHtml?.trim();
-    if (!signature) return html;
+    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const resolved =
+      (signatureId && signatures.find((s) => s.id === signatureId)) ||
+      signatures.find((s) => s.isDefault) ||
+      null;
+    const signatureHtml = resolved?.html?.trim();
+    if (!signatureHtml) return html;
     const companyVariables = {
       companyName: org?.companyName ?? '',
       companyPhone: org?.phone ?? '',
@@ -395,35 +415,123 @@ export class EmailTemplatesService {
       companyAddress: org?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(organizationId, org?.emailLogoUrl),
     };
-    return `${html}${this.render(signature, { ...companyVariables, ...variables })}`;
+    return `${html}${this.render(signatureHtml, { ...companyVariables, ...variables })}`;
   }
 
-  async getSignature(organizationId: string): Promise<{ signatureHtml: string }> {
+  async listSignatures(organizationId: string): Promise<{ data: EmailSignature[] }> {
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
-      select: { emailSignatureHtml: true },
+      select: { emailSignatures: true },
     });
-    return { signatureHtml: org?.emailSignatureHtml ?? '' };
+    return { data: (org?.emailSignatures ?? []) as unknown as EmailSignature[] };
   }
 
-  async updateSignature(
-    signatureHtml: string,
+  async createSignature(
+    dto: { name: string; html: string },
     organizationId: string,
     actorId: string,
-  ): Promise<{ signatureHtml: string }> {
+  ): Promise<EmailSignature> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { emailSignatures: true },
+    });
+    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const signature: EmailSignature = {
+      id: crypto.randomUUID(),
+      name: dto.name.trim() || 'Untitled Signature',
+      html: dto.html,
+      // The very first signature an org creates becomes the default
+      // automatically — otherwise every template would silently get no
+      // signature at all until an admin remembers to flip one on.
+      isDefault: signatures.length === 0,
+    };
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
-      data: { emailSignatureHtml: signatureHtml },
+      data: { emailSignatures: [...signatures, signature] as unknown as Prisma.InputJsonValue },
+    });
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMAIL_SIGNATURE_CREATED',
+      module: AuditModule.NOTIFICATION,
+      organizationId,
+      targetId: signature.id,
+      details: { name: signature.name },
+    });
+    return signature;
+  }
+
+  async updateSignatureById(
+    id: string,
+    dto: { name?: string; html?: string; isDefault?: boolean },
+    organizationId: string,
+    actorId: string,
+  ): Promise<EmailSignature> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { emailSignatures: true },
+    });
+    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const existing = signatures.find((s) => s.id === id);
+    if (!existing) throw new NotFoundException('Signature not found.');
+    // Exactly one signature is ever isDefault:true — setting this one
+    // clears the flag on every other, same "radio button" invariant as
+    // Organization.signatories' isPrimary.
+    const next = signatures.map((s) => {
+      if (s.id === id) {
+        return {
+          ...s,
+          ...(dto.name !== undefined && { name: dto.name.trim() || s.name }),
+          ...(dto.html !== undefined && { html: dto.html }),
+          ...(dto.isDefault !== undefined && { isDefault: dto.isDefault }),
+        };
+      }
+      return dto.isDefault ? { ...s, isDefault: false } : s;
+    });
+    await this.scopedPrisma.organization.updateMany({
+      where: { id: organizationId },
+      data: { emailSignatures: next as unknown as Prisma.InputJsonValue },
     });
     await this.auditLogService.log({
       actorId,
       action: 'EMAIL_SIGNATURE_UPDATED',
       module: AuditModule.NOTIFICATION,
       organizationId,
-      targetId: organizationId,
+      targetId: id,
       details: {},
     });
-    return { signatureHtml };
+    return next.find((s) => s.id === id)!;
+  }
+
+  async deleteSignature(
+    id: string,
+    organizationId: string,
+    actorId: string,
+  ): Promise<{ success: true; message: string }> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { emailSignatures: true },
+    });
+    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const existing = signatures.find((s) => s.id === id);
+    if (!existing) throw new NotFoundException('Signature not found.');
+    const remaining = signatures.filter((s) => s.id !== id);
+    // Losing the default shouldn't leave the list with none — promote
+    // whichever one is now first, if any are left. Same pattern as
+    // SignatoryStep's own removeRow on the frontend.
+    if (existing.isDefault && remaining.length) remaining[0] = { ...remaining[0], isDefault: true };
+    await this.scopedPrisma.organization.updateMany({
+      where: { id: organizationId },
+      data: { emailSignatures: remaining as unknown as Prisma.InputJsonValue },
+    });
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMAIL_SIGNATURE_DELETED',
+      module: AuditModule.NOTIFICATION,
+      organizationId,
+      targetId: id,
+      details: { name: existing.name },
+    });
+    return { success: true, message: 'Signature deleted' };
   }
 
   private async findByOccasionOrThrow(

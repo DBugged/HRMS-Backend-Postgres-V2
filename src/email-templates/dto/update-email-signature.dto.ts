@@ -1,11 +1,21 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsString } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsOptional, IsString } from 'class-validator';
 
 export class UpdateEmailSignatureDto {
-  // Deliberately not @IsNotEmpty — an empty string is how a signature gets
-  // cleared (appendSignature() treats a blank/whitespace-only value as
-  // "no signature set").
-  @ApiProperty({ example: '<p>Regards,<br/>{{companyName}} HR Team</p>' })
+  @ApiPropertyOptional()
+  @IsOptional()
   @IsString()
-  signatureHtml!: string;
+  name?: string;
+
+  // Deliberately not @IsNotEmpty — an empty string is a valid signature
+  // body (blank sign-off for that named entry).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  html?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isDefault?: boolean;
 }

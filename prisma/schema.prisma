@@ -151,12 +151,17 @@ model Organization {
   // uploaded filename survives, for display in Organization Settings.
   assetMeta      Json    @default("{}")
 
-  // One shared HTML sign-off block, appended below every occasion/custom
-  // Email Template's rendered body when it's actually sent (see
-  // EmailTemplatesService.appendSignature) — edited from the Email
-  // Templates screen itself, not per-template, so it stays consistent
-  // across all of them and only needs updating in one place.
+  // Superseded by emailSignatures below (named, multiple) — not every org
+  // has one team sending all mail (HR vs Payroll vs IT, say), so a single
+  // shared block wasn't enough. Column kept (unused) rather than dropped to
+  // avoid a destructive migration; no code reads it anymore.
   emailSignatureHtml String @default("")
+  // Named signatures an EmailTemplate can pick from (EmailTemplate.
+  // signatureId — null means "use whichever one has isDefault:true").
+  // [{ id, name, html, isDefault }]. Edited from the Email Templates
+  // screen; appended below the rendered body when a template's email is
+  // actually sent (see EmailTemplatesService.appendSignature).
+  emailSignatures Json @default("[]")
 
   // Step 5 — Authorized Signatories: [{ id, name, designation,
   // signatureUrl, signatureMeta: {name,size}, isPrimary }]. Exactly one
@@ -559,6 +564,12 @@ model EmailTemplate {
   // (isCustom: true) template has no automatic trigger; it's sent manually
   // via EmailTemplatesController's send endpoint and can be deleted freely.
   isCustom Boolean @default(true)
+
+  // Which of Organization.emailSignatures this template's email uses when
+  // sent — null means "whichever one has isDefault:true". Not a real FK
+  // (emailSignatures is a JSON list, not its own table) — validated
+  // against the org's current list at write time instead.
+  signatureId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

@@ -1,7 +1,8 @@
-// Purpose: Exposes CRUD for the organization's occasion-based email templates.
+// Purpose: Exposes CRUD for the organization's occasion-based email templates, plus its named signature
+// list (Organization.emailSignatures — each template picks which one it uses).
 // Responsibilities: Validates DTOs and delegates all logic to EmailTemplatesService.
-// Important: findAll/findOne have no @Roles() — any authenticated caller can view the templates in effect;
-// update is ADMIN/HR only, same split as HolidaysController.
+// Important: findAll/findOne/listSignatures have no @Roles() — any authenticated caller can view the
+// templates/signatures in effect; writes are ADMIN/HR only, same split as HolidaysController.
 import {
   Body,
   Controller,
@@ -18,6 +19,7 @@ import { EmailTemplatesService } from './email-templates.service';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { SendEmailTemplateDto } from './dto/send-email-template.dto';
+import { CreateEmailSignatureDto } from './dto/create-email-signature.dto';
 import { UpdateEmailSignatureDto } from './dto/update-email-signature.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -38,22 +40,49 @@ export class EmailTemplatesController {
   }
 
   // Registered ahead of the ':occasionKey' wildcard routes below — Nest
-  // matches routes in registration order, so 'signature' would otherwise be
-  // captured as a literal occasionKey value instead of reaching these.
-  @Get('signature')
-  getSignature(@CurrentUser() caller: Caller) {
-    return this.emailTemplatesService.getSignature(caller.organizationId);
+  // matches routes in registration order, so 'signatures' would otherwise
+  // be captured as a literal occasionKey value instead of reaching these.
+  @Get('signatures')
+  listSignatures(@CurrentUser() caller: Caller) {
+    return this.emailTemplatesService.listSignatures(caller.organizationId);
   }
 
-  @Put('signature')
+  @Post('signatures')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  createSignature(
+    @Body() dto: CreateEmailSignatureDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.emailTemplatesService.createSignature(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  @Put('signatures/:id')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   updateSignature(
+    @Param('id') id: string,
     @Body() dto: UpdateEmailSignatureDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.emailTemplatesService.updateSignature(
-      dto.signatureHtml,
+    return this.emailTemplatesService.updateSignatureById(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  @Delete('signatures/:id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  removeSignature(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.emailTemplatesService.deleteSignature(
+      id,
       caller.organizationId,
       caller.id,
     );
