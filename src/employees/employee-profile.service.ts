@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import {
   EmployeeDocument,
+  EmployeeDocumentStatus,
   EmploymentStatus,
   NotificationCategory,
   Prisma,
@@ -266,7 +267,15 @@ export class EmployeeProfileService {
     organizationId: string,
   ) {
     this.assertSelfOrHr(actor, id);
-    await this.findEmployeeOrThrow(id, organizationId);
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    // Approval tier follows the document owner's role, not who physically
+    // clicked upload (an HR/Admin can upload on an employee's behalf):
+    // Founder/Admin documents need no review at all — there's no one above
+    // an Admin in this hierarchy to approve them — so they're stamped
+    // approved immediately instead of sitting PENDING forever. HR and
+    // Employee documents still go through the normal review flow (see
+    // assertMayReviewDocumentFor).
+    const isFounderDoc = employee.role === Role.ADMIN;
     const doc = await this.scopedPrisma.employeeDocument.create({
       data: {
         organizationId,
@@ -274,6 +283,11 @@ export class EmployeeProfileService {
         docType: dto.docType,
         fileName: dto.fileName,
         fileUrl: dto.fileUrl,
+        ...(isFounderDoc && {
+          status: EmployeeDocumentStatus.APPROVED,
+          reviewedById: actor.id,
+          reviewedAt: new Date(),
+        }),
       },
     });
     return withSignedFileUrl(doc);
@@ -296,6 +310,22 @@ export class EmployeeProfileService {
     return { success: true };
   }
 
+  // One tier up the hierarchy reviews the one below — a Founder/Admin's own
+  // documents are auto-approved on upload (see addDocument) and never reach
+  // here in practice; an HR document needs an Admin specifically (another
+  // HR can't approve a peer's document); an Employee/Manager document keeps
+  // the existing ADMIN-or-HR review the controller's @Roles already gates.
+  private assertMayReviewDocumentFor(actor: Actor, employee: User) {
+    if (
+      (employee.role === Role.ADMIN || employee.role === Role.HR) &&
+      actor.role !== Role.ADMIN
+    ) {
+      throw new ForbiddenException(
+        'Only an Admin can review an HR or Admin employee’s document.',
+      );
+    }
+  }
+
   async reviewDocument(
     id: string,
     docId: string,
@@ -303,6 +333,8 @@ export class EmployeeProfileService {
     actor: Actor,
     organizationId: string,
   ) {
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    this.assertMayReviewDocumentFor(actor, employee);
     const doc = await this.scopedPrisma.employeeDocument.findFirst({
       where: { id: docId, employeeId: id, organizationId },
     });
@@ -322,10 +354,7 @@ export class EmployeeProfileService {
       where: { id: docId, organizationId },
     });
 
-    const employee = await this.scopedPrisma.user.findFirst({
-      where: { id, organizationId },
-    });
-    if (employee) {
+    {
       const title = `Document ${dto.status === 'APPROVED' ? 'Approved' : 'Rejected'}`;
       const message = `Your document "${doc.fileName}" has been ${dto.status.toLowerCase()}.${dto.reason ? ` Reason: ${dto.reason}` : ''}`;
       await this.notificationsService.create({
