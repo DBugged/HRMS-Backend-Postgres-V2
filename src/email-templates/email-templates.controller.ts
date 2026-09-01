@@ -18,6 +18,7 @@ import { EmailTemplatesService } from './email-templates.service';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { SendEmailTemplateDto } from './dto/send-email-template.dto';
+import { UpdateEmailSignatureDto } from './dto/update-email-signature.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -34,6 +35,28 @@ export class EmailTemplatesController {
   @Get()
   findAll(@CurrentUser() caller: Caller) {
     return this.emailTemplatesService.findAll(caller.organizationId);
+  }
+
+  // Registered ahead of the ':occasionKey' wildcard routes below — Nest
+  // matches routes in registration order, so 'signature' would otherwise be
+  // captured as a literal occasionKey value instead of reaching these.
+  @Get('signature')
+  getSignature(@CurrentUser() caller: Caller) {
+    return this.emailTemplatesService.getSignature(caller.organizationId);
+  }
+
+  @Put('signature')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  updateSignature(
+    @Body() dto: UpdateEmailSignatureDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.emailTemplatesService.updateSignature(
+      dto.signatureHtml,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Get(':occasionKey')

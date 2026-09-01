@@ -141,17 +141,25 @@ export class HrEventsService {
     variables: Record<string, string>,
     fallback: { subject: string; html: string },
   ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
-    const template = await this.emailTemplatesService.findActiveByOccasion(
+    // Delegates to EmailTemplatesService.renderOccasion for the actual
+    // template lookup/render/signature-append (it also appends the org's
+    // shared email signature — see that method) — this wrapper exists only
+    // to keep this file's ccAllActive fallback (true — Birthday/Anniversary
+    // default to CC'ing everyone) distinct from renderOccasion's own
+    // fallback default (false), which fits the other 22 occasions better.
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      organizationId,
+      occasionKey,
+      variables,
+      fallback,
+    );
+    const hasActiveTemplate = await this.emailTemplatesService.findActiveByOccasion(
       occasionKey,
       organizationId,
     );
-    if (!template) {
-      return { ...fallback, ccAllActive: true };
-    }
     return {
-      subject: this.emailTemplatesService.render(template.subject, variables),
-      html: this.emailTemplatesService.render(template.bodyHtml, variables),
-      ccAllActive: template.ccAllActive,
+      ...rendered,
+      ccAllActive: hasActiveTemplate ? rendered.ccAllActive : true,
     };
   }
 

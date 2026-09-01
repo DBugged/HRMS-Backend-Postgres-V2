@@ -286,12 +286,12 @@ export class EmailTemplatesService {
     const cc = ccEmployees.map((e) => e.email);
 
     const results = await Promise.allSettled(
-      employees.map((employee) => {
+      employees.map(async (employee) => {
         const variables = { employeeName: employee.name, ...orgVariables };
         return this.emailService.send({
           to: employee.email,
           subject: renderTemplate(template.subject, variables),
-          html: renderTemplate(template.bodyHtml, variables),
+          html: await this.appendSignature(renderTemplate(template.bodyHtml, variables), organizationId, variables),
           ...(cc.length && { cc }),
         });
       }),
@@ -334,7 +334,8 @@ export class EmailTemplatesService {
   // than silently dropping the email. Generalized out of HrEventsService's
   // original private method (same name/shape) once every notification
   // email in the app started going through this, not just Birthday/Work
-  // Anniversary.
+  // Anniversary. The org's shared signature (if any) is appended below the
+  // body either way — see appendSignature().
   async renderOccasion(
     organizationId: string,
     occasionKey: string,
@@ -343,13 +344,86 @@ export class EmailTemplatesService {
   ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
     const template = await this.findActiveByOccasion(occasionKey, organizationId);
     if (!template) {
-      return { ...fallback, ccAllActive: false };
+      return {
+        subject: fallback.subject,
+        html: await this.appendSignature(fallback.html, organizationId, variables),
+        ccAllActive: false,
+      };
     }
     return {
       subject: this.render(template.subject, variables),
-      html: this.render(template.bodyHtml, variables),
+      html: await this.appendSignature(this.render(template.bodyHtml, variables), organizationId, variables),
       ccAllActive: template.ccAllActive,
     };
+  }
+
+  // One shared HTML sign-off, set once from the Email Templates screen and
+  // appended below every template's rendered body when it's actually sent
+  // — not stored as part of any individual EmailTemplate row, so editing it
+  // doesn't mean touching all 24 templates. Renders {{placeholder}}s the
+  // same way the body itself does, but the signature's own variable needs
+  // (companyPhone/companyWebsite/companyEmail/companyAddress/companyLogo)
+  // are broader than what most occasion call sites bother building for
+  // their own body — a leave-decision email, say, only ever passes
+  // employeeName/decision/dates — so this fetches the full company
+  // variable set itself rather than relying on the caller to have included
+  // it. Caller-supplied `variables` win on any key overlap.
+  private async appendSignature(
+    html: string,
+    organizationId: string,
+    variables: Record<string, string>,
+  ): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        emailSignatureHtml: true,
+        companyName: true,
+        phone: true,
+        website: true,
+        contactEmail: true,
+        registeredAddress: true,
+        emailLogoUrl: true,
+      },
+    });
+    const signature = org?.emailSignatureHtml?.trim();
+    if (!signature) return html;
+    const companyVariables = {
+      companyName: org?.companyName ?? '',
+      companyPhone: org?.phone ?? '',
+      companyWebsite: org?.website ?? '',
+      companyEmail: org?.contactEmail ?? '',
+      companyAddress: org?.registeredAddress ?? '',
+      companyLogo: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+    };
+    return `${html}${this.render(signature, { ...companyVariables, ...variables })}`;
+  }
+
+  async getSignature(organizationId: string): Promise<{ signatureHtml: string }> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { emailSignatureHtml: true },
+    });
+    return { signatureHtml: org?.emailSignatureHtml ?? '' };
+  }
+
+  async updateSignature(
+    signatureHtml: string,
+    organizationId: string,
+    actorId: string,
+  ): Promise<{ signatureHtml: string }> {
+    await this.scopedPrisma.organization.updateMany({
+      where: { id: organizationId },
+      data: { emailSignatureHtml: signatureHtml },
+    });
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMAIL_SIGNATURE_UPDATED',
+      module: AuditModule.NOTIFICATION,
+      organizationId,
+      targetId: organizationId,
+      details: {},
+    });
+    return { signatureHtml };
   }
 
   private async findByOccasionOrThrow(

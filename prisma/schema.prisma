@@ -151,6 +151,13 @@ model Organization {
   // uploaded filename survives, for display in Organization Settings.
   assetMeta      Json    @default("{}")
 
+  // One shared HTML sign-off block, appended below every occasion/custom
+  // Email Template's rendered body when it's actually sent (see
+  // EmailTemplatesService.appendSignature) — edited from the Email
+  // Templates screen itself, not per-template, so it stays consistent
+  // across all of them and only needs updating in one place.
+  emailSignatureHtml String @default("")
+
   // Step 5 — Authorized Signatories: [{ id, name, designation,
   // signatureUrl, signatureMeta: {name,size}, isPrimary }]. Exactly one
   // entry is expected isPrimary:true; readers needing "the" signatory fall
