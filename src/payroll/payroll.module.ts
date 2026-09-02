@@ -10,6 +10,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
+import { LoansModule } from '../loans/loans.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
     EmployeeTimelineModule,
     NotificationsModule,
     EmailTemplatesModule,
+    LoansModule,
   ],
   controllers: [PayrollController],
   providers: [

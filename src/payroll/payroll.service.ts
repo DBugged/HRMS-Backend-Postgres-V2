@@ -21,6 +21,9 @@ import {
   EmployeeSalaryComponent,
   LeaveEncashmentStatus,
   LeaveStatus,
+  Loan,
+  LoanStatus,
+  LoanType,
   NotificationCategory,
   OvertimeStatus,
   PayFrequency,
@@ -85,6 +88,7 @@ import { mapWithConcurrency } from '../common/concurrency';
 import { issueDocumentNumber } from '../organizations/document-numbering';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
+import { LoansService } from '../loans/loans.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -197,6 +201,7 @@ export class PayrollService {
     private readonly emailService: EmailService,
     private readonly payslipEmailQueueService: PayslipEmailQueueService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly loansService: LoansService,
   ) {}
 
   // Computes a full payroll snapshot for one employee for one month/year.
@@ -476,6 +481,25 @@ export class PayrollService {
         });
         afterDeductions.INCOME_TAX = incomeTaxAmount;
       }
+    }
+
+    // Same shape as the leave-encashment fold-in above: any ACTIVE loan/
+    // advance whose repayment period has started gets its EMI (capped at
+    // whatever's still outstanding, for the final installment) shown as a
+    // deduction line here — read-only, nothing is persisted until the run
+    // is locked (afterLock actually decrements the balance, same
+    // calculate-is-a-preview-until-lock rule leave encashment follows).
+    for (const { loan, amount } of await this.getDueLoanEmis(
+      employeeId,
+      month,
+      year,
+      organizationId,
+    )) {
+      deductionsResults.push({
+        code: 'LOAN_EMI',
+        name: `${loan.loanType === LoanType.ADVANCE ? 'Advance' : 'Loan'} EMI`,
+        amount,
+      });
     }
 
     const includedDeductions = deductionsResults.filter(
@@ -1159,7 +1183,12 @@ export class PayrollService {
         const rendered = await this.emailTemplatesService.renderOccasion(
           organizationId,
           'PAYSLIP_ISSUED',
-          { employeeName: employee.name, month: String(run.month), year: String(run.year), netPay: String(run.netPay) },
+          {
+            employeeName: employee.name,
+            month: String(run.month),
+            year: String(run.year),
+            netPay: String(run.netPay),
+          },
           { subject: title, html: message },
         );
         await this.emailService.send({
@@ -1334,6 +1363,57 @@ export class PayrollService {
         processedAt: new Date(),
       },
     });
+
+    // Actually deduct each active loan/advance's EMI now that the run is
+    // locked (not at calculate — a recalculation before lock must stay a
+    // free preview, same reasoning as leave encashment above). Reuses
+    // LoansService.recordRepayment so the balance-decrement/auto-close-at-
+    // zero logic lives in exactly one place, not duplicated here.
+    for (const { loan, amount } of await this.getDueLoanEmis(
+      run.employeeId,
+      run.month,
+      run.year,
+      organizationId,
+    )) {
+      await this.loansService.recordRepayment(
+        loan.id,
+        { month: run.month, year: run.year, amount, payrollRun: run.id },
+        organizationId,
+      );
+    }
+  }
+
+  // ACTIVE loans/advances whose repayment period has started (loan.
+  // startYear/startMonth <= this run's year/month) and still have a
+  // balance — each one's EMI, capped at whatever's left outstanding so
+  // the final installment never overshoots. Shared by calculatePayroll
+  // (a read-only preview line) and afterLock (which actually records the
+  // repayment), same "approved-but-not-yet-processed" split leave
+  // encashment uses.
+  private async getDueLoanEmis(
+    employeeId: string,
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<Array<{ loan: Loan; amount: number }>> {
+    const loans = await this.scopedPrisma.loan.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        status: LoanStatus.ACTIVE,
+        outstandingBalance: { gt: 0 },
+      },
+    });
+    return loans
+      .filter(
+        (l) =>
+          l.startYear < year || (l.startYear === year && l.startMonth <= month),
+      )
+      .map((l) => ({
+        loan: l,
+        amount: Math.min(l.emiAmount, l.outstandingBalance),
+      }))
+      .filter(({ amount }) => amount > 0);
   }
 
   // Resolves a group of same-type components (all earnings, or all

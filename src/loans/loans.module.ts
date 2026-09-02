@@ -15,5 +15,9 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
   ],
   controllers: [LoansController],
   providers: [LoansService],
+  // Payroll's afterLock() reuses recordRepayment() to deduct each active
+  // loan's EMI from the run rather than duplicating the balance-math/
+  // auto-close logic.
+  exports: [LoansService],
 })
 export class LoansModule {}

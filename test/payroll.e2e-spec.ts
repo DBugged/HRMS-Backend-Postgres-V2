@@ -47,13 +47,14 @@ async function markFullMonthPresent(
   prisma: PrismaService,
   organizationId: string,
   employeeId: string,
+  month: number = MONTH,
 ) {
   const rows = Array.from({ length: DAYS_IN_MONTH }, (_, i) => {
     const day = String(i + 1).padStart(2, '0');
     return {
       organizationId,
       employeeId,
-      date: `${YEAR}-0${MONTH}-${day}`,
+      date: `${YEAR}-${String(month).padStart(2, '0')}-${day}`,
       status: AttendanceStatus.PRESENT,
       source: 'FACE_API' as const,
     };
@@ -801,6 +802,173 @@ describe('Payroll (e2e)', () => {
         .get(`/payroll/${runId}/pdf`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
+    });
+  });
+
+  describe('Loan/advance EMI deduction', () => {
+    const LOAN_MONTH = 11;
+
+    beforeAll(async () => {
+      await markFullMonthPresent(
+        prisma,
+        organizationId,
+        employeeId,
+        LOAN_MONTH,
+      );
+    });
+
+    it("calculate shows an ACTIVE loan's EMI as a deduction line (preview, nothing persisted yet)", async () => {
+      const loan = await prisma.loan.create({
+        data: {
+          organizationId,
+          employeeId,
+          loanType: 'LOAN',
+          principal: 12000,
+          interestRate: 0,
+          tenureMonths: 4,
+          emiAmount: 3000,
+          startMonth: LOAN_MONTH,
+          startYear: YEAR,
+          outstandingBalance: 12000,
+          status: 'ACTIVE',
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: LOAN_MONTH, year: YEAR, employeeId })
+        .expect(201);
+      const run = (res.body as CalculateResponseBody).payrolls[0];
+      const emiLine = run.deductions.find((d) => d.code === 'LOAN_EMI');
+      expect(emiLine?.amount).toBe(3000);
+      expect(run.totalDeductions).toBeGreaterThanOrEqual(3000);
+
+      // Preview only — calculate() never touches the loan itself.
+      const untouched = await prisma.loan.findFirstOrThrow({
+        where: { id: loan.id },
+      });
+      expect(untouched.outstandingBalance).toBe(12000);
+      const repaymentCount = await prisma.loanRepayment.count({
+        where: { loanId: loan.id },
+      });
+      expect(repaymentCount).toBe(0);
+    });
+
+    it('a loan starting after this run is not deducted yet', async () => {
+      await prisma.loan.create({
+        data: {
+          organizationId,
+          employeeId,
+          loanType: 'ADVANCE',
+          principal: 5000,
+          interestRate: 0,
+          tenureMonths: 1,
+          emiAmount: 5000,
+          startMonth: LOAN_MONTH + 1,
+          startYear: YEAR,
+          outstandingBalance: 5000,
+          status: 'ACTIVE',
+        },
+      });
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: LOAN_MONTH, year: YEAR, employeeId })
+        .expect(201);
+      const run = (res.body as CalculateResponseBody).payrolls[0];
+      expect(run.deductions.filter((d) => d.code === 'LOAN_EMI')).toHaveLength(
+        1,
+      ); // only the already-started loan
+    });
+
+    it('lock actually deducts the EMI, decrements the balance, and stamps payrollRunId', async () => {
+      const loan = await prisma.loan.findFirstOrThrow({
+        where: { organizationId, employeeId, loanType: 'LOAN' },
+      });
+      const run = await prisma.payrollRun.findFirstOrThrow({
+        where: { employeeId, month: LOAN_MONTH, year: YEAR },
+      });
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/lock`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+
+      const updatedLoan = await prisma.loan.findFirstOrThrow({
+        where: { id: loan.id },
+      });
+      expect(updatedLoan.outstandingBalance).toBe(9000); // 12000 - 3000
+      expect(updatedLoan.status).toBe('ACTIVE'); // not paid off yet
+
+      const repayment = await prisma.loanRepayment.findFirstOrThrow({
+        where: { loanId: loan.id },
+      });
+      expect(repayment.amount).toBe(3000);
+      expect(repayment.payrollRunId).toBe(run.id);
+      expect(repayment.balanceAfter).toBe(9000);
+    });
+
+    it("locking a later run's EMI that pays off the remaining balance closes the loan", async () => {
+      const loan = await prisma.loan.findFirstOrThrow({
+        where: { organizationId, employeeId, loanType: 'LOAN' },
+      });
+      // Fast-forward straight to the loan's last installment so this one
+      // run's EMI (capped at whatever's left) fully closes it out.
+      await prisma.loan.update({
+        where: { id: loan.id },
+        data: { outstandingBalance: 1500 }, // less than the 3000 EMI
+      });
+
+      // Must stay >= LOAN_MONTH (the loan's own startMonth) for
+      // getDueLoanEmis' "period has started" check, and >= 12 was never
+      // actually calculate()'d anywhere else in this file (only used as
+      // the OTHER loan's startMonth above, never as a run's own month).
+      const finalMonth = 12;
+      await markFullMonthPresent(
+        prisma,
+        organizationId,
+        employeeId,
+        finalMonth,
+      );
+      await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: finalMonth, year: YEAR, employeeId })
+        .expect(201);
+      const run = await prisma.payrollRun.findFirstOrThrow({
+        where: { employeeId, month: finalMonth, year: YEAR },
+      });
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/lock`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+
+      const closedLoan = await prisma.loan.findFirstOrThrow({
+        where: { id: loan.id },
+      });
+      expect(closedLoan.outstandingBalance).toBe(0);
+      expect(closedLoan.status).toBe('CLOSED');
+
+      const repayment = await prisma.loanRepayment.findFirstOrThrow({
+        where: { loanId: loan.id, month: finalMonth },
+      });
+      expect(repayment.amount).toBe(1500); // capped at what was left, not the full 3000 EMI
     });
   });
 });
