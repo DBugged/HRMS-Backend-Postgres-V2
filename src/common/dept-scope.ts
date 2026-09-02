@@ -28,15 +28,35 @@ export async function deptScopedEmployeeIds(
   return deptEmployees.map((e) => e.id);
 }
 
+// No one below ADMIN may approve their own request — an HR (or MANAGER)
+// reviewing their own leave/comp-off/overtime/reimbursement/document is
+// self-approval regardless of department scope, so this runs first, ahead
+// of (and independent from) the MANAGER-only department check below. ADMIN
+// is exempt: there's no one above an Admin in this hierarchy to review
+// their requests instead.
+export function assertNotSelfApproval(
+  actor: DeptScopeActor,
+  targetEmployeeId: string,
+): void {
+  if (actor.role !== Role.ADMIN && actor.id === targetEmployeeId) {
+    throw new ForbiddenException(
+      'You cannot approve or review your own request.',
+    );
+  }
+}
+
 // Guards a single-record action (review/approve/view) so a MANAGER can only
-// act on an employee within their own department. No-op for ADMIN/HR.
-// EMPLOYEE never reaches this — those actions are self-scoped upstream.
+// act on an employee within their own department, and no one but ADMIN can
+// act on their own request. No further scope check for ADMIN/HR beyond
+// self-approval. EMPLOYEE never reaches this — those actions are
+// self-scoped upstream.
 export async function assertManagerDeptScope(
   prisma: ExtendedPrismaClient,
   actor: DeptScopeActor,
   organizationId: string,
   targetEmployeeId: string,
 ): Promise<void> {
+  assertNotSelfApproval(actor, targetEmployeeId);
   if (actor.role !== Role.MANAGER) return;
   const target = await prisma.user.findFirst({
     where: { id: targetEmployeeId, organizationId },
@@ -62,6 +82,7 @@ export async function assertManagerScopeOrDelegate(
   organizationId: string,
   targetEmployeeId: string,
 ): Promise<void> {
+  assertNotSelfApproval(actor, targetEmployeeId);
   if (actor.role !== Role.MANAGER) return;
   const target = await prisma.user.findFirst({
     where: { id: targetEmployeeId, organizationId },

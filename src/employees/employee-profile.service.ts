@@ -41,6 +41,7 @@ import {
   mergePersonalData,
   signPersonalDataFileUrls,
 } from './personal-data';
+import { assertNotSelfApproval } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -410,6 +411,13 @@ export class EmployeeProfileService {
   ) {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
     this.assertMayAccessDocumentsFor(actor, employee);
+    // assertMayAccessDocumentsFor deliberately lets an employee through for
+    // *viewing*/uploading their own documents — but reviewing (approving/
+    // rejecting) your own upload is self-approval, blocked here the same
+    // way as every other review action. ADMIN is exempt, though moot in
+    // practice: an ADMIN's own documents are auto-approved on upload (see
+    // addDocument) and never sit PENDING for this to fire on.
+    assertNotSelfApproval(actor, id);
     const doc = await this.scopedPrisma.employeeDocument.findFirst({
       where: { id: docId, employeeId: id, organizationId },
     });

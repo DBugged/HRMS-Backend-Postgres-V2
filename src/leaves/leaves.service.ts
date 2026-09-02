@@ -41,6 +41,7 @@ import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
 import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
+  assertNotSelfApproval,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -329,6 +330,8 @@ export class LeavesService {
         'This leave request has already been reviewed.',
       );
     }
+
+    assertNotSelfApproval(actor, leave.employeeId);
 
     if (actor.role === Role.MANAGER) {
       const employee = await this.scopedPrisma.user.findFirst({
