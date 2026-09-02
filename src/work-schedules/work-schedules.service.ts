@@ -4,7 +4,12 @@
 //   alternateWeeklyOffs/breakMinutes onto each selected department's own shiftStartTime/shiftEndTime/
 //   weeklyOffs/breakMinutes (what AttendanceService actually reads — see attendance-shift-config.ts) and
 //   sets Department.workScheduleId for traceability, replace semantics (exact target set).
-import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuditModule, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -76,7 +81,11 @@ export class WorkSchedulesService {
     return schedule;
   }
 
-  async create(dto: CreateWorkScheduleDto, organizationId: string, actor: Actor) {
+  async create(
+    dto: CreateWorkScheduleDto,
+    organizationId: string,
+    actor: Actor,
+  ) {
     const alternateWeeklyOffs = dto.alternateWeeklyOffs ?? [];
     validateNoOverlap(dto.workingDays, alternateWeeklyOffs);
 
@@ -88,7 +97,8 @@ export class WorkSchedulesService {
         startTime: dto.startTime,
         endTime: dto.endTime,
         breakMinutes: dto.breakMinutes ?? 60,
-        alternateWeeklyOffs: alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
+        alternateWeeklyOffs:
+          alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
         isActive: dto.isActive ?? true,
       },
     });
@@ -131,9 +141,12 @@ export class WorkSchedulesService {
         ...(dto.workingDays !== undefined && { workingDays: dto.workingDays }),
         ...(dto.startTime !== undefined && { startTime: dto.startTime }),
         ...(dto.endTime !== undefined && { endTime: dto.endTime }),
-        ...(dto.breakMinutes !== undefined && { breakMinutes: dto.breakMinutes }),
+        ...(dto.breakMinutes !== undefined && {
+          breakMinutes: dto.breakMinutes,
+        }),
         ...(dto.alternateWeeklyOffs !== undefined && {
-          alternateWeeklyOffs: dto.alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
+          alternateWeeklyOffs:
+            dto.alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },
@@ -158,7 +171,7 @@ export class WorkSchedulesService {
           weeklyOffs: computeWeeklyOffs(
             updated.workingDays as number[],
             updated.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[],
-          ) as unknown as Prisma.InputJsonValue,
+          ),
           breakMinutes: updated.breakMinutes,
         },
       });
@@ -216,7 +229,9 @@ export class WorkSchedulesService {
         where: { id: { in: dto.departmentIds }, organizationId },
       });
       if (found !== dto.departmentIds.length) {
-        throw new BadRequestException('One or more departments were not found.');
+        throw new BadRequestException(
+          'One or more departments were not found.',
+        );
       }
     }
 
@@ -245,7 +260,7 @@ export class WorkSchedulesService {
           workScheduleId: id,
           shiftStartTime: schedule.startTime,
           shiftEndTime: schedule.endTime,
-          weeklyOffs: weeklyOffs as unknown as Prisma.InputJsonValue,
+          weeklyOffs: weeklyOffs,
           breakMinutes: schedule.breakMinutes,
         },
       });
@@ -257,7 +272,10 @@ export class WorkSchedulesService {
       module: AuditModule.ORGANIZATION,
       organizationId,
       targetId: id,
-      details: { name: schedule.name, departmentCount: dto.departmentIds.length },
+      details: {
+        name: schedule.name,
+        departmentCount: dto.departmentIds.length,
+      },
     });
 
     return this.findOrThrow(id, organizationId);

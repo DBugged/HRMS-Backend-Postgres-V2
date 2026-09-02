@@ -260,10 +260,20 @@ export class ReimbursementsService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'REIMBURSEMENT_STATUS',
-        { employeeName: employee.name, amount: String(claim.amount), category: claim.category, status: dto.status, comments: dto.reviewComments ?? '' },
+        {
+          employeeName: employee.name,
+          amount: String(claim.amount),
+          category: claim.category,
+          status: dto.status,
+          comments: dto.reviewComments ?? '',
+        },
         { subject: title, html: message },
       );
-      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
 
     return this.withSignedReceipt(updated);

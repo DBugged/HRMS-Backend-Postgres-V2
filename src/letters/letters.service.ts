@@ -105,7 +105,10 @@ export class LettersService {
     const [hasOffboardingCase, hasPaidPayrollRun, hasSettlement] =
       await Promise.all([
         this.scopedPrisma.offboardingCase
-          .findFirst({ where: { organizationId, employeeId }, select: { id: true } })
+          .findFirst({
+            where: { organizationId, employeeId },
+            select: { id: true },
+          })
           .then(Boolean),
         this.scopedPrisma.payrollRun
           .findFirst({
@@ -119,7 +122,10 @@ export class LettersService {
           })
           .then(Boolean),
         this.scopedPrisma.settlement
-          .findFirst({ where: { organizationId, employeeId }, select: { id: true } })
+          .findFirst({
+            where: { organizationId, employeeId },
+            select: { id: true },
+          })
           .then(Boolean),
       ]);
 
@@ -134,7 +140,8 @@ export class LettersService {
       },
       [LetterDataProfile.PAYROLL]: {
         unlocked: hasPaidPayrollRun,
-        reason: 'Available once a payroll run has been processed for this employee.',
+        reason:
+          'Available once a payroll run has been processed for this employee.',
       },
       [LetterDataProfile.SETTLEMENT]: {
         unlocked: hasSettlement,
@@ -273,18 +280,14 @@ export class LettersService {
           settlement.recoveriesAmount +
           settlement.loanBalanceRecovered +
           settlement.noticePeriodRecovery;
-        variables.lastWorkingDay = formatDateDisplay(
-          settlement.lastWorkingDay,
-        );
+        variables.lastWorkingDay = formatDateDisplay(settlement.lastWorkingDay);
         variables.pendingSalary = money(settlement.pendingSalaryAmount);
         variables.leaveEncashment = money(settlement.leaveEncashmentAmount);
         variables.bonus = money(settlement.bonusAmount);
         variables.gratuity = money(settlement.gratuityAmount);
         variables.recoveries = money(settlement.recoveriesAmount);
         variables.loanRecovered = money(settlement.loanBalanceRecovered);
-        variables.noticePeriodRecovery = money(
-          settlement.noticePeriodRecovery,
-        );
+        variables.noticePeriodRecovery = money(settlement.noticePeriodRecovery);
         variables.totalDeductions = money(totalDeductions);
         variables.netPayable = money(settlement.netSettlementAmount);
         variables.netPayableInWords = amountInWords(
@@ -297,10 +300,7 @@ export class LettersService {
         break;
     }
 
-    const title = this.letterTemplatesService.render(
-      template.title,
-      variables,
-    );
+    const title = this.letterTemplatesService.render(template.title, variables);
     const renderedBody = this.letterTemplatesService.render(
       template.bodyText,
       variables,
@@ -366,12 +366,10 @@ export class LettersService {
     employeeId: string,
     organizationId: string,
   ): Promise<string> {
-    const offboardingCase = await this.scopedPrisma.offboardingCase.findFirst(
-      {
-        where: { organizationId, employeeId },
-        orderBy: { createdAt: 'desc' },
-      },
-    );
+    const offboardingCase = await this.scopedPrisma.offboardingCase.findFirst({
+      where: { organizationId, employeeId },
+      orderBy: { createdAt: 'desc' },
+    });
     if (!offboardingCase) {
       throw new BadRequestException(
         'No offboarding case found for this employee yet — initiate offboarding first.',

@@ -136,7 +136,8 @@ export function resolveShiftConfig(
       orgPrefs?.weekendDays,
       HARDCODED_FALLBACK.weeklyOffs,
     ),
-    breakMinutes: orgPrefs?.defaultBreakMinutes ?? HARDCODED_FALLBACK.breakMinutes,
+    breakMinutes:
+      orgPrefs?.defaultBreakMinutes ?? HARDCODED_FALLBACK.breakMinutes,
   };
 }
 

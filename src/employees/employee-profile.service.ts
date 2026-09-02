@@ -98,7 +98,9 @@ export class EmployeeProfileService {
       where: { id, organizationId },
       include: {
         department: { select: { id: true, name: true } },
-        reportingManager: { select: { id: true, name: true, employeeId: true } },
+        reportingManager: {
+          select: { id: true, name: true, employeeId: true },
+        },
       },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
@@ -479,10 +481,19 @@ export class EmployeeProfileService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'DOCUMENT_STATUS',
-        { employeeName: employee.name, fileName: doc.fileName, status: dto.status, reason: dto.reason ?? '' },
+        {
+          employeeName: employee.name,
+          fileName: doc.fileName,
+          status: dto.status,
+          reason: dto.reason ?? '',
+        },
         { subject: title, html: message },
       );
-      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
 
     // A REJECTED review can un-complete the profile (the mandatory

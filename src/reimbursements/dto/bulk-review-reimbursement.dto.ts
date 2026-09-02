@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { ArrayMinSize, IsArray, IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+} from 'class-validator';
 import { ReimbursementPaymentMode } from '@prisma/client';
 import { REIMBURSEMENT_REVIEW_STATUSES } from './review-reimbursement.dto';
 
@@ -21,7 +29,9 @@ export class BulkReviewReimbursementDto {
   @IsString()
   reviewComments?: string;
 
-  @ApiPropertyOptional({ description: 'YYYY-MM-DD — only used when status is PAID' })
+  @ApiPropertyOptional({
+    description: 'YYYY-MM-DD — only used when status is PAID',
+  })
   @IsOptional()
   @Matches(DATE_RE, { message: 'paidDate must be in YYYY-MM-DD format' })
   paidDate?: string;

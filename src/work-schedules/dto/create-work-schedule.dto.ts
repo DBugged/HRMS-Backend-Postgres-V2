@@ -23,7 +23,10 @@ export class AlternateWeeklyOffDto {
   @Max(6)
   day!: number;
 
-  @ApiProperty({ type: [Number], description: '1st..5th occurrence of that weekday in the month' })
+  @ApiProperty({
+    type: [Number],
+    description: '1st..5th occurrence of that weekday in the month',
+  })
   @IsArray()
   @ArrayMinSize(1)
   @IsInt({ each: true })

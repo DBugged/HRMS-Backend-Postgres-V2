@@ -35,7 +35,10 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
-import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
+import {
+  formatDateDisplay,
+  resolveOrgDateTimeFormat,
+} from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -89,7 +92,10 @@ export class OvertimeService {
       targetId: record.id,
       details: { employeeId: actor.id, date: dto.date, hours: dto.hours, type },
     });
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     await this.timelineService.logEvent({
       organizationId,
       employeeId: actor.id,
@@ -205,7 +211,10 @@ export class OvertimeService {
       where: { id: record.employeeId, organizationId },
     });
     if (employee) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+      const { dateFormat } = await resolveOrgDateTimeFormat(
+        this.scopedPrisma,
+        organizationId,
+      );
       const title = `Overtime Request ${dto.status}`;
       const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat)} has been ${dto.status.toLowerCase()}.`;
       await this.notificationsService.create({
@@ -218,10 +227,19 @@ export class OvertimeService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'OVERTIME_STATUS',
-        { employeeName: employee.name, hours: String(record.hours), date: formatDateDisplay(record.date, '', dateFormat), status: dto.status },
+        {
+          employeeName: employee.name,
+          hours: String(record.hours),
+          date: formatDateDisplay(record.date, '', dateFormat),
+          status: dto.status,
+        },
         { subject: title, html: message },
       );
-      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
 
     return updated;

@@ -52,7 +52,12 @@ export class OrgListItemsController {
     @Body() dto: UpdateOrgListItemDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.orgListItemsService.update(id, dto.name, caller.organizationId, caller);
+    return this.orgListItemsService.update(
+      id,
+      dto.name,
+      caller.organizationId,
+      caller,
+    );
   }
 
   @Delete(':id')

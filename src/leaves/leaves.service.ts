@@ -49,7 +49,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
+import {
+  formatDateDisplay,
+  resolveOrgDateTimeFormat,
+} from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -510,7 +513,10 @@ export class LeavesService {
     });
     if (!employee) return;
 
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     const title = `Leave Request ${dto.decision}`;
     const message = `Your leave request from ${formatDateDisplay(leave.startDate, '', dateFormat)} to ${formatDateDisplay(leave.endDate, '', dateFormat)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
 
@@ -525,10 +531,20 @@ export class LeavesService {
     const rendered = await this.emailTemplatesService.renderOccasion(
       organizationId,
       'LEAVE_DECISION',
-      { employeeName: employee.name, decision: dto.decision, startDate: formatDateDisplay(leave.startDate, '', dateFormat), endDate: formatDateDisplay(leave.endDate, '', dateFormat), comments: dto.comments ?? '' },
+      {
+        employeeName: employee.name,
+        decision: dto.decision,
+        startDate: formatDateDisplay(leave.startDate, '', dateFormat),
+        endDate: formatDateDisplay(leave.endDate, '', dateFormat),
+        comments: dto.comments ?? '',
+      },
       { subject: title, html: message },
     );
-    await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+    await this.emailService.send({
+      to: employee.email,
+      subject: rendered.subject,
+      html: rendered.html,
+    });
   }
 
   async cancel(id: string, actor: Actor, organizationId: string) {
@@ -770,7 +786,10 @@ export class LeavesService {
     actor: Actor,
     organizationId: string,
   ) {
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     const title = 'New Leave Application';
     const message = `${actor.name} applied for leave from ${formatDateDisplay(leave.startDate, '', dateFormat)} to ${formatDateDisplay(leave.endDate, '', dateFormat)}.`;
 

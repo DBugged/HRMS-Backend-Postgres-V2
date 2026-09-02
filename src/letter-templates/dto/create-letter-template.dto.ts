@@ -29,7 +29,10 @@ export class CreateLetterTemplateDto {
   @IsBoolean()
   addressedToEmployee?: boolean;
 
-  @ApiPropertyOptional({ enum: LetterDataProfile, default: LetterDataProfile.BASIC })
+  @ApiPropertyOptional({
+    enum: LetterDataProfile,
+    default: LetterDataProfile.BASIC,
+  })
   @IsOptional()
   @IsEnum(LetterDataProfile)
   dataProfile?: LetterDataProfile;

@@ -18,7 +18,11 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { frontendUrl } from '../common/frontend-url';
-import { signFileToken, resolveIncomingFileValue, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
+import {
+  signFileToken,
+  resolveIncomingFileValue,
+  SESSION_ASSET_TTL_SECONDS,
+} from '../files/file-token';
 import { validateOrgFields } from './org-validators';
 import { RedisCacheService } from '../common/redis-cache';
 import {
@@ -169,7 +173,8 @@ export class OrganizationSettingsService {
     for (const field of BRANDING_URL_FIELDS) {
       const value = org[field];
       if (value) {
-        signed[field] = `/files/${signFileToken(org.id, value, SESSION_ASSET_TTL_SECONDS)}`;
+        signed[field] =
+          `/files/${signFileToken(org.id, value, SESSION_ASSET_TTL_SECONDS)}`;
       }
     }
     const signatories = org.signatories as unknown as SignatoryEntry[];
@@ -245,7 +250,8 @@ export class OrganizationSettingsService {
       // TaxDeclarationsService (blocks the EMPLOYEE-tier endpoints
       // entirely when off) and the frontend (hides the nav link + shows a
       // disabled state instead of the form).
-      enableTaxDeclaration: attendancePayrollPrefs.enableTaxDeclaration !== false,
+      enableTaxDeclaration:
+        attendancePayrollPrefs.enableTaxDeclaration !== false,
     };
   }
 
@@ -272,8 +278,7 @@ export class OrganizationSettingsService {
     // silently overwrite the durable key on every unrelated save.
     const needsBrandingFix = BRANDING_URL_FIELDS.some((f) => f in data);
     const signatoriesIncoming = data.signatories as
-      | SignatoryEntry[]
-      | undefined;
+      SignatoryEntry[] | undefined;
     if (needsBrandingFix || signatoriesIncoming) {
       const existingOrg = await this.findOrThrow(organizationId);
       for (const field of BRANDING_URL_FIELDS) {
@@ -281,14 +286,13 @@ export class OrganizationSettingsService {
           data[field] = resolveIncomingFileValue(
             organizationId,
             data[field],
-            existingOrg[field] as string | null,
+            existingOrg[field],
           );
         }
       }
       if (signatoriesIncoming) {
         const existingByI = existingOrg.signatories as unknown as
-          | SignatoryEntry[]
-          | null;
+          SignatoryEntry[] | null;
         data.signatories = signatoriesIncoming.map((s, i) => ({
           ...s,
           signatureUrl: resolveIncomingFileValue(
@@ -418,7 +422,10 @@ export class OrganizationSettingsService {
         organizationId,
         'SETUP_COMPLETE',
         { employeeName: actor.name, companyName },
-        { subject: `Your ${companyName} HRMS Setup Is Complete`, html: fallbackHtml },
+        {
+          subject: `Your ${companyName} HRMS Setup Is Complete`,
+          html: fallbackHtml,
+        },
       );
       await this.emailService.send({
         to: actor.email,

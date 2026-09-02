@@ -50,7 +50,12 @@ export class WorkSchedulesController {
     @Body() dto: UpdateWorkScheduleDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.workSchedulesService.update(id, dto, caller.organizationId, caller);
+    return this.workSchedulesService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller,
+    );
   }
 
   @Delete(':id')
@@ -68,6 +73,11 @@ export class WorkSchedulesController {
     @Body() dto: AssignWorkScheduleDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.workSchedulesService.assign(id, dto, caller.organizationId, caller);
+    return this.workSchedulesService.assign(
+      id,
+      dto,
+      caller.organizationId,
+      caller,
+    );
   }
 }

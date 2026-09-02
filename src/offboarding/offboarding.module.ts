@@ -7,7 +7,12 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
-  imports: [AuditLogModule, EmployeeTimelineModule, NotificationsModule, EmailTemplatesModule],
+  imports: [
+    AuditLogModule,
+    EmployeeTimelineModule,
+    NotificationsModule,
+    EmailTemplatesModule,
+  ],
   controllers: [OffboardingController],
   providers: [OffboardingService],
 })

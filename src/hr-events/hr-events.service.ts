@@ -179,10 +179,11 @@ export class HrEventsService {
       variables,
       fallback,
     );
-    const hasActiveTemplate = await this.emailTemplatesService.findActiveByOccasion(
-      occasionKey,
-      organizationId,
-    );
+    const hasActiveTemplate =
+      await this.emailTemplatesService.findActiveByOccasion(
+        occasionKey,
+        organizationId,
+      );
     return {
       ...rendered,
       ccAllActive: hasActiveTemplate ? rendered.ccAllActive : true,
@@ -206,7 +207,10 @@ export class HrEventsService {
       companyWebsite: organization?.website ?? '',
       companyEmail: organization?.contactEmail ?? '',
       companyAddress: organization?.registeredAddress ?? '',
-      companyLogo: companyLogoImgTag(organizationId, organization?.emailLogoUrl),
+      companyLogo: companyLogoImgTag(
+        organizationId,
+        organization?.emailLogoUrl,
+      ),
     };
   }
 

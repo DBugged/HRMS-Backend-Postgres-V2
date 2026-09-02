@@ -169,10 +169,7 @@ export class LetterTemplatesService {
       where: { id: organizationId },
       select: { documentNumbering: true },
     });
-    const numbering = (org?.documentNumbering ?? {}) as Record<
-      string,
-      unknown
-    >;
+    const numbering = (org?.documentNumbering ?? {}) as Record<string, unknown>;
     if (!(key in numbering)) {
       await this.scopedPrisma.organization.update({
         where: { id: organizationId },
@@ -289,9 +286,7 @@ export class LetterTemplatesService {
       where: { organizationId, key },
     });
     if (!template) {
-      throw new NotFoundException(
-        `No letter template found for key '${key}'.`,
-      );
+      throw new NotFoundException(`No letter template found for key '${key}'.`);
     }
     return template;
   }

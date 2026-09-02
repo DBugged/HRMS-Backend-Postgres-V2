@@ -80,8 +80,16 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
     const rendered = await this.emailTemplatesService.renderOccasion(
       organizationId,
       'PAYSLIP_ISSUED',
-      { employeeName: employee.name, month: String(run.month), year: String(run.year), netPay: String(run.netPay) },
-      { subject: title, html: `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.` },
+      {
+        employeeName: employee.name,
+        month: String(run.month),
+        year: String(run.year),
+        netPay: String(run.netPay),
+      },
+      {
+        subject: title,
+        html: `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.`,
+      },
     );
     await this.emailService.send({
       to: employee.email,

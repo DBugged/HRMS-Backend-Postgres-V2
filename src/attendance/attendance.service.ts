@@ -57,7 +57,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
-import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
+import {
+  formatDateDisplay,
+  resolveOrgDateTimeFormat,
+} from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 // Either the plain scoped client or a $transaction callback's tx client —
@@ -226,7 +229,8 @@ export class AttendanceService {
       // thresholds, only the raw punch-in-to-punch-out span still does
       // (workDurationMinutes itself stays the full span, unadjusted, since
       // that's what's actually displayed/exported elsewhere).
-      const hours = Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
+      const hours =
+        Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
       if (hours >= shiftConfig.minHoursForPresent) {
         status = AttendanceStatus.PRESENT;
       } else if (hours >= shiftConfig.minHoursForHalfDay) {
@@ -325,7 +329,10 @@ export class AttendanceService {
     isLate: boolean,
     organizationId: string,
   ) {
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     const displayDate = formatDateDisplay(dateStr, '', dateFormat);
     if (status === AttendanceStatus.ABSENT) {
       const title = `Marked Absent — ${displayDate}`;
@@ -348,12 +355,13 @@ export class AttendanceService {
       });
       if (employee) {
         const fallbackHtml = `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`;
-        const { subject, html } = await this.emailTemplatesService.renderOccasion(
-          organizationId,
-          'ABSENT_MARKED',
-          { employeeName: employee.name, date: displayDate },
-          { subject: title, html: fallbackHtml },
-        );
+        const { subject, html } =
+          await this.emailTemplatesService.renderOccasion(
+            organizationId,
+            'ABSENT_MARKED',
+            { employeeName: employee.name, date: displayDate },
+            { subject: title, html: fallbackHtml },
+          );
         await this.emailService.send({ to: employee.email, subject, html });
       }
       return;
@@ -587,7 +595,10 @@ export class AttendanceService {
     }
 
     if (isWfh) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+      const { dateFormat } = await resolveOrgDateTimeFormat(
+        this.scopedPrisma,
+        organizationId,
+      );
       await this.timelineService.logEvent({
         organizationId,
         employeeId: actor.id,
@@ -614,7 +625,10 @@ export class AttendanceService {
     if (!actor.reportingManagerId || actor.reportingManagerId === actor.id) {
       return;
     }
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     await this.notificationsService.create({
       organizationId,
       userId: actor.reportingManagerId,
@@ -713,7 +727,10 @@ export class AttendanceService {
       description: dto.comments ?? '',
     });
 
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     const title = `Work From Home Request ${dto.decision}`;
     const message = `Your Work From Home request for ${formatDateDisplay(row.date, '', dateFormat)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
     await this.notificationsService.create({
@@ -727,7 +744,12 @@ export class AttendanceService {
       const { subject, html } = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'WFH_DECISION',
-        { employeeName: row.employee.name, decision: dto.decision, date: formatDateDisplay(row.date, '', dateFormat), comments: dto.comments ?? '' },
+        {
+          employeeName: row.employee.name,
+          decision: dto.decision,
+          date: formatDateDisplay(row.date, '', dateFormat),
+          comments: dto.comments ?? '',
+        },
         { subject: title, html: message },
       );
       await this.emailService.send({ to: row.employee.email, subject, html });
@@ -1019,7 +1041,10 @@ export class AttendanceService {
     if (!actor.reportingManagerId || actor.reportingManagerId === actor.id) {
       return;
     }
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     await this.notificationsService.create({
       organizationId,
       userId: actor.reportingManagerId,
@@ -1104,7 +1129,10 @@ export class AttendanceService {
       where: { id: row.employeeId, organizationId },
     });
     if (employee) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+      const { dateFormat } = await resolveOrgDateTimeFormat(
+        this.scopedPrisma,
+        organizationId,
+      );
       const title = `Regularization Request ${dto.decision}`;
       const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
       await this.notificationsService.create({
@@ -1117,7 +1145,12 @@ export class AttendanceService {
       const { subject, html } = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'REGULARIZATION_DECISION',
-        { employeeName: employee.name, decision: dto.decision, date: formatDateDisplay(row.date, '', dateFormat), comments: dto.comments ?? '' },
+        {
+          employeeName: employee.name,
+          decision: dto.decision,
+          date: formatDateDisplay(row.date, '', dateFormat),
+          comments: dto.comments ?? '',
+        },
         { subject: title, html: message },
       );
       await this.emailService.send({ to: employee.email, subject, html });

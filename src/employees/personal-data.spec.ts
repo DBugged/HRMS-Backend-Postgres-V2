@@ -45,7 +45,11 @@ describe('isProfileComplete', () => {
 });
 
 describe('areMandatoryDocumentsUploaded', () => {
-  const MANDATORY = { name: 'Bank Passbook', isMandatory: true, isActive: true };
+  const MANDATORY = {
+    name: 'Bank Passbook',
+    isMandatory: true,
+    isActive: true,
+  };
 
   it('is true when there are no mandatory requirements', () => {
     expect(areMandatoryDocumentsUploaded([], [])).toBe(true);

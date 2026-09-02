@@ -6,7 +6,11 @@
 //   management-screen equivalent of Departments/OrgListItems, kept consistent with their role split.
 // Important: doesn't introduce a second source of truth — reads/writes the exact same JSON array
 //   useEmployeeTypes() and the old inline flow already use, so all three surfaces stay in sync.
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { AuditModule, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -88,9 +92,7 @@ export class EmployeeTypesService {
     actor: Actor,
   ) {
     if (DEFAULT_EMPLOYEE_TYPES.some((t) => t.value === value)) {
-      throw new BadRequestException(
-        "Built-in employee types can't be edited.",
-      );
+      throw new BadRequestException("Built-in employee types can't be edited.");
     }
     const trimmed = label.trim();
     if (!trimmed) throw new BadRequestException('Label is required.');
@@ -99,7 +101,9 @@ export class EmployeeTypesService {
     if (!custom.some((t) => t.value === value)) {
       throw new NotFoundException('Employee type not found.');
     }
-    const next = custom.map((t) => (t.value === value ? { ...t, label: trimmed } : t));
+    const next = custom.map((t) =>
+      t.value === value ? { ...t, label: trimmed } : t,
+    );
     await this.prisma.organization.update({
       where: { id: organizationId },
       data: { customEmployeeTypes: next as unknown as Prisma.InputJsonValue },
@@ -140,11 +144,7 @@ export class EmployeeTypesService {
     return { success: true, message: 'Employee type deleted' };
   }
 
-  async bulkImport(
-    labels: string[],
-    organizationId: string,
-    actor: Actor,
-  ) {
+  async bulkImport(labels: string[], organizationId: string, actor: Actor) {
     const custom = await this.getCustomTypes(organizationId);
     const created: EmployeeTypeEntry[] = [];
     const skipped: { name: string; reason: string }[] = [];
@@ -175,7 +175,10 @@ export class EmployeeTypesService {
       await this.prisma.organization.update({
         where: { id: organizationId },
         data: {
-          customEmployeeTypes: [...custom, ...created] as unknown as Prisma.InputJsonValue,
+          customEmployeeTypes: [
+            ...custom,
+            ...created,
+          ] as unknown as Prisma.InputJsonValue,
         },
       });
       await this.auditLogService.log({

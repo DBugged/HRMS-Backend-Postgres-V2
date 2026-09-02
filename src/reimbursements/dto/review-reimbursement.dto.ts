@@ -23,7 +23,9 @@ export class ReviewReimbursementDto {
   // Only meaningful when status is PAID — a free-form date so a payout that
   // happened on a different day than the approval (or was backdated) can be
   // recorded accurately. Defaults to today server-side if omitted.
-  @ApiPropertyOptional({ description: 'YYYY-MM-DD — only used when status is PAID' })
+  @ApiPropertyOptional({
+    description: 'YYYY-MM-DD — only used when status is PAID',
+  })
   @IsOptional()
   @Matches(DATE_RE, { message: 'paidDate must be in YYYY-MM-DD format' })
   paidDate?: string;

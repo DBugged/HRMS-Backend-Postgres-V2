@@ -2,13 +2,7 @@
 // Responsibilities: Validates the query DTO and delegates to AuditLogService.
 // Important: Restricted to ADMIN/HR at the controller level for reads; clearAll is ADMIN-only (a stricter
 // per-route override) — deleting the entire trail is a bigger step than viewing it.
-import {
-  Controller,
-  Delete,
-  Get,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Controller, Delete, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { AuditLogService } from './audit-log.service';

@@ -7,7 +7,12 @@ import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.m
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
-  imports: [NotificationsModule, AuditLogModule, EmployeeTimelineModule, EmailTemplatesModule],
+  imports: [
+    NotificationsModule,
+    AuditLogModule,
+    EmployeeTimelineModule,
+    EmailTemplatesModule,
+  ],
   controllers: [ReimbursementsController],
   providers: [ReimbursementsService],
 })

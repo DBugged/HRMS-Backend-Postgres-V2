@@ -471,7 +471,9 @@ export class PayslipPdfService {
         align: 'right',
       });
       const payDate = run.paidAt ? formatDateDisplay(run.paidAt) : '-';
-      const periodStart = formatDateDisplay(`${run.year}-${String(run.month).padStart(2, '0')}-01`);
+      const periodStart = formatDateDisplay(
+        `${run.year}-${String(run.month).padStart(2, '0')}-01`,
+      );
       const periodEnd = formatDateDisplay(lastDayOfMonth(run.month, run.year));
       doc.fontSize(7.5);
       text(

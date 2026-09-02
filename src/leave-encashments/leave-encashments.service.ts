@@ -299,10 +299,19 @@ export class LeaveEncashmentsService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'LEAVE_ENCASHMENT_STATUS',
-        { employeeName: employee.name, days: String(row.days), amount: String(row.amount), status: dto.status },
+        {
+          employeeName: employee.name,
+          days: String(row.days),
+          amount: String(row.amount),
+          status: dto.status,
+        },
         { subject: title, html: message },
       );
-      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
 
     return result;

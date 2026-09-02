@@ -8,7 +8,13 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 import { PayrollSettingsModule } from '../payroll-settings/payroll-settings.module';
 
 @Module({
-  imports: [NotificationsModule, AuditLogModule, EmployeeTimelineModule, EmailTemplatesModule, PayrollSettingsModule],
+  imports: [
+    NotificationsModule,
+    AuditLogModule,
+    EmployeeTimelineModule,
+    EmailTemplatesModule,
+    PayrollSettingsModule,
+  ],
   controllers: [TaxDeclarationsController],
   providers: [TaxDeclarationsService],
 })

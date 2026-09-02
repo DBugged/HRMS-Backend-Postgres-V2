@@ -28,7 +28,9 @@ type Caller = Omit<User, 'password'>;
 @ApiBearerAuth('access-token')
 @Controller('letter-templates')
 export class LetterTemplatesController {
-  constructor(private readonly letterTemplatesService: LetterTemplatesService) {}
+  constructor(
+    private readonly letterTemplatesService: LetterTemplatesService,
+  ) {}
 
   @Get()
   findAll(@CurrentUser() caller: Caller) {

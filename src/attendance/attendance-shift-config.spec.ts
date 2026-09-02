@@ -67,7 +67,10 @@ describe('resolveShiftConfig', () => {
   });
 
   it('uses the org prefs break minutes when set', () => {
-    const result = resolveShiftConfig(null, { ...orgPrefs, defaultBreakMinutes: 45 });
+    const result = resolveShiftConfig(null, {
+      ...orgPrefs,
+      defaultBreakMinutes: 45,
+    });
     expect(result.breakMinutes).toBe(45);
   });
 

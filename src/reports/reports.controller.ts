@@ -56,7 +56,10 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('leave')
@@ -70,7 +73,10 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('leave/balance')
@@ -84,7 +90,10 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('leave/employee-history')
@@ -98,7 +107,10 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('leave/department-summary')
@@ -112,7 +124,10 @@ export class ReportsController {
       caller,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('payroll')
@@ -127,7 +142,10 @@ export class ReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('employees')
@@ -141,7 +159,10 @@ export class ReportsController {
     const report = await this.reportsService.employeeReport(
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format,
+    });
   }
 
   @Get('departments')
@@ -155,7 +176,10 @@ export class ReportsController {
     const report = await this.reportsService.departmentReport(
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format,
+    });
   }
 
   @Get('headcount-trend')
@@ -170,7 +194,10 @@ export class ReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('attrition')
@@ -185,6 +212,9 @@ export class ReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 }

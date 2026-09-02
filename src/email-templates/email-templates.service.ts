@@ -110,7 +110,9 @@ export class EmailTemplatesService {
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         // '' from the frontend's "Use default" option means "clear it back
         // to null" — undefined (the key omitted) means "leave unchanged".
-        ...(dto.signatureId !== undefined && { signatureId: dto.signatureId || null }),
+        ...(dto.signatureId !== undefined && {
+          signatureId: dto.signatureId || null,
+        }),
       },
     });
 
@@ -292,7 +294,10 @@ export class EmailTemplatesService {
       companyWebsite: organization?.website ?? '',
       companyEmail: organization?.contactEmail ?? '',
       companyAddress: organization?.registeredAddress ?? '',
-      companyLogo: companyLogoImgTag(organizationId, organization?.emailLogoUrl),
+      companyLogo: companyLogoImgTag(
+        organizationId,
+        organization?.emailLogoUrl,
+      ),
     };
     const cc = ccEmployees.map((e) => e.email);
 
@@ -302,7 +307,12 @@ export class EmailTemplatesService {
         return this.emailService.send({
           to: employee.email,
           subject: renderTemplate(template.subject, variables),
-          html: await this.appendSignature(renderTemplate(template.bodyHtml, variables), organizationId, variables, template.signatureId),
+          html: await this.appendSignature(
+            renderTemplate(template.bodyHtml, variables),
+            organizationId,
+            variables,
+            template.signatureId,
+          ),
           ...(cc.length && { cc }),
         });
       }),
@@ -354,17 +364,30 @@ export class EmailTemplatesService {
     variables: Record<string, string>,
     fallback: { subject: string; html: string },
   ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
-    const template = await this.findActiveByOccasion(occasionKey, organizationId);
+    const template = await this.findActiveByOccasion(
+      occasionKey,
+      organizationId,
+    );
     if (!template) {
       return {
         subject: fallback.subject,
-        html: await this.appendSignature(fallback.html, organizationId, variables, null),
+        html: await this.appendSignature(
+          fallback.html,
+          organizationId,
+          variables,
+          null,
+        ),
         ccAllActive: false,
       };
     }
     return {
       subject: this.render(template.subject, variables),
-      html: await this.appendSignature(this.render(template.bodyHtml, variables), organizationId, variables, template.signatureId),
+      html: await this.appendSignature(
+        this.render(template.bodyHtml, variables),
+        organizationId,
+        variables,
+        template.signatureId,
+      ),
       ccAllActive: template.ccAllActive,
     };
   }
@@ -400,7 +423,8 @@ export class EmailTemplatesService {
         emailLogoUrl: true,
       },
     });
-    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const signatures = (org?.emailSignatures ??
+      []) as unknown as EmailSignature[];
     const resolved =
       (signatureId && signatures.find((s) => s.id === signatureId)) ||
       signatures.find((s) => s.isDefault) ||
@@ -418,12 +442,16 @@ export class EmailTemplatesService {
     return `${html}${this.render(signatureHtml, { ...companyVariables, ...variables })}`;
   }
 
-  async listSignatures(organizationId: string): Promise<{ data: EmailSignature[] }> {
+  async listSignatures(
+    organizationId: string,
+  ): Promise<{ data: EmailSignature[] }> {
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
       select: { emailSignatures: true },
     });
-    return { data: (org?.emailSignatures ?? []) as unknown as EmailSignature[] };
+    return {
+      data: (org?.emailSignatures ?? []) as unknown as EmailSignature[],
+    };
   }
 
   async createSignature(
@@ -435,7 +463,8 @@ export class EmailTemplatesService {
       where: { id: organizationId },
       select: { emailSignatures: true },
     });
-    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const signatures = (org?.emailSignatures ??
+      []) as unknown as EmailSignature[];
     const signature: EmailSignature = {
       id: crypto.randomUUID(),
       name: dto.name.trim() || 'Untitled Signature',
@@ -447,7 +476,12 @@ export class EmailTemplatesService {
     };
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
-      data: { emailSignatures: [...signatures, signature] as unknown as Prisma.InputJsonValue },
+      data: {
+        emailSignatures: [
+          ...signatures,
+          signature,
+        ] as unknown as Prisma.InputJsonValue,
+      },
     });
     await this.auditLogService.log({
       actorId,
@@ -470,7 +504,8 @@ export class EmailTemplatesService {
       where: { id: organizationId },
       select: { emailSignatures: true },
     });
-    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const signatures = (org?.emailSignatures ??
+      []) as unknown as EmailSignature[];
     const existing = signatures.find((s) => s.id === id);
     if (!existing) throw new NotFoundException('Signature not found.');
     // Exactly one signature is ever isDefault:true — setting this one
@@ -511,14 +546,16 @@ export class EmailTemplatesService {
       where: { id: organizationId },
       select: { emailSignatures: true },
     });
-    const signatures = (org?.emailSignatures ?? []) as unknown as EmailSignature[];
+    const signatures = (org?.emailSignatures ??
+      []) as unknown as EmailSignature[];
     const existing = signatures.find((s) => s.id === id);
     if (!existing) throw new NotFoundException('Signature not found.');
     const remaining = signatures.filter((s) => s.id !== id);
     // Losing the default shouldn't leave the list with none — promote
     // whichever one is now first, if any are left. Same pattern as
     // SignatoryStep's own removeRow on the frontend.
-    if (existing.isDefault && remaining.length) remaining[0] = { ...remaining[0], isDefault: true };
+    if (existing.isDefault && remaining.length)
+      remaining[0] = { ...remaining[0], isDefault: true };
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
       data: { emailSignatures: remaining as unknown as Prisma.InputJsonValue },

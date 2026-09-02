@@ -149,9 +149,9 @@ export class TaxDeclarationsService {
       );
     }
 
-    const existing = await this.scopedPrisma.employeeTaxDeclaration.findFirst(
-      { where: { organizationId, employeeId, financialYear: dto.financialYear } },
-    );
+    const existing = await this.scopedPrisma.employeeTaxDeclaration.findFirst({
+      where: { organizationId, employeeId, financialYear: dto.financialYear },
+    });
 
     if (isOwnDeclaration) {
       // Locked once submitted — the whole point of "submit" is that it's
@@ -169,9 +169,8 @@ export class TaxDeclarationsService {
       // org's own financialYearStartMonth (April by default). Only gates
       // own-declaration writes; HR/Admin editing on someone's behalf keeps
       // the flexibility to process things early if genuinely needed.
-      const settings = await this.payrollSettingsService.getOrCreate(
-        organizationId,
-      );
+      const settings =
+        await this.payrollSettingsService.getOrCreate(organizationId);
       const today = new Date();
       const currentFinancialYear = getFinancialYear(
         today.getMonth() + 1,
@@ -189,7 +188,9 @@ export class TaxDeclarationsService {
     // declaration — DRAFT -> SUBMITTED via `submit`, never any other value
     // (that's still `dto.status`, still stripped for isOwnDeclaration).
     const status = isOwnDeclaration
-      ? (dto.submit ? TaxDeclarationStatus.SUBMITTED : undefined)
+      ? dto.submit
+        ? TaxDeclarationStatus.SUBMITTED
+        : undefined
       : dto.status;
 
     const data = {
@@ -279,7 +280,11 @@ export class TaxDeclarationsService {
           { employeeName: employee.name, financialYear: dto.financialYear },
           { subject: title, html: message },
         );
-        await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+        await this.emailService.send({
+          to: employee.email,
+          subject: rendered.subject,
+          html: rendered.html,
+        });
       }
     }
 

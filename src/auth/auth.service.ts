@@ -191,7 +191,10 @@ export class AuthService {
       organization.id,
       'FOUNDER_ACCOUNT_WELCOME',
       { employeeName: user.name, companyName: organization.name, loginUrl },
-      { subject: `Welcome to ${organization.name} HRMS — your account is ready`, html: fallbackHtml },
+      {
+        subject: `Welcome to ${organization.name} HRMS — your account is ready`,
+        html: fallbackHtml,
+      },
     );
     await this.emailService.send({
       to: user.email,
@@ -347,7 +350,11 @@ export class AuthService {
         { employeeName: user.name, companyName, resetUrl },
         { subject: `${companyName} HRMS - Password Reset`, html: fallbackHtml },
       );
-      await this.emailService.send({ to: user.email, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: user.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
     return { message: FORGOT_PASSWORD_GENERIC_MESSAGE };
   }
@@ -446,7 +453,11 @@ export class AuthService {
           { employeeName: user.name, email: user.email },
           { subject: 'Welcome to your HRMS account', html: fallbackHtml },
         );
-        await this.emailService.send({ to: user.email, subject: rendered.subject, html: rendered.html });
+        await this.emailService.send({
+          to: user.email,
+          subject: rendered.subject,
+          html: rendered.html,
+        });
       })().catch((err: Error) => {
         this.logger.error(
           `Failed to send welcome email: ${err.message}`,

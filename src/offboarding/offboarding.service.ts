@@ -32,7 +32,10 @@ import { paginate, skip } from '../common/pagination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
-import { formatDateDisplay, resolveOrgDateTimeFormat } from '../payroll/format-date';
+import {
+  formatDateDisplay,
+  resolveOrgDateTimeFormat,
+} from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -121,7 +124,10 @@ export class OffboardingService {
       },
     });
 
-    const { dateFormat } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     const title = 'Offboarding Process Initiated';
     const message = `Your offboarding has been initiated with a last working day of ${formatDateDisplay(dto.lastWorkingDay, '', dateFormat)}. HR will reach out with the exit checklist.`;
     await this.notificationsService.create({
@@ -134,10 +140,17 @@ export class OffboardingService {
     const rendered = await this.emailTemplatesService.renderOccasion(
       organizationId,
       'OFFBOARDING_INITIATED',
-      { employeeName: employee.name, lastWorkingDay: formatDateDisplay(dto.lastWorkingDay, '', dateFormat) },
+      {
+        employeeName: employee.name,
+        lastWorkingDay: formatDateDisplay(dto.lastWorkingDay, '', dateFormat),
+      },
       { subject: title, html: message },
     );
-    await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+    await this.emailService.send({
+      to: employee.email,
+      subject: rendered.subject,
+      html: rendered.html,
+    });
     // NOTICE_PERIOD_STARTED — same "log next to the notification" pattern
     // used elsewhere in this file (see complete()'s RELIEVED event); the
     // EXIT category on the timeline was otherwise silent until completion.

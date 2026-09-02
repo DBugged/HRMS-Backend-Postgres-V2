@@ -193,7 +193,11 @@ export class EmployeesService {
         },
         { subject: `Welcome to ${companyName} HRMS`, html: fallbackHtml },
       );
-      await this.emailService.send({ to: dto.personalEmail, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: dto.personalEmail,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
 
     await this.auditLogService.log({
@@ -267,9 +271,16 @@ export class EmployeesService {
         password: generatedPassword,
         loginUrl: `${frontendUrl()}/login`,
       },
-      { subject: `Your ${companyName} HRMS login credentials`, html: fallbackHtml },
+      {
+        subject: `Your ${companyName} HRMS login credentials`,
+        html: fallbackHtml,
+      },
     );
-    await this.emailService.send({ to: employee.officialEmail, subject: rendered.subject, html: rendered.html });
+    await this.emailService.send({
+      to: employee.officialEmail,
+      subject: rendered.subject,
+      html: rendered.html,
+    });
 
     return { success: true, sentTo: employee.officialEmail };
   }

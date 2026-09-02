@@ -416,10 +416,20 @@ export class SettlementsService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'SETTLEMENT_PROCESSED',
-        { employeeName: employee.name, netSettlementAmount: String(settlement.netSettlementAmount), netSettlementAmountInWords: amountInWords(settlement.netSettlementAmount) },
+        {
+          employeeName: employee.name,
+          netSettlementAmount: String(settlement.netSettlementAmount),
+          netSettlementAmountInWords: amountInWords(
+            settlement.netSettlementAmount,
+          ),
+        },
         { subject: title, html: message },
       );
-      await this.emailService.send({ to: personalEmail, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: personalEmail,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
     await this.timelineService.logEvent({
       organizationId,

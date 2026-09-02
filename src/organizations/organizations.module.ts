@@ -10,6 +10,10 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 @Module({
   imports: [AuditLogModule, NotificationsModule, EmailTemplatesModule],
   controllers: [OrganizationsController],
-  providers: [OrganizationsService, OrganizationSettingsService, EmployeeTypesService],
+  providers: [
+    OrganizationsService,
+    OrganizationSettingsService,
+    EmployeeTypesService,
+  ],
 })
 export class OrganizationsModule {}

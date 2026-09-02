@@ -62,7 +62,10 @@ export class AuditLogService {
   // Deletes every AuditLog row for the org, then writes a fresh one
   // recording who cleared it — the one entry that survives its own clear,
   // so "the trail was wiped" is itself traceable rather than a silent gap.
-  async clearAll(actor: Actor, organizationId: string): Promise<{ deleted: number }> {
+  async clearAll(
+    actor: Actor,
+    organizationId: string,
+  ): Promise<{ deleted: number }> {
     const { count } = await this.scopedPrisma.auditLog.deleteMany({
       where: { organizationId },
     });

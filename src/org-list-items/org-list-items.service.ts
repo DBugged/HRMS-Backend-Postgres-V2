@@ -30,7 +30,11 @@ export class OrgListItemsService {
     return wrapAll(data);
   }
 
-  async create(dto: CreateOrgListItemDto, organizationId: string, actor: Actor) {
+  async create(
+    dto: CreateOrgListItemDto,
+    organizationId: string,
+    actor: Actor,
+  ) {
     const name = dto.name.trim();
     const item = await this.scopedPrisma.orgListItem.create({
       data: { organizationId, type: dto.type, name },
@@ -48,12 +52,7 @@ export class OrgListItemsService {
     return item;
   }
 
-  async update(
-    id: string,
-    name: string,
-    organizationId: string,
-    actor: Actor,
-  ) {
+  async update(id: string, name: string, organizationId: string, actor: Actor) {
     const item = await this.scopedPrisma.orgListItem.findFirst({
       where: { id, organizationId },
     });
@@ -77,7 +76,9 @@ export class OrgListItemsService {
       details: { type: item.type, from: item.name, to: trimmed },
     });
 
-    return this.scopedPrisma.orgListItem.findFirst({ where: { id, organizationId } });
+    return this.scopedPrisma.orgListItem.findFirst({
+      where: { id, organizationId },
+    });
   }
 
   async delete(id: string, organizationId: string, actor: Actor) {
@@ -140,7 +141,11 @@ export class OrgListItemsService {
         action: 'ORG_LIST_ITEM_BULK_IMPORTED',
         module: AuditModule.ORGANIZATION,
         organizationId,
-        details: { type: dto.type, created: created.length, skipped: skipped.length },
+        details: {
+          type: dto.type,
+          created: created.length,
+          skipped: skipped.length,
+        },
       });
     }
 

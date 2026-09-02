@@ -46,7 +46,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('bank-transfer')
@@ -59,7 +62,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('income-tax')
@@ -72,7 +78,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('pf')
@@ -85,7 +94,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('esi')
@@ -98,7 +110,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('pt')
@@ -111,7 +126,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('employer-contributions')
@@ -124,7 +142,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('bonus')
@@ -137,7 +158,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('ctc')
@@ -150,7 +174,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('form16')
@@ -163,7 +190,10 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 
   @Get('audit')
@@ -176,6 +206,9 @@ export class PayrollReportsController {
       query,
       caller.organizationId,
     );
-    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, { ...report, format: query.format ?? 'xlsx' });
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
   }
 }

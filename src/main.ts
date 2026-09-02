@@ -68,7 +68,11 @@ async function bootstrap() {
       process.env.NODE_ENV === 'production'
         ? allowedOrigins
         : (origin, callback) => {
-            if (!origin || allowedOrigins.includes(origin) || localhostAnyPort.test(origin)) {
+            if (
+              !origin ||
+              allowedOrigins.includes(origin) ||
+              localhostAnyPort.test(origin)
+            ) {
               callback(null, true);
             } else {
               callback(new Error('Not allowed by CORS'));

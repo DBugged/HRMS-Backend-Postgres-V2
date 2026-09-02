@@ -20,13 +20,27 @@ export type ReportFormat = 'xlsx' | 'csv' | 'pdf';
 // is valid to upload, just not embeddable here). Returns null for anything
 // else, and every caller treats that as "skip the logo" rather than erroring.
 function detectRasterExtension(buffer: Buffer): 'png' | 'jpeg' | 'gif' | null {
-  if (buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+  if (
+    buffer.length >= 8 &&
+    buffer
+      .subarray(0, 8)
+      .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
     return 'png';
   }
-  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+  if (
+    buffer.length >= 3 &&
+    buffer[0] === 0xff &&
+    buffer[1] === 0xd8 &&
+    buffer[2] === 0xff
+  ) {
     return 'jpeg';
   }
-  if (buffer.length >= 6 && (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' || buffer.subarray(0, 6).toString('ascii') === 'GIF89a')) {
+  if (
+    buffer.length >= 6 &&
+    (buffer.subarray(0, 6).toString('ascii') === 'GIF87a' ||
+      buffer.subarray(0, 6).toString('ascii') === 'GIF89a')
+  ) {
     return 'gif';
   }
   return null;
@@ -64,8 +78,14 @@ export function buildWorkbook(
       // shift any row/column, so it has no effect on the CSV export (CSV
       // has no concept of an embedded image; the same worksheet just
       // renders without one).
-      const imageId = workbook.addImage({ buffer: logoBuffer as any, extension });
-      sheet.addImage(imageId, { tl: { col: 0, row: 0 }, ext: { width: 60, height: 60 } });
+      const imageId = workbook.addImage({
+        buffer: logoBuffer as any,
+        extension,
+      });
+      sheet.addImage(imageId, {
+        tl: { col: 0, row: 0 },
+        ext: { width: 60, height: 60 },
+      });
       sheet.getRow(1).height = 46;
     }
   }
@@ -102,7 +122,10 @@ export function renderPdfTable(
   }
   doc.fontSize(16).text(title, { align: 'center' });
   if (subtitle) {
-    doc.fontSize(9).font('Helvetica-Oblique').text(subtitle, { align: 'center' });
+    doc
+      .fontSize(9)
+      .font('Helvetica-Oblique')
+      .text(subtitle, { align: 'center' });
     doc.font('Helvetica');
   }
   doc.moveDown(0.5);
@@ -170,7 +193,15 @@ export interface SendReportInput {
 // this with the org's Report Logo already resolved.
 export async function sendReport(
   res: Response,
-  { title, subtitle, logoBuffer, columns, rows, filename, format }: SendReportInput,
+  {
+    title,
+    subtitle,
+    logoBuffer,
+    columns,
+    rows,
+    filename,
+    format,
+  }: SendReportInput,
 ): Promise<void> {
   if (format === 'pdf') {
     renderPdfTable(res, title, columns, rows, filename, subtitle, logoBuffer);

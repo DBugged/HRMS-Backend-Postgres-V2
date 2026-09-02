@@ -243,7 +243,12 @@ export class PayrollReportsService {
   private async registrationSubtitle(
     organizationId: string,
     label: string,
-    field: 'epfoEstablishmentCode' | 'esicEmployerCode' | 'ptRegistrationNumber' | 'tan' | 'pan',
+    field:
+      | 'epfoEstablishmentCode'
+      | 'esicEmployerCode'
+      | 'ptRegistrationNumber'
+      | 'tan'
+      | 'pan',
   ): Promise<string | undefined> {
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
@@ -311,7 +316,11 @@ export class PayrollReportsService {
       SALARY_COMPONENT_CODES.PF_EMPLOYER,
       'PF Report',
       'pf_report',
-      await this.registrationSubtitle(organizationId, 'EPFO Establishment Code', 'epfoEstablishmentCode'),
+      await this.registrationSubtitle(
+        organizationId,
+        'EPFO Establishment Code',
+        'epfoEstablishmentCode',
+      ),
     );
   }
 
@@ -323,7 +332,11 @@ export class PayrollReportsService {
       SALARY_COMPONENT_CODES.ESI_EMPLOYER,
       'ESI Report',
       'esi_report',
-      await this.registrationSubtitle(organizationId, 'ESIC Employer Code', 'esicEmployerCode'),
+      await this.registrationSubtitle(
+        organizationId,
+        'ESIC Employer Code',
+        'esicEmployerCode',
+      ),
     );
   }
 
@@ -335,7 +348,11 @@ export class PayrollReportsService {
       null,
       'Professional Tax Report',
       'pt_report',
-      await this.registrationSubtitle(organizationId, 'PT Registration Number', 'ptRegistrationNumber'),
+      await this.registrationSubtitle(
+        organizationId,
+        'PT Registration Number',
+        'ptRegistrationNumber',
+      ),
     );
   }
 
@@ -473,7 +490,8 @@ export class PayrollReportsService {
       deductor?.tan && `Deductor TAN: ${deductor.tan}`,
       deductor?.pan && `Deductor PAN: ${deductor.pan}`,
     ].filter(Boolean);
-    const subtitle = deductorBits.length > 0 ? deductorBits.join('  |  ') : undefined;
+    const subtitle =
+      deductorBits.length > 0 ? deductorBits.join('  |  ') : undefined;
 
     const byEmployee = new Map<
       string,
