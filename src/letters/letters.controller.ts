@@ -22,6 +22,19 @@ type Caller = Omit<User, 'password'>;
 export class LettersController {
   constructor(private readonly lettersService: LettersService) {}
 
+  // Must be declared before ':key' — Nest matches routes in registration
+  // order, and ':key' would otherwise swallow this literal path.
+  @Get()
+  @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  async list(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.lettersService.listForEmployee(
+      id,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   @Get(':key')
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)

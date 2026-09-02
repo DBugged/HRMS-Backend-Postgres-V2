@@ -64,6 +64,96 @@ export class LettersService {
     private readonly letterTemplatesService: LetterTemplatesService,
   ) {}
 
+  // Powers the Letters & Certificates tab's list — which of the org's
+  // active templates this employee can actually see, given the real
+  // prerequisite record each dataProfile needs. BASIC (Offer/Appointment)
+  // is unlocked from day one; EXIT/PAYROLL/SETTLEMENT need an
+  // OffboardingCase/paid-out PayrollRun/Settlement to exist first — the
+  // exact same existence checks generate() already throws 400 on, just
+  // turned into a boolean instead of an exception so the UI can show
+  // locked ones greyed out rather than surfacing a failed download.
+  async listForEmployee(
+    employeeId: string,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<
+    Array<{
+      key: string;
+      name: string;
+      dataProfile: LetterDataProfile;
+      unlocked: boolean;
+      reason: string | null;
+    }>
+  > {
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { departmentId: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    if (
+      actor.role === Role.MANAGER &&
+      (actor.departmentId === null ||
+        actor.departmentId !== employee.departmentId)
+    ) {
+      throw new ForbiddenException('Not authorized to view this employee.');
+    }
+
+    const { data: templates } =
+      await this.letterTemplatesService.findAll(organizationId);
+    const activeTemplates = templates.filter((t) => t.isActive);
+
+    const [hasOffboardingCase, hasPaidPayrollRun, hasSettlement] =
+      await Promise.all([
+        this.scopedPrisma.offboardingCase
+          .findFirst({ where: { organizationId, employeeId }, select: { id: true } })
+          .then(Boolean),
+        this.scopedPrisma.payrollRun
+          .findFirst({
+            where: {
+              organizationId,
+              employeeId,
+              isFinalSettlement: false,
+              status: { in: PAID_OUT_STATUSES },
+            },
+            select: { id: true },
+          })
+          .then(Boolean),
+        this.scopedPrisma.settlement
+          .findFirst({ where: { organizationId, employeeId }, select: { id: true } })
+          .then(Boolean),
+      ]);
+
+    const UNLOCK_BY_PROFILE: Record<
+      LetterDataProfile,
+      { unlocked: boolean; reason: string }
+    > = {
+      [LetterDataProfile.BASIC]: { unlocked: true, reason: '' },
+      [LetterDataProfile.EXIT]: {
+        unlocked: hasOffboardingCase,
+        reason: 'Available once offboarding is initiated for this employee.',
+      },
+      [LetterDataProfile.PAYROLL]: {
+        unlocked: hasPaidPayrollRun,
+        reason: 'Available once a payroll run has been processed for this employee.',
+      },
+      [LetterDataProfile.SETTLEMENT]: {
+        unlocked: hasSettlement,
+        reason: 'Available once a Full & Final Settlement has been calculated.',
+      },
+    };
+
+    return activeTemplates.map((t) => {
+      const gate = UNLOCK_BY_PROFILE[t.dataProfile];
+      return {
+        key: t.key,
+        name: t.name,
+        dataProfile: t.dataProfile,
+        unlocked: gate.unlocked,
+        reason: gate.unlocked ? null : gate.reason,
+      };
+    });
+  }
+
   async generate(
     employeeId: string,
     key: string,
