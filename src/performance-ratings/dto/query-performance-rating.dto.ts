@@ -1,6 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsString, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
+import { PerformanceRatingStatus } from '@prisma/client';
 
 export class QueryPerformanceRatingDto {
   @ApiPropertyOptional()
@@ -12,6 +21,11 @@ export class QueryPerformanceRatingDto {
   @IsOptional()
   @IsString()
   financialYear?: string;
+
+  @ApiPropertyOptional({ enum: PerformanceRatingStatus })
+  @IsOptional()
+  @IsEnum(PerformanceRatingStatus)
+  status?: PerformanceRatingStatus;
 
   @ApiPropertyOptional({ default: 1 })
   @IsOptional()

@@ -421,6 +421,7 @@ model User {
   overtimeRecordsApproved          OvertimeRecord[]          @relation("OvertimeApprovedBy")
   performanceRatings               PerformanceRating[]       @relation("PerformanceRatingEmployee")
   performanceRatingsGiven          PerformanceRating[]       @relation("PerformanceRatingRatedBy")
+  performanceRatingsApproved       PerformanceRating[]       @relation("PerformanceRatingApprovedBy")
   leaveEncashments                 LeaveEncashment[]         @relation("LeaveEncashmentEmployee")
   leaveEncashmentsApproved         LeaveEncashment[]         @relation("LeaveEncashmentApprovedBy")
   payrollRuns                      PayrollRun[]              @relation("PayrollRunEmployee")
@@ -1565,12 +1566,24 @@ model PerformanceRating {
   ratedById String?
   ratedBy   User?   @relation("PerformanceRatingRatedBy", fields: [ratedById], references: [id])
 
+  status PerformanceRatingStatus @default(SUBMITTED)
+
+  approvedById String?
+  approvedBy   User?     @relation("PerformanceRatingApprovedBy", fields: [approvedById], references: [id])
+  approvedAt   DateTime?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([organizationId, employeeId, financialYear])
   @@index([organizationId])
   @@map("performance_ratings")
+}
+
+enum PerformanceRatingStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
 }
 
 enum LeaveEncashmentStatus {

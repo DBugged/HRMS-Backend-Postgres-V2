@@ -971,4 +971,99 @@ describe('Payroll (e2e)', () => {
       expect(repayment.amount).toBe(1500); // capped at what was left, not the full 3000 EMI
     });
   });
+
+  describe('Variable pay is only scaled by an APPROVED PerformanceRating', () => {
+    // VARIABLE_PAY (seeded, MANUAL calcType) is YEARLY — only payable in
+    // the last month of the FY. Default financialYearStartMonth is 4
+    // (April), so month 3 (March) is the payable month, landing in FY
+    // "2025-26" for calendar YEAR (2026).
+    const VAR_PAY_MONTH = 3;
+    let varPayEmployeeId: string;
+
+    beforeAll(async () => {
+      const create = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Var Pay Employee',
+          email: 'pay-e2e-varpay@example.test',
+        });
+      varPayEmployeeId = (create.body as EmployeeCreateBody).employee.id;
+
+      await request(app.getHttpServer())
+        .post(`/employee-salary/${varPayEmployeeId}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentCode: 'BASIC',
+          fixedAmount: 10000,
+          effectiveFrom: '2026-01-01',
+        })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/employee-salary/${varPayEmployeeId}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentCode: 'VARIABLE_PAY',
+          fixedAmount: 4000,
+          effectiveFrom: '2026-01-01',
+        })
+        .expect(201);
+
+      await markFullMonthPresent(
+        prisma,
+        organizationId,
+        varPayEmployeeId,
+        VAR_PAY_MONTH,
+      );
+
+      await prisma.performanceRating.create({
+        data: {
+          organizationId,
+          employeeId: varPayEmployeeId,
+          financialYear: '2025-26',
+          rating: 5,
+          payoutPercentage: 50,
+          status: 'SUBMITTED',
+        },
+      });
+    });
+
+    it('a SUBMITTED (not approved) rating does not scale VARIABLE_PAY — falls back to factor 1', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          month: VAR_PAY_MONTH,
+          year: YEAR,
+          employeeId: varPayEmployeeId,
+        })
+        .expect(201);
+      const run = (res.body as CalculateResponseBody).payrolls[0];
+      const line = run.earnings.find((e) => e.code === 'VARIABLE_PAY');
+      expect(line?.amount).toBe(4000);
+    });
+
+    it('an APPROVED rating scales VARIABLE_PAY by payoutPercentage', async () => {
+      const rating = await prisma.performanceRating.findFirstOrThrow({
+        where: { employeeId: varPayEmployeeId, financialYear: '2025-26' },
+      });
+      await prisma.performanceRating.update({
+        where: { id: rating.id },
+        data: { status: 'APPROVED' },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          month: VAR_PAY_MONTH,
+          year: YEAR,
+          employeeId: varPayEmployeeId,
+        })
+        .expect(201);
+      const run = (res.body as CalculateResponseBody).payrolls[0];
+      const line = run.earnings.find((e) => e.code === 'VARIABLE_PAY');
+      expect(line?.amount).toBe(2000); // 4000 * 50%
+    });
+  });
 });

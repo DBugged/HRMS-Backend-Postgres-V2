@@ -354,7 +354,12 @@ export class PayrollService {
     );
     if (variableEarningCodes.size > 0) {
       const perfRating = await this.scopedPrisma.performanceRating.findFirst({
-        where: { organizationId, employeeId, financialYear },
+        where: {
+          organizationId,
+          employeeId,
+          financialYear,
+          status: 'APPROVED',
+        },
       });
       const payoutFactor = perfRating ? perfRating.payoutPercentage / 100 : 1;
       if (payoutFactor !== 1) {
