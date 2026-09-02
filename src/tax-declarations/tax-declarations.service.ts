@@ -22,8 +22,26 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import { assertManagerDeptScope } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
+import { getFinancialYear } from '../payroll-settings/financial-year';
 
 type Actor = Omit<User, 'password'>;
+
+const MONTH_NAMES = [
+  '',
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
 
 @Injectable()
 export class TaxDeclarationsService {
@@ -34,6 +52,7 @@ export class TaxDeclarationsService {
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly payrollSettingsService: PayrollSettingsService,
   ) {}
 
   async get(
@@ -96,7 +115,49 @@ export class TaxDeclarationsService {
         employeeId,
       );
     }
-    const status = isOwnDeclaration ? undefined : dto.status;
+
+    const existing = await this.scopedPrisma.employeeTaxDeclaration.findFirst(
+      { where: { organizationId, employeeId, financialYear: dto.financialYear } },
+    );
+
+    if (isOwnDeclaration) {
+      // Locked once submitted — the whole point of "submit" is that it's
+      // final; further self-edits (including re-submitting) are rejected
+      // outright. HR/Admin can still reopen it by setting status back to
+      // DRAFT via their own (non-own-declaration) edit path below.
+      if (existing && existing.status !== TaxDeclarationStatus.DRAFT) {
+        throw new BadRequestException(
+          `Your declaration for FY ${dto.financialYear} has already been submitted and can no longer be changed.`,
+        );
+      }
+
+      // "Next FY opens in April" — an employee can't start/edit a
+      // declaration for a financial year that hasn't begun yet under the
+      // org's own financialYearStartMonth (April by default). Only gates
+      // own-declaration writes; HR/Admin editing on someone's behalf keeps
+      // the flexibility to process things early if genuinely needed.
+      const settings = await this.payrollSettingsService.getOrCreate(
+        organizationId,
+      );
+      const today = new Date();
+      const currentFinancialYear = getFinancialYear(
+        today.getMonth() + 1,
+        today.getFullYear(),
+        settings.financialYearStartMonth,
+      );
+      if (dto.financialYear > currentFinancialYear) {
+        throw new BadRequestException(
+          `FY ${dto.financialYear} hasn't started yet — it opens for declarations in ${MONTH_NAMES[settings.financialYearStartMonth]}.`,
+        );
+      }
+    }
+
+    // The one status transition an employee can make on their own
+    // declaration — DRAFT -> SUBMITTED via `submit`, never any other value
+    // (that's still `dto.status`, still stripped for isOwnDeclaration).
+    const status = isOwnDeclaration
+      ? (dto.submit ? TaxDeclarationStatus.SUBMITTED : undefined)
+      : dto.status;
 
     const data = {
       ...(dto.regimeChosen !== undefined && { regimeChosen: dto.regimeChosen }),
@@ -127,10 +188,6 @@ export class TaxDeclarationsService {
       ...(dto.otherIncome !== undefined && { otherIncome: dto.otherIncome }),
       ...(status !== undefined && { status }),
     };
-
-    const existing = await this.scopedPrisma.employeeTaxDeclaration.findFirst({
-      where: { organizationId, employeeId, financialYear: dto.financialYear },
-    });
 
     let declaration: EmployeeTaxDeclaration;
     if (existing) {

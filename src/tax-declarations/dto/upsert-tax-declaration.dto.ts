@@ -51,4 +51,16 @@ export class UpsertTaxDeclarationDto {
   @IsOptional()
   @IsEnum(TaxDeclarationStatus)
   status?: TaxDeclarationStatus;
+
+  // Own-declaration-only: the one status transition an employee can make
+  // themselves (DRAFT -> SUBMITTED), locking their own declaration against
+  // further self-edits. Distinct from `status` (which they can never set
+  // directly) so a plain field-save call can never accidentally submit.
+  @ApiPropertyOptional({
+    description:
+      "Employee's own submit action — locks the declaration (DRAFT -> SUBMITTED). Ignored for non-own declarations.",
+  })
+  @IsOptional()
+  @IsBoolean()
+  submit?: boolean;
 }
