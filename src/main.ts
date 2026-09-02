@@ -54,8 +54,26 @@ async function bootstrap() {
     }),
   );
 
+  const allowedOrigins = (
+    process.env.CORS_ORIGIN || 'http://localhost:5173'
+  ).split(',');
+  // Any localhost:* origin in dev — the frontend's dev server (and this
+  // sandbox's preview tooling) doesn't always land on the same port
+  // between sessions, and re-editing CORS_ORIGIN by hand every time a
+  // preview picks a different port isn't sustainable. Production still
+  // enforces the explicit allowedOrigins list only.
+  const localhostAnyPort = /^http:\/\/localhost:\d+$/;
   app.enableCors({
-    origin: (process.env.CORS_ORIGIN || 'http://localhost:5173').split(','),
+    origin:
+      process.env.NODE_ENV === 'production'
+        ? allowedOrigins
+        : (origin, callback) => {
+            if (!origin || allowedOrigins.includes(origin) || localhostAnyPort.test(origin)) {
+              callback(null, true);
+            } else {
+              callback(new Error('Not allowed by CORS'));
+            }
+          },
     credentials: true, // required for the httpOnly refresh cookie to be sent/received cross-origin
   });
 
