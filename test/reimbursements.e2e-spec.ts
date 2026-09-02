@@ -46,6 +46,10 @@ describe('Reimbursements (e2e)', () => {
   let employeeToken: string;
   let employeeId: string;
   let otherEmployeeToken: string;
+  let managerToken: string;
+  let managerId: string;
+  let deptEmployeeId: string;
+  let deptEmployeeToken: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -116,6 +120,48 @@ describe('Reimbursements (e2e)', () => {
         password: (otherCreate.body as EmployeeCreateBody).generatedPassword,
       });
     otherEmployeeToken = (otherLogin.body as AuthBody).accessToken;
+
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Engineering', code: 'ENG' });
+    const departmentId = (dept.body as { id: string }).id;
+
+    const managerCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Eng Manager',
+        email: 'reimb-e2e-manager@example.test',
+        role: 'MANAGER',
+        departmentId,
+      });
+    managerId = (managerCreate.body as EmployeeCreateBody).employee.id;
+    const managerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'reimb-e2e-manager@example.test',
+        password: (managerCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    managerToken = (managerLogin.body as AuthBody).accessToken;
+
+    const deptEmpCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Dept Employee',
+        email: 'reimb-e2e-dept-emp@example.test',
+        departmentId,
+      });
+    const deptEmpBody = deptEmpCreate.body as EmployeeCreateBody;
+    deptEmployeeId = deptEmpBody.employee.id;
+    const deptEmpLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'reimb-e2e-dept-emp@example.test',
+        password: deptEmpBody.generatedPassword,
+      });
+    deptEmployeeToken = (deptEmpLogin.body as AuthBody).accessToken;
   });
 
   afterAll(async () => {
@@ -270,5 +316,76 @@ describe('Reimbursements (e2e)', () => {
     const claims = (res.body as { data: ReimbursementBody[] }).data;
     expect(claims.some((c) => c.id === claimId)).toBe(true);
     expect(claims.every((c) => c.status === 'PAID')).toBe(true);
+  });
+
+  describe('MANAGER scoping (?employeeId=self is My Reimbursements)', () => {
+    let managerClaimId: string;
+    let deptEmployeeClaimId: string;
+
+    beforeAll(async () => {
+      const managerClaim = await request(app.getHttpServer())
+        .post('/reimbursements')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({
+          amount: 800,
+          claimDate: '2026-06-12',
+          description: 'Manager cab',
+        })
+        .expect(201);
+      managerClaimId = (managerClaim.body as ReimbursementBody).id;
+
+      const deptEmpClaim = await request(app.getHttpServer())
+        .post('/reimbursements')
+        .set('Authorization', `Bearer ${deptEmployeeToken}`)
+        .send({
+          amount: 600,
+          claimDate: '2026-06-12',
+          description: 'Dept employee lunch',
+        })
+        .expect(201);
+      deptEmployeeClaimId = (deptEmpClaim.body as ReimbursementBody).id;
+    });
+
+    it('with no employeeId filter, MANAGER sees the whole department (existing behavior, unchanged)', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/reimbursements')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const ids = (res.body as { data: ReimbursementBody[] }).data.map(
+        (c) => c.id,
+      );
+      expect(ids).toContain(managerClaimId);
+      expect(ids).toContain(deptEmployeeClaimId);
+    });
+
+    it('?employeeId=self ("My Reimbursements") scopes to only the manager\'s own claims', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/reimbursements')
+        .query({ employeeId: managerId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const claims = (res.body as { data: ReimbursementBody[] }).data;
+      expect(claims.every((c) => c.employeeId === managerId)).toBe(true);
+      expect(claims.some((c) => c.id === managerClaimId)).toBe(true);
+    });
+
+    it('?employeeId=<another dept member> narrows to just that member', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/reimbursements')
+        .query({ employeeId: deptEmployeeId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const claims = (res.body as { data: ReimbursementBody[] }).data;
+      expect(claims.every((c) => c.employeeId === deptEmployeeId)).toBe(true);
+      expect(claims.some((c) => c.id === deptEmployeeClaimId)).toBe(true);
+    });
+
+    it('?employeeId=<someone outside the department> is refused, not silently ignored', async () => {
+      await request(app.getHttpServer())
+        .get('/reimbursements')
+        .query({ employeeId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(403);
+    });
   });
 });
