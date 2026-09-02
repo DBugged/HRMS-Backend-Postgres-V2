@@ -6,6 +6,7 @@
 // RATE_MULTIPLIERS only affects new records, not historical ones.
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -106,13 +107,26 @@ export class OvertimeService {
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
     } else if (actor.role === Role.MANAGER) {
-      where.employeeId = {
-        in: await deptScopedEmployeeIds(
-          this.scopedPrisma,
-          actor,
-          organizationId,
-        ),
-      };
+      const deptIds = await deptScopedEmployeeIds(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+      );
+      if (query.employeeId) {
+        // Narrows to one department member (or the manager themself, for
+        // "My Attendance"'s overtime section) instead of the whole
+        // department — never widens it: the requested id must already be
+        // within the manager's own dept scope, same boundary the
+        // unfiltered branch below enforces.
+        if (!deptIds.includes(query.employeeId)) {
+          throw new ForbiddenException(
+            "Not authorized to view this employee's overtime records.",
+          );
+        }
+        where.employeeId = query.employeeId;
+      } else {
+        where.employeeId = { in: deptIds };
+      }
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }

@@ -50,6 +50,11 @@ describe('Leave Encashments (e2e)', () => {
   let hrToken: string;
   let employeeToken: string;
   let employeeId: string;
+  let managerToken: string;
+  let managerId: string;
+  let deptEmployeeId: string;
+  let deptEmployeeToken: string;
+  let outsideDeptEmployeeId: string;
 
   let encashableLeaveTypeId: string;
   let noEncashLeaveTypeId: string;
@@ -111,6 +116,57 @@ describe('Leave Encashments (e2e)', () => {
         password: empBody.generatedPassword,
       });
     employeeToken = (empLogin.body as AuthBody).accessToken;
+
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Engineering', code: 'ENG' });
+    const departmentId = (dept.body as { id: string }).id;
+
+    const managerCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Eng Manager',
+        email: 'lenc-e2e-manager@example.test',
+        role: 'MANAGER',
+        departmentId,
+      });
+    managerId = (managerCreate.body as EmployeeCreateBody).employee.id;
+    const managerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'lenc-e2e-manager@example.test',
+        password: (managerCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    managerToken = (managerLogin.body as AuthBody).accessToken;
+
+    const deptEmpCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Dept Employee',
+        email: 'lenc-e2e-dept-emp@example.test',
+        departmentId,
+      });
+    deptEmployeeId = (deptEmpCreate.body as EmployeeCreateBody).employee.id;
+    const deptEmpLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'lenc-e2e-dept-emp@example.test',
+        password: (deptEmpCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    deptEmployeeToken = (deptEmpLogin.body as AuthBody).accessToken;
+
+    const outsideCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Outside Employee',
+        email: 'lenc-e2e-outside@example.test',
+      });
+    outsideDeptEmployeeId = (outsideCreate.body as EmployeeCreateBody).employee
+      .id;
 
     // BASIC is auto-seeded on every new org (see LeaveTypesService/
     // SalaryComponentsService.seedDefaults) with defaultValue 0 — patch it
@@ -278,5 +334,68 @@ describe('Leave Encashments (e2e)', () => {
       .send({ status: 'PROCESSED' })
       .expect(200);
     expect((res.body as EncashmentBody).status).toBe('PROCESSED');
+  });
+
+  describe("MANAGER scoping (?employeeId=self is My Leave's encashment section)", () => {
+    let managerEncId: string;
+    let deptEmployeeEncId: string;
+
+    beforeAll(async () => {
+      const managerEnc = await request(app.getHttpServer())
+        .post('/leave-encashments')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ days: 1, leaveType: encashableLeaveTypeId })
+        .expect(201);
+      managerEncId = (managerEnc.body as EncashmentBody).id;
+
+      const deptEmpEnc = await request(app.getHttpServer())
+        .post('/leave-encashments')
+        .set('Authorization', `Bearer ${deptEmployeeToken}`)
+        .send({ days: 1, leaveType: encashableLeaveTypeId })
+        .expect(201);
+      deptEmployeeEncId = (deptEmpEnc.body as EncashmentBody).id;
+    });
+
+    it('with no employeeId filter, MANAGER sees the whole department (existing behavior, unchanged)', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/leave-encashments')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const ids = (res.body as EncashmentListBody).data.map((e) => e.id);
+      expect(ids).toContain(managerEncId);
+      expect(ids).toContain(deptEmployeeEncId);
+    });
+
+    it("?employeeId=self scopes to only the manager's own requests", async () => {
+      const res = await request(app.getHttpServer())
+        .get('/leave-encashments')
+        .query({ employeeId: managerId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const encashments = (res.body as EncashmentListBody).data;
+      expect(encashments.every((e) => e.employeeId === managerId)).toBe(true);
+      expect(encashments.some((e) => e.id === managerEncId)).toBe(true);
+    });
+
+    it('?employeeId=<dept member> narrows to just that member', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/leave-encashments')
+        .query({ employeeId: deptEmployeeId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const encashments = (res.body as EncashmentListBody).data;
+      expect(encashments.every((e) => e.employeeId === deptEmployeeId)).toBe(
+        true,
+      );
+      expect(encashments.some((e) => e.id === deptEmployeeEncId)).toBe(true);
+    });
+
+    it('?employeeId=<outside the department> is refused, not silently widened', async () => {
+      await request(app.getHttpServer())
+        .get('/leave-encashments')
+        .query({ employeeId: outsideDeptEmployeeId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(403);
+    });
   });
 });

@@ -38,6 +38,11 @@ describe('Overtime (e2e)', () => {
   let employeeToken: string;
   let employeeId: string;
   let otherEmployeeToken: string;
+  let otherEmployeeId: string;
+  let managerToken: string;
+  let managerId: string;
+  let deptEmployeeId: string;
+  let deptEmployeeToken: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -97,6 +102,7 @@ describe('Overtime (e2e)', () => {
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ name: 'Other Employee', email: 'ot-e2e-other@example.test' });
+    otherEmployeeId = (otherCreate.body as EmployeeCreateBody).employee.id;
     const otherLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -104,6 +110,47 @@ describe('Overtime (e2e)', () => {
         password: (otherCreate.body as EmployeeCreateBody).generatedPassword,
       });
     otherEmployeeToken = (otherLogin.body as AuthBody).accessToken;
+
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Engineering', code: 'ENG' });
+    const departmentId = (dept.body as { id: string }).id;
+
+    const managerCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Eng Manager',
+        email: 'ot-e2e-manager@example.test',
+        role: 'MANAGER',
+        departmentId,
+      });
+    managerId = (managerCreate.body as EmployeeCreateBody).employee.id;
+    const managerLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'ot-e2e-manager@example.test',
+        password: (managerCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    managerToken = (managerLogin.body as AuthBody).accessToken;
+
+    const deptEmpCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Dept Employee',
+        email: 'ot-e2e-dept-emp@example.test',
+        departmentId,
+      });
+    deptEmployeeId = (deptEmpCreate.body as EmployeeCreateBody).employee.id;
+    const deptEmpLogin = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'ot-e2e-dept-emp@example.test',
+        password: (deptEmpCreate.body as EmployeeCreateBody).generatedPassword,
+      });
+    deptEmployeeToken = (deptEmpLogin.body as AuthBody).accessToken;
   });
 
   afterAll(async () => {
@@ -217,5 +264,66 @@ describe('Overtime (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .send({ status: 'REJECTED' })
       .expect(400);
+  });
+
+  describe("MANAGER scoping (?employeeId=self is My Attendance's overtime section)", () => {
+    let managerOtId: string;
+    let deptEmployeeOtId: string;
+
+    beforeAll(async () => {
+      const managerOt = await request(app.getHttpServer())
+        .post('/overtime')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ date: '2026-07-05', hours: 2, type: 'REGULAR' })
+        .expect(201);
+      managerOtId = (managerOt.body as OvertimeBody).id;
+
+      const deptEmpOt = await request(app.getHttpServer())
+        .post('/overtime')
+        .set('Authorization', `Bearer ${deptEmployeeToken}`)
+        .send({ date: '2026-07-05', hours: 3, type: 'REGULAR' })
+        .expect(201);
+      deptEmployeeOtId = (deptEmpOt.body as OvertimeBody).id;
+    });
+
+    it('with no employeeId filter, MANAGER sees the whole department (existing behavior, unchanged)', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/overtime')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const ids = (res.body as { data: OvertimeBody[] }).data.map((o) => o.id);
+      expect(ids).toContain(managerOtId);
+      expect(ids).toContain(deptEmployeeOtId);
+    });
+
+    it("?employeeId=self scopes to only the manager's own records", async () => {
+      const res = await request(app.getHttpServer())
+        .get('/overtime')
+        .query({ employeeId: managerId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const records = (res.body as { data: OvertimeBody[] }).data;
+      expect(records.every((o) => o.employeeId === managerId)).toBe(true);
+      expect(records.some((o) => o.id === managerOtId)).toBe(true);
+    });
+
+    it('?employeeId=<dept member> narrows to just that member', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/overtime')
+        .query({ employeeId: deptEmployeeId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const records = (res.body as { data: OvertimeBody[] }).data;
+      expect(records.every((o) => o.employeeId === deptEmployeeId)).toBe(true);
+      expect(records.some((o) => o.id === deptEmployeeOtId)).toBe(true);
+    });
+
+    it('?employeeId=<outside the department> is refused, not silently widened', async () => {
+      await request(app.getHttpServer())
+        .get('/overtime')
+        .query({ employeeId: otherEmployeeId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(403);
+    });
   });
 });
