@@ -96,6 +96,7 @@ export class EmployeeProfileService {
   private async findEmployeeOrThrow(id: string, organizationId: string) {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id, organizationId },
+      include: { department: { select: { id: true, name: true } } },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     return employee;
