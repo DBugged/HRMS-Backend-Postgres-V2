@@ -5,9 +5,9 @@
 // balance mutations happen, mirroring the old backend's leavePolicyEngine.js.
 // Important: ensureBalanceRow()/recalculate() must be called with a transaction client so the
 // read-then-maybe-create/read-then-write is atomic under concurrent callers. creditAccrual() is
-// idempotent per accrual period (a row already on the current period is skipped, not re-credited) and
-// backfills every cycle missed since a row's last credit, not just the latest one — see
-// countElapsedCycles.
+// idempotent per accrual period (a row already on the current period is skipped, not re-credited),
+// backfills every cycle missed since a row's last credit (countElapsedCycles), and backdates a row's very
+// first-ever credit to the employee's joining cycle (cyclesSinceJoining) rather than only the current one.
 import { randomUUID } from 'crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
@@ -20,6 +20,7 @@ import {
   computeCarryOut,
   computeUpfrontCredit,
   countElapsedCycles,
+  cyclesSinceJoining,
   recalcClosing,
 } from './leave-balance-math';
 
@@ -244,16 +245,22 @@ export class LeaveBalanceService {
 
         // Backfill every cycle missed since this row's last credit (e.g.
         // the accrual cron's host was down across one or more cycle
-        // boundaries), not just the latest one — a row credited for the
-        // first time ever (lastAccrualPeriod null) gets exactly 1 cycle,
-        // same as before this existed.
+        // boundaries), not just the latest one. A row credited for the
+        // first time ever (lastAccrualPeriod null) backdates instead to
+        // the employee's joining cycle — their true entitlement since they
+        // actually joined, not just from whenever accrual first happened
+        // to run for them.
         const cycles = row.lastAccrualPeriod
           ? countElapsedCycles(
               leaveType.accrualFrequency,
               row.lastAccrualPeriod,
               periodKey,
             )
-          : 1;
+          : cyclesSinceJoining(
+              leaveType.accrualFrequency,
+              employee.joiningDate,
+              new Date(),
+            );
 
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },

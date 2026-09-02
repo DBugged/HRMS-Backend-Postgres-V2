@@ -5,6 +5,7 @@ import {
   computeCarryOut,
   computeUpfrontCredit,
   countElapsedCycles,
+  cyclesSinceJoining,
   recalcClosing,
 } from './leave-balance-math';
 
@@ -206,6 +207,51 @@ describe('countElapsedCycles', () => {
     ).toBe(1);
     expect(
       countElapsedCycles(AccrualFrequency.MONTHLY, '2026-05', '2026-01'),
+    ).toBe(1);
+  });
+});
+
+describe('cyclesSinceJoining', () => {
+  it('returns 1 when joining cycle and current cycle are the same', () => {
+    expect(
+      cyclesSinceJoining(
+        AccrualFrequency.QUARTERLY,
+        new Date(Date.UTC(2026, 7, 15)), // Q3 2026
+        new Date(Date.UTC(2026, 8, 2)), // still Q3 2026
+      ),
+    ).toBe(1);
+  });
+
+  it("backdates to the joining cycle across many elapsed cycles (Jigar's real case)", () => {
+    // Joined 23 Oct 2024 (Q4 2024) -> now Q3 2026 = Q4'24, Q1'25, Q2'25,
+    // Q3'25, Q4'25, Q1'26, Q2'26, Q3'26 = 8 quarters inclusive.
+    expect(
+      cyclesSinceJoining(
+        AccrualFrequency.QUARTERLY,
+        new Date(Date.UTC(2024, 9, 23)),
+        new Date(Date.UTC(2026, 8, 2)),
+      ),
+    ).toBe(8);
+  });
+
+  it('works across monthly frequency too', () => {
+    // Joined Nov 2025 -> now Feb 2026 = Nov, Dec, Jan, Feb = 4 months.
+    expect(
+      cyclesSinceJoining(
+        AccrualFrequency.MONTHLY,
+        new Date(Date.UTC(2025, 10, 1)),
+        new Date(Date.UTC(2026, 1, 15)),
+      ),
+    ).toBe(4);
+  });
+
+  it('falls back to 1 if the employee somehow joined after "now" (bad data)', () => {
+    expect(
+      cyclesSinceJoining(
+        AccrualFrequency.MONTHLY,
+        new Date(Date.UTC(2027, 0, 1)),
+        new Date(Date.UTC(2026, 0, 1)),
+      ),
     ).toBe(1);
   });
 });

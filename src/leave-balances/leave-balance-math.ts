@@ -129,6 +129,34 @@ export function countElapsedCycles(
   return to - from;
 }
 
+// How many cycles an employee is owed on their very first-ever accrual
+// credit for a leave type — every cycle from the one they joined in
+// through the current one, inclusive, rather than just the current one.
+// Without this, an employee who joined long before accrual was ever run
+// for them (the normal case for every employee that already existed when
+// this org started actually running its accrual cron/HR's Run Accrual)
+// permanently loses everything they earned between joining and whenever
+// the first run happened — same missed-cycle problem countElapsedCycles
+// fixes for gaps between runs, just for the very first one. Falls back to
+// 1 (today's current-cycle-only credit) if the joining cycle can't be
+// parsed for some reason.
+export function cyclesSinceJoining(
+  frequency: AccrualFrequency,
+  joiningDate: Date,
+  asOf: Date,
+): number {
+  const from = parseAccrualPeriodKey(
+    frequency,
+    computeAccrualPeriodKey(frequency, joiningDate),
+  );
+  const to = parseAccrualPeriodKey(
+    frequency,
+    computeAccrualPeriodKey(frequency, asOf),
+  );
+  if (from === null || to === null || to < from) return 1;
+  return to - from + 1;
+}
+
 export interface BalanceRowLike {
   opening: number;
   credited: number;
