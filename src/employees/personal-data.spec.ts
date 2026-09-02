@@ -8,6 +8,7 @@ const COMPLETE_FIELDS = {
   fullNameAsPerGovtId: 'Jane Doe',
   dateOfBirth: '1990-01-01',
   gender: 'Female',
+  maritalStatus: 'Single',
   currentAddress: '123 Main St',
   fatherName: 'John Doe',
   emergencyContact1Number: '+91 98765 43210',

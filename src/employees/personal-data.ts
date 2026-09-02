@@ -37,12 +37,16 @@ export function signPersonalDataFileUrls(
 }
 
 // Ported from the old system's updatePersonalData: profileCompleted flips
-// true once these 8 fields are all truthy — an intentionally small subset
-// of the full personal-data shape, not "every field filled in".
+// true once these fields are all truthy — an intentionally small subset
+// of the full personal-data shape, not "every field filled in". Started as
+// 8 fields; maritalStatus added on top, mirroring Profile.tsx's
+// REQUIRED_PD_KEYS (the two lists are kept in step by hand, same as
+// before this field — no shared source of truth exists between them).
 const REQUIRED_FOR_COMPLETION = [
   'fullNameAsPerGovtId',
   'dateOfBirth',
   'gender',
+  'maritalStatus',
   'currentAddress',
   'fatherName',
   'emergencyContact1Number',
