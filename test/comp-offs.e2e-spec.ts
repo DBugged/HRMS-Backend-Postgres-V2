@@ -31,8 +31,10 @@ describe('Comp-Offs (e2e)', () => {
 
   let adminToken: string;
   let managerToken: string;
+  let managerId: string;
   let employeeToken: string;
   let employeeId: string;
+  let outsideDeptEmployeeId: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -77,6 +79,8 @@ describe('Comp-Offs (e2e)', () => {
         role: 'MANAGER',
         departmentId,
       });
+    managerId = (managerCreate.body as { employee: { id: string } }).employee
+      .id;
     const managerPassword = (
       managerCreate.body as { generatedPassword: string }
     ).generatedPassword;
@@ -108,6 +112,19 @@ describe('Comp-Offs (e2e)', () => {
         password: empBody.generatedPassword,
       });
     employeeToken = (empLogin.body as AuthBody).accessToken;
+
+    const outsideCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Outside Employee',
+        email: 'compoffs-e2e-outside@example.test',
+      });
+    const outsideBody = outsideCreate.body as {
+      employee: { id: string };
+      generatedPassword: string;
+    };
+    outsideDeptEmployeeId = outsideBody.employee.id;
   });
 
   afterAll(async () => {
@@ -163,6 +180,37 @@ describe('Comp-Offs (e2e)', () => {
     expect(deptBody.find((c) => c.id === compOffId)?.employee?.id).toBe(
       deptBody.find((c) => c.id === compOffId)?.employeeId,
     );
+  });
+
+  it('MANAGER ?employeeId=self ("My Comp-Off") scopes to only their own, not the whole department', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/comp-offs')
+      .query({ employeeId: managerId })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+    const claims = (res.body as { data: CompOffBody[] }).data;
+    expect(claims.every((c) => c.employeeId === managerId)).toBe(true);
+    // The employee's comp-off (a different dept member) must not leak in.
+    expect(claims.some((c) => c.id === compOffId)).toBe(false);
+  });
+
+  it('MANAGER ?employeeId=<dept member> narrows to just that member', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/comp-offs')
+      .query({ employeeId })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+    const claims = (res.body as { data: CompOffBody[] }).data;
+    expect(claims.every((c) => c.employeeId === employeeId)).toBe(true);
+    expect(claims.some((c) => c.id === compOffId)).toBe(true);
+  });
+
+  it('MANAGER ?employeeId=<outside the department> is refused, not silently widened', async () => {
+    await request(app.getHttpServer())
+      .get('/comp-offs')
+      .query({ employeeId: outsideDeptEmployeeId })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(403);
   });
 
   it('EMPLOYEE gets 403 reviewing a comp-off', async () => {

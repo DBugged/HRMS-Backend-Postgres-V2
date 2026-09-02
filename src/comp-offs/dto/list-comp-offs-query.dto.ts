@@ -6,7 +6,7 @@ import { CompOffStatus } from '@prisma/client';
 export class ListCompOffsQueryDto {
   @ApiPropertyOptional({
     description:
-      'Ignored for EMPLOYEE/MANAGER callers (forced to self/department)',
+      'Ignored for EMPLOYEE (forced to self); for MANAGER, must be within their own department scope (self or a direct report) or 403s — narrows within the department rather than widening it',
   })
   @IsOptional()
   @IsUUID()
