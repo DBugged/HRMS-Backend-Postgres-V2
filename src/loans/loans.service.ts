@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import {
   LoanStatus,
+  LoanType,
   NotificationCategory,
   Prisma,
   Role,
@@ -53,6 +54,22 @@ export class LoansService {
     private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
+  // A salary Advance is an early draw against the employee's own upcoming
+  // pay — the money is already theirs, so unlike a Loan it's never
+  // interest-bearing. Enforced wherever a rate gets set (direct create and
+  // approve()) rather than just defaulted, so HR can't accidentally sneak
+  // interest onto an advance by typing a non-zero rate.
+  private assertAdvanceIsInterestFree(
+    loanType: LoanType,
+    interestRate: number,
+  ): void {
+    if (loanType === LoanType.ADVANCE && interestRate > 0) {
+      throw new BadRequestException(
+        'A salary advance is interest-free — set 0%, or use Loan instead if interest applies.',
+      );
+    }
+  }
+
   async findAll(query: QueryLoanDto, actor: Actor, organizationId: string) {
     const where: Prisma.LoanWhereInput = { organizationId };
 
@@ -89,6 +106,10 @@ export class LoansService {
   }
 
   async create(dto: CreateLoanDto, actor: Actor, organizationId: string) {
+    this.assertAdvanceIsInterestFree(
+      dto.loanType ?? LoanType.LOAN,
+      dto.interestRate ?? 0,
+    );
     const emiAmount = calculateEmi(
       dto.principal,
       dto.interestRate ?? 0,
@@ -247,6 +268,7 @@ export class LoansService {
     assertNotSelfApproval(actor, loan.employeeId);
 
     const interestRate = dto.interestRate ?? 0;
+    this.assertAdvanceIsInterestFree(loan.loanType, interestRate);
     const tenureMonths = dto.tenureMonths ?? loan.tenureMonths;
     const emiAmount = calculateEmi(loan.principal, interestRate, tenureMonths);
 

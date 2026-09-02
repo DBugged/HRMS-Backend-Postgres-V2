@@ -170,7 +170,10 @@ describe('Loans (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .send({
         employeeId,
-        loanType: 'ADVANCE',
+        // LOAN, not ADVANCE — an advance is always interest-free (see the
+        // ADVANCE-specific tests below), so this needs the other type to
+        // actually exercise the reducing-balance EMI path.
+        loanType: 'LOAN',
         principal: 100000,
         interestRate: 12,
         tenureMonths: 12,
@@ -452,6 +455,45 @@ describe('Loans (e2e)', () => {
         .patch(`/loans/${id}/status`)
         .set('Authorization', `Bearer ${hrToken}`)
         .send({ status: 'CANCELLED' })
+        .expect(400);
+    });
+
+    it('an ADVANCE cannot be approved with a non-zero interest rate', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ loanType: 'ADVANCE', principal: 12000, tenureMonths: 1 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ startMonth: 1, startYear: 2027, interestRate: 3 })
+        .expect(400);
+      // 0% (or omitted, defaulting to 0%) goes through fine.
+      const approved = await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ startMonth: 1, startYear: 2027 })
+        .expect(200);
+      expect(
+        (approved.body as LoanBody & { interestRate: number }).interestRate,
+      ).toBe(0);
+    });
+
+    it('a direct HR-created ADVANCE also rejects a non-zero interest rate', async () => {
+      await request(app.getHttpServer())
+        .post('/loans')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          employeeId,
+          loanType: 'ADVANCE',
+          principal: 5000,
+          interestRate: 2,
+          tenureMonths: 1,
+          startMonth: 1,
+          startYear: 2027,
+        })
         .expect(400);
     });
 
