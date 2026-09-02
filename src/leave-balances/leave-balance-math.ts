@@ -73,6 +73,62 @@ export function computeAccrualPeriodKey(
   }
 }
 
+// Parses a computeAccrualPeriodKey() string back into a monotonically
+// increasing integer for the given frequency, so two period keys can be
+// subtracted to count how many cycles separate them. Returns null if the
+// key doesn't match the shape this frequency currently produces (e.g. the
+// leave type's accrualFrequency was changed since the key was stored) —
+// callers treat that as "gap unknown," not "gap is zero."
+function parseAccrualPeriodKey(
+  frequency: AccrualFrequency,
+  key: string,
+): number | null {
+  const yearly = /^(\d{4})$/.exec(key);
+  const sub = /^(\d{4})-([A-Z])(\d+)$/.exec(key);
+  const monthly = /^(\d{4})-(\d{2})$/.exec(key);
+  switch (frequency) {
+    case AccrualFrequency.YEARLY:
+      return yearly ? Number(yearly[1]) : null;
+    case AccrualFrequency.HALF_YEARLY:
+      return sub && sub[2] === 'H'
+        ? Number(sub[1]) * 2 + (Number(sub[3]) - 1)
+        : null;
+    case AccrualFrequency.QUARTERLY:
+      return sub && sub[2] === 'Q'
+        ? Number(sub[1]) * 4 + (Number(sub[3]) - 1)
+        : null;
+    case AccrualFrequency.BI_MONTHLY:
+      return sub && sub[2] === 'B'
+        ? Number(sub[1]) * 6 + (Number(sub[3]) - 1)
+        : null;
+    case AccrualFrequency.MONTHLY:
+      return monthly
+        ? Number(monthly[1]) * 12 + (Number(monthly[2]) - 1)
+        : null;
+  }
+}
+
+// How many accrual cycles separate a stale lastAccrualPeriod from the
+// current period — 1 for the ordinary "one cycle since last credit" case,
+// more than 1 if the accrual run was missed for one or more whole cycles
+// (e.g. the daily cron's host was down across a cycle boundary), so a
+// later run backfills every missed cycle instead of only ever crediting
+// the single most-recent one. Falls back to 1 (credit just the current
+// cycle, same as the pre-backfill behavior) whenever the gap can't be
+// determined — a malformed stored value, or the leave type's
+// accrualFrequency changed since fromKey was written — rather than
+// guessing at a number that could over- or under-credit.
+export function countElapsedCycles(
+  frequency: AccrualFrequency,
+  fromKey: string,
+  toKey: string,
+): number {
+  const from = parseAccrualPeriodKey(frequency, fromKey);
+  const to = parseAccrualPeriodKey(frequency, toKey);
+  if (from === null || to === null || to <= from) return 1;
+  return to - from;
+}
+
 export interface BalanceRowLike {
   opening: number;
   credited: number;

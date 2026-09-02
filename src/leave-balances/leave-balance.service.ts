@@ -4,9 +4,10 @@
 // reads/writes; exposed cross-module (e.g. to LeaveEncashmentsService, LeaveTypesService) as the one place
 // balance mutations happen, mirroring the old backend's leavePolicyEngine.js.
 // Important: ensureBalanceRow()/recalculate() must be called with a transaction client so the
-// read-then-maybe-create/read-then-write is atomic under concurrent callers. creditAccrual() has no
-// frequency gating or idempotency guard — calling it twice in the same period double-credits, ported as-is
-// from the old system.
+// read-then-maybe-create/read-then-write is atomic under concurrent callers. creditAccrual() is
+// idempotent per accrual period (a row already on the current period is skipped, not re-credited) and
+// backfills every cycle missed since a row's last credit, not just the latest one — see
+// countElapsedCycles.
 import { randomUUID } from 'crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
@@ -18,6 +19,7 @@ import {
   computeCarriedInExpiry,
   computeCarryOut,
   computeUpfrontCredit,
+  countElapsedCycles,
   recalcClosing,
 } from './leave-balance-math';
 
@@ -240,10 +242,23 @@ export class LeaveBalanceService {
           continue;
         }
 
+        // Backfill every cycle missed since this row's last credit (e.g.
+        // the accrual cron's host was down across one or more cycle
+        // boundaries), not just the latest one — a row credited for the
+        // first time ever (lastAccrualPeriod null) gets exactly 1 cycle,
+        // same as before this existed.
+        const cycles = row.lastAccrualPeriod
+          ? countElapsedCycles(
+              leaveType.accrualFrequency,
+              row.lastAccrualPeriod,
+              periodKey,
+            )
+          : 1;
+
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
           data: {
-            credited: row.credited + leaveType.accrualAmountPerCycle,
+            credited: row.credited + leaveType.accrualAmountPerCycle * cycles,
             lastAccrualPeriod: periodKey,
           },
         });

@@ -1,8 +1,10 @@
-import { AllocationType } from '@prisma/client';
+import { AccrualFrequency, AllocationType } from '@prisma/client';
 import {
+  computeAccrualPeriodKey,
   computeCarriedInExpiry,
   computeCarryOut,
   computeUpfrontCredit,
+  countElapsedCycles,
   recalcClosing,
 } from './leave-balance-math';
 
@@ -135,5 +137,75 @@ describe('computeCarriedInExpiry', () => {
 
   it('handles a 12-month expiry rolling into the following year', () => {
     expect(computeCarriedInExpiry(2027, 12)).toBe('2028-01-01');
+  });
+});
+
+describe('countElapsedCycles', () => {
+  it('returns 1 for the ordinary one-cycle-since-last-credit case, every frequency', () => {
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, '2026-01', '2026-02'),
+    ).toBe(1);
+    expect(
+      countElapsedCycles(AccrualFrequency.QUARTERLY, '2026-Q1', '2026-Q2'),
+    ).toBe(1);
+    expect(
+      countElapsedCycles(AccrualFrequency.HALF_YEARLY, '2026-H1', '2026-H2'),
+    ).toBe(1);
+    expect(
+      countElapsedCycles(AccrualFrequency.BI_MONTHLY, '2026-B1', '2026-B2'),
+    ).toBe(1);
+    expect(countElapsedCycles(AccrualFrequency.YEARLY, '2025', '2026')).toBe(1);
+  });
+
+  it('backfills every cycle missed across a run gap', () => {
+    // Missed Feb, Mar, Apr -> 4 cycles behind by May.
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, '2026-01', '2026-05'),
+    ).toBe(4);
+    // Missed Q2, Q3 -> 3 cycles behind by Q4.
+    expect(
+      countElapsedCycles(AccrualFrequency.QUARTERLY, '2026-Q1', '2026-Q4'),
+    ).toBe(3);
+  });
+
+  it('backfills across a year boundary', () => {
+    // Nov 2025 -> Feb 2026 is 3 monthly cycles.
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, '2025-11', '2026-02'),
+    ).toBe(3);
+  });
+
+  it("matches computeAccrualPeriodKey's own output shape", () => {
+    const from = computeAccrualPeriodKey(
+      AccrualFrequency.QUARTERLY,
+      new Date(Date.UTC(2026, 0, 15)),
+    );
+    const to = computeAccrualPeriodKey(
+      AccrualFrequency.QUARTERLY,
+      new Date(Date.UTC(2026, 9, 15)),
+    );
+    // Q1 -> Q4 is 3 cycles.
+    expect(countElapsedCycles(AccrualFrequency.QUARTERLY, from, to)).toBe(3);
+  });
+
+  it('falls back to 1 when the stored key does not match the current frequency (e.g. frequency changed)', () => {
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, '2026-Q1', '2026-05'),
+    ).toBe(1);
+  });
+
+  it('falls back to 1 for a malformed key', () => {
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, 'garbage', '2026-05'),
+    ).toBe(1);
+  });
+
+  it('never returns 0 or negative even if toKey is not after fromKey', () => {
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, '2026-05', '2026-05'),
+    ).toBe(1);
+    expect(
+      countElapsedCycles(AccrualFrequency.MONTHLY, '2026-05', '2026-01'),
+    ).toBe(1);
   });
 });
