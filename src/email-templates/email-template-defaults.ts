@@ -25,6 +25,19 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     ccAllActive: true,
   },
   {
+    occasionKey: 'NEW_JOINER_ANNOUNCEMENT',
+    name: 'New Joiner Announcement',
+    subject: 'Please welcome {{employeeName}} to {{companyName}}!',
+    bodyHtml:
+      '<p>Hi team,</p>' +
+      '<p>Please join us in welcoming <strong>{{employeeName}}</strong>, who is joining us today as <strong>{{designation}}</strong>{{departmentLine}}.</p>' +
+      '<p>{{intro}}</p>' +
+      '<p>Feel free to drop by and say hello!</p>' +
+      '<p>Warm regards,<br/>{{companyName}}</p>' +
+      '<p style="color:#888;font-size:12px;">{{companyName}} | {{companyAddress}} | {{companyPhone}} | {{companyEmail}} | {{companyWebsite}}</p>',
+    ccAllActive: true,
+  },
+  {
     occasionKey: 'WORK_ANNIVERSARY',
     name: 'Work Anniversary Wish',
     subject: 'Happy Work Anniversary!',

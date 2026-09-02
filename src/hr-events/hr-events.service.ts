@@ -1,11 +1,13 @@
-// Purpose: Sends birthday and work-anniversary wishes (notification + email) to employees, org-wide.
+// Purpose: Sends birthday, work-anniversary, and new-joiner-announcement wishes/emails, org-wide.
 // Responsibilities: Owns the daily cron trigger (sendDailyWishes) and per-org wish logic (sendWishesForOrg);
 // delegates actual delivery to NotificationsService/EmailService, and email subject/body content to
 // EmailTemplatesService (falls back to the old hardcoded strings when an org has no active template for the
 // occasion, so nothing breaks for orgs that predate email-templates seeding).
 // Important: matches month/day in UTC to stay consistent with how joiningDate/dateOfBirth are stored
 // elsewhere, and is not deduped against a same-day re-run (e.g. after a restart) — wishes simply resend,
-// same accepted precedent as the Marked Absent email in AttendanceService.
+// same accepted precedent as the Marked Absent email in AttendanceService. The new-joiner announcement is
+// the one exception that matches the *full* calendar date (not just month/day) — unlike a birthday or
+// anniversary, it must fire exactly once, on the actual joining day, not every year after.
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory } from '@prisma/client';
@@ -24,6 +26,13 @@ import { companyLogoImgTag } from '../email-templates/company-logo';
 function monthDay(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
+}
+
+// Full calendar date (UTC), for the new-joiner announcement's exactly-once
+// match — monthDay() alone would also match on every later anniversary.
+function isoDate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
 }
 
 const ORDINAL_SUFFIX = (n: number): string => {
@@ -69,6 +78,7 @@ export class HrEventsService {
   async sendWishesForOrg(organizationId: string) {
     const today = new Date();
     const todayMonthDay = monthDay(today);
+    const todayIso = isoDate(today);
 
     const employees = await this.scopedPrisma.user.findMany({
       where: { organizationId, isActive: true },
@@ -78,6 +88,8 @@ export class HrEventsService {
         email: true,
         joiningDate: true,
         personalData: true,
+        designation: true,
+        departmentId: true,
       },
     });
 
@@ -95,8 +107,22 @@ export class HrEventsService {
         emailLogoUrl: true,
       },
     });
+    const departments = await this.scopedPrisma.department.findMany({
+      where: { organizationId },
+      select: { id: true, name: true },
+    });
+    const departmentNameById = new Map(departments.map((d) => [d.id, d.name]));
 
     for (const employee of employees) {
+      if (isoDate(employee.joiningDate) === todayIso) {
+        await this.sendNewJoinerAnnouncement(
+          organizationId,
+          employee,
+          departmentNameById.get(employee.departmentId ?? '') ?? null,
+          organization,
+          activeEmails,
+        );
+      }
       const personalData = (employee.personalData ?? {}) as Record<
         string,
         unknown
@@ -182,6 +208,66 @@ export class HrEventsService {
       companyAddress: organization?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(organizationId, organization?.emailLogoUrl),
     };
+  }
+
+  private async sendNewJoinerAnnouncement(
+    organizationId: string,
+    employee: {
+      id: string;
+      name: string;
+      email: string;
+      designation: string;
+    },
+    departmentName: string | null,
+    organization: {
+      companyName: string | null;
+      phone: string | null;
+      website: string | null;
+      contactEmail: string | null;
+      registeredAddress: string | null;
+      emailLogoUrl: string | null;
+    } | null,
+    activeEmails: string[],
+  ) {
+    const designation = employee.designation || 'a new team member';
+    const title = `Welcome ${employee.name} to the team!`;
+    const intro = `${employee.name} joins us today as ${designation}${
+      departmentName ? ` in ${departmentName}` : ''
+    } — please give them a warm welcome.`;
+    await this.notificationsService.create({
+      organizationId,
+      userId: employee.id,
+      title,
+      message: intro,
+      category: NotificationCategory.GENERAL,
+    });
+
+    const variables = {
+      employeeName: employee.name,
+      designation,
+      departmentLine: departmentName ? ` in ${departmentName}` : '',
+      intro,
+      ...this.orgVariables(organizationId, organization),
+    };
+    const { subject, html, ccAllActive } = await this.renderOccasionEmail(
+      organizationId,
+      'NEW_JOINER_ANNOUNCEMENT',
+      variables,
+      { subject: title, html: `<p>${intro}</p>` },
+    );
+    // The whole company, not just the new joiner, is the audience here —
+    // ccAllActive defaults to true for this occasion (see the
+    // NEW_JOINER_ANNOUNCEMENT default), same "to: employee, cc: everyone
+    // else active" delivery shape as Birthday/Anniversary.
+    const cc = ccAllActive
+      ? activeEmails.filter((email) => email !== employee.email)
+      : undefined;
+    await this.emailService.send({
+      to: employee.email,
+      subject,
+      html,
+      ...(cc?.length && { cc }),
+    });
   }
 
   private async sendBirthdayWish(
