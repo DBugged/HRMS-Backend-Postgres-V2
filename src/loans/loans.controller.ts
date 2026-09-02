@@ -1,6 +1,9 @@
-// Purpose: Exposes endpoints for employee loans — creation, status updates, and repayment recording/listing.
+// Purpose: Exposes endpoints for employee loans — creation, requests, approve/reject, status updates, and
+//   repayment recording/listing.
 // Responsibilities: Validates DTOs and delegates all logic to LoansService.
-// Important: Loans are always initiated by ADMIN/HR on an employee's behalf, not self-service; reads self-scope in the service.
+// Important: HR/Admin can still sanction a loan directly (create, unchanged); an employee can also request
+//   one for themselves (request), which sits PENDING until an HR/Admin approve()s or reject()s it — reads
+//   self-scope in the service either way.
 import {
   Body,
   Controller,
@@ -15,6 +18,9 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { LoansService } from './loans.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { RequestLoanDto } from './dto/request-loan.dto';
+import { ApproveLoanDto } from './dto/approve-loan.dto';
+import { RejectLoanDto } from './dto/reject-loan.dto';
 import { UpdateLoanStatusDto } from './dto/update-loan-status.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
@@ -45,6 +51,35 @@ export class LoansController {
   @UseGuards(RolesGuard)
   create(@Body() dto: CreateLoanDto, @CurrentUser() caller: Caller) {
     return this.loansService.create(dto, caller, caller.organizationId);
+  }
+
+  // No @Roles() — any authenticated caller requesting for themselves
+  // (employeeId is always caller.id, not taken from the body).
+  @Post('request')
+  request(@Body() dto: RequestLoanDto, @CurrentUser() caller: Caller) {
+    return this.loansService.request(dto, caller, caller.organizationId);
+  }
+
+  @Patch(':id/approve')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  approve(
+    @Param('id') id: string,
+    @Body() dto: ApproveLoanDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.loansService.approve(id, dto, caller, caller.organizationId);
+  }
+
+  @Patch(':id/reject')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  reject(
+    @Param('id') id: string,
+    @Body() dto: RejectLoanDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.loansService.reject(id, dto, caller, caller.organizationId);
   }
 
   @Patch(':id/status')

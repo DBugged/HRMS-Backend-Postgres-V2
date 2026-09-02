@@ -1776,6 +1776,10 @@ enum LoanType {
 }
 
 enum LoanStatus {
+  // Employee-requested, awaiting HR/Admin's approve/reject decision — not
+  // in the old system, which only ever let HR sanction a loan directly.
+  PENDING
+  REJECTED
   ACTIVE
   CLOSED
   CANCELLED

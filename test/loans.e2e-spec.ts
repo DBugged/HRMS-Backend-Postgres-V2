@@ -357,4 +357,141 @@ describe('Loans (e2e)', () => {
     expect(loans.length).toBeGreaterThan(0);
     expect(loans.every((l) => l.status === 'CLOSED')).toBe(true);
   });
+
+  describe('self-service request -> approve/reject', () => {
+    it('an employee can request a loan for themselves, landing PENDING', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          loanType: 'ADVANCE',
+          principal: 50000,
+          tenureMonths: 5,
+          reason: 'Medical',
+        })
+        .expect(201);
+      const loan = res.body as LoanBody;
+      expect(loan.status).toBe('PENDING');
+      expect(loan.employeeId).toBe(employeeId);
+    });
+
+    it('the request DTO has no employeeId field — it is always the caller (global whitelist rejects one)', async () => {
+      await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${otherEmployeeToken}`)
+        .send({ employeeId, principal: 10000, tenureMonths: 2 })
+        .expect(400);
+    });
+
+    it('HR approving sets the real terms and flips it ACTIVE', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ principal: 30000, tenureMonths: 6 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+
+      const approved = await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ startMonth: 4, startYear: 2027, interestRate: 5 })
+        .expect(200);
+      const body = approved.body as LoanBody;
+      expect(body.status).toBe('ACTIVE');
+      expect(body.outstandingBalance).toBe(30000);
+    });
+
+    it('HR rejecting sets it REJECTED, not ACTIVE', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ principal: 15000, tenureMonths: 3 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+
+      const rejected = await request(app.getHttpServer())
+        .patch(`/loans/${id}/reject`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reason: 'Not eligible yet' })
+        .expect(200);
+      expect((rejected.body as LoanBody).status).toBe('REJECTED');
+    });
+
+    it('rejects approving/rejecting a non-pending loan', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ principal: 8000, tenureMonths: 2 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ startMonth: 1, startYear: 2027 })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ startMonth: 1, startYear: 2027 })
+        .expect(400);
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/reject`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({})
+        .expect(400);
+    });
+
+    it('the generic status endpoint refuses a still-pending loan', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ principal: 9000, tenureMonths: 2 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/status`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'CANCELLED' })
+        .expect(400);
+    });
+
+    it('HR cannot approve their own loan request (self-approval blocked)', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ principal: 6000, tenureMonths: 2 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ startMonth: 1, startYear: 2027 })
+        .expect(403);
+      // An Admin can still approve it, though — the exemption is Admin-only.
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ startMonth: 1, startYear: 2027 })
+        .expect(200);
+    });
+
+    it('an EMPLOYEE cannot approve or reject (HR/Admin only)', async () => {
+      const req = await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${otherEmployeeToken}`)
+        .send({ principal: 7000, tenureMonths: 2 })
+        .expect(201);
+      const id = (req.body as LoanBody).id;
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/approve`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ startMonth: 1, startYear: 2027 })
+        .expect(403);
+      await request(app.getHttpServer())
+        .patch(`/loans/${id}/reject`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({})
+        .expect(403);
+    });
+  });
 });

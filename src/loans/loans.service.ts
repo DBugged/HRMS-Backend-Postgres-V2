@@ -1,10 +1,12 @@
-// Purpose: Manages employee loans (advances) — sanctioning, status transitions, and repayment recording.
-// Responsibilities: Owns EMI calculation at creation (calculateEmi) and outstanding-balance bookkeeping on
-// each repayment; recordRepayment() is called by the payroll engine when an EMI is deducted, but is also
-// exposed for HR to record/adjust a repayment manually.
+// Purpose: Manages employee loans (advances) — sanctioning (direct or via employee request/HR
+// approve-reject), status transitions, and repayment recording.
+// Responsibilities: Owns EMI calculation at creation/approval (calculateEmi) and outstanding-balance
+// bookkeeping on each repayment; recordRepayment() is called by the payroll engine when an EMI is deducted,
+// but is also exposed for HR to record/adjust a repayment manually.
 // Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan and MANAGER-own-dept-only checks
 // independently of findAll's filter, since it's reached directly by loan id rather than through the pre-filtered list.
 import {
+  BadRequestException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -23,11 +25,17 @@ import { calculateEmi } from './loan-math';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
+import { RequestLoanDto } from './dto/request-loan.dto';
+import { ApproveLoanDto } from './dto/approve-loan.dto';
+import { RejectLoanDto } from './dto/reject-loan.dto';
 import { UpdateLoanStatusDto } from './dto/update-loan-status.dto';
 import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
 import { paginate, skip } from '../common/pagination';
-import { deptScopedEmployeeIds } from '../common/dept-scope';
+import {
+  deptScopedEmployeeIds,
+  assertNotSelfApproval,
+} from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -120,10 +128,20 @@ export class LoansService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'LOAN_SANCTIONED',
-        { employeeName: employee.name, loanType: loan.loanType, principal: String(dto.principal), emiAmount: String(emiAmount), tenureMonths: String(dto.tenureMonths) },
+        {
+          employeeName: employee.name,
+          loanType: loan.loanType,
+          principal: String(dto.principal),
+          emiAmount: String(emiAmount),
+          tenureMonths: String(dto.tenureMonths),
+        },
         { subject: title, html: message },
       );
-      await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
     }
 
     await this.auditLogService.log({
@@ -149,6 +167,231 @@ export class LoansService {
     return loan;
   }
 
+  // Self-service counterpart to create() — an employee requesting a loan
+  // for themselves rather than HR sanctioning one directly. Sits PENDING
+  // until approve()/reject(); interestRate/startMonth/startYear aren't the
+  // employee's call, so they're placeholders here (0%, current month/year)
+  // that approve() always overwrites with HR's real terms before the loan
+  // ever goes ACTIVE — emiAmount below is purely an indicative estimate
+  // for the request, not what the employee will actually be held to.
+  async request(dto: RequestLoanDto, actor: Actor, organizationId: string) {
+    const now = new Date();
+    const emiAmount = calculateEmi(dto.principal, 0, dto.tenureMonths);
+
+    const loan = await this.scopedPrisma.loan.create({
+      data: {
+        organizationId,
+        employeeId: actor.id,
+        loanType: dto.loanType,
+        principal: dto.principal,
+        interestRate: 0,
+        tenureMonths: dto.tenureMonths,
+        emiAmount,
+        startMonth: now.getMonth() + 1,
+        startYear: now.getFullYear(),
+        outstandingBalance: dto.principal,
+        reason: dto.reason ?? '',
+        status: LoanStatus.PENDING,
+      },
+    });
+
+    const hrUsers = await this.scopedPrisma.user.findMany({
+      where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
+      select: { id: true },
+    });
+    await this.notificationsService.createMany(
+      hrUsers.map((u) => ({
+        organizationId,
+        userId: u.id,
+        title: 'Loan/Advance Request Pending Review',
+        message: `${actor.name} requested a ${loan.loanType.toLowerCase()} of ${dto.principal} over ${dto.tenureMonths} month(s).`,
+        category: NotificationCategory.GENERAL,
+      })),
+    );
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LOAN_REQUESTED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: loan.id,
+      details: { principal: dto.principal, tenureMonths: dto.tenureMonths },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: actor.id,
+      eventKey: 'LOAN_REQUESTED',
+      performedById: actor.id,
+      description: `${loan.loanType} of ${dto.principal} requested.`,
+    });
+
+    return loan;
+  }
+
+  async approve(
+    id: string,
+    dto: ApproveLoanDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const loan = await this.scopedPrisma.loan.findFirst({
+      where: { id, organizationId },
+    });
+    if (!loan) throw new NotFoundException('Loan not found.');
+    if (loan.status !== LoanStatus.PENDING) {
+      throw new BadRequestException('Only a pending request can be approved.');
+    }
+    // An HR/Admin can't approve their own loan request — same self-review
+    // gate as document/probation reviews elsewhere; ADMIN is exempt since
+    // there's no one above an Admin to approve it instead.
+    assertNotSelfApproval(actor, loan.employeeId);
+
+    const interestRate = dto.interestRate ?? 0;
+    const tenureMonths = dto.tenureMonths ?? loan.tenureMonths;
+    const emiAmount = calculateEmi(loan.principal, interestRate, tenureMonths);
+
+    await this.scopedPrisma.loan.updateMany({
+      where: { id, organizationId },
+      data: {
+        status: LoanStatus.ACTIVE,
+        interestRate,
+        tenureMonths,
+        emiAmount,
+        startMonth: dto.startMonth,
+        startYear: dto.startYear,
+        outstandingBalance: loan.principal,
+        approvedById: actor.id,
+      },
+    });
+    const updated = await this.scopedPrisma.loan.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: loan.employeeId, organizationId },
+    });
+    if (employee) {
+      const title = 'Loan Request Approved';
+      const message = `Your ${loan.loanType} request of ${loan.principal} has been approved, repayable as ${emiAmount}/month over ${tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.GENERAL,
+      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'LOAN_SANCTIONED',
+        {
+          employeeName: employee.name,
+          loanType: loan.loanType,
+          principal: String(loan.principal),
+          emiAmount: String(emiAmount),
+          tenureMonths: String(tenureMonths),
+        },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
+    }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LOAN_APPROVED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { employeeId: loan.employeeId, principal: loan.principal },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: loan.employeeId,
+      eventKey: 'LOAN_APPROVED',
+      performedById: actor.id,
+      description: `${loan.loanType} of ${loan.principal} approved.`,
+    });
+
+    return updated;
+  }
+
+  async reject(
+    id: string,
+    dto: RejectLoanDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const loan = await this.scopedPrisma.loan.findFirst({
+      where: { id, organizationId },
+    });
+    if (!loan) throw new NotFoundException('Loan not found.');
+    if (loan.status !== LoanStatus.PENDING) {
+      throw new BadRequestException('Only a pending request can be rejected.');
+    }
+    assertNotSelfApproval(actor, loan.employeeId);
+
+    await this.scopedPrisma.loan.updateMany({
+      where: { id, organizationId },
+      data: { status: LoanStatus.REJECTED, approvedById: actor.id },
+    });
+    const updated = await this.scopedPrisma.loan.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: loan.employeeId, organizationId },
+    });
+    if (employee) {
+      const title = 'Loan Request Rejected';
+      const message = dto.reason
+        ? `Your ${loan.loanType} request of ${loan.principal} was rejected: ${dto.reason}`
+        : `Your ${loan.loanType} request of ${loan.principal} was rejected.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.GENERAL,
+      });
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'LOAN_STATUS_UPDATE',
+        {
+          employeeName: employee.name,
+          loanType: loan.loanType,
+          status: LoanStatus.REJECTED,
+        },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
+    }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LOAN_REJECTED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { employeeId: loan.employeeId, reason: dto.reason ?? '' },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: loan.employeeId,
+      eventKey: 'LOAN_REJECTED',
+      performedById: actor.id,
+      description: `${loan.loanType} request rejected.`,
+    });
+
+    return updated;
+  }
+
   async updateStatus(
     id: string,
     dto: UpdateLoanStatusDto,
@@ -158,6 +401,14 @@ export class LoansService {
       where: { id, organizationId },
     });
     if (!loan) throw new NotFoundException('Loan not found.');
+    // A pending request has no terms set yet (interestRate/EMI/start
+    // date) — it must go through approve()/reject(), not this generic
+    // status flip, so those terms always get filled in together.
+    if (loan.status === LoanStatus.PENDING) {
+      throw new BadRequestException(
+        'Use the approve or reject action for a pending request.',
+      );
+    }
 
     await this.scopedPrisma.loan.updateMany({
       where: { id, organizationId },
@@ -189,10 +440,18 @@ export class LoansService {
         const rendered = await this.emailTemplatesService.renderOccasion(
           organizationId,
           'LOAN_STATUS_UPDATE',
-          { employeeName: employee.name, loanType: loan.loanType, status: dto.status },
+          {
+            employeeName: employee.name,
+            loanType: loan.loanType,
+            status: dto.status,
+          },
           { subject: title, html: message },
         );
-        await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
+        await this.emailService.send({
+          to: employee.email,
+          subject: rendered.subject,
+          html: rendered.html,
+        });
       }
     }
 
