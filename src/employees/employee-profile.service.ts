@@ -504,14 +504,20 @@ export class EmployeeProfileService {
     // this org throws Prisma P2002 here — the global AllExceptionsFilter
     // turns that into a clean 409 automatically, same mechanism used for
     // every other unique-constraint conflict in this app, so no manual
-    // pre-check or hand-rolled error is needed.
+    // pre-check or hand-rolled error is needed. Only actually true for a
+    // real SQL NULL though — an empty string ('', what the "Asset Tag /
+    // Serial (optional)" field sends when left blank) is NOT exempt, so
+    // without this normalization the *second* ever asset allocated with no
+    // tag 409s (both rows have assetTag=''), not just an actual duplicate
+    // tag. Normalize blank/whitespace-only to null so "no tag" means no
+    // tag, not a shared empty-string value every asset collides on.
     const asset = await this.scopedPrisma.employeeAsset.create({
       data: {
         organizationId,
         employeeId: id,
         assetType: dto.assetType,
         assetName: dto.assetName,
-        assetTag: dto.assetTag,
+        assetTag: dto.assetTag?.trim() || null,
         allocatedDate: dto.allocatedDate,
         notes: dto.notes ?? '',
         allocatedById: actor.id,
