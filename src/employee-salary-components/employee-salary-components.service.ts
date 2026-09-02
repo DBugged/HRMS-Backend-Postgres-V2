@@ -39,15 +39,43 @@ export class EmployeeSalaryComponentsService {
     await this.assertEmployeeExists(employeeId, organizationId);
     const asOf = asOfParam ?? localDateStr();
 
-    const [rows, activeComponents] = await Promise.all([
+    const [rawRows, activeComponents] = await Promise.all([
       this.scopedPrisma.employeeSalaryComponent.findMany({
         where: { organizationId, employeeId },
-        include: { component: { select: { id: true, displayOrder: true } } },
+        // Every field the frontend's buildBreakdown (EmployeeFullProfile.tsx)
+        // actually reads off `componentRef` — type (is this even an
+        // earning?), payFrequency (is this recurring-monthly vs
+        // yearly/half-yearly/quarterly variable pay?), isEmployerContribution
+        // (exclude from the employee-facing Earnings total), name. Missing
+        // any of these silently mis-buckets the row: previously this only
+        // selected {id, displayOrder}, so payFrequency always fell back to
+        // 'MONTHLY' client-side and a YEARLY MANUAL component (e.g.
+        // "Variable Pay") got summed straight into the monthly Fixed CTC
+        // instead of routed to the Variable Pay bucket — see the "wrong
+        // Monthly Amount" bug this fixes.
+        include: {
+          component: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              type: true,
+              calcType: true,
+              payFrequency: true,
+              isEmployerContribution: true,
+              displayOrder: true,
+            },
+          },
+        },
       }),
       this.scopedPrisma.salaryComponent.findMany({
         where: { organizationId, isActive: true },
       }),
     ]);
+    // Renamed here (not at the Prisma layer, which can only ever be called
+    // `component` — it's the relation name) to match what buildBreakdown
+    // reads on every row: `r.componentRef`.
+    const rows = rawRows.map((r) => ({ ...r, componentRef: r.component }));
 
     const current = resolveCurrentRows(rows, asOf);
     const synthesized = synthesizeMissingRows(rows, activeComponents, asOf);
@@ -70,15 +98,33 @@ export class EmployeeSalaryComponentsService {
     organizationId: string,
   ) {
     await this.assertEmployeeExists(employeeId, organizationId);
-    return this.scopedPrisma.employeeSalaryComponent.findMany({
+    // Feeds the same frontend buildBreakdown() as getStructure — needs the
+    // same full componentRef shape (see getStructure's comment) so a
+    // historical Variable Pay/etc. row reconstructs into the right bucket
+    // too, not just the current structure.
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
       where: {
         organizationId,
         employeeId,
         ...(componentCode && { componentCode }),
       },
-      include: { component: { select: { id: true, name: true, code: true } } },
+      include: {
+        component: {
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            type: true,
+            calcType: true,
+            payFrequency: true,
+            isEmployerContribution: true,
+            displayOrder: true,
+          },
+        },
+      },
       orderBy: [{ componentCode: 'asc' }, { effectiveFrom: 'desc' }],
     });
+    return rows.map((r) => ({ ...r, componentRef: r.component }));
   }
 
   async setComponentValue(

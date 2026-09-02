@@ -87,6 +87,11 @@ export interface SynthesizedRow {
   effectiveFrom: string;
   effectiveTo: null;
   synthesized: true;
+  // Same shape/purpose as getStructure's componentRef on real rows — a
+  // synthesized row (no per-employee override) still needs its type/
+  // payFrequency/isEmployerContribution for buildBreakdown to bucket it
+  // correctly, not just its raw calcType/percentageOf/formula.
+  componentRef: SynthesizableComponent;
 }
 
 // For active EARNING, non-employer-contribution components whose calcType
@@ -125,5 +130,6 @@ export function synthesizeMissingRows(
       effectiveFrom: asOf,
       effectiveTo: null,
       synthesized: true as const,
+      componentRef: c,
     }));
 }
