@@ -97,6 +97,17 @@ export class UpdateEmployeeDto {
   @IsEnum(EmploymentStatus)
   employmentStatus?: EmploymentStatus;
 
+  // Missing from this DTO entirely until now — the Edit Employee form
+  // always sends it (create and edit share one payload builder on the
+  // frontend), so every edit save 400'd with "property employeeType
+  // should not exist" (forbidNonWhitelisted). Locked for self-update, same
+  // tier as designation/gradeLevel/employeeCategory — see
+  // employee-field-lock.ts.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  employeeType?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()

@@ -21,6 +21,7 @@ const LOCKED_FIELDS_FOR_EMPLOYEE: (keyof UpdateEmployeeDto)[] = [
   'reportingManagerId',
   'email',
   'employmentStatus',
+  'employeeType',
 ];
 
 /**
