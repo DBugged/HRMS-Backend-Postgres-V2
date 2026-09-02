@@ -28,6 +28,18 @@ export class FileServeController {
       throw new NotFoundException('This link is invalid or has expired.');
     }
 
+    // helmet's default X-Frame-Options: SAMEORIGIN (set in main.ts) blocks
+    // the browser from rendering this response inside an <iframe> at all
+    // whenever the frontend is on a different origin — the normal case (a
+    // different port in dev, a different subdomain in prod) — which broke
+    // every in-app PDF/document viewer (FileViewerModal, Documents.tsx's
+    // policy-document viewer) with a silently blank iframe, no console
+    // error. Same rationale as crossOriginResourcePolicy above: access is
+    // already controlled by the signed, short-lived token in the URL, so
+    // frame-embedding protection isn't adding real protection here, only
+    // breaking a legitimate same-app cross-origin embed.
+    res.removeHeader('X-Frame-Options');
+
     if (fileStorageDriver() === 's3') {
       await this.serveFromS3(claim.relativeKey, res);
       return;
