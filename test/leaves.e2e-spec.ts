@@ -42,8 +42,10 @@ describe('Leaves (e2e)', () => {
   let adminToken: string;
   let hrToken: string;
   let managerToken: string;
+  let managerId: string;
   let employeeToken: string;
   let employeeId: string;
+  let outsideDeptEmployeeId: string;
   let elLeaveTypeId: string;
   let compOffLeaveTypeId: string;
 
@@ -107,8 +109,8 @@ describe('Leaves (e2e)', () => {
         role: 'MANAGER',
         departmentId,
       });
-    const managerId = (managerCreate.body as { employee: { id: string } })
-      .employee.id;
+    managerId = (managerCreate.body as { employee: { id: string } }).employee
+      .id;
     const managerLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -139,6 +141,16 @@ describe('Leaves (e2e)', () => {
         password: empBody.generatedPassword,
       });
     employeeToken = (empLogin.body as AuthBody).accessToken;
+
+    const outsideCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Outside Employee',
+        email: 'leaves-e2e-outside@example.test',
+      });
+    outsideDeptEmployeeId = (outsideCreate.body as { employee: { id: string } })
+      .employee.id;
 
     const elType = await request(app.getHttpServer())
       .post('/leave-types')
@@ -371,6 +383,35 @@ describe('Leaves (e2e)', () => {
         (l) => l.employeeId === employeeId,
       ),
     ).toBe(true);
+  });
+
+  it('MANAGER ?employeeId=self ("My Leave") scopes to only their own, not the whole department', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/leaves')
+      .query({ employeeId: managerId })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+    const leaves = (res.body as { data: LeaveBody[] }).data;
+    expect(leaves.every((l) => l.employeeId === managerId)).toBe(true);
+    expect(leaves.some((l) => l.employeeId === employeeId)).toBe(false);
+  });
+
+  it('MANAGER ?employeeId=<dept member> narrows to just that member', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/leaves')
+      .query({ employeeId })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(200);
+    const leaves = (res.body as { data: LeaveBody[] }).data;
+    expect(leaves.every((l) => l.employeeId === employeeId)).toBe(true);
+  });
+
+  it('MANAGER ?employeeId=<outside the department> is refused, not silently widened', async () => {
+    await request(app.getHttpServer())
+      .get('/leaves')
+      .query({ employeeId: outsideDeptEmployeeId })
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(403);
   });
 
   it('a low ?limit= caps the number of leaves returned', async () => {
