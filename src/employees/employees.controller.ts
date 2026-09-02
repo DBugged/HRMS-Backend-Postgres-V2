@@ -13,7 +13,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Role, User } from '@prisma/client';
+import { EmployeeDocumentCategory, Role, User } from '@prisma/client';
 import { EmployeesService } from './employees.service';
 import { EmployeeProfileService } from './employee-profile.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -188,11 +188,16 @@ export class EmployeesController {
   }
 
   @Get(':id/documents')
-  listDocuments(@Param('id') id: string, @CurrentUser() caller: Caller) {
+  listDocuments(
+    @Param('id') id: string,
+    @Query('category') category: EmployeeDocumentCategory | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
     return this.employeeProfileService.listDocuments(
       id,
       caller,
       caller.organizationId,
+      category,
     );
   }
 

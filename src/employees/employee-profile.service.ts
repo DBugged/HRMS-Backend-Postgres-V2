@@ -15,6 +15,7 @@ import {
 } from '@nestjs/common';
 import {
   EmployeeDocument,
+  EmployeeDocumentCategory,
   EmployeeDocumentStatus,
   EmploymentStatus,
   NotificationCategory,
@@ -139,7 +140,11 @@ export class EmployeeProfileService {
         select: { name: true, isMandatory: true, isActive: true },
       }),
       this.scopedPrisma.employeeDocument.findMany({
-        where: { organizationId, employeeId: id },
+        where: {
+          organizationId,
+          employeeId: id,
+          category: EmployeeDocumentCategory.DOCUMENT,
+        },
         select: { docType: true, status: true },
       }),
     ]);
@@ -215,7 +220,15 @@ export class EmployeeProfileService {
     const [documents, assets] = await Promise.all([
       canSeeDocuments
         ? this.scopedPrisma.employeeDocument.findMany({
-            where: { organizationId, employeeId: id },
+            // Only the Documents tab's rows — an uploaded Letter (category
+            // LETTER) is fetched separately by the Letters tab via
+            // GET /employees/:id/documents?category=LETTER, so it doesn't
+            // show up twice.
+            where: {
+              organizationId,
+              employeeId: id,
+              category: EmployeeDocumentCategory.DOCUMENT,
+            },
             orderBy: { uploadedAt: 'desc' },
           })
         : Promise.resolve([]),
@@ -320,12 +333,17 @@ export class EmployeeProfileService {
 
   // -- Documents --
 
-  async listDocuments(id: string, actor: Actor, organizationId: string) {
+  async listDocuments(
+    id: string,
+    actor: Actor,
+    organizationId: string,
+    category?: EmployeeDocumentCategory,
+  ) {
     this.assertSelfOrHr(actor, id);
     const employee = await this.findEmployeeOrThrow(id, organizationId);
     this.assertMayAccessDocumentsFor(actor, employee);
     const docs = await this.scopedPrisma.employeeDocument.findMany({
-      where: { organizationId, employeeId: id },
+      where: { organizationId, employeeId: id, ...(category && { category }) },
       orderBy: { uploadedAt: 'desc' },
     });
     return docs.map(withSignedFileUrl);
@@ -347,6 +365,7 @@ export class EmployeeProfileService {
     // Employee documents still go through the normal review flow (see
     // assertMayAccessDocumentsFor).
     const isFounderDoc = employee.role === Role.ADMIN;
+    const category = dto.category ?? EmployeeDocumentCategory.DOCUMENT;
     const doc = await this.scopedPrisma.employeeDocument.create({
       data: {
         organizationId,
@@ -354,6 +373,7 @@ export class EmployeeProfileService {
         docType: dto.docType,
         fileName: dto.fileName,
         fileUrl: dto.fileUrl,
+        category,
         ...(isFounderDoc && {
           status: EmployeeDocumentStatus.APPROVED,
           reviewedById: actor.id,
@@ -361,7 +381,12 @@ export class EmployeeProfileService {
         }),
       },
     });
-    await this.refreshProfileCompletion(id, organizationId);
+    // Mandatory-doc completion tracking only concerns the Documents tab's
+    // DocumentRequirement list — a manually-uploaded Letter never matches
+    // one, so skip the (harmless but pointless) recompute for those.
+    if (category === EmployeeDocumentCategory.DOCUMENT) {
+      await this.refreshProfileCompletion(id, organizationId);
+    }
     return withSignedFileUrl(doc);
   }
 

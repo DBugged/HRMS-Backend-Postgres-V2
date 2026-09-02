@@ -2233,6 +2233,16 @@ enum EmployeeDocumentStatus {
   REJECTED
 }
 
+// DOCUMENT = KYC/onboarding paperwork shown on the Documents tab (against
+// DocumentRequirement's master list). LETTER = a manually-uploaded letter
+// (e.g. a signed scan) shown on the Letters tab alongside the
+// auto-generated LetterTemplate ones — same upload/review/delete plumbing,
+// just kept out of each other's list.
+enum EmployeeDocumentCategory {
+  DOCUMENT
+  LETTER
+}
+
 // Real table, not a JSON array like the old system — lets a review action
 // join back to the reviewer and gives normal list/status semantics. Files
 // themselves go through the existing generic files module (POST
@@ -2254,6 +2264,7 @@ model EmployeeDocument {
   docType  String
   fileName String
   fileUrl  String
+  category EmployeeDocumentCategory @default(DOCUMENT)
 
   status       EmployeeDocumentStatus @default(PENDING)
   reviewReason String?

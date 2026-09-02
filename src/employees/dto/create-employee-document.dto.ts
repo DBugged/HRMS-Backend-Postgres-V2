@@ -1,5 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
+import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { EmployeeDocumentCategory } from '@prisma/client';
 
 export class CreateEmployeeDocumentDto {
   @ApiProperty()
@@ -17,4 +18,11 @@ export class CreateEmployeeDocumentDto {
   @IsNotEmpty()
   @IsString()
   fileUrl!: string;
+
+  // DOCUMENT (default) for the Documents tab's KYC/onboarding paperwork;
+  // LETTER for a manually-uploaded letter shown on the Letters tab instead.
+  @ApiPropertyOptional({ enum: EmployeeDocumentCategory })
+  @IsOptional()
+  @IsEnum(EmployeeDocumentCategory)
+  category?: EmployeeDocumentCategory;
 }
