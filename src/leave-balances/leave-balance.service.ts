@@ -223,6 +223,15 @@ export class LeaveBalanceService {
       leaveType.accrualFrequency,
       new Date(),
     );
+    // creditAccrual only ever writes into `year`'s balance row — it never
+    // touches a prior year's row, and carrying a balance across years is a
+    // separate, explicit process (runYearEndCarryForward) gated by the
+    // leave type's own carryForward.allowed. So a first-ever credit must
+    // never backdate past Jan 1 of `year`, even for an employee who joined
+    // in an earlier year — those earlier cycles belong to (and, unless
+    // carry-forward is on, expire with) that earlier year's own row, which
+    // this call was never asked to touch.
+    const yearStart = new Date(Date.UTC(year, 0, 1));
     let credited = 0;
     let alreadyAccrued = 0;
 
@@ -247,9 +256,11 @@ export class LeaveBalanceService {
         // the accrual cron's host was down across one or more cycle
         // boundaries), not just the latest one. A row credited for the
         // first time ever (lastAccrualPeriod null) backdates instead to
-        // the employee's joining cycle — their true entitlement since they
-        // actually joined, not just from whenever accrual first happened
-        // to run for them.
+        // the employee's joining cycle within *this* year — their true
+        // entitlement since they joined (or since Jan 1, whichever is
+        // later, since a prior year is a different row entirely — see
+        // yearStart above) — not just from whenever accrual first
+        // happened to run for them.
         const cycles = row.lastAccrualPeriod
           ? countElapsedCycles(
               leaveType.accrualFrequency,
@@ -258,7 +269,9 @@ export class LeaveBalanceService {
             )
           : cyclesSinceJoining(
               leaveType.accrualFrequency,
-              employee.joiningDate,
+              employee.joiningDate > yearStart
+                ? employee.joiningDate
+                : yearStart,
               new Date(),
             );
 
