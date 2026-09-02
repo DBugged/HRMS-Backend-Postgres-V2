@@ -46,7 +46,7 @@ export class EmployeeSalaryComponentsController {
   }
 
   @Get(':id/history')
-  @Roles(Role.ADMIN, Role.HR)
+  @SelfOrRoles('id', Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   getHistory(
     @Param('id') id: string,
