@@ -59,17 +59,39 @@ export function isProfileComplete(
   });
 }
 
+// A mandatory DocumentRequirement is satisfied by any uploaded
+// EmployeeDocument whose docType matches its name and whose status isn't
+// REJECTED — a rejected upload still needs a valid resubmission, so it
+// doesn't count. Only active requirements gate completion (a disabled
+// requirement stops being expected, matching DocumentRequirement.isActive's
+// own "soft-disable" semantics elsewhere).
+export function areMandatoryDocumentsUploaded(
+  requirements: { name: string; isMandatory: boolean; isActive: boolean }[],
+  documents: { docType: string; status: string }[],
+): boolean {
+  return requirements
+    .filter((r) => r.isMandatory && r.isActive)
+    .every((r) =>
+      documents.some((d) => d.docType === r.name && d.status !== 'REJECTED'),
+    );
+}
+
 // Merge (not overwrite) semantics — PUT /employees/:id/personal-data sends
 // only the fields being changed; anything omitted keeps its prior value.
 // previousEmployment/references arrays are replaced wholesale when present
 // in the patch (the client always sends the full array back), same as the
 // old system's plain object-spread merge.
+// mandatoryDocumentsUploaded is the caller's pre-computed
+// areMandatoryDocumentsUploaded() result — kept as a plain boolean argument
+// (rather than fetched in here) since this function stays DB-free/pure,
+// same as before.
 export function mergePersonalData(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
+  mandatoryDocumentsUploaded: boolean,
 ): Record<string, unknown> {
   const merged = { ...current, ...patch };
-  const completed = isProfileComplete(merged);
+  const completed = isProfileComplete(merged) && mandatoryDocumentsUploaded;
   return {
     ...merged,
     profileCompleted: completed,

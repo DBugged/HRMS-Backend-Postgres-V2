@@ -123,10 +123,15 @@ export class EmployeesService {
             // later personal-data PATCH) specifically so the welcome email
             // below always has somewhere to go on the interactive Add
             // Employee path. Absent for bulk-imported rows — see the DTO.
+            // No documents exist yet at creation time, so
+            // mandatoryDocumentsUploaded is always false here — harmless,
+            // since isProfileComplete(...) is false too at this point
+            // regardless (only personalEmail is set).
             personalData: dto.personalEmail
               ? (mergePersonalData(
                   {},
                   { personalEmail: dto.personalEmail },
+                  false,
                 ) as Prisma.InputJsonValue)
               : undefined,
           },

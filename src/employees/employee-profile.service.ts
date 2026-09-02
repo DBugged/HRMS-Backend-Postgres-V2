@@ -36,7 +36,11 @@ import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
 import { ReviewEmployeeDocumentDto } from './dto/review-employee-document.dto';
 import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
-import { mergePersonalData, signPersonalDataFileUrls } from './personal-data';
+import {
+  areMandatoryDocumentsUploaded,
+  mergePersonalData,
+  signPersonalDataFileUrls,
+} from './personal-data';
 
 type Actor = Omit<User, 'password'>;
 
@@ -118,6 +122,53 @@ export class EmployeeProfileService {
     }
   }
 
+  // Profile completion needs every active-and-mandatory DocumentRequirement
+  // to have a corresponding (non-rejected) EmployeeDocument uploaded — not
+  // just the personal-data fields. Shared by updatePersonalData (a Save
+  // Profile click) and refreshProfileCompletion (a document
+  // upload/delete/review, which can also flip completion without the
+  // employee touching the personal-data form at all).
+  private async computeMandatoryDocumentsUploaded(
+    id: string,
+    organizationId: string,
+  ): Promise<boolean> {
+    const [requirements, documents] = await Promise.all([
+      this.scopedPrisma.documentRequirement.findMany({
+        where: { organizationId, isMandatory: true, isActive: true },
+        select: { name: true, isMandatory: true, isActive: true },
+      }),
+      this.scopedPrisma.employeeDocument.findMany({
+        where: { organizationId, employeeId: id },
+        select: { docType: true, status: true },
+      }),
+    ]);
+    return areMandatoryDocumentsUploaded(requirements, documents);
+  }
+
+  // Re-derives personalData.profileCompleted from the employee's *current*
+  // documents, without changing any other personalData field — called after
+  // a document is added/removed/reviewed, since those can flip completion
+  // on their own now (uploading the last missing mandatory document
+  // completes the profile even without a subsequent Save Profile click; a
+  // document getting rejected, or a required upload being deleted, can
+  // un-complete it the same way).
+  private async refreshProfileCompletion(id: string, organizationId: string) {
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    const mandatoryDocumentsUploaded =
+      await this.computeMandatoryDocumentsUploaded(id, organizationId);
+    const merged = mergePersonalData(
+      employee.personalData as Record<string, unknown>,
+      {},
+      mandatoryDocumentsUploaded,
+    );
+    const current = employee.personalData as Record<string, unknown>;
+    if (merged.profileCompleted === current.profileCompleted) return;
+    await this.scopedPrisma.user.updateMany({
+      where: { id, organizationId },
+      data: { personalData: merged as Prisma.InputJsonValue },
+    });
+  }
+
   async updatePersonalData(
     id: string,
     dto: UpdatePersonalDataDto,
@@ -127,9 +178,12 @@ export class EmployeeProfileService {
     this.assertSelfOrHr(actor, id);
     const employee = await this.findEmployeeOrThrow(id, organizationId);
     this.assertMaySetPersonalDataFor(actor, employee);
+    const mandatoryDocumentsUploaded =
+      await this.computeMandatoryDocumentsUploaded(id, organizationId);
     const merged = mergePersonalData(
       employee.personalData as Record<string, unknown>,
       dto.personalData,
+      mandatoryDocumentsUploaded,
     );
 
     await this.scopedPrisma.user.updateMany({
@@ -306,6 +360,7 @@ export class EmployeeProfileService {
         }),
       },
     });
+    await this.refreshProfileCompletion(id, organizationId);
     return withSignedFileUrl(doc);
   }
 
@@ -323,6 +378,7 @@ export class EmployeeProfileService {
     await this.scopedPrisma.employeeDocument.deleteMany({
       where: { id: docId, organizationId },
     });
+    await this.refreshProfileCompletion(id, organizationId);
     return { success: true };
   }
 
@@ -391,6 +447,14 @@ export class EmployeeProfileService {
       );
       await this.emailService.send({ to: employee.email, subject: rendered.subject, html: rendered.html });
     }
+
+    // A REJECTED review can un-complete the profile (the mandatory
+    // requirement it was covering needs a valid resubmission again); an
+    // APPROVED review can't newly complete it here (addDocument already
+    // refreshed completion on upload — approval status isn't part of the
+    // "uploaded" check, see areMandatoryDocumentsUploaded), but running
+    // this either way keeps the two cases from silently drifting apart.
+    await this.refreshProfileCompletion(id, organizationId);
 
     return withSignedFileUrl(updated);
   }
