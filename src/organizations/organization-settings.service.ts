@@ -202,6 +202,9 @@ export class OrganizationSettingsService {
       dateFormat?: string;
       timeFormat?: string;
     };
+    const attendancePayrollPrefs = (org.orgPayrollAttendancePrefs ?? {}) as {
+      enableTaxDeclaration?: boolean;
+    };
     return {
       isInitialized: org.isInitialized,
       companyName: org.companyName,
@@ -236,6 +239,13 @@ export class OrganizationSettingsService {
         ? policies.dateFormat
         : 'DD-MM-YYYY',
       timeFormat: policies.timeFormat === '24' ? '24' : '12',
+      // Org-wide "employee can't see or do anything on Tax Declaration"
+      // switch — defaults to enabled (undefined !== false) so orgs that
+      // predate this setting keep working exactly as before. Read by
+      // TaxDeclarationsService (blocks the EMPLOYEE-tier endpoints
+      // entirely when off) and the frontend (hides the nav link + shows a
+      // disabled state instead of the form).
+      enableTaxDeclaration: attendancePayrollPrefs.enableTaxDeclaration !== false,
     };
   }
 

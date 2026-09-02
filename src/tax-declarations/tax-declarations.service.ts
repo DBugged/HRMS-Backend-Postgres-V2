@@ -5,7 +5,12 @@
 // Important: upsert()'s isOwnDeclaration check is identity-based, not role-based — an HR/Admin caller
 // editing their OWN declaration can never set `status` themselves (closing a self-verification loophole),
 // even though they could set it freely when editing someone else's.
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+} from '@nestjs/common';
 import {
   EmployeeTaxDeclaration,
   NotificationCategory,
@@ -55,12 +60,38 @@ export class TaxDeclarationsService {
     private readonly payrollSettingsService: PayrollSettingsService,
   ) {}
 
+  // Org-wide "employee can't see or do anything on Tax Declaration" switch
+  // (Organization Settings > General Settings > Payroll & Attendance). Only
+  // gates the EMPLOYEE role specifically — an ADMIN/HR/MANAGER caller still
+  // reaches their own declaration (they may need to file one too) and can
+  // always manage anyone else's regardless of this setting.
+  private async assertEnabledForEmployee(
+    actor: Actor,
+    organizationId: string,
+  ): Promise<void> {
+    if (actor.role !== Role.EMPLOYEE) return;
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { orgPayrollAttendancePrefs: true },
+    });
+    const prefs = (org?.orgPayrollAttendancePrefs ?? {}) as {
+      enableTaxDeclaration?: boolean;
+    };
+    if (prefs.enableTaxDeclaration === false) {
+      throw new ForbiddenException(
+        'Tax Declaration is currently disabled for your organization.',
+      );
+    }
+  }
+
   async get(
     employeeIdParam: string | undefined,
     financialYear: string | undefined,
     actor: Actor,
     organizationId: string,
   ) {
+    await this.assertEnabledForEmployee(actor, organizationId);
+
     // EMPLOYEE always gets forced to their own record — an employeeId
     // query param must be ignored for that role, or they could view a
     // co-worker's declaration just by guessing/passing another id. Every
@@ -96,6 +127,8 @@ export class TaxDeclarationsService {
     actor: Actor,
     organizationId: string,
   ) {
+    await this.assertEnabledForEmployee(actor, organizationId);
+
     // Same self-resolution as get() above, including the same EMPLOYEE
     // guard — an EMPLOYEE must never be able to write another employee's
     // declaration by passing dto.employeeId.
