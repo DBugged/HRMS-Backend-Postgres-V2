@@ -24,6 +24,10 @@ import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
 import { QueryLeaveTrackerBalancesDto } from './dto/query-leave-tracker-balances.dto';
+import { ExportLeaveTrackerGridDto } from './dto/export-leave-tracker-grid.dto';
+import { ExportLeaveTrackerBalancesDto } from './dto/export-leave-tracker-balances.dto';
+import type { ReportColumn } from '../reports/report-export';
+import type { ReportPayload } from '../reports/reports.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -65,6 +69,22 @@ export type LeaveTrackerCellCode =
   | 'COMP_OFF'
   | 'WEEKLY_OFF'
   | 'HOLIDAY';
+
+// Same short codes as the frontend grid's own CELL_SHORT map
+// (AttendanceGrid.tsx) — kept in sync by hand, not imported, since the
+// frontend has no build-time access to backend-v2 source.
+const CELL_SHORT: Record<LeaveTrackerCellCode, string> = {
+  PRESENT: 'P',
+  ABSENT: 'A',
+  HALF_DAY: 'HD',
+  WFH: 'WFH',
+  ON_LEAVE: 'L',
+  COMP_OFF: 'CO',
+  WEEKLY_OFF: 'WO',
+  HOLIDAY: 'H',
+};
+
+const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 @Injectable()
 export class LeaveTrackerService {
@@ -346,5 +366,123 @@ export class LeaveTrackerService {
     }
 
     return result;
+  }
+
+  // Reshapes grid()'s own output into a flat Employee-row / one-column-
+  // per-day table for Excel/PDF export — reuses grid() itself rather than
+  // re-deriving the same cell codes a second time.
+  async exportGrid(
+    query: ExportLeaveTrackerGridDto,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const { employees, days, cells } = await this.grid(
+      query,
+      actor,
+      organizationId,
+    );
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 24 },
+      ...days.map((day) => ({
+        header: `${day.day} ${DOW_SHORT[day.dow]}`,
+        key: `d${day.day}`,
+        width: 8,
+      })),
+    ];
+
+    const rows = employees.map((employee) => {
+      const row: Record<string, unknown> = {
+        employeeId: employee.employeeId,
+        name: employee.name,
+      };
+      for (const day of days) {
+        const code = cells[employee.id]?.[day.day];
+        row[`d${day.day}`] = code ? CELL_SHORT[code] : '';
+      }
+      return row;
+    });
+
+    const monthName = new Date(
+      Date.UTC(query.year, query.month - 1, 1),
+    ).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+
+    return {
+      title: 'Attendance Grid',
+      subtitle: `${monthName} ${query.year}`,
+      columns,
+      rows,
+      filename: `attendance-grid-${query.year}-${pad(query.month)}`,
+    };
+  }
+
+  // Same idea as exportGrid() — reuses balances() and reshapes it into a
+  // flat table. Leave-type columns are the union of every leave type any
+  // scoped employee is eligible for (not just the first employee's), so no
+  // employee's balance silently goes missing because their own leave-type
+  // set happened to be a subset of someone else's.
+  async exportBalances(
+    query: ExportLeaveTrackerBalancesDto,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const [balances, employeeIds] = await Promise.all([
+      this.balances(query, actor, organizationId),
+      this.resolveScopedEmployeeIds(actor, organizationId, query.departmentId),
+    ]);
+    // balances()'s own `employeeId` field is the User.id (its join key for
+    // the frontend, not a human-readable code) — resolved separately here
+    // since the export needs the actual employeeId (e.g. "DP-00001").
+    const employees = await this.scopedPrisma.user.findMany({
+      where: { id: { in: employeeIds }, organizationId },
+      select: { id: true, employeeId: true },
+    });
+    const codeByUserId = new Map(employees.map((e) => [e.id, e.employeeId]));
+
+    const leaveTypeCodes: string[] = [];
+    for (const entry of balances) {
+      for (const b of entry.leaveBalances) {
+        if (!leaveTypeCodes.includes(b.leaveTypeCode)) {
+          leaveTypeCodes.push(b.leaveTypeCode);
+        }
+      }
+    }
+
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 24 },
+      ...leaveTypeCodes.map((code) => ({
+        header: `${code} (Credited/Availed/Closing)`,
+        key: `lt_${code}`,
+        width: 18,
+      })),
+      { header: 'Comp-Off Available', key: 'compOffAvailable', width: 16 },
+      { header: 'WFH Days Used', key: 'wfhDaysUsed', width: 14 },
+    ];
+
+    const rows = balances.map((entry) => {
+      const row: Record<string, unknown> = {
+        employeeId: codeByUserId.get(entry.employeeId) ?? '',
+        name: entry.name,
+        compOffAvailable: entry.compOffAvailable,
+        wfhDaysUsed: entry.wfhDaysUsed,
+      };
+      for (const code of leaveTypeCodes) {
+        const match = entry.leaveBalances.find((b) => b.leaveTypeCode === code);
+        row[`lt_${code}`] = match
+          ? `${match.credited}/${match.availed}/${match.closing}`
+          : '';
+      }
+      return row;
+    });
+
+    return {
+      title: 'Leave & WFH Balances',
+      subtitle: `Year ${query.year}`,
+      columns,
+      rows,
+      filename: `leave-wfh-balances-${query.year}`,
+    };
   }
 }
