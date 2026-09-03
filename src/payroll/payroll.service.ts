@@ -1568,7 +1568,10 @@ export class PayrollService {
       where: {
         organizationId,
         isActive: true,
-        role: { in: [Role.EMPLOYEE, Role.MANAGER] },
+        // Bulk payroll runs cover every real employee on payroll —
+        // EMPLOYEE/MANAGER/HR — and only skip ADMIN, since that account
+        // is the org's system/owner login rather than a paid role here.
+        role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR] },
       },
     });
   }
