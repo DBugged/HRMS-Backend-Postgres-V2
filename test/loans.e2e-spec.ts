@@ -329,9 +329,161 @@ describe('Loans (e2e)', () => {
     const res = await request(app.getHttpServer())
       .patch(`/loans/${cancelLoanId}/status`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ status: 'CANCELLED' })
+      .send({ status: 'CANCELLED', reason: 'Employee resigned' })
       .expect(200);
     expect((res.body as LoanBody).status).toBe('CANCELLED');
+  });
+
+  it('cancelling an active loan without a reason is rejected', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        principal: 15000,
+        tenureMonths: 3,
+        startMonth: 9,
+        startYear: 2026,
+      })
+      .expect(201);
+    const id = (loan.body as LoanBody).id;
+
+    await request(app.getHttpServer())
+      .patch(`/loans/${id}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'CANCELLED' })
+      .expect(400);
+  });
+
+  it('closing an active loan with an outstanding balance and no reason is rejected', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        principal: 18000,
+        tenureMonths: 3,
+        startMonth: 9,
+        startYear: 2026,
+      })
+      .expect(201);
+    const id = (loan.body as LoanBody).id;
+
+    await request(app.getHttpServer())
+      .patch(`/loans/${id}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'CLOSED' })
+      .expect(400);
+  });
+
+  it('closing an active loan with an outstanding balance and a reason succeeds and stamps closure fields', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        principal: 22000,
+        tenureMonths: 3,
+        startMonth: 9,
+        startYear: 2026,
+      })
+      .expect(201);
+    const id = (loan.body as LoanBody).id;
+
+    const res = await request(app.getHttpServer())
+      .patch(`/loans/${id}/status`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ status: 'CLOSED', reason: 'Written off' })
+      .expect(200);
+    const body = res.body as LoanBody & {
+      closureReason: string;
+      closedAt: string | null;
+      closedById: string | null;
+    };
+    expect(body.status).toBe('CLOSED');
+    expect(body.closureReason).toBe('Written off');
+    expect(body.closedAt).not.toBeNull();
+    expect(body.closedById).toBeTruthy();
+
+    // findAll() (the list the frontend's History modal reads its
+    // `closedBy` from) must actually include the relation, not just the
+    // scalar closedById — a bare `include: { employee }` would leave
+    // `closedBy` undefined even though closedById is set.
+    const listRes = await request(app.getHttpServer())
+      .get('/loans')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const listed = (
+      listRes.body as PaginatedBody<
+        LoanBody & { closedBy?: { id: string; name: string } }
+      >
+    ).data.find((l) => l.id === id);
+    expect(listed?.closedBy?.name).toBeTruthy();
+  });
+
+  it('cancelling an active loan with a reason succeeds and stamps closure fields', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        principal: 9000,
+        tenureMonths: 3,
+        startMonth: 9,
+        startYear: 2026,
+      })
+      .expect(201);
+    const id = (loan.body as LoanBody).id;
+
+    const res = await request(app.getHttpServer())
+      .patch(`/loans/${id}/status`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ status: 'CANCELLED', reason: 'Recorded in error' })
+      .expect(200);
+    const body = res.body as LoanBody & {
+      closureReason: string;
+      closedAt: string | null;
+      closedById: string | null;
+    };
+    expect(body.status).toBe('CANCELLED');
+    expect(body.closureReason).toBe('Recorded in error');
+    expect(body.closedAt).not.toBeNull();
+    expect(body.closedById).toBeTruthy();
+  });
+
+  it('closing a loan with a zero outstanding balance does not require a reason', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        principal: 4000,
+        tenureMonths: 2,
+        startMonth: 9,
+        startYear: 2026,
+      })
+      .expect(201);
+    const id = (loan.body as LoanBody).id;
+
+    await request(app.getHttpServer())
+      .post(`/loans/${id}/repayments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ month: 9, year: 2026, amount: 4000 })
+      .expect(201);
+
+    // The repayment already auto-closed the loan (see the auto-close test
+    // above) — flip it back to ACTIVE first so the CLOSED status endpoint
+    // actually has a transition to make.
+    await prisma.loan.update({ where: { id }, data: { status: 'ACTIVE' } });
+
+    const res = await request(app.getHttpServer())
+      .patch(`/loans/${id}/status`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ status: 'CLOSED' })
+      .expect(200);
+    const body = res.body as LoanBody;
+    expect(body.status).toBe('CLOSED');
+    expect(body.outstandingBalance).toBe(0);
   });
 
   it('rejects an invalid status value', async () => {

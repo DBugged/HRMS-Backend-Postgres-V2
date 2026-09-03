@@ -431,6 +431,7 @@ model User {
   reimbursementsPaid               Reimbursement[]           @relation("ReimbursementPaidBy")
   loans                            Loan[]                    @relation("LoanEmployee")
   loansApproved                    Loan[]                    @relation("LoanApprovedBy")
+  loansClosed                      Loan[]                    @relation("LoanClosedBy")
   settlements                      Settlement[]              @relation("SettlementEmployee")
   settlementsProcessed             Settlement[]              @relation("SettlementProcessedBy")
   offboardingCases                 OffboardingCase[]         @relation("OffboardingCaseEmployee")
@@ -1820,6 +1821,11 @@ model Loan {
 
   approvedById String?
   approvedBy   User?   @relation("LoanApprovedBy", fields: [approvedById], references: [id])
+
+  closureReason String    @default("")
+  closedAt      DateTime?
+  closedById    String?
+  closedBy      User?     @relation("LoanClosedBy", fields: [closedById], references: [id])
 
   repayments LoanRepayment[]
 

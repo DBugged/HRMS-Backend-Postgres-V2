@@ -90,7 +90,12 @@ export class LoansController {
     @Body() dto: UpdateLoanStatusDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.loansService.updateStatus(id, dto, caller.organizationId);
+    return this.loansService.updateStatus(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Post(':id/repayments')

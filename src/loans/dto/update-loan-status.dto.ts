@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsIn } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 import { LoanStatus } from '@prisma/client';
 
 const LOAN_STATUSES = [
@@ -12,4 +12,9 @@ export class UpdateLoanStatusDto {
   @ApiProperty({ enum: LOAN_STATUSES })
   @IsIn(LOAN_STATUSES)
   status!: LoanStatus;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

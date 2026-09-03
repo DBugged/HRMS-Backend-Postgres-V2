@@ -94,6 +94,11 @@ export class LoansService {
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
+            // closureReason/closedAt are plain scalars on Loan and flow
+            // through automatically, but closedBy is a relation — needs an
+            // explicit include or the History modal's "Closed by" always
+            // reads as blank even when closedById is actually set.
+            closedBy: { select: { id: true, name: true } },
           },
           orderBy: { createdAt: 'desc' },
           skip: skip(query.page, query.limit),
@@ -418,6 +423,7 @@ export class LoansService {
     id: string,
     dto: UpdateLoanStatusDto,
     organizationId: string,
+    actorId: string,
   ) {
     const loan = await this.scopedPrisma.loan.findFirst({
       where: { id, organizationId },
@@ -432,9 +438,34 @@ export class LoansService {
       );
     }
 
+    if (
+      dto.status === LoanStatus.CLOSED &&
+      loan.outstandingBalance > 0 &&
+      !dto.reason
+    ) {
+      throw new BadRequestException(
+        'This loan still has an outstanding balance — a reason is required to close it anyway.',
+      );
+    }
+    if (dto.status === LoanStatus.CANCELLED && !dto.reason) {
+      throw new BadRequestException('A reason is required to cancel a loan.');
+    }
+
+    const isClosureStatus =
+      dto.status === LoanStatus.CLOSED || dto.status === LoanStatus.CANCELLED;
+
     await this.scopedPrisma.loan.updateMany({
       where: { id, organizationId },
-      data: { status: dto.status },
+      data: {
+        status: dto.status,
+        ...(isClosureStatus
+          ? {
+              closureReason: dto.reason ?? '',
+              closedAt: new Date(),
+              closedById: actorId,
+            }
+          : {}),
+      },
     });
     const updated = await this.scopedPrisma.loan.findFirstOrThrow({
       where: { id, organizationId },
@@ -448,9 +479,11 @@ export class LoansService {
         const title = `Loan ${dto.status === LoanStatus.CLOSED ? 'Closed' : dto.status === LoanStatus.CANCELLED ? 'Cancelled' : 'Updated'}`;
         const message =
           dto.status === LoanStatus.CLOSED
-            ? `Your ${loan.loanType} loan has been fully repaid and is now closed.`
+            ? loan.outstandingBalance === 0
+              ? `Your ${loan.loanType} loan has been fully repaid and is now closed.`
+              : `Your ${loan.loanType} loan has been closed with an outstanding balance of ₹${loan.outstandingBalance}. Reason: ${dto.reason}.`
             : dto.status === LoanStatus.CANCELLED
-              ? `Your ${loan.loanType} loan has been cancelled.`
+              ? `Your ${loan.loanType} loan has been cancelled. Reason: ${dto.reason}.`
               : `Your ${loan.loanType} loan status is now ${dto.status}.`;
         await this.notificationsService.create({
           organizationId,
@@ -466,6 +499,8 @@ export class LoansService {
             employeeName: employee.name,
             loanType: loan.loanType,
             status: dto.status,
+            reason: dto.reason ?? '',
+            outstandingBalance: String(loan.outstandingBalance),
           },
           { subject: title, html: message },
         );
