@@ -26,6 +26,7 @@ interface GridResponse {
   employees: { id: string; name: string; employeeId: string }[];
   days: { day: number; dow: number; holidayName?: string }[];
   cells: Record<string, Record<number, string>>;
+  hours: Record<string, Record<number, number>>;
 }
 interface BalanceEntry {
   employeeId: string;
@@ -67,6 +68,7 @@ describe('Leave Tracker (e2e)', () => {
   let departmentId: string;
   let empAId: string;
   let empBId: string;
+  let lateJoinerId: string;
   let outsideEmployeeId: string;
   let otherDepartmentId: string;
   let talLeaveTypeId: string;
@@ -160,8 +162,23 @@ describe('Leave Tracker (e2e)', () => {
         name: 'Employee A',
         email: 'leavetracker-e2e-empa@example.test',
         departmentId,
+        // Well before MONTH/YEAR below — a default (today's) joiningDate
+        // would fall after the whole fixture month and suppress every
+        // ABSENT backfill assertion this file makes.
+        joiningDate: '2020-01-01',
       });
     empAId = (empACreate.body as EmployeeCreateBody).employee.id;
+
+    const lateJoinerCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Late Joiner',
+        email: 'leavetracker-e2e-latejoiner@example.test',
+        departmentId,
+        joiningDate: d(12), // mid-fixture-month — see the dedicated grid test.
+      });
+    lateJoinerId = (lateJoinerCreate.body as EmployeeCreateBody).employee.id;
 
     const empBCreate = await request(app.getHttpServer())
       .post('/employees')
@@ -269,6 +286,7 @@ describe('Leave Tracker (e2e)', () => {
           date: d(3),
           status: 'PRESENT',
           workArrangement: 'OFFICE',
+          workDurationMinutes: 495, // 8.25h — see the `hours` map assertion.
         },
         {
           organizationId,
@@ -343,6 +361,10 @@ describe('Leave Tracker (e2e)', () => {
 
       const cells = body.cells[empAId];
       expect(cells[3]).toBe('PRESENT');
+      // 495 minutes worked on day 3 -> 8.25h, rounded to 1 decimal -> 8.3.
+      expect(body.hours[empAId]?.[3]).toBe(8.3);
+      // No work duration recorded for day 5 (WFH) — omitted, not 0.
+      expect(body.hours[empAId]?.[5]).toBeUndefined();
       expect(cells[4]).toBe('ABSENT');
       expect(cells[5]).toBe('WFH');
       expect(cells[6]).toBe('HALF_DAY');
@@ -351,8 +373,13 @@ describe('Leave Tracker (e2e)', () => {
       expect(cells[9]).toBe('WEEKLY_OFF');
       expect(cells[10]).toBe('ON_LEAVE');
 
-      // No Attendance row exists for day 11 — omitted, not synthesized.
-      expect(cells[11]).toBeUndefined();
+      // No Attendance row exists for day 11 — a past weekday with nothing
+      // recorded is backfilled to ABSENT, not left blank.
+      expect(cells[11]).toBe('ABSENT');
+
+      // Day 15 (a Saturday) also has no Attendance row, but it's a weekend
+      // — must stay blank, never backfilled to ABSENT.
+      expect(cells[15]).toBeUndefined();
 
       const day8 = body.days.find((day) => day.day === 8);
       expect(day8?.holidayName).toBe('Test Holiday');
@@ -403,6 +430,39 @@ describe('Leave Tracker (e2e)', () => {
       const ids = (res.body as GridResponse).employees.map((e) => e.id);
       expect(ids).toContain(outsideEmployeeId);
       expect(ids).not.toContain(empAId);
+    });
+
+    it('never backfills ABSENT onto today or a future day', async () => {
+      const now = new Date();
+      const res = await request(app.getHttpServer())
+        .get('/leave-tracker/grid')
+        .query({ month: now.getUTCMonth() + 1, year: now.getUTCFullYear() })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const cells = (res.body as GridResponse).cells[empAId] ?? {};
+      // No Attendance rows exist for empA in the current month at all — if
+      // today/future backfilling ever leaked in, this would start failing.
+      expect(cells[now.getUTCDate()]).toBeUndefined();
+      const lastDay = new Date(
+        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
+      ).getUTCDate();
+      if (lastDay > now.getUTCDate()) {
+        expect(cells[lastDay]).toBeUndefined();
+      }
+    });
+
+    it("never backfills ABSENT before an employee's own joining date", async () => {
+      const res = await request(app.getHttpServer())
+        .get('/leave-tracker/grid')
+        .query({ month: MONTH, year: YEAR })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const cells = (res.body as GridResponse).cells[lateJoinerId] ?? {};
+      // Late Joiner's joiningDate is Aug 12 — day 11 (a Tuesday, before
+      // they joined) must stay blank, day 13 (a Thursday, after) with no
+      // Attendance row backfills to ABSENT same as any other employee's.
+      expect(cells[11]).toBeUndefined();
+      expect(cells[13]).toBe('ABSENT');
     });
   });
 

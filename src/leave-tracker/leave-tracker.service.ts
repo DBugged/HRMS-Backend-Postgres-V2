@@ -1,8 +1,9 @@
 // Purpose: Read-only, server-side pivot of Attendance/Leave/Holiday into a month-grid + balance-strip view,
 // replacing a manually-maintained Excel "Leave Tracker" (person x day grid + leave/WFH balance summary).
 // Responsibilities: Resolves ADMIN/HR/MANAGER department scoping, derives one status code per (employee, day)
-// from the existing Attendance row (never synthesizing a guess for a day with no row), and batches the same
-// per-employee leave-balance/comp-off primitives LeavesService.getBalance uses across the whole scoped list.
+// from the existing Attendance row, backfilling ABSENT onto any past working day with no row at all, and
+// batches the same per-employee leave-balance/comp-off primitives LeavesService.getBalance uses across the
+// whole scoped list.
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
@@ -46,6 +47,13 @@ function monthBounds(
 
 function isCompOffType(leaveType: Pick<LeaveType, 'code'>): boolean {
   return leaveType.code === LEAVE_TYPE_CODES.COMPOFF;
+}
+
+// Same todayStr() convention as attendance.service.ts/leaves.service.ts —
+// plain-string comparison against the YYYY-MM-DD date fields, no timezone
+// math needed since both sides are already UTC-normalized this way.
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
 }
 
 export type LeaveTrackerCellCode =
@@ -111,7 +119,7 @@ export class LeaveTrackerService {
     const [employees, attendanceRows, leaves, holidays] = await Promise.all([
       this.scopedPrisma.user.findMany({
         where: { id: { in: employeeIds }, organizationId },
-        select: { id: true, name: true, employeeId: true },
+        select: { id: true, name: true, employeeId: true, joiningDate: true },
         orderBy: { name: 'asc' },
       }),
       this.scopedPrisma.attendance.findMany({
@@ -153,8 +161,17 @@ export class LeaveTrackerService {
     }
 
     const cells: Record<string, Record<number, LeaveTrackerCellCode>> = {};
+    // Hours actually worked that day, from the same Attendance row —
+    // separate from `cells` (which only carries the status code) so the
+    // grid can show it in a cell's tooltip without overloading the cell
+    // code's own type. Only present for a day with real punch duration.
+    const hours: Record<string, Record<number, number>> = {};
     for (const row of attendanceRows) {
       const day = Number(row.date.slice(8, 10));
+      if (row.workDurationMinutes > 0) {
+        (hours[row.employeeId] ??= {})[day] =
+          Math.round((row.workDurationMinutes / 60) * 10) / 10;
+      }
       let code: LeaveTrackerCellCode;
       if (row.status === AttendanceStatus.HOLIDAY) {
         code = 'HOLIDAY';
@@ -188,9 +205,30 @@ export class LeaveTrackerService {
       return {
         day,
         dow,
+        dateStr,
         ...(holiday && { holidayName: holiday.name }),
       };
     });
+
+    // A working day (not a weekend/holiday) strictly before today, on or
+    // after the employee's own joining date, with no Attendance row at all
+    // — no punch, no leave, nothing — means the employee simply didn't show
+    // up: mark it ABSENT rather than leaving it blank. Today itself is left
+    // alone (the day isn't over — someone can still check in), future days
+    // are never touched, and days before someone joined are never touched
+    // either (they weren't an employee yet — blank, not Absent).
+    const today = todayStr();
+    for (const employee of employees) {
+      const joiningDateStr = employee.joiningDate.toISOString().slice(0, 10);
+      for (const day of days) {
+        if (day.dow === 0 || day.dow === 6 || day.holidayName) continue;
+        if (day.dateStr >= today) continue;
+        if (day.dateStr < joiningDateStr) continue;
+        const existing = cells[employee.id]?.[day.day];
+        if (existing) continue;
+        (cells[employee.id] ??= {})[day.day] = 'ABSENT';
+      }
+    }
 
     return {
       employees: employees.map((e) => ({
@@ -200,6 +238,7 @@ export class LeaveTrackerService {
       })),
       days,
       cells,
+      hours,
     };
   }
 
