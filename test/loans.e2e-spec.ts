@@ -419,6 +419,25 @@ describe('Loans (e2e)', () => {
       >
     ).data.find((l) => l.id === id);
     expect(listed?.closedBy?.name).toBeTruthy();
+
+    // updateStatus() previously didn't audit-log at all, unlike every
+    // other loan action (request/approve/reject/recordRepayment) — this
+    // closure must show up in the Audit Logs screen the same way those do.
+    const auditRes = await request(app.getHttpServer())
+      .get('/audit-logs')
+      .query({ action: 'LOAN_STATUS_UPDATED' })
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const auditEntry = (
+      auditRes.body as PaginatedBody<{
+        action: string;
+        targetId: string | null;
+        details: { fromStatus?: string; toStatus?: string; reason?: string };
+      }>
+    ).data.find((a) => a.targetId === id);
+    expect(auditEntry).toBeTruthy();
+    expect(auditEntry?.details.toStatus).toBe('CLOSED');
+    expect(auditEntry?.details.reason).toBe('Written off');
   });
 
   it('cancelling an active loan with a reason succeeds and stamps closure fields', async () => {

@@ -471,6 +471,27 @@ export class LoansService {
       where: { id, organizationId },
     });
 
+    // Logged unconditionally (not gated on dto.status !== loan.status like
+    // the notification below) — a same-status call still changes real
+    // fields on the record (e.g. backfilling closureReason on an
+    // already-CLOSED loan), and that's exactly the kind of edit an audit
+    // trail exists to capture. request()/approve()/reject()/
+    // recordRepayment() above all log; this generic status-flip endpoint
+    // (Close/Cancel/reopen) previously didn't.
+    await this.auditLogService.log({
+      actorId,
+      action: 'LOAN_STATUS_UPDATED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: loan.employeeId,
+        fromStatus: loan.status,
+        toStatus: dto.status,
+        ...(isClosureStatus ? { reason: dto.reason ?? '' } : {}),
+      },
+    });
+
     if (dto.status !== loan.status) {
       const employee = await this.scopedPrisma.user.findFirst({
         where: { id: loan.employeeId, organizationId },
