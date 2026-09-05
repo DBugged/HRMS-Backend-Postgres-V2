@@ -299,10 +299,12 @@ describe('Reimbursements (e2e)', () => {
   });
 
   it('ADMIN can transition an approved claim to PAID', async () => {
+    // paymentMode is required for a PAID transition (see
+    // ReimbursementsService.review's own guard) — without it this 400s.
     const res = await request(app.getHttpServer())
       .patch(`/reimbursements/${claimId}/review`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ status: 'PAID' })
+      .send({ status: 'PAID', paymentMode: 'TRANSFER' })
       .expect(200);
     expect((res.body as ReimbursementBody).status).toBe('PAID');
   });

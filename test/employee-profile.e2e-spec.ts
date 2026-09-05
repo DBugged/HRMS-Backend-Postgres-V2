@@ -173,13 +173,18 @@ describe('Employee Rich Profile (e2e)', () => {
         .expect(200);
     });
 
-    it('profileCompleted flips true once all 8 required fields are present, and stays stamped', async () => {
+    it('profileCompleted flips true once all 9 required fields are present, and stays stamped', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${empId}/personal-data`)
         .set('Authorization', `Bearer ${empToken}`)
         .send({
           personalData: {
             gender: 'Female',
+            // maritalStatus was added to REQUIRED_FOR_COMPLETION on top of
+            // the original 8 fields (see personal-data.ts's own comment) —
+            // without it this test's payload never actually reaches
+            // completion.
+            maritalStatus: 'Single',
             currentAddress: '123 Main St',
             fatherName: 'John Doe',
             emergencyContact1Number: '+91 98765 43210',

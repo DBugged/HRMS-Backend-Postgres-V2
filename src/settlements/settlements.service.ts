@@ -11,6 +11,7 @@
 // already deactivated.
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -136,7 +137,19 @@ export class SettlementsService {
       year,
       organizationId,
     );
-    const pendingSalaryAmount = calc.netPay;
+    // calculatePayroll() (a plain preview — it never calls
+    // LoansService.recordRepayment, that only happens when a normal
+    // payroll run is actually locked) includes a LOAN_EMI deduction line
+    // for this month if the employee has a due EMI, since that's what a
+    // regular month's payslip would show. A settlement recovers the
+    // loan's full outstandingBalance separately below (loanBalanceRecovered),
+    // so if this month's EMI deduction were left inside pendingSalaryAmount
+    // too, the employee would be charged for it twice — once via reduced
+    // pending salary, once via the full balance recovery. Add it back.
+    const loanEmiDeduction = calc.deductions
+      .filter((d) => d.code === 'LOAN_EMI')
+      .reduce((sum, d) => sum + d.amount, 0);
+    const pendingSalaryAmount = calc.netPay + loanEmiDeduction;
 
     const activeLoans = await this.scopedPrisma.loan.findMany({
       where: {
@@ -333,6 +346,22 @@ export class SettlementsService {
     const now = new Date();
 
     const result = await this.scopedPrisma.$transaction(async (tx) => {
+      // Guarded status flip runs FIRST, re-asserting DRAFT in the `where`
+      // (not just the separate check above, which ran outside any lock)
+      // — only the caller that wins this compare-and-swap goes on to
+      // create the PayrollRun below. Without this ordering, two
+      // concurrent process() calls (double-click "Process", or a retried
+      // request) could both pass the pre-transaction DRAFT check and both
+      // create their own PayrollRun — a duplicate isFinalSettlement
+      // payslip, i.e. the employee's settlement paid out twice.
+      const { count } = await tx.settlement.updateMany({
+        where: { id, organizationId, status: SettlementStatus.DRAFT },
+        data: { status: SettlementStatus.PROCESSED, processedById: actor.id },
+      });
+      if (count === 0) {
+        throw new ConflictException('This settlement was already processed.');
+      }
+
       const run = await tx.payrollRun.create({
         data: {
           organizationId,
@@ -361,11 +390,7 @@ export class SettlementsService {
 
       await tx.settlement.updateMany({
         where: { id, organizationId },
-        data: {
-          status: SettlementStatus.PROCESSED,
-          processedById: actor.id,
-          payrollRunId: run.id,
-        },
+        data: { payrollRunId: run.id },
       });
       await tx.user.updateMany({
         where: { id: settlement.employeeId, organizationId },
@@ -452,10 +477,17 @@ export class SettlementsService {
     }
 
     return this.scopedPrisma.$transaction(async (tx) => {
-      await tx.settlement.updateMany({
-        where: { id, organizationId },
+      // Re-asserts PROCESSED in the `where` — a second concurrent
+      // markPaid() call (double-click) would otherwise still pass the
+      // pre-transaction check and silently overwrite paidAt/paidById a
+      // second time.
+      const { count } = await tx.settlement.updateMany({
+        where: { id, organizationId, status: SettlementStatus.PROCESSED },
         data: { status: SettlementStatus.PAID },
       });
+      if (count === 0) {
+        throw new ConflictException('This settlement was already paid.');
+      }
       if (settlement.payrollRunId) {
         await tx.payrollRun.updateMany({
           where: { id: settlement.payrollRunId, organizationId },

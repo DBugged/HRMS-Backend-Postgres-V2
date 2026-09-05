@@ -137,11 +137,11 @@ describe('Employee Salary Components (e2e)', () => {
       .expect(200);
   });
 
-  it('EMPLOYEE gets 403 viewing history or setting values', async () => {
+  it('EMPLOYEE can view their own history (SelfOrRoles, same as structure) but gets 403 setting values', async () => {
     await request(app.getHttpServer())
       .get(`/employee-salary/${employeeId}/history`)
       .set('Authorization', `Bearer ${employeeToken}`)
-      .expect(403);
+      .expect(200);
     await request(app.getHttpServer())
       .post(`/employee-salary/${employeeId}/structure`)
       .set('Authorization', `Bearer ${employeeToken}`)

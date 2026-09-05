@@ -149,10 +149,20 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       companyName: null,
       tagline: null,
       companyLogoUrl: null,
+      // companyLogoKey and the currency/date/time/tax-declaration prefs
+      // below were added to getPublicBranding() so non-ADMIN callers (e.g.
+      // Payroll Templates, Offboarding) can read them without full
+      // /organizations/settings access — see organization-settings.service.ts.
+      companyLogoKey: null,
       faviconUrl: null,
       primaryColor: '#5546e0',
       secondaryColor: '#14161d',
       enableWFH: true,
+      currencySymbol: '₹',
+      defaultNoticeDays: 30,
+      dateFormat: 'DD-MM-YYYY',
+      timeFormat: '24',
+      enableTaxDeclaration: true,
     });
   });
 
@@ -179,6 +189,8 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .send({
         companyName: 'Acme Corp',
         legalName: 'Acme Corporation Pvt Ltd',
+        // Required for complete-setup below (REQUIRED_FOR_COMPLETION).
+        companyLogoUrl: 'org-id/branding/logo.png',
         // Not in the `profile` section whitelist — must be silently ignored.
         gstin: '29ABCDE1234F1Z5',
         setupStep: 2,
@@ -210,9 +222,12 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     expect(body.pan).toBe('ABCDE1234F');
   });
 
-  it('deriving attendancePayrollPrefs: attendancePayroll section write updates the narrower field AttendanceService actually reads', async () => {
+  it('deriving attendancePayrollPrefs: policies section write updates the narrower field AttendanceService actually reads', async () => {
+    // The standalone 'attendancePayroll' section was folded into the
+    // combined 'policies' section/tab — see SECTION_FIELDS's comment above
+    // the 'policies' entry in organization-settings.service.ts.
     await request(app.getHttpServer())
-      .patch('/organizations/settings/attendancePayroll')
+      .patch('/organizations/settings/policies')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         orgPayrollAttendancePrefs: {
@@ -243,12 +258,12 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     });
   });
 
-  it('a partial attendancePayroll write (missing all 7 shift keys) merges against the existing prefs instead of wiping attendancePayrollPrefs', async () => {
+  it('a partial policies write (missing all 7 shift keys) merges against the existing prefs instead of wiping attendancePayrollPrefs', async () => {
     // Deliberately omits defaultShiftStartTime/etc. entirely — only a
     // frontend that always sends the full blob would mask the bug this
     // guards against.
     await request(app.getHttpServer())
-      .patch('/organizations/settings/attendancePayroll')
+      .patch('/organizations/settings/policies')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         orgPayrollAttendancePrefs: { payrollCycle: 'weekly' },
@@ -283,6 +298,9 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         registeredAddress: '123 Main St',
+        // Required for complete-setup below (REQUIRED_FOR_COMPLETION).
+        corporateAddress: '123 Main St',
+        website: 'https://acme.test',
         city: 'Bengaluru',
         state: 'Karnataka',
         country: 'India',
@@ -340,7 +358,10 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     const firstBody = first.body as PreviewBody;
     const secondBody = second.body as PreviewBody;
     expect(firstBody.preview).toBe(secondBody.preview);
-    expect(firstBody.preview).toMatch(/^PS-\d{6}-0001$/);
+    // Default format is "PS-{DD_MM_YYYY}-{00001}" (see the Organization.
+    // documentNumbering default in prisma/schema.prisma) — an underscored
+    // date, not a bare 6-digit YYMMDD, and 5-digit counter padding.
+    expect(firstBody.preview).toMatch(/^PS-\d{2}_\d{2}_\d{4}-00001$/);
   });
 
   it('404s previewing an unknown document type', async () => {

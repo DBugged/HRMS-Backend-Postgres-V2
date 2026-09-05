@@ -94,17 +94,51 @@ describe('EmailTemplates (e2e)', () => {
   });
 
   afterAll(async () => {
+    await prisma.$executeRawUnsafe(
+      'TRUNCATE TABLE "email_templates", "refresh_tokens", "users", "departments", "organizations" RESTART IDENTITY CASCADE',
+    );
     await app.close();
   });
 
-  it('seeds BIRTHDAY and WORK_ANNIVERSARY templates at registration', async () => {
+  it('seeds the full default occasion set at registration', async () => {
+    // AuthService.register() seeds every occasion in
+    // email-template-defaults.ts, not just Birthday/Work Anniversary — see
+    // EmailTemplatesService.seedDefaults() and its call site comment in
+    // auth.service.ts (that comment is itself now stale, predating most of
+    // these).
     const res = await request(app.getHttpServer())
       .get('/email-templates')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     const data = (res.body as { data: EmailTemplateBody[] }).data;
     const occasionKeys = data.map((t) => t.occasionKey).sort();
-    expect(occasionKeys).toEqual(['BIRTHDAY', 'WORK_ANNIVERSARY']);
+    expect(occasionKeys).toEqual([
+      'ABSENT_MARKED',
+      'ACCOUNT_ACTIVATED',
+      'BIRTHDAY',
+      'COMP_OFF_DECISION',
+      'DOCUMENT_STATUS',
+      'FOUNDER_ACCOUNT_WELCOME',
+      'LEAVE_DECISION',
+      'LEAVE_ENCASHMENT_STATUS',
+      'LOAN_SANCTIONED',
+      'LOAN_STATUS_UPDATE',
+      'LOGIN_CREDENTIALS_RESENT',
+      'NEW_JOINER_ANNOUNCEMENT',
+      'OFFBOARDING_INITIATED',
+      'OVERTIME_STATUS',
+      'PASSWORD_RESET',
+      'PAYSLIP_ISSUED',
+      'PERFORMANCE_RATING_PUBLISHED',
+      'REGULARIZATION_DECISION',
+      'REIMBURSEMENT_STATUS',
+      'SETTLEMENT_PROCESSED',
+      'SETUP_COMPLETE',
+      'TAX_DECLARATION_VERIFIED',
+      'WELCOME_EMAIL',
+      'WFH_DECISION',
+      'WORK_ANNIVERSARY',
+    ]);
     expect(data.every((t) => t.isActive)).toBe(true);
   });
 

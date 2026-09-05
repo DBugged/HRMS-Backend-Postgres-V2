@@ -275,10 +275,20 @@ export class LeaveBalanceService {
               new Date(),
             );
 
+        // Atomic increment, not `row.credited + delta` — this loop can
+        // process the same employee's row again across two accrual runs
+        // that overlap in time (e.g. the daily cron firing while HR
+        // manually clicks "Run Accrual Now"), and a JS-computed value
+        // read before either transaction commits would silently lose one
+        // run's credit. The lastAccrualPeriod check above already makes a
+        // *second* call for the same period a no-op; this closes the
+        // remaining gap for two genuinely concurrent first-time credits.
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
           data: {
-            credited: row.credited + leaveType.accrualAmountPerCycle * cycles,
+            credited: {
+              increment: leaveType.accrualAmountPerCycle * cycles,
+            },
             lastAccrualPeriod: periodKey,
           },
         });

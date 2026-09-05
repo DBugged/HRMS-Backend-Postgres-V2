@@ -3,10 +3,14 @@
 // and rate calculation (current BASIC monthly value via EmployeeSalaryComponentsService, converted with
 // dailyRateFromMonthly); delegates the actual balance debit to LeaveBalanceService.
 // Important: review()'s balance deduction on APPROVED is a second, independent deduction — request() only
-// validated availability, it never reserved a hold — so this carries the old system's latent race condition
-// forward as-is (ported deliberately, not an oversight).
+// validated availability, it never reserved a hold. review() itself guards against being replayed (a
+// compare-and-swap status check inside the transaction, atomic `encashed` increment) so a double-click or
+// retried request can't double-deduct; there's no cross-request hold preventing two *different* pending
+// encashment requests from jointly overdrawing the same balance, same class of gap as leave application's
+// own affordability check.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -233,15 +237,34 @@ export class LeaveEncashmentsService {
       row.employeeId,
     );
 
+    // PENDING -> APPROVED -> PROCESSED — the only two legal transitions
+    // this endpoint drives (see ReviewLeaveEncashmentDto). Required so the
+    // guarded update below only matches a row that's actually eligible
+    // for the requested transition.
+    const requiredCurrentStatus: LeaveEncashmentStatus =
+      dto.status === LeaveEncashmentStatus.APPROVED
+        ? LeaveEncashmentStatus.PENDING
+        : LeaveEncashmentStatus.APPROVED;
+
     const result = await this.scopedPrisma.$transaction(async (tx) => {
-      await tx.leaveEncashment.updateMany({
-        where: { id, organizationId },
+      // Re-asserts requiredCurrentStatus in the `where` (not just a
+      // separate JS check beforehand) — a second concurrent review() call
+      // (double-click Approve, or a retried request) would otherwise
+      // still pass an outside-the-transaction status check and re-run the
+      // balance deduction below a second time for one approval. count ===
+      // 0 means another review already won the race.
+      const { count } = await tx.leaveEncashment.updateMany({
+        where: { id, organizationId, status: requiredCurrentStatus },
         data: { status: dto.status, approvedById: actor.id },
       });
+      if (count === 0) {
+        throw new ConflictException(
+          'This leave encashment request was already reviewed.',
+        );
+      }
 
       // A second, independent deduction from the balance — the request
-      // step only validated availability, it never reserved a hold. Ported
-      // as-is, including the old system's latent race condition.
+      // step only validated availability, it never reserved a hold.
       if (dto.status === LeaveEncashmentStatus.APPROVED && row.leaveTypeId) {
         const year = new Date().getFullYear();
         const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
@@ -251,9 +274,14 @@ export class LeaveEncashmentsService {
           year,
           organizationId,
         );
+        // Atomic increment (not `balanceRow.encashed + row.days`, a stale
+        // JS-computed value) — see the guarded updateMany above for why a
+        // second call can no longer reach this point at all, but this
+        // still closes the gap against any other concurrent writer of the
+        // same balance row (e.g. a simultaneous accrual run).
         await tx.leaveBalance.updateMany({
           where: { id: balanceRow.id, organizationId },
-          data: { encashed: balanceRow.encashed + row.days },
+          data: { encashed: { increment: row.days } },
         });
         await this.leaveBalanceService.recalculate(
           tx,

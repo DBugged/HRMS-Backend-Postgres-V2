@@ -7,6 +7,7 @@
 // independently of findAll's filter, since it's reached directly by loan id rather than through the pre-filtered list.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -437,6 +438,20 @@ export class LoansService {
         'Use the approve or reject action for a pending request.',
       );
     }
+    // Terminal states can't be transitioned away from — a same-status
+    // call is still allowed (e.g. backfilling/correcting closureReason on
+    // an already-CLOSED loan), but CLOSED can't be reopened to ACTIVE or
+    // swapped to CANCELLED, and vice versa. Without this, the caller's
+    // target status was trusted blindly once past PENDING.
+    if (
+      (loan.status === LoanStatus.CLOSED ||
+        loan.status === LoanStatus.CANCELLED) &&
+      dto.status !== loan.status
+    ) {
+      throw new BadRequestException(
+        `A ${loan.status.toLowerCase()} loan can't be changed to ${dto.status.toLowerCase()}.`,
+      );
+    }
 
     if (
       dto.status === LoanStatus.CLOSED &&
@@ -550,19 +565,54 @@ export class LoansService {
       where: { id, organizationId },
     });
     if (!loan) throw new NotFoundException('Loan not found.');
+    // Only an active loan is actually being repaid — recording a
+    // repayment against PENDING/REJECTED/CANCELLED/CLOSED silently
+    // resurrects a loan that was never approved, or reopens one that's
+    // already settled.
+    if (loan.status !== LoanStatus.ACTIVE) {
+      throw new BadRequestException(
+        'Only an active loan can have a repayment recorded against it.',
+      );
+    }
 
-    const principalComponent = Math.min(dto.amount, loan.outstandingBalance);
-    const outstandingBalance = Math.max(
-      0,
-      loan.outstandingBalance - principalComponent,
-    );
-    const status = outstandingBalance === 0 ? LoanStatus.CLOSED : loan.status;
-
+    let principalComponent = 0;
+    let outstandingBalance = 0;
     const result = await this.scopedPrisma.$transaction(async (tx) => {
-      await tx.loan.updateMany({
+      // Re-read inside the transaction and write via a compare-and-swap
+      // (the `where` re-asserts the just-read outstandingBalance) instead
+      // of the previous read-outside-transaction + blind updateMany —
+      // two concurrent repayments both reading the same stale balance
+      // would otherwise both compute against it and the loser's write
+      // would win last, silently losing one payment's effect from the
+      // stored balance even though both LoanRepayment rows exist. `count
+      // === 0` here means another repayment landed first; the caller
+      // (payroll engine or HR) should retry against the now-current
+      // balance rather than the request racing to a wrong number.
+      const current = await tx.loan.findFirstOrThrow({
         where: { id, organizationId },
+      });
+      principalComponent = Math.min(dto.amount, current.outstandingBalance);
+      outstandingBalance = Math.max(
+        0,
+        current.outstandingBalance - principalComponent,
+      );
+      const status =
+        outstandingBalance === 0 ? LoanStatus.CLOSED : current.status;
+
+      const { count } = await tx.loan.updateMany({
+        where: {
+          id,
+          organizationId,
+          outstandingBalance: current.outstandingBalance,
+        },
         data: { outstandingBalance, status },
       });
+      if (count === 0) {
+        throw new ConflictException(
+          'This loan was updated concurrently — please retry.',
+        );
+      }
+
       const repayment = await tx.loanRepayment.create({
         data: {
           organizationId,

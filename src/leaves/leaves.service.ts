@@ -9,6 +9,7 @@
 // is the single place that reverses whatever a leave's current status implied, shared by update() and cancel().
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -323,11 +324,20 @@ export class LeavesService {
     }
 
     await this.scopedPrisma.$transaction(async (tx) => {
-      await this.releaseHold(tx, existing, organizationId);
-      await tx.leave.updateMany({
-        where: { id, organizationId },
+      // Same compare-and-swap-then-release ordering as cancel() below —
+      // only the caller that wins this guarded update (still PENDING)
+      // proceeds to release the pending hold, so a concurrent double-edit
+      // can't decrement `pending` twice for one request.
+      const { count } = await tx.leave.updateMany({
+        where: { id, organizationId, status: LeaveStatus.PENDING },
         data: { status: LeaveStatus.CANCELLED },
       });
+      if (count === 0) {
+        throw new ConflictException(
+          'This leave request was already reviewed or cancelled.',
+        );
+      }
+      await this.releaseHold(tx, existing, organizationId);
     });
 
     return this.createLeaveInternal(dto, actor, organizationId, id);
@@ -413,8 +423,15 @@ export class LeavesService {
     }
 
     await this.scopedPrisma.$transaction(async (tx) => {
-      await tx.leave.updateMany({
-        where: { id, organizationId },
+      // status: PENDING re-asserted here (not just in the pre-transaction
+      // check above) so a second concurrent review() call — double-click,
+      // or a retried request — can't slip past the earlier check (which
+      // ran outside any lock) and re-apply the balance/attendance/comp-off
+      // side effects below a second time. count === 0 means another
+      // review already won the race; bail out instead of double-crediting
+      // or double-debiting.
+      const { count } = await tx.leave.updateMany({
+        where: { id, organizationId, status: LeaveStatus.PENDING },
         data: {
           status: dto.decision,
           reviewedById: actor.id,
@@ -422,6 +439,9 @@ export class LeavesService {
           reviewComments: dto.comments ?? '',
         },
       });
+      if (count === 0) {
+        throw new ConflictException('This leave request was already reviewed.');
+      }
 
       if (dto.decision === 'APPROVED') {
         await this.attendanceService.writeAttendanceForApprovedLeave(
@@ -568,11 +588,28 @@ export class LeavesService {
     }
 
     await this.scopedPrisma.$transaction(async (tx) => {
-      await this.releaseHold(tx, leave, organizationId);
-      await tx.leave.updateMany({
-        where: { id, organizationId },
+      // Guarded update runs FIRST and re-asserts the still-cancellable
+      // status — only the caller that actually wins this compare-and-swap
+      // proceeds to releaseHold() below. Without this, two concurrent
+      // cancel() calls on the same APPROVED leave (double-click, or a
+      // retried request) would both pass the pre-transaction check above
+      // and both call releaseHold(), each reverting attendance and
+      // decrementing `availed`/comp-off a second time for a single
+      // cancellation.
+      const { count } = await tx.leave.updateMany({
+        where: { id, organizationId, status: { in: cancellableStatuses } },
         data: { status: LeaveStatus.CANCELLED },
       });
+      if (count === 0) {
+        throw new ConflictException(
+          'This leave request was already cancelled or reviewed.',
+        );
+      }
+      // `leave` is the pre-transaction snapshot — releaseHold only needs
+      // its *original* status (APPROVED vs PENDING/RETURNED) to know what
+      // to reverse, which the guarded update above just confirmed is
+      // still accurate (no other caller could have changed it first).
+      await this.releaseHold(tx, leave, organizationId);
     });
 
     return this.findByIdOrThrow(id, organizationId);

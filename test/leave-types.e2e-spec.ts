@@ -265,16 +265,20 @@ describe('Leave Types (e2e)', () => {
     expect(row?.credited).toBe(1.5);
     expect(row?.closing).toBe(1.5);
 
-    // Running it again double-credits — ported as-is from the old system,
-    // no idempotency guard exists there either.
-    await request(app.getHttpServer())
+    // Running it again for the same accrual period is a no-op — the
+    // row's lastAccrualPeriod already matches, so creditAccrual() skips
+    // it (counted in alreadyAccrued, not credited/re-credited).
+    const secondRunRes = await request(app.getHttpServer())
       .post(`/leave-types/${casualLeaveId}/run-accrual`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(201);
+    expect(
+      (secondRunRes.body as { alreadyAccrued: number }).alreadyAccrued,
+    ).toBeGreaterThan(0);
     const rowAfterSecondRun = await prisma.leaveBalance.findFirst({
       where: { employeeId, leaveTypeId: casualLeaveId, year },
     });
-    expect(rowAfterSecondRun?.credited).toBe(3);
+    expect(rowAfterSecondRun?.credited).toBe(1.5);
   });
 
   it('run-carry-forward rolls closing into next year opening and stamps expiry', async () => {

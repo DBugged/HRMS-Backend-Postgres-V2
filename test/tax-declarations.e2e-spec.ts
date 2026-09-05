@@ -147,10 +147,16 @@ describe('Tax Declarations (e2e)', () => {
   });
 
   it('one declaration per employee per financial year (unique upsert, not duplicate rows)', async () => {
+    // By this point the employee's FY 2026-27 declaration is already
+    // VERIFIED (set by HR two tests up), so the employee's own POST is
+    // correctly locked out (see upsert()'s "already submitted" guard
+    // above) — post again as HR instead, which is exactly the "edit
+    // someone else's declaration" path that stays open regardless of
+    // status, to confirm the upsert still targets the same row.
     await request(app.getHttpServer())
       .post('/tax-declarations')
-      .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ financialYear: '2026-27', section80C: 75000 })
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ employeeId, financialYear: '2026-27', section80C: 75000 })
       .expect(201);
 
     const count = await prisma.employeeTaxDeclaration.count({

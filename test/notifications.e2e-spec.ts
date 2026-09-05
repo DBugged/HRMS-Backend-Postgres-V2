@@ -572,6 +572,9 @@ describe('Notifications (e2e)', () => {
   });
 
   it('a recalculated absent day notifies the employee once (deduped on re-run)', async () => {
+    // The notification title renders the date via formatDateDisplay,
+    // which defaults to DD-MM-YYYY (DEFAULT_DATE_FORMAT) — not the raw
+    // ISO date string sent in the request body.
     // No punches for this date + no leave/holiday -> ABSENT via
     // recalculateAttendanceForDay, triggered indirectly through the
     // regularization request path (which reads back the row it created).
@@ -590,7 +593,7 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
     const absentNotifs = (empView.body as NotificationsListBody).data.filter(
-      (n) => n.title === 'Marked Absent — 2026-08-03',
+      (n) => n.title === 'Marked Absent — 03-08-2026',
     );
     expect(absentNotifs.length).toBe(1);
 
@@ -607,7 +610,7 @@ describe('Notifications (e2e)', () => {
       .expect(200);
     const absentNotifsAgain = (
       empViewAgain.body as NotificationsListBody
-    ).data.filter((n) => n.title === 'Marked Absent — 2026-08-03');
+    ).data.filter((n) => n.title === 'Marked Absent — 03-08-2026');
     expect(absentNotifsAgain.length).toBe(1);
   });
 });
