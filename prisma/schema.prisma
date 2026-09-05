@@ -522,6 +522,11 @@ model Holiday {
   type        HolidayType @default(COMPANY)
   state       String?
   description String      @default("")
+  // Deactivating keeps the record (audit history, past-year reporting)
+  // while excluding it from attendance/leave-tracker/dashboard/leave-
+  // eligibility calculations that read the calendar going forward — see
+  // every `isActive: true` filter alongside a holiday.findMany/findFirst.
+  isActive Boolean @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

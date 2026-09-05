@@ -179,6 +179,37 @@ describe('Holidays (e2e)', () => {
     expect((res.body as HolidayBody).year).toBe(2027);
   });
 
+  it('ADMIN deactivates a holiday — flag persists and the management list still shows it', async () => {
+    const res = await request(app.getHttpServer())
+      .put(`/holidays/${holidayId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isActive: false })
+      .expect(200);
+    expect((res.body as HolidayBody & { isActive: boolean }).isActive).toBe(
+      false,
+    );
+
+    // The management screen (Holiday Calendar) needs to see inactive
+    // holidays too, to let HR/Admin toggle them back on — only the
+    // calendar's *consumers* (attendance/dashboard/leave-tracker/leave
+    // eligibility) filter isActive:true, not this list itself.
+    const listRes = await request(app.getHttpServer())
+      .get('/holidays')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const listed = (
+      listRes.body as { data: (HolidayBody & { isActive: boolean })[] }
+    ).data.find((h) => h.id === holidayId);
+    expect(listed?.isActive).toBe(false);
+
+    // Reactivate so the remaining tests below see the holiday as normal.
+    await request(app.getHttpServer())
+      .put(`/holidays/${holidayId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isActive: true })
+      .expect(200);
+  });
+
   it('bulk-import: valid rows create, invalid/duplicate rows fail without aborting the batch', async () => {
     const res = await request(app.getHttpServer())
       .post('/holidays/bulk-import')

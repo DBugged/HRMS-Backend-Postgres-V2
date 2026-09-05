@@ -659,7 +659,7 @@ export class LeavesService {
 
     const [holidays, priorLeaveOfType, otherLeaves] = await Promise.all([
       this.scopedPrisma.holiday.findMany({
-        where: { organizationId },
+        where: { organizationId, isActive: true },
         select: { date: true },
       }),
       this.scopedPrisma.leave.findFirst({

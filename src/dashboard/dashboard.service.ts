@@ -214,7 +214,7 @@ export class DashboardService {
         _sum: { amount: true },
       }),
       this.scopedPrisma.holiday.findMany({
-        where: { organizationId, date: { gte: today } },
+        where: { organizationId, isActive: true, date: { gte: today } },
         orderBy: { date: 'asc' },
         take: 3,
       }),
@@ -483,7 +483,7 @@ export class DashboardService {
         orderBy: [{ year: 'desc' }, { month: 'desc' }],
       }),
       this.scopedPrisma.holiday.findMany({
-        where: { organizationId, date: { gte: today } },
+        where: { organizationId, isActive: true, date: { gte: today } },
         orderBy: { date: 'asc' },
         take: 5,
       }),

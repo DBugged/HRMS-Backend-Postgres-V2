@@ -48,4 +48,9 @@ export class CreateHolidayDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }

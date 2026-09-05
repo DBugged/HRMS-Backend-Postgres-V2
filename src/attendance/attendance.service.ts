@@ -173,6 +173,7 @@ export class AttendanceService {
     const holiday = await db.holiday.findFirst({
       where: {
         organizationId,
+        isActive: true,
         date: dateStr,
         OR: employee.departmentId
           ? [{ departmentId: null }, { departmentId: employee.departmentId }]

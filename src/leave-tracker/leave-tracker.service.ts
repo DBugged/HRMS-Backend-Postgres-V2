@@ -162,6 +162,7 @@ export class LeaveTrackerService {
       this.scopedPrisma.holiday.findMany({
         where: {
           organizationId,
+          isActive: true,
           year: query.year,
           ...(effectiveDepartmentId && {
             OR: [

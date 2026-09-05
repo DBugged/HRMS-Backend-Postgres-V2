@@ -6,6 +6,11 @@
 export interface EmployeeTypeEntry {
   value: string;
   label: string;
+  // Custom entries only — built-ins are always active (mirrors their
+  // existing edit/delete immutability; see EmployeeTypesService.update()/
+  // setActive()). Optional so pre-existing custom entries (created before
+  // this field existed) default to active via `?? true` at read time.
+  isActive?: boolean;
 }
 
 export const DEFAULT_EMPLOYEE_TYPES: EmployeeTypeEntry[] = [

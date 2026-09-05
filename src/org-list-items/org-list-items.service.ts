@@ -10,6 +10,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateOrgListItemDto } from './dto/create-org-list-item.dto';
+import { UpdateOrgListItemDto } from './dto/update-org-list-item.dto';
 import { BulkImportOrgListItemsDto } from './dto/bulk-import-org-list-items.dto';
 import { wrapAll } from '../common/pagination';
 
@@ -22,9 +23,13 @@ export class OrgListItemsService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  async findAll(type: OrgListType, organizationId: string) {
+  async findAll(
+    type: OrgListType | undefined,
+    organizationId: string,
+    activeOnly?: boolean,
+  ) {
     const data = await this.scopedPrisma.orgListItem.findMany({
-      where: { organizationId, type },
+      where: { organizationId, type, ...(activeOnly && { isActive: true }) },
       orderBy: { name: 'asc' },
     });
     return wrapAll(data);
@@ -52,19 +57,27 @@ export class OrgListItemsService {
     return item;
   }
 
-  async update(id: string, name: string, organizationId: string, actor: Actor) {
+  async update(
+    id: string,
+    dto: UpdateOrgListItemDto,
+    organizationId: string,
+    actor: Actor,
+  ) {
     const item = await this.scopedPrisma.orgListItem.findFirst({
       where: { id, organizationId },
     });
     if (!item) throw new NotFoundException('List item not found.');
 
-    const trimmed = name.trim();
+    const trimmed = dto.name?.trim();
     // updateMany (not update) — its `where` accepts arbitrary filters, so
     // it can be organizationId-scoped directly, matching the same
     // tenant-scope pattern DepartmentsService.update() uses.
     await this.scopedPrisma.orgListItem.updateMany({
       where: { id, organizationId },
-      data: { name: trimmed },
+      data: {
+        ...(trimmed !== undefined && { name: trimmed }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
     });
 
     await this.auditLogService.log({
@@ -73,7 +86,11 @@ export class OrgListItemsService {
       module: AuditModule.ORGANIZATION,
       organizationId,
       targetId: id,
-      details: { type: item.type, from: item.name, to: trimmed },
+      details: {
+        type: item.type,
+        ...(trimmed !== undefined && { from: item.name, to: trimmed }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      },
     });
 
     return this.scopedPrisma.orgListItem.findFirst({

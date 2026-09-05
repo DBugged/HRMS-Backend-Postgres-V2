@@ -180,7 +180,7 @@ export class OrganizationsController {
   ) {
     return this.employeeTypesService.update(
       value,
-      dto.label,
+      dto,
       caller.organizationId,
       caller,
     );

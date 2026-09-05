@@ -42,8 +42,16 @@ export class EmployeeTypesService {
   async findAll(organizationId: string) {
     const custom = await this.getCustomTypes(organizationId);
     return [
-      ...DEFAULT_EMPLOYEE_TYPES.map((t) => ({ ...t, isCustom: false })),
-      ...custom.map((t) => ({ ...t, isCustom: true })),
+      ...DEFAULT_EMPLOYEE_TYPES.map((t) => ({
+        ...t,
+        isActive: true,
+        isCustom: false,
+      })),
+      ...custom.map((t) => ({
+        ...t,
+        isActive: t.isActive ?? true,
+        isCustom: true,
+      })),
     ];
   }
 
@@ -80,29 +88,40 @@ export class EmployeeTypesService {
     return this.findAll(organizationId);
   }
 
-  // Renames a custom type's display label only — `value` (the slug
-  // actually stored on Employee.employeeType) never changes, so existing
-  // employees already set to this type keep working. Built-in types can't
-  // be renamed either, same guard as delete — their labels are the ones
-  // business logic docs/UI copy already reference.
+  // Renames a custom type's display label and/or flips its Active status —
+  // `value` (the slug actually stored on Employee.employeeType) never
+  // changes, so existing employees already set to this type keep working.
+  // Built-in types can't be edited either way, same guard as delete —
+  // their labels/active state are the ones business logic docs/UI copy
+  // already reference.
   async update(
     value: string,
-    label: string,
+    updates: { label?: string; isActive?: boolean },
     organizationId: string,
     actor: Actor,
   ) {
     if (DEFAULT_EMPLOYEE_TYPES.some((t) => t.value === value)) {
       throw new BadRequestException("Built-in employee types can't be edited.");
     }
-    const trimmed = label.trim();
-    if (!trimmed) throw new BadRequestException('Label is required.');
+    const trimmed = updates.label?.trim();
+    if (updates.label !== undefined && !trimmed) {
+      throw new BadRequestException('Label is required.');
+    }
 
     const custom = await this.getCustomTypes(organizationId);
     if (!custom.some((t) => t.value === value)) {
       throw new NotFoundException('Employee type not found.');
     }
     const next = custom.map((t) =>
-      t.value === value ? { ...t, label: trimmed } : t,
+      t.value === value
+        ? {
+            ...t,
+            ...(trimmed !== undefined && { label: trimmed }),
+            ...(updates.isActive !== undefined && {
+              isActive: updates.isActive,
+            }),
+          }
+        : t,
     );
     await this.prisma.organization.update({
       where: { id: organizationId },
@@ -114,7 +133,13 @@ export class EmployeeTypesService {
       action: 'EMPLOYEE_TYPE_UPDATED',
       module: AuditModule.ORGANIZATION,
       organizationId,
-      details: { value, label: trimmed },
+      details: {
+        value,
+        ...(trimmed !== undefined && { label: trimmed }),
+        ...(updates.isActive !== undefined && {
+          isActive: updates.isActive,
+        }),
+      },
     });
 
     return this.findAll(organizationId);

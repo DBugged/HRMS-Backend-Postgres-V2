@@ -100,6 +100,7 @@ export class HolidaysService {
         type: dto.type ?? HolidayType.COMPANY,
         state: dto.state ?? null,
         description: dto.description ?? '',
+        isActive: dto.isActive ?? true,
       },
     });
 
@@ -162,6 +163,7 @@ export class HolidaysService {
         ...(dto.description !== undefined && {
           description: dto.description,
         }),
+        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
       },
     });
 

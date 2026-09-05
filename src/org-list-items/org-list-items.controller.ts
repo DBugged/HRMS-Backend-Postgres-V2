@@ -15,10 +15,11 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { OrgListType, Role, User } from '@prisma/client';
+import { Role, User } from '@prisma/client';
 import { OrgListItemsService } from './org-list-items.service';
 import { CreateOrgListItemDto } from './dto/create-org-list-item.dto';
 import { UpdateOrgListItemDto } from './dto/update-org-list-item.dto';
+import { ListOrgListItemsQueryDto } from './dto/list-org-list-items-query.dto';
 import { BulkImportOrgListItemsDto } from './dto/bulk-import-org-list-items.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -33,8 +34,15 @@ export class OrgListItemsController {
   constructor(private readonly orgListItemsService: OrgListItemsService) {}
 
   @Get()
-  findAll(@Query('type') type: OrgListType, @CurrentUser() caller: Caller) {
-    return this.orgListItemsService.findAll(type, caller.organizationId);
+  findAll(
+    @Query() query: ListOrgListItemsQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.orgListItemsService.findAll(
+      query.type,
+      caller.organizationId,
+      query.activeOnly,
+    );
   }
 
   @Post()
@@ -54,7 +62,7 @@ export class OrgListItemsController {
   ) {
     return this.orgListItemsService.update(
       id,
-      dto.name,
+      dto,
       caller.organizationId,
       caller,
     );
