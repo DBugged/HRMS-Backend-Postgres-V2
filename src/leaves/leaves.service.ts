@@ -38,6 +38,10 @@ import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import { checkLeaveRules, LeaveRules } from './leave-rules';
+import {
+  resolveShiftConfig,
+  OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
 import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
 import { paginate, skip } from '../common/pagination';
 import {
@@ -694,30 +698,48 @@ export class LeavesService {
       throw new ForbiddenException('You are not eligible for this leave type.');
     }
 
-    const [holidays, priorLeaveOfType, otherLeaves] = await Promise.all([
-      this.scopedPrisma.holiday.findMany({
-        where: { organizationId, isActive: true },
-        select: { date: true },
-      }),
-      this.scopedPrisma.leave.findFirst({
-        where: {
-          organizationId,
-          employeeId: actor.id,
-          leaveTypeId: leaveType.id,
-          status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
-          endDate: { lt: dto.startDate },
-        },
-        orderBy: { endDate: 'desc' },
-      }),
-      this.scopedPrisma.leave.findMany({
-        where: {
-          organizationId,
-          employeeId: actor.id,
-          status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
-        },
-        select: { startDate: true, endDate: true },
-      }),
-    ]);
+    const [holidays, priorLeaveOfType, otherLeaves, employeeDept, org] =
+      await Promise.all([
+        this.scopedPrisma.holiday.findMany({
+          where: { organizationId, isActive: true },
+          select: { date: true },
+        }),
+        this.scopedPrisma.leave.findFirst({
+          where: {
+            organizationId,
+            employeeId: actor.id,
+            leaveTypeId: leaveType.id,
+            status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+            endDate: { lt: dto.startDate },
+          },
+          orderBy: { endDate: 'desc' },
+        }),
+        this.scopedPrisma.leave.findMany({
+          where: {
+            organizationId,
+            employeeId: actor.id,
+            status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+          },
+          select: { startDate: true, endDate: true },
+        }),
+        actor.departmentId
+          ? this.scopedPrisma.department.findFirst({
+              where: { id: actor.departmentId, organizationId },
+            })
+          : Promise.resolve(null),
+        this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+        }),
+      ]);
+
+    // Resolves the employee's actual weekly-off days (department shift
+    // config, falling back to the org default) — same source AttendanceService
+    // itself reads — instead of assuming every org's weekend is plain Sunday
+    // (see the sandwich-leave gap check in leave-rules.ts).
+    const { weeklyOffs } = resolveShiftConfig(
+      employeeDept,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
 
     const rules = leaveType.rules as unknown as LeaveRules;
     const ruleResult = checkLeaveRules(
@@ -731,6 +753,7 @@ export class LeavesService {
       {
         today: todayStr(),
         holidayDates: new Set(holidays.map((h) => h.date)),
+        weeklyOffs,
         priorLeaveEndDate: priorLeaveOfType?.endDate ?? null,
         existingRanges: otherLeaves.map((l) => ({
           start: l.startDate,

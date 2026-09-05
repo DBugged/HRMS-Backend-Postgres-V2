@@ -18,6 +18,7 @@ const permissiveRules: LeaveRules = {
 const baseContext = {
   today: '2026-06-01',
   holidayDates: new Set<string>(),
+  weeklyOffs: [0], // Sunday only, matching every existing test's assumption
   priorLeaveEndDate: null,
   existingRanges: [],
   documentsRequired: false,
@@ -339,6 +340,29 @@ describe('checkLeaveRules', () => {
         context,
       );
       // 2 requested days + 1 gap day (the holiday between) = 3
+      expect(result.totalDays).toBe(3);
+    });
+
+    it('adds a Saturday gap day for an org whose weekly-offs include Saturday (not just Sunday)', () => {
+      // Same 2026-06-06 (Sat) gap as the "does not adjust" case below, but
+      // this org's weeklyOffs is [0, 6] — Saturday is a real weekly-off
+      // here, so the gap must fold in even with no holiday configured.
+      const context = {
+        ...baseContext,
+        weeklyOffs: [0, 6],
+        priorLeaveEndDate: '2026-06-05',
+        holidayDates: new Set<string>(),
+      };
+      const result = checkLeaveRules(
+        sandwichRules,
+        {
+          startDate: '2026-06-07',
+          endDate: '2026-06-08',
+          isHalfDay: false,
+          hasAttachment: false,
+        },
+        context,
+      );
       expect(result.totalDays).toBe(3);
     });
 

@@ -23,4 +23,11 @@ describe('resolveDayOfMonth', () => {
   it('clamps day=31 correctly in a leap-year February', () => {
     expect(resolveDayOfMonth(31, 2028, 2)).toBe('2028-02-29');
   });
+
+  it('day=0 respects a custom weeklyOffs instead of assuming Saturday is off', () => {
+    // May 2026: May 31 2026 is a Sunday, May 30 is a Saturday. An org whose
+    // only weekly-off is Sunday (weeklyOffs: [0]) should land on Saturday,
+    // not skip past it to Friday.
+    expect(resolveDayOfMonth(0, 2026, 5, [0])).toBe('2026-05-30');
+  });
 });

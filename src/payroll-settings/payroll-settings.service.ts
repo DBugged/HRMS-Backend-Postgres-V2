@@ -5,6 +5,10 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { RedisCacheService } from '../common/redis-cache';
 import { UpdatePayrollSettingsDto } from './dto/update-payroll-settings.dto';
 import { resolveDayOfMonth } from './payroll-date';
+import {
+  resolveShiftConfig,
+  OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
 import { AuditLogService } from '../audit-log/audit-log.service';
 
 // Read once per employee inside a payroll batch, rarely written — same
@@ -75,11 +79,31 @@ export class PayrollSettingsService {
     const now = new Date();
     const year = now.getUTCFullYear();
     const month = now.getUTCMonth() + 1;
+    // Org-wide default weekly-offs — there's no single department to
+    // resolve against at this org-settings level, same rationale as
+    // resolveShiftConfig's own org-default branch.
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+    });
+    const { weeklyOffs } = resolveShiftConfig(
+      null,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
     return {
       settings,
       resolvedForCurrentMonth: {
-        processingDate: resolveDayOfMonth(settings.processingDay, year, month),
-        paymentDate: resolveDayOfMonth(settings.paymentDay, year, month),
+        processingDate: resolveDayOfMonth(
+          settings.processingDay,
+          year,
+          month,
+          weeklyOffs,
+        ),
+        paymentDate: resolveDayOfMonth(
+          settings.paymentDay,
+          year,
+          month,
+          weeklyOffs,
+        ),
       },
     };
   }

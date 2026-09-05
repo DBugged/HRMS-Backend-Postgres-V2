@@ -5,6 +5,10 @@
  * leaves) are pre-fetched once by LeavesService and passed in as plain
  * data, keeping this function itself DB-free and directly unit-testable.
  */
+import {
+  isWeeklyOff,
+  WeeklyOffEntry,
+} from '../attendance/attendance-shift-config';
 
 export interface LeaveRules {
   minDurationDays: number;
@@ -36,6 +40,10 @@ export interface DateRange {
 export interface LeaveRuleContext {
   today: string; // YYYY-MM-DD
   holidayDates: Set<string>;
+  // The employee's resolved weekly-offs (department shift config, falling
+  // back to the org default) — used by the sandwich-leave gap check below
+  // instead of assuming every org's weekend is plain Sunday.
+  weeklyOffs: WeeklyOffEntry[];
   // Most recent approved/pending leave of the SAME type ending before
   // startDate — used for both sandwich-leave gap detection and
   // minGapBetweenRequestsDays.
@@ -74,22 +82,25 @@ function addDaysStr(dateStr: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function isHolidayOrSunday(
+function isHolidayOrWeeklyOff(
   dateStr: string,
   holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
 ): boolean {
   if (holidayDates.has(dateStr)) return true;
-  return toUTCDate(dateStr).getUTCDay() === 0; // Sunday only — hardcoded weekly-off, matches old system
+  return isWeeklyOff(dateStr, weeklyOffs);
 }
 
 // If the gap between a prior same-type leave's end and this request's
-// start is 1-3 days AND every gap day is a holiday/Sunday, those gap days
-// get folded into totalDays too (the employee didn't really get a break).
+// start is 1-3 days AND every gap day is a holiday/weekly-off, those gap
+// days get folded into totalDays too (the employee didn't really get a
+// break).
 function computeSandwichAdjustedDays(
   totalDays: number,
   startDate: string,
   priorLeaveEndDate: string | null | undefined,
   holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
 ): number {
   if (!priorLeaveEndDate) return totalDays;
   const gapDays = daysBetween(priorLeaveEndDate, startDate) - 1;
@@ -100,7 +111,7 @@ function computeSandwichAdjustedDays(
     gapDates.push(addDaysStr(priorLeaveEndDate, i));
   }
   const allNonWorking = gapDates.every((d) =>
-    isHolidayOrSunday(d, holidayDates),
+    isHolidayOrWeeklyOff(d, holidayDates, weeklyOffs),
   );
   return allNonWorking ? totalDays + gapDays : totalDays;
 }
@@ -125,6 +136,7 @@ export function checkLeaveRules(
       request.startDate,
       context.priorLeaveEndDate,
       context.holidayDates,
+      context.weeklyOffs,
     );
   }
 
