@@ -1,9 +1,12 @@
-// Purpose: Manage the org's Employee Type list — the 12 built-in defaults (undeletable, business logic
-//   keys off their exact values) plus whatever custom ones this org has added.
+// Purpose: Manage the org's Employee Type list — the 12 built-in defaults (undeletable/unrenameable,
+//   business logic keys off their exact values, but deactivatable) plus whatever custom ones this org has
+//   added.
 // Responsibilities: Owns Organization.customEmployeeTypes (the same field the Setup Wizard's
-//   settings/employeeTypes section and Employees.tsx's inline "add new type" flow already write) behind
-//   ADMIN/HR-scoped endpoints, instead of the broad ADMIN-only settings/:section route — this is the
-//   management-screen equivalent of Departments/OrgListItems, kept consistent with their role split.
+//   settings/employeeTypes section and Employees.tsx's inline "add new type" flow already write) and
+//   Organization.inactiveBuiltinEmployeeTypes (a built-in's only writable state, since the built-in entry
+//   itself is hardcoded in employee-types.ts) behind ADMIN/HR-scoped endpoints, instead of the broad
+//   ADMIN-only settings/:section route — this is the management-screen equivalent of Departments/
+//   OrgListItems, kept consistent with their role split.
 // Important: doesn't introduce a second source of truth — reads/writes the exact same JSON array
 //   useEmployeeTypes() and the old inline flow already use, so all three surfaces stay in sync.
 import {
@@ -39,12 +42,25 @@ export class EmployeeTypesService {
     return (org?.customEmployeeTypes as EmployeeTypeEntry[] | null) ?? [];
   }
 
+  private async getInactiveBuiltins(
+    organizationId: string,
+  ): Promise<string[]> {
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { inactiveBuiltinEmployeeTypes: true },
+    });
+    return org?.inactiveBuiltinEmployeeTypes ?? [];
+  }
+
   async findAll(organizationId: string) {
-    const custom = await this.getCustomTypes(organizationId);
+    const [custom, inactiveBuiltins] = await Promise.all([
+      this.getCustomTypes(organizationId),
+      this.getInactiveBuiltins(organizationId),
+    ]);
     return [
       ...DEFAULT_EMPLOYEE_TYPES.map((t) => ({
         ...t,
-        isActive: true,
+        isActive: !inactiveBuiltins.includes(t.value),
         isCustom: false,
       })),
       ...custom.map((t) => ({
@@ -91,9 +107,9 @@ export class EmployeeTypesService {
   // Renames a custom type's display label and/or flips its Active status —
   // `value` (the slug actually stored on Employee.employeeType) never
   // changes, so existing employees already set to this type keep working.
-  // Built-in types can't be edited either way, same guard as delete —
-  // their labels/active state are the ones business logic docs/UI copy
-  // already reference.
+  // Built-in types can't be renamed/deleted (their labels/values are the
+  // ones business logic and UI copy already reference), but CAN be
+  // deactivated — see updateBuiltinActive().
   async update(
     value: string,
     updates: { label?: string; isActive?: boolean },
@@ -101,7 +117,20 @@ export class EmployeeTypesService {
     actor: Actor,
   ) {
     if (DEFAULT_EMPLOYEE_TYPES.some((t) => t.value === value)) {
-      throw new BadRequestException("Built-in employee types can't be edited.");
+      if (updates.label !== undefined) {
+        throw new BadRequestException(
+          "Built-in employee types can't be renamed.",
+        );
+      }
+      if (updates.isActive !== undefined) {
+        return this.updateBuiltinActive(
+          value,
+          updates.isActive,
+          organizationId,
+          actor,
+        );
+      }
+      return this.findAll(organizationId);
     }
     const trimmed = updates.label?.trim();
     if (updates.label !== undefined && !trimmed) {
@@ -140,6 +169,39 @@ export class EmployeeTypesService {
           isActive: updates.isActive,
         }),
       },
+    });
+
+    return this.findAll(organizationId);
+  }
+
+  // Deactivating a built-in type just adds its value to the org's
+  // inactiveBuiltinEmployeeTypes list (reactivating removes it) — the
+  // DEFAULT_EMPLOYEE_TYPES entry itself never changes, so label/value stay
+  // exactly what business logic elsewhere expects.
+  private async updateBuiltinActive(
+    value: string,
+    isActive: boolean,
+    organizationId: string,
+    actor: Actor,
+  ) {
+    const inactiveBuiltins = await this.getInactiveBuiltins(organizationId);
+    const next = isActive
+      ? inactiveBuiltins.filter((v) => v !== value)
+      : inactiveBuiltins.includes(value)
+        ? inactiveBuiltins
+        : [...inactiveBuiltins, value];
+
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { inactiveBuiltinEmployeeTypes: next },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_TYPE_UPDATED',
+      module: AuditModule.ORGANIZATION,
+      organizationId,
+      details: { value, isActive },
     });
 
     return this.findAll(organizationId);

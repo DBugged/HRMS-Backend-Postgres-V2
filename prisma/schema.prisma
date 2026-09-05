@@ -188,6 +188,13 @@ model Organization {
   // default-employee-types.ts) — each entry { value, label }.
   customEmployeeTypes Json @default("[]")
 
+  // Built-in employee type `value`s this org has deactivated — built-ins
+  // are hardcoded (DEFAULT_EMPLOYEE_TYPES), not DB rows, so there's
+  // nowhere else on a built-in entry to persist an Active/Inactive flag.
+  // Label/value stay immutable and undeletable either way; this only
+  // gates whether one shows as active in the Employment Types list.
+  inactiveBuiltinEmployeeTypes String[] @default([])
+
   // Bare enforcement hook for a future plan/billing system — high default
   // so nothing breaks until real billing exists.
   maxEmployees Int @default(999999)
