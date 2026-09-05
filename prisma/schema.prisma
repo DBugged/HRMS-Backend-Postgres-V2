@@ -1186,7 +1186,11 @@ model PayrollTemplate {
   isDefault Boolean @default(false)
 
   companyLogoUrl       String?
-  companyName          String  @default("D'Bugged Programmers")
+  // A neutral placeholder, not the vendor's own name — a template row
+  // created with no companyName (the DTO field is optional) would
+  // otherwise silently print this platform's own identity on another
+  // org's real payslips.
+  companyName          String  @default("Your Company Name")
   companyAddress       String?
   companyEmail         String?
   companyWebsite       String?

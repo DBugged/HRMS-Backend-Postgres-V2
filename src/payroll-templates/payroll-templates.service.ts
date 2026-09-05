@@ -33,7 +33,12 @@ const DRAFT_DEFAULTS: PayrollTemplate = {
   name: 'New Template',
   isDefault: false,
   companyLogoUrl: null,
-  companyName: "D'Bugged Programmers",
+  // Neutral placeholder, not this platform's own name — matches the
+  // Prisma column default (see schema.prisma's comment on
+  // PayrollTemplate.companyName); a brand-new/never-saved preview
+  // session with no companyName typed yet must not print this
+  // platform's identity on what could become another org's real payslip.
+  companyName: 'Your Company Name',
   companyAddress: null,
   companyEmail: null,
   companyWebsite: null,
