@@ -266,6 +266,9 @@ export class SalaryComponentsService {
           payFrequency: dto.payFrequency,
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.displayOrder !== undefined && {
+          displayOrder: dto.displayOrder,
+        }),
       },
     });
 

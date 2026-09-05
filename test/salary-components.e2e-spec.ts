@@ -163,6 +163,17 @@ describe('Salary Components (e2e)', () => {
     expect(body.defaultValue).toBe(30000);
   });
 
+  it('PATCH /:id accepts displayOrder directly (not just via /reorder)', async () => {
+    const res = await request(app.getHttpServer())
+      .patch(`/salary-components/${basicId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ displayOrder: 7 })
+      .expect(200);
+    expect(
+      (res.body as ComponentBody & { displayOrder: number }).displayOrder,
+    ).toBe(7);
+  });
+
   it('rejects an out-of-range percentageValue', async () => {
     await request(app.getHttpServer())
       .post('/salary-components')
