@@ -790,13 +790,19 @@ export class LeavesService {
           year,
           organizationId,
         );
-        const affordability = checkAffordability(
+        // Cheap fail-fast against the pre-hold snapshot — good enough to
+        // reject an obviously-unaffordable request without touching the
+        // row, but NOT the authoritative check: two concurrent apply()
+        // calls for the same employee+leaveType+year can both read this
+        // same snapshot before either commits its hold below, so both
+        // would pass here even if only one can actually be afforded.
+        const preflight = checkAffordability(
           row,
           negativeBalance,
           totalDays,
           todayStr(),
         );
-        if (!affordability.ok) {
+        if (!preflight.ok) {
           throw new ForbiddenException('Insufficient leave balance.');
         }
         // Atomic increment, not `row.pending + totalDays` — the latter is a
@@ -813,6 +819,29 @@ export class LeavesService {
           where: { id: row.id, organizationId },
           data: { pending: { increment: totalDays } },
         });
+        // The authoritative check, re-read AFTER the hold above — by the
+        // time this runs, a concurrent apply() that got here first has
+        // already committed its own increment (this UPDATE serialized
+        // behind its row lock), so `rowAfterHold.pending` reflects BOTH
+        // holds, not the stale pre-hold snapshot the preflight check saw.
+        // Passing requestedDays=0 here checks "is the balance still
+        // affordable now that this request's own days are already held,"
+        // which is the exact same inequality as the preflight check
+        // against the pre-hold row (pending appears on both sides of the
+        // formula either way) — just evaluated against current data
+        // instead of a snapshot two writers could share.
+        const rowAfterHold = await tx.leaveBalance.findFirstOrThrow({
+          where: { id: row.id, organizationId },
+        });
+        const affordability = checkAffordability(
+          rowAfterHold,
+          negativeBalance,
+          0,
+          todayStr(),
+        );
+        if (!affordability.ok) {
+          throw new ForbiddenException('Insufficient leave balance.');
+        }
       }
 
       return tx.leave.create({

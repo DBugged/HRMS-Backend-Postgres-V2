@@ -197,6 +197,46 @@ describe('Employee Rich Profile (e2e)', () => {
       expect(personalData.profileCompleted).toBe(true);
       expect(personalData.profileCompletedAt).not.toBeNull();
     });
+
+    it('changing bankAccountNo/bankIFSC writes a BANK_DETAILS_UPDATED audit log entry, but a no-op re-send does not', async () => {
+      // The prior test in this describe block already set bankAccountNo/
+      // bankIFSC once (from empty), so this counts the delta rather than
+      // asserting an absolute total.
+      const before = await prisma.auditLog.count({
+        where: { action: 'BANK_DETAILS_UPDATED', targetId: empId },
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({
+          personalData: {
+            bankAccountNo: '111122223333',
+            bankIFSC: 'ICIC0000111',
+          },
+        })
+        .expect(200);
+      const afterChange = await prisma.auditLog.count({
+        where: { action: 'BANK_DETAILS_UPDATED', targetId: empId },
+      });
+      expect(afterChange).toBe(before + 1);
+
+      // Re-sending the exact same values is a no-op — must not log again.
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({
+          personalData: {
+            bankAccountNo: '111122223333',
+            bankIFSC: 'ICIC0000111',
+          },
+        })
+        .expect(200);
+      const afterNoOp = await prisma.auditLog.count({
+        where: { action: 'BANK_DETAILS_UPDATED', targetId: empId },
+      });
+      expect(afterNoOp).toBe(before + 1);
+    });
   });
 
   describe('full-profile / role-history / employment-status-history (HR/Admin only)', () => {
@@ -408,6 +448,35 @@ describe('Employee Rich Profile (e2e)', () => {
         .set('Authorization', `Bearer ${empToken}`)
         .expect(200);
       expect((res.body as DocumentBody[]).length).toBe(0);
+    });
+
+    it('EMPLOYEE cannot remove their own document once HR has approved it, but HR still can', async () => {
+      const uploadRes = await request(app.getHttpServer())
+        .post(`/employees/${empId}/documents`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({
+          docType: 'Aadhar Card',
+          fileName: 'aadhar.pdf',
+          fileUrl: 'documents/aadhar.pdf',
+        })
+        .expect(201);
+      const approvedDocId = (uploadRes.body as DocumentBody).id;
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/documents/${approvedDocId}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'APPROVED' })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .delete(`/employees/${empId}/documents/${approvedDocId}`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .delete(`/employees/${empId}/documents/${approvedDocId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
     });
   });
 

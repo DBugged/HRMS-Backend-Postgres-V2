@@ -71,6 +71,18 @@ function toSafe(user: User) {
   return safe;
 }
 
+// Reduces a bank field to a change-detection/audit-safe form — the last 4
+// characters plus its length, never the value itself. Good enough to tell
+// "did this actually change" and "roughly what changed to/from" in an
+// audit trail without persisting a second plaintext copy of the account
+// number anywhere.
+function maskTail(value: unknown): string {
+  if (typeof value !== 'string' || !value) return '';
+  return value.length <= 4
+    ? `(${value.length} chars)`
+    : `…${value.slice(-4)} (${value.length} chars)`;
+}
+
 // EmployeeDocument.fileUrl stores a durable relativeKey (never a signed
 // URL — see file-token.ts), so every response that surfaces one signs it
 // fresh, same pattern as PolicyDocument's withSignedUrl.
@@ -192,8 +204,9 @@ export class EmployeeProfileService {
     this.assertMaySetPersonalDataFor(actor, employee);
     const mandatoryDocumentsUploaded =
       await this.computeMandatoryDocumentsUploaded(id, organizationId);
+    const before = employee.personalData as Record<string, unknown>;
     const merged = mergePersonalData(
-      employee.personalData as Record<string, unknown>,
+      before,
       dto.personalData,
       mandatoryDocumentsUploaded,
     );
@@ -202,6 +215,47 @@ export class EmployeeProfileService {
       where: { id, organizationId },
       data: { personalData: merged as Prisma.InputJsonValue },
     });
+
+    // bankAccountNo/bankIFSC drive where Payroll actually sends this
+    // employee's salary (see reports/payroll-reports.service.ts's bank
+    // transfer file) — unlike every other write path in this codebase
+    // (leaves, loans, tax declarations, ...), this endpoint had no audit
+    // trail at all, so a changed account number left zero record of when
+    // or by whom. BANK_DETAILS_UPDATED already existed as a registered
+    // timeline event (employee-timeline/timeline-events.ts) but nothing
+    // ever fired it. Values are masked to their last 4 characters — this
+    // is a change record, not a place to persist the full account number
+    // a second time.
+    if (
+      maskTail(before.bankAccountNo) !== maskTail(merged.bankAccountNo) ||
+      maskTail(before.bankIFSC) !== maskTail(merged.bankIFSC)
+    ) {
+      const details = {
+        bankAccountNo: {
+          from: maskTail(before.bankAccountNo),
+          to: maskTail(merged.bankAccountNo),
+        },
+        bankIFSC: {
+          from: maskTail(before.bankIFSC),
+          to: maskTail(merged.bankIFSC),
+        },
+      };
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'BANK_DETAILS_UPDATED',
+        module: 'EMPLOYEE',
+        organizationId,
+        targetId: id,
+        details,
+      });
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: id,
+        eventKey: 'BANK_DETAILS_UPDATED',
+        performedById: actor.id,
+        metadata: details,
+      });
+    }
 
     return toSafe(await this.findEmployeeOrThrow(id, organizationId));
   }
@@ -407,6 +461,22 @@ export class EmployeeProfileService {
       where: { id: docId, employeeId: id, organizationId },
     });
     if (!doc) throw new NotFoundException('Document not found.');
+    // Once HR has reviewed and approved a document (KYC paperwork like a
+    // PAN/Aadhaar card, or a signed offer/appointment letter), the
+    // employee who uploaded it can no longer silently remove it — there
+    // was previously nothing stopping self-service deletion of an
+    // already-approved compliance document with zero record of it ever
+    // having existed. HR/Admin can still delete an approved document
+    // (e.g. to fix a mis-filed upload); only a plain self-service delete
+    // of one's own already-approved document is blocked.
+    if (
+      doc.status === EmployeeDocumentStatus.APPROVED &&
+      !HR_ROLES.includes(actor.role)
+    ) {
+      throw new ForbiddenException(
+        'This document has already been approved and can no longer be removed. Contact HR if it needs to be replaced.',
+      );
+    }
     await this.scopedPrisma.employeeDocument.deleteMany({
       where: { id: docId, organizationId },
     });
