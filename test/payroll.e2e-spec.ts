@@ -1066,4 +1066,64 @@ describe('Payroll (e2e)', () => {
       expect(line?.amount).toBe(2000); // 4000 * 50%
     });
   });
+
+  describe('GET /payroll/attendance-gaps', () => {
+    // Reuses MONTH (June 2026, 30 days) — markFullMonthPresent's row
+    // count is hardcoded to DAYS_IN_MONTH (30), so a month with a
+    // different length would leave this fresh employee's last day(s)
+    // still unmarked even after "marking the full month present". A
+    // different employeeId than the rest of the file's MONTH/YEAR tests
+    // use, so there's no cross-test interference.
+    const GAPS_MONTH = MONTH;
+    let gapsEmployeeId: string;
+
+    beforeAll(async () => {
+      const create = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Gaps Employee', email: 'pay-e2e-gaps@example.test' });
+      gapsEmployeeId = (create.body as EmployeeCreateBody).employee.id;
+    });
+
+    it('EMPLOYEE gets 403', async () => {
+      await request(app.getHttpServer())
+        .get('/payroll/attendance-gaps')
+        .query({ month: GAPS_MONTH, year: YEAR })
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
+
+    it('an employee with zero attendance rows shows the full month as unmarked', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/payroll/attendance-gaps')
+        .query({ month: GAPS_MONTH, year: YEAR })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const rows = res.body as {
+        employeeId: string;
+        unmarkedDays: number;
+        totalDaysInMonth: number;
+      }[];
+      const row = rows.find((r) => r.employeeId === gapsEmployeeId);
+      expect(row).toBeTruthy();
+      expect(row?.unmarkedDays).toBe(row?.totalDaysInMonth);
+    });
+
+    it('marking the full month present drops the employee out of the gaps list', async () => {
+      await markFullMonthPresent(
+        prisma,
+        organizationId,
+        gapsEmployeeId,
+        GAPS_MONTH,
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/payroll/attendance-gaps')
+        .query({ month: GAPS_MONTH, year: YEAR })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const rows = res.body as { employeeId: string }[];
+      expect(rows.some((r) => r.employeeId === gapsEmployeeId)).toBe(false);
+    });
+  });
 });

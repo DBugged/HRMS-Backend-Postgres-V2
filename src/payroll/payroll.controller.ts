@@ -20,6 +20,7 @@ import { PayrollRunStatus, Role, User } from '@prisma/client';
 import { PayrollService } from './payroll.service';
 import { PayslipPdfService } from './payslip-pdf.service';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
+import { AttendanceGapsQueryDto } from './dto/attendance-gaps-query.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto } from './dto/adjust-payroll.dto';
@@ -62,6 +63,21 @@ export class PayrollController {
   @UseGuards(RolesGuard)
   history(@Query() query: QueryPayrollDto, @CurrentUser() caller: Caller) {
     return this.payrollService.getHistory(query, caller, caller.organizationId);
+  }
+
+  // Registered before ':id' for the same reason as 'history' above.
+  @Get('attendance-gaps')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  attendanceGaps(
+    @Query() query: AttendanceGapsQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.getAttendanceGaps(
+      query.month,
+      query.year,
+      caller.organizationId,
+    );
   }
 
   // No @Roles() — self/dept/org scoping all enforced inline in the

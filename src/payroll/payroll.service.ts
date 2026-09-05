@@ -1575,4 +1575,49 @@ export class PayrollService {
       },
     });
   }
+
+  // Surfaces, per employee eligible for this month's payroll run, how
+  // many calendar days have no attendance record at all — the exact gap
+  // that silently becomes unpaid (LOP) once calculatePayroll() runs, with
+  // no warning anywhere before that point today. Meant to be checked by
+  // the frontend before Draft/Calculate, not during it — a day with a
+  // real attendance row (PRESENT/ABSENT/ON_LEAVE/HOLIDAY/WEEKLY_OFF,
+  // doesn't matter which) was actually looked at by someone; only a day
+  // with no row at all is a genuine blind spot.
+  async getAttendanceGaps(
+    month: number,
+    year: number,
+    organizationId: string,
+  ) {
+    const employees = await this.targetEmployees(undefined, organizationId);
+    const totalDaysInMonth = daysInMonth(month, year);
+    const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+
+    const counts = await this.scopedPrisma.attendance.groupBy({
+      by: ['employeeId'],
+      where: {
+        organizationId,
+        employeeId: { in: employees.map((e) => e.id) },
+        date: { startsWith: monthPrefix },
+      },
+      _count: { _all: true },
+    });
+    const markedDaysByEmployeeId = new Map(
+      counts.map((c) => [c.employeeId, c._count._all]),
+    );
+
+    return employees
+      .map((e) => {
+        const markedDays = markedDaysByEmployeeId.get(e.id) ?? 0;
+        return {
+          employeeId: e.id,
+          name: e.name,
+          employeeCode: e.employeeId,
+          unmarkedDays: Math.max(0, totalDaysInMonth - markedDays),
+          totalDaysInMonth,
+        };
+      })
+      .filter((row) => row.unmarkedDays > 0)
+      .sort((a, b) => b.unmarkedDays - a.unmarkedDays);
+  }
 }

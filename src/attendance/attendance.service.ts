@@ -12,9 +12,11 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   AttendanceSource,
   AttendanceStatus,
@@ -130,6 +132,8 @@ interface ImportRow {
 
 @Injectable()
 export class AttendanceService {
+  private readonly logger = new Logger(AttendanceService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly prisma: PrismaService,
@@ -1507,5 +1511,33 @@ export class AttendanceService {
     });
 
     return { date, notifiedCount: employeeIds.length, employeeIds };
+  }
+
+  // Runs notifyAbsentees automatically for every active org, once a day,
+  // for the previous full calendar day (not "today" — the shift/day isn't
+  // over yet when this fires, so marking it absent this early would be
+  // premature for anyone who punches in later). Previously this only ever
+  // ran when HR remembered to click "Send Absence Alerts" — relying on
+  // that let real attendance gaps go completely unnoticed until payroll
+  // silently zeroed out over it. One org's failure is logged and skipped
+  // rather than aborting the rest, same reasoning as notifyAbsentees'
+  // own bounded-concurrency per-employee isolation.
+  @Cron('0 1 * * *')
+  async markYesterdayAbsences() {
+    const yesterday = utcDateStrOf(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const org of organizations) {
+      try {
+        await this.notifyAbsentees({ date: yesterday }, org.id);
+      } catch (err) {
+        this.logger.error(
+          `markYesterdayAbsences failed for org ${org.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
   }
 }
