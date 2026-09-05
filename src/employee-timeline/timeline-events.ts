@@ -81,6 +81,9 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   BANK_DETAILS_UPDATED: { category: 'PAYROLL', title: 'Bank Details Updated' },
   TAX_REGIME_CHANGED: { category: 'PAYROLL', title: 'Tax Regime Changed' },
   PAYROLL_PROCESSED: { category: 'PAYROLL', title: 'Payroll Processed' },
+  LOAN_REQUESTED: { category: 'PAYROLL', title: 'Loan Requested' },
+  LOAN_APPROVED: { category: 'PAYROLL', title: 'Loan Approved' },
+  LOAN_REJECTED: { category: 'PAYROLL', title: 'Loan Rejected' },
   LOAN_ISSUED: { category: 'PAYROLL', title: 'Loan Issued' },
   LOAN_REPAYMENT_RECORDED: {
     category: 'PAYROLL',
