@@ -9,6 +9,7 @@
 // only, no override.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -197,6 +198,28 @@ export class PerformanceRatingsService {
       },
     });
 
+    // Second half of "no override": the check above only looks at the
+    // reporting manager's *current* role, which can change after a
+    // manager has already submitted a rating (e.g. the manager is
+    // demoted to EMPLOYEE, or moved to a role with no direct reports).
+    // Without this, ADMIN/HR could demote the manager and then call this
+    // same upsert() to silently overwrite the manager's still-pending
+    // SUBMITTED rating in place — destroying it with no history and no
+    // approvedById/approvedAt, bypassing approve()/reject() entirely. A
+    // SUBMITTED rating must always be resolved through approve()/reject(),
+    // never clobbered by a later upsert() call, regardless of what the
+    // employee's reporting manager looks like *now*. A MANAGER can still
+    // freely correct their own not-yet-approved submission (e.g. a typo)
+    // via this same endpoint — only a non-MANAGER actor is blocked here.
+    if (
+      existing?.status === PerformanceRatingStatus.SUBMITTED &&
+      actor.role !== Role.MANAGER
+    ) {
+      throw new ForbiddenException(
+        'A rating for this employee/year is already submitted and pending review — use approve or reject instead of overwriting it.',
+      );
+    }
+
     // A MANAGER's write only ever reaches SUBMITTED — it stays invisible to
     // the employee until ADMIN/HR approve()s it. ADMIN/HR writing directly
     // (only reachable for an employee with no manager assigned, per the
@@ -280,8 +303,14 @@ export class PerformanceRatingsService {
     }
     assertNotSelfApproval(actor, existing.employeeId);
 
-    await this.scopedPrisma.performanceRating.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap — see LoansService.approve()'s comment for
+    // the general reasoning.
+    const { count } = await this.scopedPrisma.performanceRating.updateMany({
+      where: {
+        id,
+        organizationId,
+        status: PerformanceRatingStatus.SUBMITTED,
+      },
       data: {
         rating: dto.rating ?? existing.rating,
         payoutPercentage: dto.payoutPercentage ?? existing.payoutPercentage,
@@ -290,6 +319,11 @@ export class PerformanceRatingsService {
         approvedAt: new Date(),
       },
     });
+    if (count === 0) {
+      throw new ConflictException(
+        'This rating was already reviewed — please refresh and try again.',
+      );
+    }
     const rating = await this.scopedPrisma.performanceRating.findFirstOrThrow({
       where: { id, organizationId },
     });
@@ -319,14 +353,25 @@ export class PerformanceRatingsService {
     }
     assertNotSelfApproval(actor, existing.employeeId);
 
-    await this.scopedPrisma.performanceRating.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap — see LoansService.approve()'s comment for
+    // the general reasoning.
+    const { count } = await this.scopedPrisma.performanceRating.updateMany({
+      where: {
+        id,
+        organizationId,
+        status: PerformanceRatingStatus.SUBMITTED,
+      },
       data: {
         status: PerformanceRatingStatus.REJECTED,
         approvedById: actor.id,
         approvedAt: new Date(),
       },
     });
+    if (count === 0) {
+      throw new ConflictException(
+        'This rating was already reviewed — please refresh and try again.',
+      );
+    }
     const rating = await this.scopedPrisma.performanceRating.findFirstOrThrow({
       where: { id, organizationId },
     });

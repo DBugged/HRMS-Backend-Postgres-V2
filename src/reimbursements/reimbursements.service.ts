@@ -4,6 +4,7 @@
 // assertManagerDeptScope.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -13,6 +14,7 @@ import {
   NotificationCategory,
   Prisma,
   Reimbursement,
+  ReimbursementStatus,
   Role,
   User,
 } from '@prisma/client';
@@ -184,6 +186,23 @@ export class ReimbursementsService {
       claim.employeeId,
     );
 
+    // Forward-only state machine: PAID and REJECTED are both terminal —
+    // once money has actually gone out (PAID) or a claim has been turned
+    // down (REJECTED), no further status flip is legitimate. Previously
+    // review() only checked the *target* status's own preconditions (e.g.
+    // "PAID needs APPROVED first") and never the claim's *current* status,
+    // so a PAID claim could be flipped straight to REJECTED — a
+    // financially contradictory "paid but rejected" record with
+    // paidDate/paidById/paymentMode all still populated.
+    const TERMINAL_STATUSES: ReimbursementStatus[] = [
+      ReimbursementStatus.PAID,
+      ReimbursementStatus.REJECTED,
+    ];
+    if (TERMINAL_STATUSES.includes(claim.status)) {
+      throw new BadRequestException(
+        `This claim is already ${claim.status.toLowerCase()} and cannot be changed further.`,
+      );
+    }
     // PAID is a separate step from the initial Approve/Reject decision — a
     // claim must already be APPROVED before it can be marked PAID (mirrors
     // Leave Encashment's PENDING -> APPROVED -> PROCESSED chain, which has
@@ -199,8 +218,12 @@ export class ReimbursementsService {
       );
     }
 
-    await this.scopedPrisma.reimbursement.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap: the claim's pre-checked status is
+    // re-asserted in the write's own `where`, not just the checks above —
+    // two concurrent review() calls on the same claim (double-click, or a
+    // retried request) can't both win.
+    const { count } = await this.scopedPrisma.reimbursement.updateMany({
+      where: { id, organizationId, status: claim.status },
       data:
         dto.status === 'PAID'
           ? {
@@ -220,6 +243,11 @@ export class ReimbursementsService {
               ...(dto.status === 'APPROVED' && { approvedDate: todayStr() }),
             },
     });
+    if (count === 0) {
+      throw new ConflictException(
+        'This claim was already reviewed — please refresh and try again.',
+      );
+    }
     const updated = await this.scopedPrisma.reimbursement.findFirstOrThrow({
       where: { id, organizationId },
     });

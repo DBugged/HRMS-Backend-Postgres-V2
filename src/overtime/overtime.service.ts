@@ -6,6 +6,7 @@
 // RATE_MULTIPLIERS only affects new records, not historical ones.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -182,10 +183,15 @@ export class OvertimeService {
       );
     }
 
-    await this.scopedPrisma.overtimeRecord.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap — see LoansService.approve()'s comment for
+    // the general reasoning.
+    const { count } = await this.scopedPrisma.overtimeRecord.updateMany({
+      where: { id, organizationId, status: OvertimeStatus.PENDING },
       data: { status: dto.status, approvedById: actor.id },
     });
+    if (count === 0) {
+      throw new ConflictException('This overtime record was already reviewed.');
+    }
 
     const updated = await this.scopedPrisma.overtimeRecord.findFirstOrThrow({
       where: { id, organizationId },

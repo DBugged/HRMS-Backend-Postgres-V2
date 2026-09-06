@@ -1710,6 +1710,11 @@ model PayrollRun {
   unlockedById   String?
   unlockReason   String?
 
+  // Idempotency marker for PayslipEmailWorker — checked before building/
+  // sending, so a retried or duplicate-delivered BullMQ job for the same
+  // run doesn't resend an already-delivered payslip email.
+  payslipEmailSentAt DateTime?
+
   // Dead field carried for schema fidelity, same as the old model — no
   // upload endpoint writes this yet.
   payslipUrl        String      @default("")

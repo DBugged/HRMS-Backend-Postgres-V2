@@ -112,6 +112,19 @@ export class LoansService {
   }
 
   async create(dto: CreateLoanDto, actor: Actor, organizationId: string) {
+    // Never reached a real employee-existence/active check before — HR/
+    // Admin could sanction a loan against a typo'd or deactivated
+    // employeeId and it would go straight to ACTIVE with no error at all.
+    const employeeRow = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId },
+    });
+    if (!employeeRow) throw new NotFoundException('Employee not found.');
+    if (!employeeRow.isActive) {
+      throw new BadRequestException(
+        'Cannot sanction a loan for a deactivated employee.',
+      );
+    }
+
     this.assertAdvanceIsInterestFree(
       dto.loanType ?? LoanType.LOAN,
       dto.interestRate ?? 0,
@@ -139,9 +152,7 @@ export class LoansService {
       },
     });
 
-    const employee = await this.scopedPrisma.user.findFirst({
-      where: { id: dto.employeeId, organizationId },
-    });
+    const employee = employeeRow;
     if (employee) {
       const title = 'Loan Sanctioned';
       const message = `A ${loan.loanType} loan of ${dto.principal} has been sanctioned for you, repayable as ${emiAmount}/month over ${dto.tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
@@ -275,13 +286,28 @@ export class LoansService {
     // there's no one above an Admin to approve it instead.
     assertNotSelfApproval(actor, loan.employeeId);
 
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: loan.employeeId, organizationId },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    if (!employee.isActive) {
+      throw new BadRequestException(
+        'Cannot approve a loan for a deactivated employee.',
+      );
+    }
+
     const interestRate = dto.interestRate ?? 0;
     this.assertAdvanceIsInterestFree(loan.loanType, interestRate);
     const tenureMonths = dto.tenureMonths ?? loan.tenureMonths;
     const emiAmount = calculateEmi(loan.principal, interestRate, tenureMonths);
 
-    await this.scopedPrisma.loan.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap: PENDING re-asserted in the write's own
+    // `where`, not just the pre-check above, so two concurrent approve()
+    // calls on the same request (double-click, or a retried request)
+    // can't both win — the loser gets a clean 409 instead of both
+    // committing and firing two "approved" notifications/emails.
+    const { count } = await this.scopedPrisma.loan.updateMany({
+      where: { id, organizationId, status: LoanStatus.PENDING },
       data: {
         status: LoanStatus.ACTIVE,
         interestRate,
@@ -293,13 +319,13 @@ export class LoansService {
         approvedById: actor.id,
       },
     });
+    if (count === 0) {
+      throw new ConflictException('This loan request was already reviewed.');
+    }
     const updated = await this.scopedPrisma.loan.findFirstOrThrow({
       where: { id, organizationId },
     });
 
-    const employee = await this.scopedPrisma.user.findFirst({
-      where: { id: loan.employeeId, organizationId },
-    });
     if (employee) {
       const title = 'Loan Request Approved';
       const message = `Your ${loan.loanType} request of ${loan.principal} has been approved, repayable as ${emiAmount}/month over ${tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
@@ -365,10 +391,14 @@ export class LoansService {
     }
     assertNotSelfApproval(actor, loan.employeeId);
 
-    await this.scopedPrisma.loan.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap — see approve()'s comment for why.
+    const { count } = await this.scopedPrisma.loan.updateMany({
+      where: { id, organizationId, status: LoanStatus.PENDING },
       data: { status: LoanStatus.REJECTED, approvedById: actor.id },
     });
+    if (count === 0) {
+      throw new ConflictException('This loan request was already reviewed.');
+    }
     const updated = await this.scopedPrisma.loan.findFirstOrThrow({
       where: { id, organizationId },
     });

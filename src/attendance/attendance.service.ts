@@ -1161,10 +1161,25 @@ export class AttendanceService {
       data.source = AttendanceSource.REGULARIZED;
     }
 
-    await this.scopedPrisma.attendance.updateMany({
-      where: { id, organizationId },
+    // Guarded compare-and-swap: `regularization` is a JSON blob (not a
+    // typed status column), so the still-pending status is re-asserted
+    // via a Postgres JSON-path filter in the write's own `where`, not just
+    // the pre-check above — two concurrent reviewRegularization() calls on
+    // the same request (double-click, or a retried request) can't both
+    // win and both apply the attendance override below.
+    const { count } = await this.scopedPrisma.attendance.updateMany({
+      where: {
+        id,
+        organizationId,
+        regularization: { path: ['status'], equals: 'pending' },
+      },
       data,
     });
+    if (count === 0) {
+      throw new ConflictException(
+        'This regularization request was already reviewed.',
+      );
+    }
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: row.employeeId, organizationId },

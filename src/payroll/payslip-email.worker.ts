@@ -65,6 +65,15 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
       where: { id: runId, organizationId },
     });
     if (!run) return; // Run (or its org) no longer exists — nothing to send.
+    // Idempotent per run: BullMQ redelivers a job whose worker crashed (or
+    // whose ack was lost) after the email already went out — without this
+    // check, that redelivery would resend an already-delivered payslip.
+    // The marker is only set AFTER a successful send (below), never before
+    // attempting — setting it up front would make a genuine failure (PDF
+    // build throws, email API errors) look "sent" and silently swallow
+    // BullMQ's normal retry, which is worse than the duplicate this exists
+    // to prevent.
+    if (run.payslipEmailSentAt) return;
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: run.employeeId, organizationId },
@@ -96,6 +105,10 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
       subject: rendered.subject,
       html: rendered.html,
       attachments: [{ filename, content: buffer }],
+    });
+    await this.scopedPrisma.payrollRun.updateMany({
+      where: { id: runId, organizationId },
+      data: { payslipEmailSentAt: new Date() },
     });
   }
 

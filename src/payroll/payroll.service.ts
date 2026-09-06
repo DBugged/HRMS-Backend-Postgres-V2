@@ -1263,15 +1263,122 @@ export class PayrollService {
     const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
       where: { id, organizationId },
     });
+    const reversal = await this.undoAfterLock(run, organizationId, actor.id);
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'PAYROLL_UNLOCKED',
       module: 'PAYROLL',
       organizationId,
       targetId: id,
-      details: { reason: dto.reason ?? '' },
+      details: {
+        reason: dto.reason ?? '',
+        reversedLoanRepayments: reversal.reversedLoanRepaymentIds,
+        revertedLeaveEncashments: reversal.revertedEncashmentIds,
+      },
     });
     return updated;
+  }
+
+  // Symmetric undo of afterLock()'s side effects, scoped to exactly this
+  // run (by payrollRunId) — called whenever a LOCKED/PAID run is unlocked,
+  // so "unlock to fix something, then recalculate" doesn't leave stale
+  // financial state behind: previously neither the loan EMI nor the leave
+  // encashment afterLock() had charged/processed for this run was ever
+  // reversed, so (a) relocking the same run recharged the same loan EMI a
+  // second time (draining an extra installment off the real balance for
+  // one calendar month), and (b) the recalculated preview silently lost
+  // the encashment payout from its total (it had already flipped to
+  // PROCESSED and dropped out of the "pending, APPROVED" query afterLock
+  // itself reads), with no error or indication of why net pay just
+  // dropped.
+  private async undoAfterLock(
+    run: PayrollRun,
+    organizationId: string,
+    actorId: string,
+  ): Promise<{
+    reversedLoanRepaymentIds: string[];
+    revertedEncashmentIds: string[];
+  }> {
+    const revertedEncashments =
+      await this.scopedPrisma.leaveEncashment.findMany({
+        where: {
+          organizationId,
+          payrollRunId: run.id,
+          status: LeaveEncashmentStatus.PROCESSED,
+        },
+      });
+    if (revertedEncashments.length > 0) {
+      await this.scopedPrisma.leaveEncashment.updateMany({
+        where: {
+          organizationId,
+          payrollRunId: run.id,
+          status: LeaveEncashmentStatus.PROCESSED,
+        },
+        data: {
+          status: LeaveEncashmentStatus.APPROVED,
+          payrollRunId: null,
+          processedAt: null,
+        },
+      });
+    }
+
+    const repayments = await this.scopedPrisma.loanRepayment.findMany({
+      where: { organizationId, payrollRunId: run.id },
+    });
+    const reversedLoanRepaymentIds: string[] = [];
+    for (const repayment of repayments) {
+      await this.scopedPrisma.$transaction(async (tx) => {
+        const loan = await tx.loan.findFirst({
+          where: { id: repayment.loanId, organizationId },
+        });
+        if (!loan) return;
+        // Only safe to reverse if no later repayment has been recorded
+        // against this same loan since — otherwise restoring the balance
+        // by simply adding back this repayment's principalComponent could
+        // land on the wrong number relative to whatever happened after it.
+        // This shouldn't occur for the ordinary same-month unlock/relock
+        // flow this exists for; it's a defensive backstop, not the
+        // expected path.
+        const latest = await tx.loanRepayment.findFirst({
+          where: { organizationId, loanId: loan.id },
+          orderBy: { createdAt: 'desc' },
+        });
+        if (latest?.id !== repayment.id) return;
+
+        const restoredBalance =
+          loan.outstandingBalance + repayment.principalComponent;
+        await tx.loan.updateMany({
+          where: { id: loan.id, organizationId },
+          data: {
+            outstandingBalance: restoredBalance,
+            status:
+              loan.status === LoanStatus.CLOSED
+                ? LoanStatus.ACTIVE
+                : loan.status,
+          },
+        });
+        await tx.loanRepayment.deleteMany({
+          where: { id: repayment.id, organizationId },
+        });
+        reversedLoanRepaymentIds.push(repayment.id);
+      });
+    }
+
+    if (reversedLoanRepaymentIds.length > 0) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'LOAN_REPAYMENT_REVERSED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: run.id,
+        details: { repaymentIds: reversedLoanRepaymentIds },
+      });
+    }
+
+    return {
+      reversedLoanRepaymentIds,
+      revertedEncashmentIds: revertedEncashments.map((e) => e.id),
+    };
   }
 
   // Core of both the single-row and bulk transition endpoints — moves
@@ -1290,41 +1397,68 @@ export class PayrollService {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where: { id: { in: runIds }, organizationId },
     });
+    const byId = new Map(runs.map((r) => [r.id, r]));
     const skipped: { id: string; status: string }[] = [];
+    for (const id of runIds) {
+      if (!byId.has(id)) skipped.push({ id, status: 'not_found' });
+    }
 
-    // Every eligible run in this batch moves to the same toStatus via the
-    // same actor/at fields, so this is one updateMany + one findMany for
-    // the whole batch instead of an updateMany+findFirstOrThrow pair per
-    // run — was 2N queries, now 2 regardless of batch size.
-    const eligibleIds: string[] = [];
+    const updated: PayrollRun[] = [];
     for (const run of runs) {
       if (!config.fromStatuses.includes(run.status)) {
         skipped.push({ id: run.id, status: run.status });
         continue;
       }
-      eligibleIds.push(run.id);
-    }
+      // A payroll run that would pay a negative amount (e.g. a full-LOP
+      // month with a loan EMI still due) is blocked from progressing any
+      // further — "paying" a negative salary isn't a meaningful instruction
+      // to a bank/payroll processor. unlock() is unaffected (it's a
+      // separate method, never routed through transitionMany), so a run
+      // stuck here can still be unlocked/recalculated to fix the
+      // underlying deduction/attendance issue.
+      if (run.netPay < 0) {
+        skipped.push({ id: run.id, status: 'negative_net_pay' });
+        continue;
+      }
 
-    let updated: PayrollRun[] = [];
-    if (eligibleIds.length > 0) {
       const data: Prisma.PayrollRunUpdateManyMutationInput = {
         status: config.toStatus,
         [config.actorField]: actor.id,
         [config.atField]: new Date(),
       };
-      await this.scopedPrisma.payrollRun.updateMany({
-        where: { id: { in: eligibleIds }, organizationId },
+      // Guarded compare-and-swap, done per-run rather than batched across
+      // `eligibleIds`: the old batched updateMany's `where` never
+      // re-asserted fromStatuses, so two concurrent transitions on the
+      // same run (double-click, or two admins acting on the same batch)
+      // could both report success — and since verify/approve/lock/pay
+      // each drive real side effects (lock charges loan EMIs and marks
+      // leave encashments processed; pay emails a payslip), a "successful"
+      // second caller meant those side effects could double-fire even
+      // though the DB row only actually flipped once. Only the request
+      // whose updateMany actually matches a row (count > 0) is reported
+      // back as updated — everyone else sees a clean skip instead of a
+      // false success.
+      const { count } = await this.scopedPrisma.payrollRun.updateMany({
+        where: {
+          id: run.id,
+          organizationId,
+          status: { in: config.fromStatuses },
+        },
         data,
       });
-      updated = await this.scopedPrisma.payrollRun.findMany({
-        where: { id: { in: eligibleIds }, organizationId },
+      if (count === 0) {
+        const current = await this.scopedPrisma.payrollRun.findFirst({
+          where: { id: run.id, organizationId },
+        });
+        skipped.push({ id: run.id, status: current?.status ?? 'unknown' });
+        continue;
+      }
+      const fresh = await this.scopedPrisma.payrollRun.findFirstOrThrow({
+        where: { id: run.id, organizationId },
       });
+      updated.push(fresh);
     }
 
-    const foundIds = new Set(runs.map((r) => r.id));
-    for (const id of runIds) {
-      if (!foundIds.has(id)) skipped.push({ id, status: 'not_found' });
-    }
     return { updated, skipped };
   }
 
@@ -1343,6 +1477,11 @@ export class PayrollService {
     if (updated.length === 0) {
       if (skipped[0]?.status === 'not_found') {
         throw new NotFoundException('Payroll run not found.');
+      }
+      if (skipped[0]?.status === 'negative_net_pay') {
+        throw new BadRequestException(
+          'This payroll run has a negative net pay — adjust the underlying deductions or attendance before it can proceed.',
+        );
       }
       throw new BadRequestException(
         `Cannot move payroll from "${skipped[0].status}" to "${config.toStatus}".`,
@@ -1374,12 +1513,25 @@ export class PayrollService {
     // free preview, same reasoning as leave encashment above). Reuses
     // LoansService.recordRepayment so the balance-decrement/auto-close-at-
     // zero logic lives in exactly one place, not duplicated here.
+    //
+    // Idempotent per (loan, payrollRunId): unlocking and re-locking the
+    // *same* run (e.g. to fix an attendance mistake) re-runs afterLock()
+    // from scratch — without this check, every relock recharged the same
+    // EMI again, silently draining the loan balance an extra time per
+    // relock. unlock() reverses this run's repayments (see undoAfterLock
+    // below), so in the normal unlock-fix-relock flow this guard never
+    // actually skips anything real; it only protects against a relock
+    // that, for whatever reason, runs before the reversal has landed.
     for (const { loan, amount } of await this.getDueLoanEmis(
       run.employeeId,
       run.month,
       run.year,
       organizationId,
     )) {
+      const alreadyCharged = await this.scopedPrisma.loanRepayment.findFirst({
+        where: { organizationId, loanId: loan.id, payrollRunId: run.id },
+      });
+      if (alreadyCharged) continue;
       await this.loansService.recordRepayment(
         loan.id,
         { month: run.month, year: run.year, amount, payrollRun: run.id },
@@ -1584,11 +1736,7 @@ export class PayrollService {
   // real attendance row (PRESENT/ABSENT/ON_LEAVE/HOLIDAY/WEEKLY_OFF,
   // doesn't matter which) was actually looked at by someone; only a day
   // with no row at all is a genuine blind spot.
-  async getAttendanceGaps(
-    month: number,
-    year: number,
-    organizationId: string,
-  ) {
+  async getAttendanceGaps(month: number, year: number, organizationId: string) {
     const employees = await this.targetEmployees(undefined, organizationId);
     const totalDaysInMonth = daysInMonth(month, year);
     const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
