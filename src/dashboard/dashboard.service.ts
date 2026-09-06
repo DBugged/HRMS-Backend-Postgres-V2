@@ -502,7 +502,18 @@ export class DashboardService {
         orderBy: [{ year: 'desc' }, { month: 'desc' }],
       }),
       this.scopedPrisma.holiday.findMany({
-        where: { organizationId, isActive: true, date: { gte: today } },
+        where: {
+          organizationId,
+          isActive: true,
+          date: { gte: today },
+          // Same department-scoping HolidaysService.findAll applies — an
+          // employee's own dashboard must not surface another
+          // department's department-specific holidays alongside org-wide
+          // (departmentId: null) ones.
+          OR: actor.departmentId
+            ? [{ departmentId: null }, { departmentId: actor.departmentId }]
+            : [{ departmentId: null }],
+        },
         orderBy: { date: 'asc' },
         take: 5,
       }),
