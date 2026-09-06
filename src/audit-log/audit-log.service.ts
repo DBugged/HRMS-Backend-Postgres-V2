@@ -3,7 +3,10 @@
 // callers throughout the app invoke log() but never read AuditLog directly.
 // Important: log() swallows and logs its own errors — a broken audit write must never fail the action it's
 // documenting. findAll() hides ADMIN/MANAGER activity from HR viewers (HR_HIDDEN_ACTOR_ROLES), mirroring
-// the old system's HR_HIDDEN_ACTOR_ROLES exactly.
+// the old system's HR_HIDDEN_ACTOR_ROLES exactly. Deliberately no delete/clear method or route — a trail
+// its own subjects (even an Admin) can erase isn't an audit trail; there is no compliance-safe reason for
+// this app to ever bulk-delete audit history itself (a platform-level data-retention job, if one is ever
+// needed, belongs outside this service, not behind an ADMIN-reachable API).
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { AuditModule, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -62,23 +65,6 @@ export class AuditLogService {
   // Deletes every AuditLog row for the org, then writes a fresh one
   // recording who cleared it — the one entry that survives its own clear,
   // so "the trail was wiped" is itself traceable rather than a silent gap.
-  async clearAll(
-    actor: Actor,
-    organizationId: string,
-  ): Promise<{ deleted: number }> {
-    const { count } = await this.scopedPrisma.auditLog.deleteMany({
-      where: { organizationId },
-    });
-    await this.log({
-      actorId: actor.id,
-      action: 'AUDIT_LOG_CLEARED',
-      module: AuditModule.ORGANIZATION,
-      organizationId,
-      details: { deletedCount: count },
-    });
-    return { deleted: count };
-  }
-
   async findAll(query: QueryAuditLogDto, actor: Actor, organizationId: string) {
     const where: Prisma.AuditLogWhereInput = { organizationId };
     if (query.module) where.module = query.module;

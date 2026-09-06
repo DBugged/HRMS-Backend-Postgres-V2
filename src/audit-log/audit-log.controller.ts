@@ -1,8 +1,9 @@
-// Purpose: Exposes querying (and clearing) the organization's audit log.
+// Purpose: Exposes querying the organization's audit log.
 // Responsibilities: Validates the query DTO and delegates to AuditLogService.
-// Important: Restricted to ADMIN/HR at the controller level for reads; clearAll is ADMIN-only (a stricter
-// per-route override) — deleting the entire trail is a bigger step than viewing it.
-import { Controller, Delete, Get, Query, UseGuards } from '@nestjs/common';
+// Important: Restricted to ADMIN/HR at the controller level. There is deliberately no delete/clear route —
+// an audit trail that its own subjects (even an Admin) can erase isn't an audit trail; see
+// AuditLogService's header comment for the compliance reasoning.
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { AuditLogService } from './audit-log.service';
@@ -24,11 +25,5 @@ export class AuditLogController {
   @Get()
   findAll(@Query() query: QueryAuditLogDto, @CurrentUser() caller: Caller) {
     return this.auditLogService.findAll(query, caller, caller.organizationId);
-  }
-
-  @Delete()
-  @Roles(Role.ADMIN)
-  clearAll(@CurrentUser() caller: Caller) {
-    return this.auditLogService.clearAll(caller, caller.organizationId);
   }
 }
