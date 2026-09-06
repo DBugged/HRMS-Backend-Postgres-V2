@@ -422,22 +422,30 @@ export class ReportsService {
   }
 
   async departmentReport(organizationId: string): Promise<ReportPayload> {
-    const departments = await this.scopedPrisma.department.findMany({
-      where: { organizationId },
-      include: { departmentHead: { select: { name: true } } },
-    });
-
-    const rows = await Promise.all(
-      departments.map(async (d) => ({
-        code: d.code,
-        name: d.name,
-        head: d.departmentHead?.name ?? '-',
-        employeeCount: await this.scopedPrisma.user.count({
-          where: { organizationId, departmentId: d.id },
-        }),
-        shift: `${d.shiftStartTime} - ${d.shiftEndTime}`,
-      })),
+    const [departments, counts] = await Promise.all([
+      this.scopedPrisma.department.findMany({
+        where: { organizationId },
+        include: { departmentHead: { select: { name: true } } },
+      }),
+      // Single grouped count instead of one `user.count()` per department
+      // (was an N+1 — a query per row of the report).
+      this.scopedPrisma.user.groupBy({
+        by: ['departmentId'],
+        where: { organizationId, departmentId: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    const countByDept = new Map(
+      counts.map((c) => [c.departmentId, c._count._all]),
     );
+
+    const rows = departments.map((d) => ({
+      code: d.code,
+      name: d.name,
+      head: d.departmentHead?.name ?? '-',
+      employeeCount: countByDept.get(d.id) ?? 0,
+      shift: `${d.shiftStartTime} - ${d.shiftEndTime}`,
+    }));
 
     const columns: ReportColumn[] = [
       { header: 'Code', key: 'code', width: 10 },
