@@ -6,11 +6,11 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
+  Max,
+  Min,
 } from 'class-validator';
 import { AmountBasis, CalcType } from '@prisma/client';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class SetComponentValueDto {
   @ApiPropertyOptional({
@@ -44,6 +44,8 @@ export class SetComponentValueDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   percentageValue?: number;
 
   @ApiPropertyOptional()
@@ -70,7 +72,7 @@ export class SetComponentValueDto {
     description: 'Defaults to today (server-local date) if omitted',
   })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'effectiveFrom must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   effectiveFrom?: string;
 
   @ApiPropertyOptional()

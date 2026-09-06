@@ -5,11 +5,9 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
 } from 'class-validator';
 import { HalfDaySession } from '@prisma/client';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class ApplyLeaveDto {
   @ApiProperty()
@@ -17,11 +15,11 @@ export class ApplyLeaveDto {
   leaveType!: string;
 
   @ApiProperty({ example: '2026-06-10' })
-  @Matches(DATE_RE, { message: 'startDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   startDate!: string;
 
   @ApiProperty({ example: '2026-06-12' })
-  @Matches(DATE_RE, { message: 'endDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   endDate!: string;
 
   @ApiPropertyOptional({ default: false })

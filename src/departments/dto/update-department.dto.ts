@@ -7,6 +7,8 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -14,11 +16,13 @@ export class UpdateDepartmentDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(255)
   name?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   description?: string;
 
   @ApiPropertyOptional()
@@ -61,6 +65,9 @@ export class UpdateDepartmentDto {
   })
   @IsOptional()
   @IsArray()
+  @IsInt({ each: true })
+  @Min(0, { each: true })
+  @Max(6, { each: true })
   weeklyOffs?: number[];
 
   @ApiPropertyOptional()

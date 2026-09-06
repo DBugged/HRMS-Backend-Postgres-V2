@@ -1,18 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsNumber,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Matches,
-  Min,
-} from 'class-validator';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateCompOffDto {
   @ApiProperty({ example: '2026-01-25' })
-  @Matches(DATE_RE, { message: 'earnedForDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   earnedForDate!: string;
 
   @ApiPropertyOptional()

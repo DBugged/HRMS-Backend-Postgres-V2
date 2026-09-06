@@ -1,19 +1,22 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsDateString,
   IsEmail,
   IsEnum,
   IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   ValidateIf,
 } from 'class-validator';
 import { Role } from '@prisma/client';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateEmployeeDto {
   @ApiProperty({ example: 'Jane Employee' })
   @IsNotEmpty()
+  @IsString()
+  @MaxLength(255)
   name!: string;
 
   @ApiProperty({ example: 'jane@acme.test' })
@@ -65,7 +68,7 @@ export class CreateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsDateString()
+  @IsValidCalendarDateString()
   joiningDate?: string;
 
   @ApiPropertyOptional({
