@@ -9,9 +9,11 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
   ValidateNested,
 } from 'class-validator';
-import { AllocationType, AccrualFrequency } from '@prisma/client';
+import { AllocationType, AccrualFrequency, Gender } from '@prisma/client';
 import {
   CarryForwardDto,
   EncashmentRulesDto,
@@ -103,16 +105,19 @@ export class CreateLeaveTypeDto {
   })
   @IsOptional()
   @IsArray()
+  @IsEnum(Gender, { each: true })
   applicableGenders?: string[];
 
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsInt()
+  @Min(0)
   minServiceMonths?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
+  @Min(0)
   maxServiceMonths?: number | null;
 
   @ApiPropertyOptional({ default: 100 })
@@ -133,6 +138,8 @@ export class CreateLeaveTypeDto {
   @ApiPropertyOptional({ default: 2 })
   @IsOptional()
   @IsInt()
+  @Min(0)
+  @Max(5)
   approvalLevels?: number;
 
   @ApiPropertyOptional({ default: false })
