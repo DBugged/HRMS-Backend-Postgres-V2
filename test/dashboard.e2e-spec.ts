@@ -330,6 +330,89 @@ describe('Dashboard (e2e)', () => {
     expect(body.payrollSnapshot).toBeNull();
   });
 
+  it('EMPLOYEE dashboard rolls up pending requests, reimbursements, active loan, and tax declaration status', async () => {
+    // beforeAll already applied one PENDING leave AND one PENDING ₹1000
+    // reimbursement for this employee (used by the HR-dashboard
+    // reimbursement-summary test above) — the counts/amounts below are
+    // asserted as deltas against that baseline rather than exact totals.
+    const baseline = await request(app.getHttpServer())
+      .get('/dashboard/employee')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .then(
+        (r) =>
+          r.body as {
+            pendingRequests: { reimbursement: number };
+            reimbursements: { pendingCount: number; pendingAmount: number };
+          },
+      );
+
+    await prisma.reimbursement.create({
+      data: {
+        organizationId,
+        employeeId,
+        category: 'TRAVEL',
+        amount: 500,
+        claimDate: todayStr(),
+        status: 'PENDING',
+      },
+    });
+    await prisma.loan.create({
+      data: {
+        organizationId,
+        employeeId,
+        loanType: 'LOAN',
+        principal: 10000,
+        interestRate: 0,
+        tenureMonths: 5,
+        emiAmount: 2000,
+        startMonth: new Date().getMonth() + 1,
+        startYear: new Date().getFullYear(),
+        outstandingBalance: 8000,
+        status: 'ACTIVE',
+      },
+    });
+    await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ financialYear: '2026-27', section80C: 10000 })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/employee')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const body = res.body as {
+      pendingRequests: {
+        leave: number;
+        reimbursement: number;
+        loan: number;
+        regularization: number;
+      };
+      reimbursements: {
+        recent: { id: string }[];
+        pendingCount: number;
+        pendingAmount: number;
+      };
+      activeLoan: { outstandingBalance: number; emiAmount: number } | null;
+      taxDeclaration: { financialYear: string; status: string | null };
+    };
+    expect(body.pendingRequests.leave).toBeGreaterThanOrEqual(1);
+    expect(body.pendingRequests.reimbursement).toBe(
+      baseline.pendingRequests.reimbursement + 1,
+    );
+    expect(body.pendingRequests.loan).toBe(0); // seeded ACTIVE, not PENDING
+    expect(body.reimbursements.pendingCount).toBe(
+      baseline.reimbursements.pendingCount + 1,
+    );
+    expect(body.reimbursements.pendingAmount).toBe(
+      baseline.reimbursements.pendingAmount + 500,
+    );
+    expect(body.reimbursements.recent.length).toBeGreaterThanOrEqual(1);
+    expect(body.activeLoan?.outstandingBalance).toBe(8000);
+    expect(body.activeLoan?.emiAmount).toBe(2000);
+    expect(body.taxDeclaration.status).toBe('DRAFT');
+  });
+
   it('ADMIN sees the executive dashboard with headcount + the seeded work anniversary + birthday', async () => {
     const res = await request(app.getHttpServer())
       .get('/dashboard/executive')

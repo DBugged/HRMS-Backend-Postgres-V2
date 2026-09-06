@@ -10,6 +10,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   AttendanceStatus,
   LeaveStatus,
+  LoanStatus,
   OffboardingStatus,
   PayrollRunStatus,
   ReimbursementStatus,
@@ -20,6 +21,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
+import { getFinancialYear } from '../payroll-settings/financial-year';
 import {
   DashboardRange,
   MONTH_LABELS,
@@ -453,6 +455,13 @@ export class DashboardService {
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const currentYear = now.getFullYear();
     const today = localDateStr(now);
+    const settings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const currentFinancialYear = getFinancialYear(
+      now.getMonth() + 1,
+      now.getFullYear(),
+      settings.financialYearStartMonth,
+    );
 
     const [
       attendanceThisMonth,
@@ -460,6 +469,14 @@ export class DashboardService {
       upcomingHolidays,
       leaveBalances,
       compOffAvailable,
+      pendingLeaveCount,
+      pendingReimbursementCount,
+      pendingLoanCount,
+      pendingRegularizationCount,
+      recentReimbursements,
+      reimbursementPending,
+      activeLoan,
+      taxDeclaration,
     ] = await Promise.all([
       this.scopedPrisma.attendance.findMany({
         where: {
@@ -494,6 +511,63 @@ export class DashboardService {
         },
       }),
       this.compOffService.available(actor.id, organizationId),
+      this.scopedPrisma.leave.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: LeaveStatus.PENDING,
+        },
+      }),
+      this.scopedPrisma.reimbursement.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: ReimbursementStatus.PENDING,
+        },
+      }),
+      this.scopedPrisma.loan.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: LoanStatus.PENDING,
+        },
+      }),
+      this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          regularization: { path: ['status'], equals: 'pending' },
+        },
+      }),
+      this.scopedPrisma.reimbursement.findMany({
+        where: { organizationId, employeeId: actor.id },
+        orderBy: { claimDate: 'desc' },
+        take: 5,
+      }),
+      this.scopedPrisma.reimbursement.aggregate({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: ReimbursementStatus.PENDING,
+        },
+        _sum: { amount: true },
+        _count: true,
+      }),
+      this.scopedPrisma.loan.findFirst({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: LoanStatus.ACTIVE,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.scopedPrisma.employeeTaxDeclaration.findFirst({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          financialYear: currentFinancialYear,
+        },
+      }),
     ]);
 
     const summary: Record<string, number> = {
@@ -514,6 +588,25 @@ export class DashboardService {
       compOffAvailable,
       payrollSnapshot: latestPayroll,
       upcomingHolidays,
+      // "What am I still waiting on" — rolled up across every module an
+      // employee can submit a request through, so the dashboard answers
+      // that without a trip to five separate pages.
+      pendingRequests: {
+        leave: pendingLeaveCount,
+        reimbursement: pendingReimbursementCount,
+        loan: pendingLoanCount,
+        regularization: pendingRegularizationCount,
+      },
+      reimbursements: {
+        recent: recentReimbursements,
+        pendingCount: reimbursementPending._count,
+        pendingAmount: reimbursementPending._sum.amount ?? 0,
+      },
+      activeLoan,
+      taxDeclaration: {
+        financialYear: currentFinancialYear,
+        status: taxDeclaration?.status ?? null,
+      },
     };
   }
 
