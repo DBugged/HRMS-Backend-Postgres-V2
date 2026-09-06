@@ -392,15 +392,30 @@ export class PayrollService {
       (s, r) => s + r.amount,
       0,
     );
-    const earningsLines: ResolvedLine[] = [...earningsResults];
+    const rawEarningsLines: ResolvedLine[] = [...earningsResults];
     if (encashmentAmount > 0) {
-      earningsLines.push({
+      rawEarningsLines.push({
         code: 'LEAVE_ENCASHMENT',
         name: 'Leave Encashment',
         amount: encashmentAmount,
         taxable: true,
       });
     }
+
+    // Round every earning line exactly once, here, and use these rounded
+    // amounts for everything downstream (the gross total, the context
+    // value later components/tax can reference, and the persisted
+    // `earnings` array) — previously the gross total was rounded from the
+    // *raw* unrounded sum while the displayed `earnings` array rounded
+    // each line independently afterward, so "sum of the lines shown on
+    // the payslip" could differ from "gross shown on the payslip" by the
+    // smallest rounding unit (e.g. three lines of 10.005 each round
+    // individually to 10.01, summing to 30.03, while the raw total 30.015
+    // rounds to 30.02 — a visible ₹0.01 mismatch).
+    const earningsLines: ResolvedLine[] = rawEarningsLines.map((e) => ({
+      ...e,
+      amount: round(e.amount, settings.roundingRule, settings.roundingDecimals),
+    }));
 
     const grossSalary = round(
       earningsLines.reduce((s, e) => s + e.amount, 0),
@@ -507,6 +522,14 @@ export class PayrollService {
       });
     }
 
+    // Round every deduction line exactly once, now that the group is fully
+    // assembled (component-resolved + income tax + loan EMI) — same
+    // rounding-order fix as earnings above, so totalDeductions and the
+    // persisted `deductions` array always agree with each other.
+    for (const d of deductionsResults) {
+      d.amount = round(d.amount, settings.roundingRule, settings.roundingDecimals);
+    }
+
     const includedDeductions = deductionsResults.filter(
       (d) => d.component?.includeInNet !== false,
     );
@@ -525,6 +548,10 @@ export class PayrollService {
       { ...afterDeductions, TOTAL_DEDUCTIONS: totalDeductions },
       attendanceSummary,
     );
+    // Same rounding-order fix as earnings/deductions above.
+    for (const e of employerResults) {
+      e.amount = round(e.amount, settings.roundingRule, settings.roundingDecimals);
+    }
     const totalEmployerContributions = round(
       employerResults.reduce((s, e) => s + e.amount, 0),
       settings.roundingRule,
@@ -544,33 +571,26 @@ export class PayrollService {
 
     return {
       attendanceSummary,
+      // earningsLines/deductionsResults/employerResults are already
+      // rounded (see the comments where each is built) — mapped here
+      // as-is rather than rounded a second time, so these are exactly the
+      // line amounts the gross/deduction/employer totals below were summed
+      // from.
       earnings: earningsLines.map((e) => ({
         code: e.code,
         name: e.name,
-        amount: round(
-          e.amount,
-          settings.roundingRule,
-          settings.roundingDecimals,
-        ),
+        amount: e.amount,
         taxable: e.taxable,
       })),
       deductions: deductionsResults.map((d) => ({
         code: d.code,
         name: d.name,
-        amount: round(
-          d.amount,
-          settings.roundingRule,
-          settings.roundingDecimals,
-        ),
+        amount: d.amount,
       })),
       employerContributions: employerResults.map((e) => ({
         code: e.code,
         name: e.name,
-        amount: round(
-          e.amount,
-          settings.roundingRule,
-          settings.roundingDecimals,
-        ),
+        amount: e.amount,
       })),
       taxDetails,
       grossSalary,
