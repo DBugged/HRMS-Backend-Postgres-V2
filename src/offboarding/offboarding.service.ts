@@ -13,6 +13,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  LeaveStatus,
   NotificationCategory,
   OffboardingStatus,
   Prisma,
@@ -113,6 +114,27 @@ export class OffboardingService {
     if (existing) {
       throw new BadRequestException(
         'An offboarding case is already in progress for this employee.',
+      );
+    }
+
+    // An APPROVED leave already reserved this employee's future dates
+    // (attendance/payroll already account for it) — initiating an exit
+    // with a lastWorkingDay that falls inside it silently orphans the
+    // tail end of that leave with no warning. Blocked rather than
+    // allowed-silently or auto-adjusted: HR should either pick a
+    // lastWorkingDay after the leave ends, or cancel/shorten the leave
+    // first, both explicit decisions this service shouldn't make for them.
+    const overlappingLeave = await this.scopedPrisma.leave.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        status: LeaveStatus.APPROVED,
+        endDate: { gt: dto.lastWorkingDay },
+      },
+    });
+    if (overlappingLeave) {
+      throw new BadRequestException(
+        `This employee has an approved leave (${overlappingLeave.startDate} to ${overlappingLeave.endDate}) extending past the chosen last working day. Adjust the last working day, or cancel/shorten the leave first.`,
       );
     }
 
