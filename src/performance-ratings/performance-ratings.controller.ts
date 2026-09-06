@@ -1,6 +1,7 @@
 // Purpose: Exposes endpoints to list and upsert employee performance ratings.
 // Responsibilities: Validates DTOs and delegates all logic to PerformanceRatingsService.
-// Important: Entire controller is gated to ADMIN/HR/MANAGER; MANAGER scoping (e.g. own department) is enforced in the service.
+// Important: EMPLOYEE can only reach GET (self-only, APPROVED-only — enforced in the service's findAll,
+// never trust the query for that scoping); upsert/approve/reject stay narrower per-route below.
 import {
   Body,
   Controller,
@@ -26,15 +27,17 @@ type Caller = Omit<User, 'password'>;
 
 @ApiTags('performance-ratings')
 @ApiBearerAuth('access-token')
-@Roles(Role.ADMIN, Role.HR, Role.MANAGER)
-@UseGuards(RolesGuard)
 @Controller('performance-ratings')
 export class PerformanceRatingsController {
   constructor(
     private readonly performanceRatingsService: PerformanceRatingsService,
   ) {}
 
+  // EMPLOYEE included here (unlike every other route below) — findAll()
+  // force-scopes an EMPLOYEE caller to their own APPROVED ratings only.
   @Get()
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER, Role.EMPLOYEE)
+  @UseGuards(RolesGuard)
   findAll(
     @Query() query: QueryPerformanceRatingDto,
     @CurrentUser() caller: Caller,
@@ -47,6 +50,8 @@ export class PerformanceRatingsController {
   }
 
   @Post()
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
   upsert(
     @Body() dto: UpsertPerformanceRatingDto,
     @CurrentUser() caller: Caller,

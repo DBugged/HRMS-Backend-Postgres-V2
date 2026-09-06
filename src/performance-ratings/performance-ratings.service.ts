@@ -57,7 +57,17 @@ export class PerformanceRatingsService {
   ) {
     const where: Prisma.PerformanceRatingWhereInput = { organizationId };
 
-    if (actor.role === Role.MANAGER) {
+    if (actor.role === Role.EMPLOYEE) {
+      // Self-only, and only ever a published (APPROVED) rating — a
+      // SUBMITTED-but-not-yet-approved rating is exactly what the no-
+      // override rule keeps hidden from the employee until HR/Admin
+      // approves it; publishRating() is what actually notifies them.
+      // Force-overridden regardless of what the caller passed, same
+      // "never trust the query for self-scoping" convention as every
+      // other self-service list endpoint in this codebase.
+      where.employeeId = actor.id;
+      where.status = PerformanceRatingStatus.APPROVED;
+    } else if (actor.role === Role.MANAGER) {
       const deptEmployees = await this.scopedPrisma.user.findMany({
         where: { organizationId, departmentId: actor.departmentId },
         select: { id: true },
@@ -71,7 +81,9 @@ export class PerformanceRatingsService {
       where.employeeId = query.employeeId;
     }
     if (query.financialYear) where.financialYear = query.financialYear;
-    if (query.status) where.status = query.status;
+    // EMPLOYEE's status is force-set above and must never be widened back
+    // to SUBMITTED/REJECTED by a query param.
+    if (query.status && actor.role !== Role.EMPLOYEE) where.status = query.status;
 
     return paginate(
       () =>

@@ -182,10 +182,26 @@ describe('Performance Ratings (e2e)', () => {
     await app.close();
   });
 
-  it('EMPLOYEE gets 403', async () => {
-    await request(app.getHttpServer())
+  it('EMPLOYEE can list only their own APPROVED ratings — query params cannot widen this', async () => {
+    const res = await request(app.getHttpServer())
       .get('/performance-ratings')
       .set('Authorization', `Bearer ${employeeToken}`)
+      // Both should be silently ignored: no APPROVED rating exists yet
+      // for this employee at this point in the suite, and employeeId/
+      // status must never let an EMPLOYEE see another employee's row or
+      // a SUBMITTED (not yet published) one.
+      .query({ employeeId: deptEmployeeId, status: 'SUBMITTED' })
+      .expect(200);
+    const rows = (res.body as { data: RatingBody[] }).data;
+    expect(rows.every((r) => r.employeeId === outsideEmployeeId)).toBe(true);
+    expect(rows.length).toBe(0);
+  });
+
+  it('EMPLOYEE gets 403 creating/upserting a rating', async () => {
+    await request(app.getHttpServer())
+      .post('/performance-ratings')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ employeeId: outsideEmployeeId, financialYear: '2026-27', rating: 5 })
       .expect(403);
   });
 
@@ -266,6 +282,17 @@ describe('Performance Ratings (e2e)', () => {
     });
     expect(row?.rating).toBe(5);
     expect(row?.payoutPercentage).toBe(150);
+  });
+
+  it('EMPLOYEE now sees their own just-published (APPROVED) rating', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/performance-ratings')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const rows = (res.body as { data: RatingBody[] }).data;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].employeeId).toBe(outsideEmployeeId);
+    expect(rows[0].rating).toBe(5);
   });
 
   it("MANAGER's GET is scoped to their own department", async () => {
