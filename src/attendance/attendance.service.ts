@@ -9,6 +9,7 @@
 // executeImportBatch since Attendance has no unique constraint on employeeId+date).
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -92,6 +93,12 @@ function dayRangeUtc(dateStr: string): { gte: Date; lt: Date } {
   const start = new Date(`${dateStr}T00:00:00.000Z`);
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { gte: start, lt: end };
+}
+
+function addDaysStr(dateStr: string, days: number): string {
+  const date = new Date(`${dateStr}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -948,6 +955,36 @@ export class AttendanceService {
         'Cannot request regularization for a future date.',
       );
     }
+    // 7-day lookback window — an employee can only regularize something
+    // recent, not reach arbitrarily far back into attendance history.
+    const earliestAllowedDate = addDaysStr(todayStr(), -7);
+    if (dto.date < earliestAllowedDate) {
+      throw new BadRequestException(
+        'Regularization can only be requested for a date within the last 7 days.',
+      );
+    }
+
+    const existing = await this.scopedPrisma.attendance.findFirst({
+      where: { organizationId, employeeId: actor.id, date: dto.date },
+    });
+    // A fresh 'none'/never-requested row, or one HR/Manager already
+    // rejected, can be (re)submitted — matches this app's own precedent
+    // elsewhere of allowing resubmission after rejection (see
+    // CompOffService.earn()'s comment on the same trade-off). A 'pending'
+    // or already-'approved' regularization cannot be silently overwritten
+    // by resubmitting — that used to reset an approved/pending decision
+    // straight back to 'pending' with new requested times, with no trace
+    // of the original request ever having been reviewed.
+    const existingStatus = (
+      existing?.regularization as unknown as RegularizationState | undefined
+    )?.status;
+    if (existingStatus === 'pending' || existingStatus === 'approved') {
+      throw new ConflictException(
+        existingStatus === 'pending'
+          ? 'A regularization request for this date is already pending review.'
+          : 'This date has already been regularized and approved.',
+      );
+    }
 
     // Admin is above HR/Manager in the review chain — reviewRegularization
     // is @Roles(HR, MANAGER) only, so an Admin's own request would otherwise
@@ -992,10 +1029,6 @@ export class AttendanceService {
       }
       source = AttendanceSource.REGULARIZED;
     }
-
-    const existing = await this.scopedPrisma.attendance.findFirst({
-      where: { organizationId, employeeId: actor.id, date: dto.date },
-    });
 
     if (existing) {
       await this.scopedPrisma.attendance.updateMany({

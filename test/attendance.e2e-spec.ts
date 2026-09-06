@@ -815,8 +815,39 @@ describe('Attendance (e2e)', () => {
         .expect(400);
     });
 
+    it('rejects a request older than the 7-day lookback window', async () => {
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date: offsetDate(-8), reason: 'Too old' })
+        .expect(400);
+    });
+
+    it('allows a request exactly 7 days back (inclusive boundary)', async () => {
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date: offsetDate(-7), reason: 'Right at the edge' })
+        .expect(201);
+    });
+
+    it('blocks a second regularization request while the first is still pending', async () => {
+      const date = offsetDate(0);
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date, reason: 'First request' })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date, reason: 'Trying again while pending' })
+        .expect(409);
+    });
+
     it('EMPLOYEE gets 403 reviewing a regularization request', async () => {
-      const date = offsetDate(-20);
+      const date = offsetDate(-2);
       const res = await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -837,7 +868,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('a request with no prior Attendance row creates one (ABSENT/SYSTEM) with the regularization pending', async () => {
-      const date = offsetDate(-21);
+      const date = offsetDate(-3);
       const res = await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -860,7 +891,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('HR approves; inTime/outTime are hard-set, status forced PRESENT, source REGULARIZED', async () => {
-      const date = offsetDate(-22);
+      const date = offsetDate(-4);
       const req = await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -889,10 +920,18 @@ describe('Attendance (e2e)', () => {
       expect(body.workDurationMinutes).toBe(9 * 60);
       expect(body.regularization.status).toBe('approved');
       expect(body.regularization.reviewComments).toBe('Looks right');
+
+      // Already approved — resubmitting for the same date must not be able
+      // to silently reset an approved decision back to pending.
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date, reason: 'Trying again after approval' })
+        .expect(409);
     });
 
     it('rejecting leaves inTime/outTime/status/source untouched, only the regularization sub-fields change', async () => {
-      const date = offsetDate(-23);
+      const date = offsetDate(-1);
       const req = await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -922,6 +961,19 @@ describe('Attendance (e2e)', () => {
       expect(body.inTime).toBeNull();
       expect(body.regularization.status).toBe('rejected');
       expect(body.regularization.reviewComments).toBe('No evidence');
+
+      // Rejected — unlike an approved one, this can be corrected and
+      // resubmitted (same precedent as CompOffService.earn()'s comment on
+      // allowing resubmission after rejection).
+      const resubmitRes = await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date, reason: 'Resubmitting with clearer evidence' })
+        .expect(201);
+      expect(
+        (resubmitRes.body as { regularization: { status: string } })
+          .regularization.status,
+      ).toBe('pending');
     });
   });
 

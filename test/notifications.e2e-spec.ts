@@ -11,6 +11,16 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 
+// Attendance regularization only allows requests within the last 7 days
+// (see AttendanceService.requestRegularization) — computed relative to
+// "today" rather than a fixed literal so this stays valid indefinitely.
+function recentDateStr(daysAgo: number): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  return d.toISOString().slice(0, 10);
+}
+const REGULARIZATION_DATE = recentDateStr(2);
+
 interface AuthBody {
   accessToken: string;
 }
@@ -509,7 +519,7 @@ describe('Notifications (e2e)', () => {
     await request(app.getHttpServer())
       .post('/attendance/regularization')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ date: '2026-08-01', reason: 'Forgot to punch' })
+      .send({ date: REGULARIZATION_DATE, reason: 'Forgot to punch' })
       .expect(201);
 
     const mgrView = await request(app.getHttpServer())
@@ -527,7 +537,7 @@ describe('Notifications (e2e)', () => {
 
   it('reviewing the regularization request notifies the employee', async () => {
     const row = await prisma.attendance.findFirstOrThrow({
-      where: { organizationId, employeeId, date: '2026-08-01' },
+      where: { organizationId, employeeId, date: REGULARIZATION_DATE },
     });
     await request(app.getHttpServer())
       .patch(`/attendance/regularization/${row.id}`)
