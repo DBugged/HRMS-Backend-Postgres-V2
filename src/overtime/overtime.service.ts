@@ -13,6 +13,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AttendanceStatus,
   NotificationCategory,
   OvertimeStatus,
   OvertimeType,
@@ -74,6 +75,32 @@ export class OvertimeService {
 
   async log(dto: LogOvertimeDto, actor: Actor, organizationId: string) {
     const type = dto.type ?? OvertimeType.REGULAR;
+
+    // REGULAR/NIGHT overtime means "extra hours on top of a normal working
+    // day" — logging it for a day the employee was ABSENT or ON_LEAVE
+    // makes no sense (there was no base shift to add hours on top of) and
+    // was previously allowed with no check at all. HOLIDAY/WEEKEND types
+    // are deliberately exempt from this check: those exist specifically
+    // for days that are *expected* to show a non-PRESENT attendance status
+    // (HOLIDAY/WEEKLY_OFF), so the same guard would block the exact case
+    // those types exist for. A day with no Attendance row at all (not yet
+    // processed) isn't blocked either — only an explicit ABSENT/ON_LEAVE
+    // status does.
+    if (type === OvertimeType.REGULAR || type === OvertimeType.NIGHT) {
+      const attendance = await this.scopedPrisma.attendance.findFirst({
+        where: { organizationId, employeeId: actor.id, date: dto.date },
+      });
+      if (
+        attendance &&
+        (attendance.status === AttendanceStatus.ABSENT ||
+          attendance.status === AttendanceStatus.ON_LEAVE)
+      ) {
+        throw new BadRequestException(
+          `Cannot log ${type.toLowerCase()} overtime for ${dto.date} — attendance for that day is marked ${attendance.status.toLowerCase().replace('_', ' ')}.`,
+        );
+      }
+    }
+
     const record = await this.scopedPrisma.overtimeRecord.create({
       data: {
         organizationId,
