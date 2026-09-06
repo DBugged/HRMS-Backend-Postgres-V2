@@ -924,6 +924,10 @@ export class LeavesService {
         data: {
           organizationId,
           employeeId: actor.id,
+          // Point-in-time snapshot — see the schema comment on
+          // Leave.departmentId. Set once, here, and never touched again
+          // even if the employee is later transferred.
+          departmentId: actor.departmentId,
           leaveTypeId: leaveType.id,
           startDate: dto.startDate,
           endDate: dto.endDate,

@@ -893,6 +893,15 @@ model Leave {
   leaveTypeId String
   leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
 
+  // Point-in-time snapshot of the employee's department at application
+  // time — same reasoning as Attendance.departmentId's comment: a
+  // mid-month transfer previously re-attributed every past leave to the
+  // new department in any department-filtered report, since department
+  // was always resolved live via the employee's *current* departmentId.
+  // Null on rows created before this column existed (backfilled once,
+  // approximately, at migration time) and never overwritten afterward.
+  departmentId String?
+
   // YYYY-MM-DD, same plain-string convention as Holiday.date.
   startDate      String
   endDate        String
@@ -1426,6 +1435,19 @@ model Attendance {
 
   employeeId String
   employee   User   @relation(fields: [employeeId], references: [id])
+
+  // Point-in-time snapshot of the employee's department when this row was
+  // first created — department-scoped reports previously always resolved
+  // department live via the employee's *current* departmentId, so a
+  // mid-month transfer silently re-attributed every one of that
+  // employee's past attendance rows to the new department in any
+  // department-filtered view. Null on rows created before this column
+  // existed (backfilled once to the employee's department at migration
+  // time, an approximation for old data) and on any row whose employee
+  // has never had a department. Never overwritten once set — see
+  // recalculateAttendanceForDay's read-merge-write, which only sets this
+  // on first creation of a given (employeeId, date) row.
+  departmentId String?
 
   // YYYY-MM-DD, same plain-string convention as Holiday.date/Leave dates.
   date String

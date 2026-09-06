@@ -171,8 +171,26 @@ export class AttendanceService {
       where: { id: organizationId },
     });
 
+    // Looked up early (not just at write time below) so shift-config
+    // resolution can prefer it: an existing row already snapshotted the
+    // department it belonged to when first created (see
+    // Attendance.departmentId's schema comment). Recalculating an old day
+    // — e.g. a regularization review — must keep using *that* department's
+    // shift config, not whatever department the employee has been
+    // transferred to since; otherwise a retroactive recalculation could
+    // silently apply the wrong weekly-offs/shift-hours to a historical day.
+    const existing = await db.attendance.findFirst({
+      where: { organizationId, employeeId, date: dateStr },
+    });
+    const departmentForShiftConfig =
+      existing?.departmentId && existing.departmentId !== employee.departmentId
+        ? await db.department.findFirst({
+            where: { id: existing.departmentId, organizationId },
+          })
+        : employee.department;
+
     const shiftConfig = resolveShiftConfig(
-      employee.department,
+      departmentForShiftConfig,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
     );
 
@@ -299,20 +317,25 @@ export class AttendanceService {
       source: AttendanceSource.FACE_API,
     };
 
-    const existing = await db.attendance.findFirst({
-      where: { organizationId, employeeId, date: dateStr },
-    });
-
     if (existing) {
       // Only the fields this engine owns are touched — workArrangement and
       // regularization (set by other write paths) must survive untouched.
+      // departmentId is also deliberately absent from `fields`/never
+      // touched here — it's a point-in-time snapshot, set once below on
+      // first creation only.
       await db.attendance.updateMany({
         where: { id: existing.id, organizationId },
         data: fields,
       });
     } else {
       await db.attendance.create({
-        data: { organizationId, employeeId, date: dateStr, ...fields },
+        data: {
+          organizationId,
+          employeeId,
+          date: dateStr,
+          departmentId: employee.departmentId,
+          ...fields,
+        },
       });
     }
 
