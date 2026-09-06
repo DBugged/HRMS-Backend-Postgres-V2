@@ -22,6 +22,26 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
 
+  // Unset (default): req.ip is the direct TCP peer address — correct as
+  // long as this app is reached directly, and unchanged from today's
+  // behavior. Once it sits behind a reverse proxy/load balancer, set
+  // TRUST_PROXY to the number of proxy hops in front of it (e.g. "1" for a
+  // single nginx/ALB/Cloudflare hop) so req.ip — which ThrottlerGuard keys
+  // its per-IP rate limit on, and which auth.service.ts logs against login
+  // attempts — reflects the real client rather than the proxy's own
+  // address. Deliberately opt-in and numeric-hop-based rather than
+  // Express's `true` (trust every hop): trusting an unbounded chain lets a
+  // client forge X-Forwarded-For and either collapse every real client
+  // into one throttle bucket or spoof past the per-IP limit entirely.
+  const trustProxyHops = process.env.TRUST_PROXY;
+  if (trustProxyHops) {
+    const hops = Number(trustProxyHops);
+    app
+      .getHttpAdapter()
+      .getInstance()
+      .set('trust proxy', Number.isFinite(hops) ? hops : trustProxyHops);
+  }
+
   app.use(
     helmet({
       // Swagger UI (served from this same app at /api/docs) needs inline

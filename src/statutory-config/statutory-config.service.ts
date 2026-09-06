@@ -148,23 +148,31 @@ export class StatutoryConfigService {
     const current = await this.scopedPrisma.statutoryConfigVersion.findFirst({
       where: { organizationId, module, effectiveTo: null },
     });
-    if (current) {
-      await this.scopedPrisma.statutoryConfigVersion.updateMany({
-        where: { id: current.id, organizationId },
-        data: { effectiveTo: dayBefore(dto.effectiveFrom) },
+    // Closing out the current version and creating the new one must commit
+    // together — previously these were two independent writes, so a crash/
+    // timeout between them left the org with the current version closed but
+    // no new one created, i.e. zero active versions for this module. Since
+    // getEffective() has nothing to resolve in that state, payroll would
+    // silently fail (or fall back incorrectly) for every employee until
+    // someone noticed and manually created a new version.
+    const created = await this.scopedPrisma.$transaction(async (tx) => {
+      if (current) {
+        await tx.statutoryConfigVersion.updateMany({
+          where: { id: current.id, organizationId },
+          data: { effectiveTo: dayBefore(dto.effectiveFrom) },
+        });
+      }
+      return tx.statutoryConfigVersion.create({
+        data: {
+          organizationId,
+          module,
+          effectiveFrom: dto.effectiveFrom,
+          config: dto.config as Prisma.InputJsonValue,
+          isEnabled: dto.isEnabled ?? true,
+          notes: dto.notes ?? '',
+          createdById: actorId,
+        },
       });
-    }
-
-    const created = await this.scopedPrisma.statutoryConfigVersion.create({
-      data: {
-        organizationId,
-        module,
-        effectiveFrom: dto.effectiveFrom,
-        config: dto.config as Prisma.InputJsonValue,
-        isEnabled: dto.isEnabled ?? true,
-        notes: dto.notes ?? '',
-        createdById: actorId,
-      },
     });
     await this.cache.invalidatePrefix(
       this.effectiveCacheKeyPrefix(organizationId, module),
@@ -205,20 +213,22 @@ export class StatutoryConfigService {
       );
     }
 
-    await this.scopedPrisma.statutoryConfigVersion.deleteMany({
-      where: { id, organizationId },
-    });
-
-    // Reopen whatever version this one had closed out, so there's no
-    // coverage gap.
-    await this.scopedPrisma.statutoryConfigVersion.updateMany({
-      where: {
-        organizationId,
-        module,
-        effectiveTo: dayBefore(row.effectiveFrom),
-      },
-      data: { effectiveTo: null },
-    });
+    // Same atomicity concern as create() above — the delete and the reopen
+    // of whatever version it had closed out must commit together, or a
+    // crash between them leaves a coverage gap at that date.
+    await this.scopedPrisma.$transaction([
+      this.scopedPrisma.statutoryConfigVersion.deleteMany({
+        where: { id, organizationId },
+      }),
+      this.scopedPrisma.statutoryConfigVersion.updateMany({
+        where: {
+          organizationId,
+          module,
+          effectiveTo: dayBefore(row.effectiveFrom),
+        },
+        data: { effectiveTo: null },
+      }),
+    ]);
 
     await this.cache.invalidatePrefix(
       this.effectiveCacheKeyPrefix(organizationId, module),
