@@ -158,6 +158,19 @@ export class EmployeesService {
           'An account with this email already exists.',
         );
       }
+      // departmentId / reportingManagerId can reference a row that doesn't
+      // exist (wrong id, or one from another organization — scopedPrisma
+      // doesn't validate FK targets, only WHERE clauses) — surface that as
+      // a clean 400 instead of letting Postgres's FK-violation bubble up as
+      // an unhandled 500 with a raw Prisma stack trace.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'The specified department or reporting manager was not found.',
+        );
+      }
       throw err;
     }
 
@@ -503,22 +516,38 @@ export class EmployeesService {
     // findByIdOrThrow above already confirmed the row exists in this org,
     // but re-scoping the write itself is what actually closes the gap,
     // not just the pre-check.
-    await this.scopedPrisma.user.updateMany({
-      where: { id, organizationId },
-      data: {
-        ...clean,
-        // officialEmail is @unique — writing '' literally (rather than
-        // null) means the second employee to clear it collides with the
-        // first and gets an unhandled unique-constraint 500. '' and
-        // "not yet provisioned" are the same thing to callers (see the
-        // DTO's ValidateIf comment), so normalize to null on write; NULLs
-        // are exempt from the unique index, unlike duplicate ''s.
-        officialEmail: clean.officialEmail === '' ? null : clean.officialEmail,
-        joiningDate: clean.joiningDate
-          ? new Date(clean.joiningDate)
-          : undefined,
-      },
-    });
+    try {
+      await this.scopedPrisma.user.updateMany({
+        where: { id, organizationId },
+        data: {
+          ...clean,
+          // officialEmail is @unique — writing '' literally (rather than
+          // null) means the second employee to clear it collides with the
+          // first and gets an unhandled unique-constraint 500. '' and
+          // "not yet provisioned" are the same thing to callers (see the
+          // DTO's ValidateIf comment), so normalize to null on write; NULLs
+          // are exempt from the unique index, unlike duplicate ''s.
+          officialEmail:
+            clean.officialEmail === '' ? null : clean.officialEmail,
+          joiningDate: clean.joiningDate
+            ? new Date(clean.joiningDate)
+            : undefined,
+        },
+      });
+    } catch (err) {
+      // Same FK-target-doesn't-exist case as create() — a bogus
+      // departmentId/reportingManagerId (or one from another org) should
+      // be a clean 400, not a raw Prisma P2003 500.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2003'
+      ) {
+        throw new BadRequestException(
+          'The specified department or reporting manager was not found.',
+        );
+      }
+      throw err;
+    }
 
     await this.logChangesIfAny(before, clean, actor.id, organizationId);
 
@@ -723,8 +752,9 @@ function asString(value: unknown): string {
 // same pattern as PolicyDocument's withSignedUrl / OrganizationSettings'
 // withSignedUrls.
 function toSafe(user: User) {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
-  const { password, ...safe } = user;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
+  const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
+    user;
   if (safe.profileImage) {
     // Held in AuthContext for the whole session, not re-fetched on every
     // navigation — see SESSION_ASSET_TTL_SECONDS' comment.

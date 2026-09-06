@@ -36,8 +36,9 @@ export class JwtAccessStrategy extends PassportStrategy(
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Session is no longer valid.');
     }
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
-    const { password, ...safe } = user;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
+    const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
+      user;
     return safe; // becomes request.user
   }
 }

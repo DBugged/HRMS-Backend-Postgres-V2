@@ -55,8 +55,9 @@ const HR_ROLES: Role[] = [Role.ADMIN, Role.HR];
 // straight through, which 404s when used as an <img src>, making the
 // profile photo appear to vanish right after Save Profile.
 function toSafe(user: User) {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
-  const { password, ...safe } = user;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
+  const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
+    user;
   if (safe.profileImage) {
     // Held in AuthContext for the whole session — see
     // SESSION_ASSET_TTL_SECONDS' comment.

@@ -303,8 +303,9 @@ export class AuthService {
   async me(userId: string, organizationId: string) {
     const user = await this.usersService.findByIdInOrg(userId, organizationId);
     if (!user) throw new UnauthorizedException();
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash deliberately
-    const { password, ...safe } = user;
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
+    const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
+      user;
     // profileImage is a durable relativeKey (never a signed URL — see
     // file-token.ts), so it's signed fresh on every read. This is what
     // AuthContext's `user` (and so the header avatar) holds for the whole
