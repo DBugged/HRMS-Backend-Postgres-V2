@@ -167,8 +167,13 @@ export class LeaveBalanceService {
     });
     if (!employee) throw new NotFoundException('Employee not found.');
 
+    // Same ordering as LeaveTypesService.findAll() (the HR-facing Leave
+    // Types list) — without this, the order employees see their leave
+    // balance cards in (My Leave, the employee dashboard) was whatever
+    // order Postgres happened to return rows in, not anything deliberate.
     const leaveTypes = await this.scopedPrisma.leaveType.findMany({
       where: { organizationId, isActive: true },
+      orderBy: { displayOrder: 'asc' },
     });
 
     return leaveTypes.filter((lt) => isEligible(lt, employee));
