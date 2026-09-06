@@ -493,7 +493,10 @@ describe('Notifications (e2e)', () => {
     const earn = await request(app.getHttpServer())
       .post('/comp-offs')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ earnedForDate: '2026-08-01', reason: 'Weekend work' })
+      // earn() now validates earnedForDate is a genuine weekly-off/holiday
+      // — '2026-08-01' is a Saturday, but this org's weeklyOffs defaults to
+      // Sunday only; '2026-07-26' is a real Sunday instead.
+      .send({ earnedForDate: '2026-07-26', reason: 'Weekend work' })
       .expect(201);
     const compOffId = (earn.body as { id: string }).id;
 

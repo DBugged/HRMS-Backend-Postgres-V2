@@ -236,11 +236,20 @@ describe('Performance Ratings (e2e)', () => {
   });
 
   it('upsert by (employee, financialYear) updates rather than duplicates', async () => {
+    // Deliberately uses outsideEmployeeId, not deptEmployeeId — the
+    // previous test just left a SUBMITTED (not yet approved) rating on
+    // deptEmployeeId for this same financialYear, and ADMIN upserting
+    // over that would now correctly 403 under the no-override rule (see
+    // the "no-override" describe block below) rather than silently
+    // overwrite it. outsideEmployeeId has no reportingManagerId, so
+    // ADMIN's direct-upsert-and-auto-approve path stays open for it,
+    // same as before — this test is purely about the upsert-by-composite-
+    // key behavior, not the no-override rule.
     await request(app.getHttpServer())
       .post('/performance-ratings')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        employeeId: deptEmployeeId,
+        employeeId: outsideEmployeeId,
         financialYear: '2026-27',
         rating: 5,
         payoutPercentage: 150,
@@ -248,12 +257,12 @@ describe('Performance Ratings (e2e)', () => {
       .expect(201);
 
     const count = await prisma.performanceRating.count({
-      where: { employeeId: deptEmployeeId, financialYear: '2026-27' },
+      where: { employeeId: outsideEmployeeId, financialYear: '2026-27' },
     });
     expect(count).toBe(1);
 
     const row = await prisma.performanceRating.findFirst({
-      where: { employeeId: deptEmployeeId, financialYear: '2026-27' },
+      where: { employeeId: outsideEmployeeId, financialYear: '2026-27' },
     });
     expect(row?.rating).toBe(5);
     expect(row?.payoutPercentage).toBe(150);

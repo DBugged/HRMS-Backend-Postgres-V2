@@ -134,9 +134,21 @@ describe('Comp-Offs (e2e)', () => {
     await app.close();
   });
 
-  const pastDate = (daysAgo = 2) => {
+  // earn() now validates earnedForDate is a genuine weekly-off/holiday (not
+  // an arbitrary past date) — walks back to the most recent Sunday
+  // (Department.weeklyOffs defaults to [0], and this suite's department is
+  // created with no explicit weeklyOffs), then further back by
+  // `weeksAgo - 1` additional weeks, so every call still returns a real,
+  // distinct, always-in-the-past off-day regardless of which day of the
+  // week the suite happens to run on. `weeksAgo` replaces the old
+  // `daysAgo` 1-for-1 at every call site below — different values still
+  // produce different dates, which is all that mattered to begin with
+  // (avoiding duplicate-claim collisions between tests).
+  const pastDate = (weeksAgo = 2) => {
     const d = new Date();
-    d.setUTCDate(d.getUTCDate() - daysAgo);
+    const day = d.getUTCDay();
+    const daysSinceSunday = day || 7;
+    d.setUTCDate(d.getUTCDate() - daysSinceSunday - (weeksAgo - 1) * 7);
     return d.toISOString().slice(0, 10);
   };
 

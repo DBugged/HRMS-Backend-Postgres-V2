@@ -307,7 +307,16 @@ describe('Leaves (e2e)', () => {
   });
 
   it('a COMPOFF-type leave draws from the CompOff table, not LeaveBalance', async () => {
-    const earnedForDate = offsetDate(-2);
+    // earn() now validates earnedForDate is a genuine weekly-off/holiday —
+    // walk back to the most recent Sunday (Department.weeklyOffs defaults
+    // to [0]) instead of an arbitrary "2 days ago", which only
+    // coincidentally landed on an off day before.
+    const earnedForDate = (() => {
+      const d = new Date();
+      const day = d.getUTCDay();
+      d.setUTCDate(d.getUTCDate() - (day || 7));
+      return d.toISOString().slice(0, 10);
+    })();
     const compOff = await request(app.getHttpServer())
       .post('/comp-offs')
       .set('Authorization', `Bearer ${employeeToken}`)
