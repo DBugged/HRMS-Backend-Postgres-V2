@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
+  IsBoolean,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -51,4 +52,13 @@ export class CreateDepartmentDto {
   @Min(0, { each: true })
   @Max(6, { each: true })
   weeklyOffs?: number[];
+
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'True for a shift that starts on one calendar day and ends on the next (e.g. 22:00-06:00).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  crossesMidnight?: boolean;
 }

@@ -65,6 +65,12 @@ function nextWeekday(targetDay: number, fromOffsetDays: number): string {
   }
 }
 
+function nextDateStr(dateStr: string): string {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 describe('Attendance (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -355,6 +361,75 @@ describe('Attendance (e2e)', () => {
       );
       // Recalculation itself did still run — the punch-derived fields moved.
       expect(after.workDurationMinutes).not.toBe(before.workDurationMinutes);
+    });
+  });
+
+  describe('Overnight (crossesMidnight) shift', () => {
+    let nightEmployeeId: string;
+
+    beforeAll(async () => {
+      const dept = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Night Ops',
+          code: 'NIGHT',
+          shiftStartTime: '22:00',
+          shiftEndTime: '06:00',
+          crossesMidnight: true,
+        });
+      const nightDeptId = (dept.body as { id: string }).id;
+
+      const emp = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Night Employee',
+          email: 'att-e2e-night@example.test',
+          departmentId: nightDeptId,
+        });
+      nightEmployeeId = (emp.body as EmployeeCreateBody).employee.id;
+    });
+
+    it('pairs a late check-in with a post-midnight check-out into ONE PRESENT day, not two ABSENT days', async () => {
+      const shiftDate = offsetDateAvoidingHolidays(-4);
+      const nextDate = nextDateStr(shiftDate);
+      const checkIn = `${shiftDate}T22:15:00.000Z`;
+      const checkOut = `${nextDate}T06:30:00.000Z`;
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: nightEmployeeId, punchTime: checkIn })
+        .expect(201);
+      const res = await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: nightEmployeeId, punchTime: checkOut })
+        .expect(201);
+
+      // The check-out punch (physically on nextDate) resolved back to the
+      // shift's own date (shiftDate), not the calendar date it occurred on
+      // — this is exactly the attribution resolveAttendanceDateForPunch
+      // exists for.
+      const body = res.body as PunchIngestBody;
+      expect(body.attendance.status).toBe('PRESENT');
+
+      const shiftDayRow = await prisma.attendance.findFirst({
+        where: { employeeId: nightEmployeeId, date: shiftDate },
+      });
+      expect(shiftDayRow?.status).toBe('PRESENT');
+      // 22:15 -> 06:30 next day = 8h15m.
+      expect(shiftDayRow?.workDurationMinutes).toBe(8 * 60 + 15);
+
+      // Previously (before crossesMidnight support), each punch would have
+      // self-paired on its own calendar day, leaving BOTH shiftDate and
+      // nextDate as separate zero-duration ABSENT rows. nextDate must have
+      // no row at all — the whole shift belongs to shiftDate alone.
+      const nextDayRow = await prisma.attendance.findFirst({
+        where: { employeeId: nightEmployeeId, date: nextDate },
+      });
+      expect(nextDayRow).toBeNull();
     });
   });
 

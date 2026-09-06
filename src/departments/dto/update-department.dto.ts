@@ -70,6 +70,14 @@ export class UpdateDepartmentDto {
   @Max(6, { each: true })
   weeklyOffs?: number[];
 
+  @ApiPropertyOptional({
+    description:
+      'True for a shift that starts on one calendar day and ends on the next (e.g. 22:00-06:00).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  crossesMidnight?: boolean;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()

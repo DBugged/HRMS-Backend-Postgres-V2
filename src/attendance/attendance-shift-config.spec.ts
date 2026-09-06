@@ -14,6 +14,7 @@ describe('resolveShiftConfig', () => {
     minHoursForHalfDay: 3.5,
     weeklyOffs: [0, 6],
     breakMinutes: 30,
+    crossesMidnight: false,
   };
   const orgPrefs = {
     defaultShiftStartTime: '09:00',
@@ -39,6 +40,7 @@ describe('resolveShiftConfig', () => {
       minHoursForHalfDay: 4,
       weeklyOffs: [0],
       breakMinutes: 0,
+      crossesMidnight: false,
     });
   });
 
@@ -52,6 +54,7 @@ describe('resolveShiftConfig', () => {
       minHoursForHalfDay: 4,
       weeklyOffs: [0],
       breakMinutes: 0,
+      crossesMidnight: false,
     });
   });
 
@@ -72,6 +75,22 @@ describe('resolveShiftConfig', () => {
       defaultBreakMinutes: 45,
     });
     expect(result.breakMinutes).toBe(45);
+  });
+
+  it('passes through a department crossesMidnight:true', () => {
+    const result = resolveShiftConfig(
+      { ...department, crossesMidnight: true },
+      orgPrefs,
+    );
+    expect(result.crossesMidnight).toBe(true);
+  });
+
+  it('uses the org default crossesMidnight when no department', () => {
+    const result = resolveShiftConfig(null, {
+      ...orgPrefs,
+      defaultCrossesMidnight: true,
+    });
+    expect(result.crossesMidnight).toBe(true);
   });
 
   it('treats a malformed weeklyOffs JSON value as the hardcoded fallback', () => {

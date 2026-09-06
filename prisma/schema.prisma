@@ -288,6 +288,15 @@ model Department {
   minHoursForHalfDay       Float  @default(4)
   // [0]=Sunday ... 6=Saturday.
   weeklyOffs               Json   @default("[0]")
+  // A shift that starts on one calendar day and ends on the next (e.g.
+  // 22:00-06:00) — false (the default) preserves today's exact behavior.
+  // When true, AttendanceService attributes a punch made after midnight
+  // but before shiftEndTime to the *previous* day's shift instance instead
+  // of starting a new same-day record, and pairs a day's check-in with a
+  // check-out on the following calendar day when computing that day's
+  // status/duration. See attendance-shift-config.ts and
+  // AttendanceService.recalculateAttendanceForDay.
+  crossesMidnight          Boolean @default(false)
   // Defaults to 0 (not WorkSchedule's own 60) so existing departments'
   // attendance calculation is unaffected until a schedule is actually
   // assigned — see attendance-shift-config.ts's resolveShiftConfig and

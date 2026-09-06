@@ -27,6 +27,11 @@ export interface ShiftConfig {
   // against minHoursForPresent/minHoursForHalfDay — an unpaid lunch break
   // doesn't count as working time. 0 (the schema default) is a no-op.
   breakMinutes: number;
+  // A shift that starts on one calendar day and ends on the next (e.g.
+  // 22:00-06:00) — see AttendanceService.recalculateAttendanceForDay and
+  // resolveAttendanceDateForPunch for how this changes punch-to-date
+  // attribution and the check-in/check-out pairing window.
+  crossesMidnight: boolean;
 }
 
 // Subset of Department's shift-config columns (all present with schema
@@ -42,6 +47,7 @@ export interface DepartmentShiftFields {
   minHoursForHalfDay: number;
   weeklyOffs: unknown;
   breakMinutes: number;
+  crossesMidnight: boolean;
 }
 
 export interface OrganizationAttendancePrefs {
@@ -53,6 +59,11 @@ export interface OrganizationAttendancePrefs {
   defaultMinHoursForHalfDay?: number;
   weekendDays?: number[];
   defaultBreakMinutes?: number;
+  // Org-wide default for departments with no explicit override — there's
+  // no per-department UI gap here the way there is for weeklyOffs, this
+  // just mirrors the same "org default, department can override" shape
+  // every other attendance preference already has.
+  defaultCrossesMidnight?: boolean;
 }
 
 const HARDCODED_FALLBACK: ShiftConfig = {
@@ -64,6 +75,7 @@ const HARDCODED_FALLBACK: ShiftConfig = {
   minHoursForHalfDay: 4,
   weeklyOffs: [0],
   breakMinutes: 0,
+  crossesMidnight: false,
 };
 
 function isWeeklyOffEntry(v: unknown): v is WeeklyOffEntry {
@@ -109,6 +121,7 @@ export function resolveShiftConfig(
         HARDCODED_FALLBACK.weeklyOffs,
       ),
       breakMinutes: department.breakMinutes,
+      crossesMidnight: department.crossesMidnight,
     };
   }
 
@@ -138,6 +151,8 @@ export function resolveShiftConfig(
     ),
     breakMinutes:
       orgPrefs?.defaultBreakMinutes ?? HARDCODED_FALLBACK.breakMinutes,
+    crossesMidnight:
+      orgPrefs?.defaultCrossesMidnight ?? HARDCODED_FALLBACK.crossesMidnight,
   };
 }
 

@@ -67,6 +67,9 @@ export class DepartmentsService {
         ...(dto.shiftStartTime && { shiftStartTime: dto.shiftStartTime }),
         ...(dto.shiftEndTime && { shiftEndTime: dto.shiftEndTime }),
         ...(dto.weeklyOffs && { weeklyOffs: dto.weeklyOffs }),
+        ...(dto.crossesMidnight !== undefined && {
+          crossesMidnight: dto.crossesMidnight,
+        }),
       },
       include: DEPARTMENT_INCLUDE,
     });

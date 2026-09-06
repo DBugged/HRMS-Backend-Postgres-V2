@@ -45,6 +45,7 @@ import {
   isWeeklyOff,
   resolveShiftConfig,
   type OrganizationAttendancePrefs,
+  type ShiftConfig,
 } from './attendance-shift-config';
 import { IngestPunchDto } from './dto/ingest-punch.dto';
 import { ManualPunchDto } from './dto/manual-punch.dto';
@@ -93,6 +94,52 @@ function dayRangeUtc(dateStr: string): { gte: Date; lt: Date } {
   const start = new Date(`${dateStr}T00:00:00.000Z`);
   const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
   return { gte: start, lt: end };
+}
+
+// The punch window "day D" owns — a plain calendar day for a normal shift,
+// or [shiftStart(D), shiftEnd(D+1)) for a shift that crosses midnight (e.g.
+// 22:00-06:00), so a check-in late on D and a check-out just after
+// midnight on D+1 both land in the same day's record instead of each
+// being aggregated alone (which previously made both days compute a
+// self-paired, zero-duration, ABSENT punch set for a genuinely worked
+// overnight shift).
+// Noon, not the configured shiftEndTime, is the cutoff both functions
+// below use to decide "is this early-morning punch still last night's
+// overnight shift" — a real check-out routinely runs a bit past the
+// nominal shiftEndTime (overtime, a slow queue at the door, etc.), so
+// pinning the cutoff exactly at shiftEndTime would misattribute a merely-
+// late-but-still-overnight checkout to a shift that hasn't started yet. A
+// same-day EVENING shift's own check-in never happens before noon, so
+// this generous a cutoff can't misattribute a fresh check-in either.
+const OVERNIGHT_CUTOFF_TIME = '12:00';
+
+function shiftPunchWindow(
+  dateStr: string,
+  shiftConfig: Pick<ShiftConfig, 'crossesMidnight' | 'shiftStartTime'>,
+): { gte: Date; lt: Date } {
+  if (!shiftConfig.crossesMidnight) return dayRangeUtc(dateStr);
+  return {
+    gte: buildShiftDateTime(dateStr, shiftConfig.shiftStartTime),
+    lt: buildShiftDateTime(addDaysStr(dateStr, 1), OVERNIGHT_CUTOFF_TIME),
+  };
+}
+
+// Which day's shift a punch made at `punchTime` belongs to. For a normal
+// shift this is just the punch's own calendar date. For a crossesMidnight
+// shift, a punch made before noon belongs to the *previous* calendar
+// day's shift instance (e.g. a 01:30 check-out, or a 06:45 check-out
+// running a bit past a 06:00 shiftEndTime, from a 22:00-06:00 shift that
+// started the evening before).
+function resolveAttendanceDateForPunch(
+  punchTime: Date,
+  shiftConfig: Pick<ShiftConfig, 'crossesMidnight'>,
+): string {
+  const dateStr = utcDateStrOf(punchTime);
+  if (!shiftConfig.crossesMidnight) return dateStr;
+  const cutoff = buildShiftDateTime(dateStr, OVERNIGHT_CUTOFF_TIME);
+  return punchTime.getTime() < cutoff.getTime()
+    ? addDaysStr(dateStr, -1)
+    : dateStr;
 }
 
 function addDaysStr(dateStr: string, days: number): string {
@@ -195,7 +242,11 @@ export class AttendanceService {
     );
 
     const punches = await db.punch.findMany({
-      where: { organizationId, employeeId, punchTime: dayRangeUtc(dateStr) },
+      where: {
+        organizationId,
+        employeeId,
+        punchTime: shiftPunchWindow(dateStr, shiftConfig),
+      },
       orderBy: { punchTime: 'asc' },
     });
 
@@ -247,7 +298,13 @@ export class AttendanceService {
         dateStr,
         shiftConfig.shiftStartTime,
       );
-      const shiftEnd = buildShiftDateTime(dateStr, shiftConfig.shiftEndTime);
+      // shiftEndTime is on the *next* calendar day for a crossesMidnight
+      // shift (e.g. 22:00-06:00 — shiftEnd is 06:00 the morning after
+      // dateStr), matching shiftPunchWindow's own upper bound above.
+      const shiftEnd = buildShiftDateTime(
+        shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
+        shiftConfig.shiftEndTime,
+      );
       isLate =
         inTime.getTime() - shiftStart.getTime() >
         shiftConfig.lateInThresholdMinutes * 60000;
@@ -419,6 +476,26 @@ export class AttendanceService {
     }
   }
 
+  // Shared by every punch-ingestion path (Face API, manual, self) so a
+  // punch is always attributed to the right shift-day up front, before the
+  // Punch row's own recalculation call — see resolveAttendanceDateForPunch.
+  private async resolveEmployeeShiftConfig(
+    employeeId: string,
+    organizationId: string,
+  ): Promise<ShiftConfig> {
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      include: { department: true },
+    });
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+    return resolveShiftConfig(
+      employee?.department ?? null,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
+  }
+
   async ingestFaceApiPunch(
     dto: IngestPunchDto,
     providedKey: string | undefined,
@@ -464,10 +541,14 @@ export class AttendanceService {
       },
     });
 
+    const shiftConfig = await this.resolveEmployeeShiftConfig(
+      user.id,
+      dto.organizationId,
+    );
     const attendance = await this.recalculateAttendanceForDay(
       this.scopedPrisma,
       user.id,
-      utcDateStrOf(punchTime),
+      resolveAttendanceDateForPunch(punchTime, shiftConfig),
       dto.organizationId,
     );
 
@@ -493,10 +574,14 @@ export class AttendanceService {
       },
     });
 
+    const manualShiftConfig = await this.resolveEmployeeShiftConfig(
+      user.id,
+      organizationId,
+    );
     const attendance = await this.recalculateAttendanceForDay(
       this.scopedPrisma,
       user.id,
-      utcDateStrOf(punchTime),
+      resolveAttendanceDateForPunch(punchTime, manualShiftConfig),
       organizationId,
     );
 
@@ -546,10 +631,14 @@ export class AttendanceService {
       },
     });
 
+    const selfShiftConfig = await this.resolveEmployeeShiftConfig(
+      actor.id,
+      organizationId,
+    );
     const attendance = await this.recalculateAttendanceForDay(
       this.scopedPrisma,
       actor.id,
-      utcDateStrOf(punchTime),
+      resolveAttendanceDateForPunch(punchTime, selfShiftConfig),
       organizationId,
     );
 
