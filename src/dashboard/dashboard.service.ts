@@ -9,6 +9,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AttendanceStatus,
+  CompOffStatus,
   LeaveStatus,
   LoanStatus,
   OffboardingStatus,
@@ -473,6 +474,7 @@ export class DashboardService {
       pendingReimbursementCount,
       pendingLoanCount,
       pendingRegularizationCount,
+      pendingCompOffCount,
       recentReimbursements,
       reimbursementPending,
       activeLoan,
@@ -539,6 +541,13 @@ export class DashboardService {
           regularization: { path: ['status'], equals: 'pending' },
         },
       }),
+      this.scopedPrisma.compOff.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: CompOffStatus.PENDING,
+        },
+      }),
       this.scopedPrisma.reimbursement.findMany({
         where: { organizationId, employeeId: actor.id },
         orderBy: { claimDate: 'desc' },
@@ -596,6 +605,7 @@ export class DashboardService {
         reimbursement: pendingReimbursementCount,
         loan: pendingLoanCount,
         regularization: pendingRegularizationCount,
+        compOff: pendingCompOffCount,
       },
       reimbursements: {
         recent: recentReimbursements,

@@ -376,6 +376,15 @@ describe('Dashboard (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({ financialYear: '2026-27', section80C: 10000 })
       .expect(201);
+    await prisma.compOff.create({
+      data: {
+        organizationId,
+        employeeId,
+        earnedForDate: todayStr(),
+        reason: 'Weekend work',
+        status: 'PENDING',
+      },
+    });
 
     const res = await request(app.getHttpServer())
       .get('/dashboard/employee')
@@ -387,6 +396,7 @@ describe('Dashboard (e2e)', () => {
         reimbursement: number;
         loan: number;
         regularization: number;
+        compOff: number;
       };
       reimbursements: {
         recent: { id: string }[];
@@ -401,6 +411,7 @@ describe('Dashboard (e2e)', () => {
       baseline.pendingRequests.reimbursement + 1,
     );
     expect(body.pendingRequests.loan).toBe(0); // seeded ACTIVE, not PENDING
+    expect(body.pendingRequests.compOff).toBeGreaterThanOrEqual(1);
     expect(body.reimbursements.pendingCount).toBe(
       baseline.reimbursements.pendingCount + 1,
     );
