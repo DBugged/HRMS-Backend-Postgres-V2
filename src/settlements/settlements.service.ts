@@ -450,7 +450,8 @@ export class SettlementsService {
         },
         { subject: title, html: message },
       );
-      await this.emailService.send({
+      // Fire-and-forget — the settlement has already been processed.
+      void this.emailService.send({
         to: personalEmail,
         subject: rendered.subject,
         html: rendered.html,

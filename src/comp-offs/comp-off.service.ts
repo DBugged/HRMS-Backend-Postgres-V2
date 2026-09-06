@@ -320,7 +320,10 @@ export class CompOffService {
         },
         { subject: title, html: message },
       );
-      await this.emailService.send({
+      // Fire-and-forget: send() never throws, and the review has already
+      // committed — the HR/manager's approve/reject click shouldn't wait on
+      // an SMTP/API round trip to feel instant.
+      void this.emailService.send({
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,

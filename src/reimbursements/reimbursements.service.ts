@@ -269,7 +269,8 @@ export class ReimbursementsService {
         },
         { subject: title, html: message },
       );
-      await this.emailService.send({
+      // Fire-and-forget — the review decision has already committed.
+      void this.emailService.send({
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,

@@ -144,7 +144,10 @@ export class PerformanceRatingsService {
         },
         { subject: title, html: message },
       );
-      await this.emailService.send({
+      // Fire-and-forget — the approve()/reject()/direct-upsert has already
+      // committed, so the actor's click shouldn't wait on an SMTP/API round
+      // trip to feel instant.
+      void this.emailService.send({
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,

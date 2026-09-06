@@ -280,7 +280,8 @@ export class TaxDeclarationsService {
           { employeeName: employee.name, financialYear: dto.financialYear },
           { subject: title, html: message },
         );
-        await this.emailService.send({
+        // Fire-and-forget — the verification has already committed.
+        void this.emailService.send({
           to: employee.email,
           subject: rendered.subject,
           html: rendered.html,
