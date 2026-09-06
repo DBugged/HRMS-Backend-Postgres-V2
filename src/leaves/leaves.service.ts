@@ -21,6 +21,8 @@ import {
   LeaveStatus,
   LeaveType,
   NotificationCategory,
+  OffboardingStatus,
+  PayrollRunStatus,
   Prisma,
   Role,
   User,
@@ -77,6 +79,31 @@ function todayStr(): string {
 
 function deriveLeaveYear(startDate: string): number {
   return Number(startDate.slice(0, 4));
+}
+
+// Every distinct (month, year) a leave's date range touches, as
+// PayrollRun-style `{ month, year }` filters — used by cancel()'s
+// payroll-lock check so a leave spanning a month boundary is checked
+// against every PayrollRun it could actually affect, not just the one its
+// startDate happens to fall in.
+function monthsInRange(
+  startDate: string,
+  endDate: string,
+): { month: number; year: number }[] {
+  const months: { month: number; year: number }[] = [];
+  let year = Number(startDate.slice(0, 4));
+  let month = Number(startDate.slice(5, 7));
+  const endYear = Number(endDate.slice(0, 4));
+  const endMonth = Number(endDate.slice(5, 7));
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    months.push({ month, year });
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return months;
 }
 
 function isCompOffType(leaveType: LeaveType): boolean {
@@ -593,6 +620,31 @@ export class LeavesService {
       );
     }
 
+    // An APPROVED leave has already been folded into attendance (and
+    // possibly a since-locked/paid payroll run's LOP calculation) —
+    // cancelling it out from under an already-LOCKED/PAID run would
+    // silently invalidate that run's basis with no record of why net pay
+    // no longer matches. The flow instead is: an Admin unlocks the
+    // relevant payroll run first (which also reverses whatever that run
+    // charged — see PayrollService.undoAfterLock), then this cancellation
+    // can proceed, then payroll gets recalculated with the leave gone.
+    if (leave.status === LeaveStatus.APPROVED) {
+      const months = monthsInRange(leave.startDate, leave.endDate);
+      const lockedRun = await this.scopedPrisma.payrollRun.findFirst({
+        where: {
+          organizationId,
+          employeeId: leave.employeeId,
+          status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+          OR: months,
+        },
+      });
+      if (lockedRun) {
+        throw new BadRequestException(
+          `This leave falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before cancelling this leave.`,
+        );
+      }
+    }
+
     await this.scopedPrisma.$transaction(async (tx) => {
       // Guarded update runs FIRST and re-asserts the still-cancellable
       // status — only the caller that actually wins this compare-and-swap
@@ -698,6 +750,28 @@ export class LeavesService {
     // request would silently proceed.
     if (!isEligible(leaveType, actor)) {
       throw new ForbiddenException('You are not eligible for this leave type.');
+    }
+
+    // No new leave once notice period has started — derived entirely from
+    // this employee's own real OffboardingCase.lastWorkingDay (never a
+    // fixed day count), so it can never drift out of sync with whatever
+    // last working day HR actually agreed with the employee. Any leave
+    // that would start on or before that date is blocked; a request that
+    // starts after it isn't reachable anyway since the account is
+    // deactivated once offboarding completes.
+    const openOffboarding = await this.scopedPrisma.offboardingCase.findFirst({
+      where: {
+        organizationId,
+        employeeId: actor.id,
+        status: {
+          in: [OffboardingStatus.INITIATED, OffboardingStatus.IN_PROGRESS],
+        },
+      },
+    });
+    if (openOffboarding && dto.startDate <= openOffboarding.lastWorkingDay) {
+      throw new BadRequestException(
+        `You're serving notice with a last working day of ${openOffboarding.lastWorkingDay} — new leave can't be applied for during the notice period.`,
+      );
     }
 
     const [holidays, priorLeaveOfType, otherLeaves, employeeDept, org] =

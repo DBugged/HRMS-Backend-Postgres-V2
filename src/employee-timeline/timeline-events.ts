@@ -168,6 +168,14 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   RELIEVED: { category: 'EXIT', title: 'Relieved' },
   TERMINATED: { category: 'EXIT', title: 'Terminated' },
   ABSCONDED: { category: 'EXIT', title: 'Absconded' },
+  // A direct manual deactivation (PATCH .../deactivate, or isActive:false
+  // via the generic PATCH /employees/:id) — distinct from RELIEVED, which
+  // is what offboarding's complete() logs for its own deactivation path.
+  EMPLOYEE_DEACTIVATED: { category: 'EXIT', title: 'Employee Deactivated' },
+  EMPLOYEE_REACTIVATED: {
+    category: 'EMPLOYMENT',
+    title: 'Employee Reactivated',
+  },
 };
 
 export const TIMELINE_CATEGORIES: { value: TimelineCategory; label: string }[] =

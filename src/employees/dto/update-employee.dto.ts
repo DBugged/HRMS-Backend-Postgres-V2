@@ -1,15 +1,16 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
-  IsDateString,
   IsEmail,
   IsEnum,
   IsOptional,
   IsString,
   IsUUID,
+  MaxLength,
   ValidateIf,
 } from 'class-validator';
 import { EmploymentStatus, Gender, Role } from '@prisma/client';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 // Note: employeeId is deliberately not editable through this DTO at all
 // (not even by HR/Admin) — unlike the old system, which technically
@@ -20,6 +21,7 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(255)
   name?: string;
 
   // Locked for self-update — see employee-field-lock.ts.
@@ -79,7 +81,7 @@ export class UpdateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsDateString()
+  @IsValidCalendarDateString()
   joiningDate?: string;
 
   @ApiPropertyOptional({ enum: Role })
@@ -120,4 +122,18 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsString()
   profileImage?: string;
+
+  // Only consulted when this update flips isActive true -> false and the
+  // employee being deactivated is currently the reportingManagerId of at
+  // least one other active employee — required in that case (the service
+  // rejects the deactivation otherwise) so those direct reports are never
+  // left pointing at a manager who can no longer log in. Not a persisted
+  // column on User itself; see EmployeesService.update().
+  @ApiPropertyOptional({
+    description:
+      "Required when deactivating (isActive:false) an employee who is still another employee's reportingManagerId — the id of the replacement manager to reassign those direct reports to.",
+  })
+  @IsOptional()
+  @IsUUID()
+  reassignManagerId?: string;
 }

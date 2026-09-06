@@ -9,6 +9,7 @@
 // pre-check. officialEmail is normalized to null (not '') on clear since it's a unique column and empty
 // strings would collide across employees.
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Inject,
@@ -34,6 +35,7 @@ import { mapWithConcurrency } from '../common/concurrency';
 import { skip } from '../common/pagination';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { stripLockedFields } from './employee-field-lock';
 import { mergePersonalData } from './personal-data';
@@ -42,6 +44,7 @@ import {
   canManagerAccessEmployee,
   resolveDepartmentFilter,
 } from './employee-query-scope';
+import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // Old system's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
@@ -437,7 +440,11 @@ export class EmployeesService {
       );
     }
 
-    const clean = stripLockedFields(dto, actor.role);
+    // reassignManagerId is a transient instruction (see its DTO comment),
+    // never a persisted column — pulled off before anything below spreads
+    // the rest of the payload into the Prisma write.
+    const { reassignManagerId, ...updateFields } = dto;
+    const clean = stripLockedFields(updateFields, actor.role);
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
     // decides whether HR/Admin *may* touch `role` at all (vs. a plain
@@ -451,6 +458,43 @@ export class EmployeesService {
       !ROLES_HR_CAN_ASSIGN.includes(clean.role)
     ) {
       throw new ForbiddenException('Only an Admin can assign an Admin role.');
+    }
+
+    // A deactivated employee's record is frozen except for reactivating
+    // them — no promotion, department move, designation change, etc.
+    // should slip through while the account is inactive; reactivate first,
+    // then make the other change as its own separate call.
+    if (!before.isActive) {
+      const touchedFields = Object.keys(clean).filter(
+        (key) => clean[key as keyof UpdateEmployeeDto] !== undefined,
+      );
+      const isReactivationOnly =
+        touchedFields.length === 1 &&
+        touchedFields[0] === 'isActive' &&
+        clean.isActive === true;
+      if (!isReactivationOnly) {
+        throw new BadRequestException(
+          'This employee is deactivated — reactivate them first before making any other changes.',
+        );
+      }
+    }
+
+    // Deactivating (not reactivating) someone who's still another active
+    // employee's reportingManagerId requires reassigning those direct
+    // reports first — otherwise they're left pointing at a manager who can
+    // no longer even log in.
+    if (clean.isActive === false && before.isActive) {
+      await reassignDirectReportsBeforeDeactivation(
+        {
+          scopedPrisma: this.scopedPrisma,
+          timelineService: this.timelineService,
+          auditLogService: this.auditLogService,
+        },
+        id,
+        reassignManagerId,
+        organizationId,
+        actor.id,
+      );
     }
 
     // updateMany (not update) — its `where` accepts arbitrary filters, so
@@ -478,17 +522,44 @@ export class EmployeesService {
 
     await this.logChangesIfAny(before, clean, actor.id, organizationId);
 
+    // isActive isn't covered by logChangesIfAny (that only watches role/
+    // designation/department/employmentStatus) — without this, toggling
+    // it via this generic endpoint (as opposed to the dedicated
+    // .../deactivate route) left an audit-log line but no Employee
+    // Timeline entry at all, for either direction of the transition.
+    if (clean.isActive !== undefined && clean.isActive !== before.isActive) {
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: id,
+        eventKey: clean.isActive
+          ? 'EMPLOYEE_REACTIVATED'
+          : 'EMPLOYEE_DEACTIVATED',
+        performedById: actor.id,
+      });
+    }
+
+    const changedFieldKeys = Object.keys(clean).filter(
+      (key) => clean[key as keyof UpdateEmployeeDto] !== undefined,
+    );
+    // Records before/after for every field that actually changed, not
+    // just which field names were touched — a sensitive-change audit line
+    // (role, isActive, department, designation, employment status) is far
+    // less useful without knowing what it changed from and to.
+    const changes: Record<string, { before: unknown; after: unknown }> = {};
+    for (const key of changedFieldKeys) {
+      const beforeVal = (before as Record<string, unknown>)[key];
+      const afterVal = clean[key as keyof UpdateEmployeeDto];
+      if (beforeVal !== afterVal)
+        changes[key] = { before: beforeVal, after: afterVal };
+    }
+
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'EMPLOYEE_UPDATED',
       module: 'EMPLOYEE',
       organizationId,
       targetId: id,
-      details: {
-        fields: Object.keys(clean).filter(
-          (key) => clean[key as keyof UpdateEmployeeDto] !== undefined,
-        ),
-      },
+      details: { fields: changedFieldKeys, changes },
     });
 
     return toSafe(await this.findByIdOrThrow(id, organizationId));
@@ -585,10 +656,22 @@ export class EmployeesService {
 
   async deactivate(
     id: string,
+    dto: DeactivateEmployeeDto,
     actor: Actor & { id: string },
     organizationId: string,
   ) {
     await this.findByIdOrThrow(id, organizationId);
+    await reassignDirectReportsBeforeDeactivation(
+      {
+        scopedPrisma: this.scopedPrisma,
+        timelineService: this.timelineService,
+        auditLogService: this.auditLogService,
+      },
+      id,
+      dto.reassignManagerId,
+      organizationId,
+      actor.id,
+    );
     await this.scopedPrisma.user.updateMany({
       where: { id, organizationId },
       data: { isActive: false },
@@ -600,6 +683,12 @@ export class EmployeesService {
       organizationId,
       targetId: id,
       details: { reason: 'manual_deactivation' },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: id,
+      eventKey: 'EMPLOYEE_DEACTIVATED',
+      performedById: actor.id,
     });
     return toSafe(await this.findByIdOrThrow(id, organizationId));
   }

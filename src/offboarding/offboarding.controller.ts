@@ -18,6 +18,7 @@ import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
+import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
 import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -95,8 +96,17 @@ export class OffboardingController {
   }
 
   @Patch(':id/complete')
-  complete(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.offboardingService.complete(id, caller, caller.organizationId);
+  complete(
+    @Param('id') id: string,
+    @Body() dto: CompleteOffboardingDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.offboardingService.complete(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Patch(':id/cancel')

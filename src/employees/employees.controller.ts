@@ -19,6 +19,7 @@ import { EmployeeProfileService } from './employee-profile.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { BulkCreateEmployeesDto } from './dto/bulk-create-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
@@ -112,8 +113,17 @@ export class EmployeesController {
   @Patch(':id/deactivate')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
-  deactivate(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.employeesService.deactivate(id, caller, caller.organizationId);
+  deactivate(
+    @Param('id') id: string,
+    @Body() dto: DeactivateEmployeeDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeesService.deactivate(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Post(':id/resend-credentials')

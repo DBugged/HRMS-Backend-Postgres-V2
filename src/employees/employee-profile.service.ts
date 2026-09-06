@@ -343,10 +343,21 @@ export class EmployeeProfileService {
     organizationId: string,
   ) {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
+    if (!employee.isActive) {
+      throw new BadRequestException(
+        'This employee is deactivated — reactivate them first before changing their probation status.',
+      );
+    }
     if (dto.decision === 'extended' && !dto.newProbationEndDate) {
       throw new BadRequestException(
         'newProbationEndDate is required when extending probation.',
       );
+    }
+    if (
+      dto.decision === 'confirmed' &&
+      employee.employmentStatus === 'CONFIRMED'
+    ) {
+      throw new BadRequestException('This employee is already confirmed.');
     }
 
     const newStatus: EmploymentStatus =

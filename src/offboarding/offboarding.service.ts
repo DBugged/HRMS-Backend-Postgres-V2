@@ -25,6 +25,8 @@ import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
+import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
+import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
@@ -261,7 +263,12 @@ export class OffboardingService {
   // and complete() would happily deactivate the employee while the final
   // payout was never processed — an account gone with an orphaned DRAFT
   // settlement and no payslip behind it.
-  async complete(id: string, actor: Actor, organizationId: string) {
+  async complete(
+    id: string,
+    dto: CompleteOffboardingDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
     // findOne() (via assertOpenCase) already includes the linked
     // `settlement` relation, so its current status is available here
     // without a second query.
@@ -281,6 +288,23 @@ export class OffboardingService {
         `Cannot complete offboarding — outstanding: ${missing.join(', ')}`,
       );
     }
+
+    // Same dangling-reportingManagerId protection as
+    // EmployeesService.deactivate() — this path deactivates the account
+    // too, and completing an exit shouldn't be able to leave someone
+    // else's direct reports pointing at a manager who's about to be
+    // relieved.
+    await reassignDirectReportsBeforeDeactivation(
+      {
+        scopedPrisma: this.scopedPrisma,
+        timelineService: this.timelineService,
+        auditLogService: this.auditLogService,
+      },
+      record.employeeId,
+      dto.reassignManagerId,
+      organizationId,
+      actor.id,
+    );
 
     await this.scopedPrisma.$transaction(async (tx) => {
       await tx.offboardingCase.updateMany({
