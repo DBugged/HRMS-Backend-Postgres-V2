@@ -40,6 +40,9 @@ describe('Performance Ratings (e2e)', () => {
   let hrEmployeeId: string;
   let deptEmployeeId: string;
   let outsideEmployeeId: string;
+  let managerId: string;
+  let managedEmployeeId: string;
+  let hrManagedEmployeeId: string;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -84,6 +87,7 @@ describe('Performance Ratings (e2e)', () => {
         role: 'MANAGER',
         departmentId,
       });
+    managerId = (managerCreate.body as EmployeeCreateBody).employee.id;
     const managerLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -139,6 +143,36 @@ describe('Performance Ratings (e2e)', () => {
         password: (hrCreate.body as EmployeeCreateBody).generatedPassword,
       });
     hrToken = (hrLogin.body as AuthBody).accessToken;
+
+    // An employee with a genuine MANAGER-role reportingManager — the
+    // no-override rule (ADMIN/HR can no longer originate a rating
+    // directly once a real manager is assigned) only applies to this one.
+    const managedCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Managed Employee',
+        email: 'perf-e2e-managed@example.test',
+        departmentId,
+        reportingManagerId: managerId,
+      });
+    managedEmployeeId = (managedCreate.body as EmployeeCreateBody).employee.id;
+
+    // An employee whose reportingManagerId points to an HR-role user, not
+    // a MANAGER — this org-chart shape (common for a small team with no
+    // dedicated MANAGER role in use) must NOT trigger the no-override
+    // block; ADMIN/HR direct-rate-and-auto-approve stays available since
+    // there's no genuine manager to defer to.
+    const hrManagedCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'HR Managed Employee',
+        email: 'perf-e2e-hrmanaged@example.test',
+        reportingManagerId: hrEmployeeId,
+      });
+    hrManagedEmployeeId = (hrManagedCreate.body as EmployeeCreateBody).employee
+      .id;
   });
 
   afterAll(async () => {
@@ -411,6 +445,68 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${hrToken}`)
         .send({})
         .expect(403);
+    });
+  });
+
+  describe('no-override: ADMIN/HR cannot originate a rating once a genuine manager is assigned', () => {
+    it('ADMIN gets 403 rating an employee whose reportingManager is a MANAGER', async () => {
+      await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          employeeId: managedEmployeeId,
+          financialYear: '2029-30',
+          rating: 4,
+        })
+        .expect(403);
+    });
+
+    it('HR gets 403 rating the same employee', async () => {
+      await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          employeeId: managedEmployeeId,
+          financialYear: '2029-30',
+          rating: 4,
+        })
+        .expect(403);
+    });
+
+    it("the assigned MANAGER can still submit, and HR can still approve it (no override doesn't mean no HR involvement)", async () => {
+      const submitRes = await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({
+          employeeId: managedEmployeeId,
+          financialYear: '2029-30',
+          rating: 4,
+        })
+        .expect(201);
+      expect((submitRes.body as RatingBody).status).toBe('SUBMITTED');
+
+      const rating = await prisma.performanceRating.findFirstOrThrow({
+        where: { employeeId: managedEmployeeId, financialYear: '2029-30' },
+      });
+      const approveRes = await request(app.getHttpServer())
+        .patch(`/performance-ratings/${rating.id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({})
+        .expect(200);
+      expect((approveRes.body as RatingBody).status).toBe('APPROVED');
+    });
+
+    it('an employee whose reportingManager is HR (not MANAGER) has no genuine manager, so ADMIN/HR direct-rate still works', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          employeeId: hrManagedEmployeeId,
+          financialYear: '2029-30',
+          rating: 5,
+        })
+        .expect(201);
+      expect((res.body as RatingBody).status).toBe('APPROVED');
     });
   });
 });

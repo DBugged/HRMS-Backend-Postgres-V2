@@ -1,9 +1,12 @@
 // Purpose: Manages per-employee, per-financial-year PerformanceRating rows used to scale variable pay.
-// Responsibilities: Owns the upsert-by-(employee, financialYear) rule and MANAGER-can-only-rate-own-department
-// authorization; payoutPercentage set here is later read by PayrollService.calculatePayroll to scale
-// non-monthly earning components. A MANAGER's write only ever reaches SUBMITTED — it stays invisible to the
-// employee (no notification/email/timeline) until an ADMIN/HR approve()s it via publishRating(); ADMIN/HR
-// writing directly through upsert() publishes instantly, same as Loans' HR-direct-create path.
+// Responsibilities: Owns the upsert-by-(employee, financialYear) rule, MANAGER-can-only-rate-own-department
+// authorization, and the no-override rule that keeps ADMIN/HR from originating a rating for a managed
+// employee; payoutPercentage set here is later read by PayrollService.calculatePayroll to scale non-monthly
+// earning components. A MANAGER's write only ever reaches SUBMITTED — it stays invisible to the employee
+// (no notification/email/timeline) until an ADMIN/HR approve()s it via publishRating(). ADMIN/HR can only
+// write directly through upsert() (publishing instantly, status APPROVED) for an employee who has no
+// reportingManagerId at all — once a manager is assigned, ADMIN/HR's role narrows to approve()/reject()
+// only, no override.
 import {
   BadRequestException,
   ForbiddenException,
@@ -154,15 +157,33 @@ export class PerformanceRatingsService {
     actor: Actor,
     organizationId: string,
   ) {
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId },
+      include: { reportingManager: { select: { role: true } } },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
     if (actor.role === Role.MANAGER) {
-      const employee = await this.scopedPrisma.user.findFirst({
-        where: { id: dto.employeeId, organizationId },
-      });
-      if (!employee || employee.departmentId !== actor.departmentId) {
+      if (employee.departmentId !== actor.departmentId) {
         throw new ForbiddenException(
           'You may only rate employees in your own department.',
         );
       }
+    } else if (employee.reportingManager?.role === Role.MANAGER) {
+      // No override: once an employee has a genuine MANAGER-role reviewer
+      // assigned, ADMIN/HR can no longer originate a rating for them
+      // directly — only that manager may submit one (via this same
+      // endpoint), and ADMIN/HR's role narrows to approve()/reject() on
+      // what the manager submits. Deliberately keyed off the reporting
+      // manager's actual role, not merely reportingManagerId being set —
+      // an employee whose "manager" is an HR/Admin user (a common org-
+      // chart shape for a small team with no dedicated MANAGER role in
+      // use at all) has no one else to submit a rating, so ADMIN/HR's
+      // direct-create-and-auto-approve path stays open for them, same as
+      // an employee with no reportingManagerId at all.
+      throw new ForbiddenException(
+        'This employee has a reporting manager assigned — only their manager can submit a rating. HR/Admin can only approve or reject it.',
+      );
     }
 
     const existing = await this.scopedPrisma.performanceRating.findFirst({
@@ -175,7 +196,9 @@ export class PerformanceRatingsService {
 
     // A MANAGER's write only ever reaches SUBMITTED — it stays invisible to
     // the employee until ADMIN/HR approve()s it. ADMIN/HR writing directly
-    // publishes instantly (status APPROVED), same as before this feature.
+    // (only reachable for an employee with no manager assigned, per the
+    // check above) publishes instantly (status APPROVED), same as before
+    // this feature.
     const status =
       actor.role === Role.MANAGER
         ? PerformanceRatingStatus.SUBMITTED
