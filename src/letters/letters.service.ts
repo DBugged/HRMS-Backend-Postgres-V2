@@ -239,15 +239,28 @@ export class LettersService {
       companyName,
       companyAddress: organization.registeredAddress || '',
       issueDate: formatDateDisplay(new Date()),
+      // Available on every dataProfile (not just BASIC) since it's a
+      // plain employee-record field, same as designation/department above
+      // — backs Confirmation/Probation Extension Letter.
+      probationEndDate: employee.probationEndDate
+        ? formatDateDisplay(employee.probationEndDate)
+        : '—',
     };
 
     switch (template.dataProfile) {
       case LetterDataProfile.EXIT: {
-        const lastWorkingDay = await this.latestLastWorkingDay(
+        const offboardingCase = await this.latestOffboardingCase(
           employeeId,
           organizationId,
         );
-        variables.lastWorkingDay = formatDateDisplay(lastWorkingDay);
+        variables.lastWorkingDay = formatDateDisplay(
+          offboardingCase.lastWorkingDay,
+        );
+        // Backs Resignation Acceptance/Termination Letter — reason is
+        // optional on OffboardingCase (HR isn't required to fill it in),
+        // so this needs a fallback rather than rendering "undefined".
+        variables.reason = offboardingCase.reason || 'personal reasons';
+        variables.noticeDate = formatDateDisplay(offboardingCase.createdAt);
         break;
       }
       case LetterDataProfile.PAYROLL: {
@@ -457,10 +470,7 @@ export class LettersService {
     return { message: `${template.name} emailed to ${employee.email}.` };
   }
 
-  private async latestLastWorkingDay(
-    employeeId: string,
-    organizationId: string,
-  ): Promise<string> {
+  private async latestOffboardingCase(employeeId: string, organizationId: string) {
     const offboardingCase = await this.scopedPrisma.offboardingCase.findFirst({
       where: { organizationId, employeeId },
       orderBy: { createdAt: 'desc' },
@@ -470,6 +480,6 @@ export class LettersService {
         'No offboarding case found for this employee yet — initiate offboarding first.',
       );
     }
-    return offboardingCase.lastWorkingDay;
+    return offboardingCase;
   }
 }

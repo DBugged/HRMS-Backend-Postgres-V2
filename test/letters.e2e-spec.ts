@@ -160,4 +160,60 @@ describe('Letters (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
   });
+
+  it('BASIC-profile new letter types (Confirmation, Probation Extension, Promotion, Transfer, Warning) generate with no prerequisite', async () => {
+    for (const key of [
+      'confirmationLetter',
+      'probationExtensionLetter',
+      'promotionLetter',
+      'transferLetter',
+      'warningLetter',
+    ]) {
+      await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters/${key}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    }
+  });
+
+  it('NDA and Non-Compete Agreement generate with no prerequisite', async () => {
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/nda`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/nonCompeteAgreement`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
+  it('EXIT-profile new letter types (Resignation Acceptance, Termination) need an offboarding case, same as Relieving Letter', async () => {
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/resignationAcceptance`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/terminationLetter`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .post('/offboarding')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        lastWorkingDay: '2026-12-31',
+        reason: 'Better opportunity',
+      })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/resignationAcceptance`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/terminationLetter`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
 });
