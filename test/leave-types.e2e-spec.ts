@@ -281,6 +281,57 @@ describe('Leave Types (e2e)', () => {
     expect(rowAfterSecondRun?.credited).toBe(1.5);
   });
 
+  it('run-accrual-all credits every eligible leave type in one call', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Test Monthly Leave All',
+        code: 'CLTA',
+        allocationType: 'EARNED_MONTHLY',
+        accrualAmountPerCycle: 2,
+      })
+      .expect(201);
+    const monthlyId = (created.body as LeaveTypeBody).id;
+
+    const res = await request(app.getHttpServer())
+      .post('/leave-types/run-accrual-all')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+    expect(
+      (res.body as { leaveTypesProcessed: number }).leaveTypesProcessed,
+    ).toBeGreaterThan(0);
+    expect((res.body as { failed: string[] }).failed).toEqual([]);
+
+    const year = new Date().getFullYear();
+    const row = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId: monthlyId, year },
+    });
+    expect(row).not.toBeNull();
+    expect(row?.credited).toBe(2);
+
+    // Same idempotency guarantee as the per-type endpoint — a second run in
+    // the same period re-credits nothing.
+    const secondRes = await request(app.getHttpServer())
+      .post('/leave-types/run-accrual-all')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+    expect(
+      (secondRes.body as { totalAlreadyAccrued: number }).totalAlreadyAccrued,
+    ).toBeGreaterThan(0);
+    const rowAfterSecondRun = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId: monthlyId, year },
+    });
+    expect(rowAfterSecondRun?.credited).toBe(2);
+  });
+
+  it('run-accrual-all is HR/ADMIN only', async () => {
+    await request(app.getHttpServer())
+      .post('/leave-types/run-accrual-all')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(403);
+  });
+
   it('run-carry-forward rolls closing into next year opening and stamps expiry', async () => {
     const created = await request(app.getHttpServer())
       .post('/leave-types')

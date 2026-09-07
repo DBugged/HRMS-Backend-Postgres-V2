@@ -294,6 +294,59 @@ export class LeaveTypesService {
     return { message, matched, credited, alreadyAccrued };
   }
 
+  // Same per-leave-type logic/idempotency/audit-log as runAccrual above,
+  // just looped across every eligible type in one HR click instead of one
+  // Accrue button per row — mirrors runCarryForward's "one action, org-wide"
+  // shape. One leave type failing (e.g. a bad accrual config) is logged and
+  // skipped rather than aborting the rest, same resilience as the daily
+  // cron sweep.
+  async runAccrualAll(actorId: string, organizationId: string) {
+    const leaveTypes = await this.scopedPrisma.leaveType.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        allocationType: {
+          in: [
+            AllocationType.FIXED_ANNUAL,
+            AllocationType.PRORATED_ON_JOINING,
+            AllocationType.EARNED_MONTHLY,
+          ],
+        },
+      },
+      select: { id: true, code: true },
+    });
+
+    let totalCredited = 0;
+    let totalAlreadyAccrued = 0;
+    const failed: string[] = [];
+    for (const lt of leaveTypes) {
+      try {
+        const result = await this.runAccrual(lt.id, actorId, organizationId);
+        totalCredited += result.credited;
+        totalAlreadyAccrued += result.alreadyAccrued;
+      } catch (err) {
+        this.logger.error(
+          `Accrue-all failed for leave type ${lt.code} (org ${organizationId}): ${err instanceof Error ? err.message : err}`,
+        );
+        failed.push(lt.code);
+      }
+    }
+
+    const message =
+      leaveTypes.length === 0
+        ? 'No leave type is set up for accrual.'
+        : failed.length > 0
+          ? `Accrual run for ${leaveTypes.length - failed.length}/${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total. Failed: ${failed.join(', ')}.`
+          : `Accrual run for ${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total${totalAlreadyAccrued > 0 ? `, ${totalAlreadyAccrued} already up to date` : ''}.`;
+    return {
+      message,
+      leaveTypesProcessed: leaveTypes.length,
+      totalCredited,
+      totalAlreadyAccrued,
+      failed,
+    };
+  }
+
   async runCarryForward(
     dto: RunCarryForwardDto,
     actorId: string,

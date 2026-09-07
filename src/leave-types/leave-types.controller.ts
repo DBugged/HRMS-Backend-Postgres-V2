@@ -56,6 +56,16 @@ export class LeaveTypesController {
     );
   }
 
+  @Post('run-accrual-all')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  runAccrualAll(@CurrentUser() caller: Caller) {
+    return this.leaveTypesService.runAccrualAll(
+      caller.id,
+      caller.organizationId,
+    );
+  }
+
   @Get()
   findAll(
     @Query() query: ListLeaveTypesQueryDto,
