@@ -24,16 +24,27 @@ export async function getReportLogoBuffer(
 }
 
 // Drop-in replacement for sendReport() — every report controller endpoint
-// should call this instead, so the org's Report Logo shows up on every
-// generated report without each individual report-building method (in
-// ReportsService/PayrollReportsService/EmployeeTimelineController) needing
-// to know or care about branding.
+// should call this instead, so the org's Report Logo (and, if enabled,
+// the watermark drawn from it — see common/pdf-watermark.ts) show up on
+// every generated report without each individual report-building method
+// (in ReportsService/PayrollReportsService/EmployeeTimelineController)
+// needing to know or care about branding.
 export async function sendReportBranded(
   res: Response,
   scopedPrisma: Pick<ExtendedPrismaClient, 'organization'>,
   organizationId: string,
   input: SendReportInput,
 ): Promise<void> {
-  const logoBuffer = await getReportLogoBuffer(scopedPrisma, organizationId);
-  return sendReport(res, { ...input, logoBuffer });
+  const org = await scopedPrisma.organization.findFirst({
+    where: { id: organizationId },
+    select: { reportLogoUrl: true, watermarkLogo: true },
+  });
+  const logoBuffer = org?.reportLogoUrl
+    ? await readStoredFile(org.reportLogoUrl).catch(() => null)
+    : null;
+  return sendReport(res, {
+    ...input,
+    logoBuffer,
+    watermarkEnabled: org?.watermarkLogo ?? false,
+  });
 }

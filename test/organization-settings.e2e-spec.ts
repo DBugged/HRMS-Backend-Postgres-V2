@@ -30,6 +30,7 @@ interface OrgSettingsBody {
   sealUrl?: string | null;
   customEmployeeTypes?: unknown[];
   initializedAt?: string | null;
+  watermarkLogo?: boolean;
 }
 interface PreviewBody {
   preview: string;
@@ -209,6 +210,28 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ gstin: 'not-a-real-gstin' })
       .expect(400);
+  });
+
+  it('branding section: watermarkLogo round-trips and defaults to false', async () => {
+    const initial = await request(app.getHttpServer())
+      .get('/organizations/settings')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((initial.body as OrgSettingsBody).watermarkLogo).toBe(false);
+
+    const enabled = await request(app.getHttpServer())
+      .patch('/organizations/settings/branding')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ watermarkLogo: true })
+      .expect(200);
+    expect((enabled.body as OrgSettingsBody).watermarkLogo).toBe(true);
+
+    const disabled = await request(app.getHttpServer())
+      .patch('/organizations/settings/branding')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ watermarkLogo: false })
+      .expect(200);
+    expect((disabled.body as OrgSettingsBody).watermarkLogo).toBe(false);
   });
 
   it('accepts a valid registration section', async () => {

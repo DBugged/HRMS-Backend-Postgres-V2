@@ -115,6 +115,7 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'reportLogoUrl',
     'emailLogoUrl',
     'assetMeta',
+    'watermarkLogo',
   ],
   signatory: ['signatories', 'sealUrl'],
   // Combined General Settings tab — org.policies and the shift-default

@@ -1,6 +1,7 @@
 import ExcelJS from 'exceljs';
 import PDFDocument from 'pdfkit';
 import type { Response } from 'express';
+import { attachWatermark } from '../common/pdf-watermark';
 
 // Pure port of the old backend's reportController.js export helpers —
 // every report in this module funnels through sendReport so Excel/CSV/PDF
@@ -102,12 +103,14 @@ export function renderPdfTable(
   filename: string,
   subtitle?: string,
   logoBuffer?: Buffer | null,
+  watermarkEnabled?: boolean,
 ): void {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `attachment; filename=${filename}.pdf`);
 
   const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
   doc.pipe(res);
+  if (watermarkEnabled) attachWatermark(doc, logoBuffer);
 
   if (logoBuffer) {
     try {
@@ -182,6 +185,10 @@ export interface SendReportInput {
   // here so report-export.ts itself never needs to know about Prisma/file
   // storage).
   logoBuffer?: Buffer | null;
+  // Organization Settings > Branding > "Watermark this logo on generated
+  // documents" — same org-level toggle letters/payslips honor. PDF export
+  // only; csv/xlsx have no page to watermark.
+  watermarkEnabled?: boolean;
   columns: ReportColumn[];
   rows: Record<string, unknown>[];
   filename: string;
@@ -197,6 +204,7 @@ export async function sendReport(
     title,
     subtitle,
     logoBuffer,
+    watermarkEnabled,
     columns,
     rows,
     filename,
@@ -204,7 +212,16 @@ export async function sendReport(
   }: SendReportInput,
 ): Promise<void> {
   if (format === 'pdf') {
-    renderPdfTable(res, title, columns, rows, filename, subtitle, logoBuffer);
+    renderPdfTable(
+      res,
+      title,
+      columns,
+      rows,
+      filename,
+      subtitle,
+      logoBuffer,
+      watermarkEnabled,
+    );
     return;
   }
   const workbook = buildWorkbook(title, columns, rows, subtitle, logoBuffer);

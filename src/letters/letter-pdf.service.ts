@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import { formatDateDisplay } from '../payroll/format-date';
+import { attachWatermark } from '../common/pdf-watermark';
 
 // A rendered LetterTemplate — title/paragraphs are already {{placeholder}}-
 // substituted plain text by the time they get here (see LettersService).
@@ -74,6 +75,9 @@ export interface LetterPdfInput {
   signatoryName: string | null;
   signatoryDesignation: string | null;
   signatureBuffer: Buffer | null;
+  // Organization Settings > Branding > "Watermark this logo on generated
+  // documents" — see common/pdf-watermark.ts.
+  watermarkEnabled: boolean;
 }
 
 @Injectable()
@@ -86,6 +90,7 @@ export class LetterPdfService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
       registerFonts(doc);
+      if (input.watermarkEnabled) attachWatermark(doc, input.companyLogoBuffer);
 
       // Letterhead
       let headerY = 40;

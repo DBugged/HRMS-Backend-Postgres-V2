@@ -9,6 +9,7 @@ import { PayrollSettingsService } from '../payroll-settings/payroll-settings.ser
 import { formatDateDisplay, formatDateTimeDisplay } from './format-date';
 import { lastDayOfMonth } from './payroll-date-math';
 import { readStoredFile } from '../files/file-storage.config';
+import { attachWatermark } from '../common/pdf-watermark';
 
 /**
  * Pure port of the old backend's payslipPdfController.js — THE universal
@@ -260,7 +261,7 @@ export class PayslipPdfService {
     });
     if (!run) throw new NotFoundException('Payslip not found.');
 
-    const [template, settings, ytd] = await Promise.all([
+    const [template, settings, ytd, watermarkEnabled] = await Promise.all([
       this.getActiveTemplate(organizationId),
       this.payrollSettingsService.getOrCreate(organizationId),
       run.financialYear
@@ -272,9 +273,31 @@ export class PayslipPdfService {
             organizationId,
           )
         : Promise.resolve(null),
+      this.getWatermarkEnabled(organizationId),
     ]);
 
-    return this.renderPayslipPdf(run, template, settings, ytd);
+    return this.renderPayslipPdf(
+      run,
+      template,
+      settings,
+      ytd,
+      watermarkEnabled,
+    );
+  }
+
+  // Organization Settings > Branding > "Watermark this logo on generated
+  // documents" — a behavior switch, not a branding value, so it's read
+  // from Organization even though PayrollTemplate's own company* fields
+  // deliberately never fall back there (see this file's header comment).
+  // The watermark image itself still comes from the template's own
+  // companyLogoUrl (renderPayslipPdf's existing logoBuffer) so a payslip's
+  // watermark always matches whatever logo its own header already shows.
+  private async getWatermarkEnabled(organizationId: string): Promise<boolean> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { watermarkLogo: true },
+    });
+    return org?.watermarkLogo ?? false;
   }
 
   // Renders a dummy, fixed-figure payslip through the exact same layout
@@ -287,13 +310,16 @@ export class PayslipPdfService {
     templateOverride: PayrollTemplate,
     organizationId: string,
   ): Promise<Buffer> {
-    const settings =
-      await this.payrollSettingsService.getOrCreate(organizationId);
+    const [settings, watermarkEnabled] = await Promise.all([
+      this.payrollSettingsService.getOrCreate(organizationId),
+      this.getWatermarkEnabled(organizationId),
+    ]);
     const { buffer } = await this.renderPayslipPdf(
       buildDummyRun(),
       templateOverride,
       settings,
       null,
+      watermarkEnabled,
     );
     return buffer;
   }
@@ -303,6 +329,7 @@ export class PayslipPdfService {
     template: PayrollTemplate,
     settings: Awaited<ReturnType<PayrollSettingsService['getOrCreate']>>,
     ytd: YtdTotals | null,
+    watermarkEnabled: boolean,
   ): Promise<{ buffer: Buffer; filename: string }> {
     const rawSymbol = settings.currencySymbol || '₹';
     // pdfkit's standard 14 fonts only cover WinAnsi — the ₹ glyph isn't in
@@ -360,6 +387,7 @@ export class PayslipPdfService {
         bufferPages: true,
       });
       registerCustomFonts(doc);
+      if (watermarkEnabled) attachWatermark(doc, logoBuffer);
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));

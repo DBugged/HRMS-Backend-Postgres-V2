@@ -145,6 +145,14 @@ model Organization {
   emailLogoUrl   String?
   primaryColor   String  @default("#5546e0")
   secondaryColor String  @default("#14161d")
+  // Large, faded, centered copy of the org's logo behind every page of a
+  // generated document — Letters & Certificates (companyLogoUrl),
+  // Payslips (each PayrollTemplate's own companyLogoUrl — see
+  // payslip-pdf.service.ts, which deliberately never falls back to
+  // Organization for branding fields; this toggle is a behavior switch,
+  // not a branding value, so it's the one exception), and Report exports
+  // (reportLogoUrl). See common/pdf-watermark.ts for the actual drawing.
+  watermarkLogo Boolean @default(false)
   // Original filename/size per uploaded image, keyed by upload field name
   // (logo/favicon/reportLogo/emailLogo/signature/seal) — the URL columns
   // point at a generated relativeKey, so this is the only place the real

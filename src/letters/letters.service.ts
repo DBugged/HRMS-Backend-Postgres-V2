@@ -213,6 +213,7 @@ export class LettersService {
         companyLogoUrl: true,
         signatories: true,
         policies: true,
+        watermarkLogo: true,
       },
     });
     if (!organization) throw new NotFoundException('Organization not found.');
@@ -524,6 +525,7 @@ export class LettersService {
       signatoryName: primarySignatory?.name || null,
       signatoryDesignation: primarySignatory?.designation || null,
       signatureBuffer,
+      watermarkEnabled: organization.watermarkLogo,
     });
 
     await this.auditLogService.log({
