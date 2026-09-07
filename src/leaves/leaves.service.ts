@@ -48,7 +48,7 @@ import { checkAffordability, NegativeBalanceRule } from './leave-balance-check';
 import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
-  assertNotSelfApproval,
+  assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -387,33 +387,21 @@ export class LeavesService {
       );
     }
 
-    assertNotSelfApproval(actor, leave.employeeId);
-
-    if (actor.role === Role.MANAGER) {
-      const employee = await this.scopedPrisma.user.findFirst({
-        where: { id: leave.employeeId, organizationId },
-      });
-      const managerId = employee?.reportingManagerId ?? null;
-      const isDirectManager = managerId === actor.id;
-      // An active ApprovalDelegation lets a stand-in reviewer act in the
-      // employee's actual manager's place for a date range (e.g. the
-      // manager themself is on leave) — ported from the old system's
-      // identical inline check in leaveController.js.
-      const isDelegate =
-        !isDirectManager &&
-        managerId !== null &&
-        (await this.delegationService.isActiveDelegate(
-          managerId,
-          actor.id,
-          organizationId,
-          todayStr(),
-        ));
-      if (!isDirectManager && !isDelegate) {
-        throw new ForbiddenException(
-          'You can only review leave requests from employees who report to you (or whose manager has delegated to you).',
-        );
-      }
-    }
+    // Same department-scope-or-delegate boundary as findAll()'s pending
+    // queue (deptScopedEmployeeIds) and every other review action in the
+    // app (attendance/overtime/comp-off — see assertManagerScopeOrDelegate).
+    // This used to be a bespoke reportingManagerId-only check here, which
+    // let a leave show up in a MANAGER's pending list (department match)
+    // while still 403-ing them on the actual review — e.g. any employee
+    // whose reportingManagerId isn't set (or points elsewhere) even though
+    // they're in the reviewing manager's own department.
+    await assertManagerScopeOrDelegate(
+      this.scopedPrisma,
+      this.delegationService,
+      actor,
+      organizationId,
+      leave.employeeId,
+    );
 
     const leaveType = await this.scopedPrisma.leaveType.findFirstOrThrow({
       where: { id: leave.leaveTypeId, organizationId },

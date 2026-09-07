@@ -24,11 +24,13 @@ import {
   extractDependencies,
   resolveComponentValue,
 } from './component-value-resolution';
+import { AuditLogService } from '../audit-log/audit-log.service';
 
 @Injectable()
 export class EmployeeSalaryComponentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   async getStructure(
@@ -223,7 +225,7 @@ export class EmployeeSalaryComponentsService {
       });
     }
 
-    return this.scopedPrisma.employeeSalaryComponent.create({
+    const created = await this.scopedPrisma.employeeSalaryComponent.create({
       data: {
         organizationId,
         employeeId,
@@ -242,6 +244,42 @@ export class EmployeeSalaryComponentsService {
         createdById: actorId,
       },
     });
+
+    // A compensation change — same sensitivity class as EMPLOYEE_UPDATED's
+    // role/department/isActive transitions (see EmployeesService.update),
+    // which do get an AuditLog row; this sibling write path (the org's
+    // salary-*component-definition* CRUD in SalaryComponentsService already
+    // logs SALARY_COMPONENT_*) was silently exempt. before/after mirrors
+    // that convention so a pay-rate change is traceable the same way.
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMPLOYEE_SALARY_COMPONENT_SET',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: employeeId,
+      details: {
+        componentCode: component.code,
+        effectiveFrom: from,
+        before: current
+          ? {
+              fixedAmount: current.fixedAmount,
+              percentageValue: current.percentageValue,
+              percentageOf: current.percentageOf,
+              formula: current.formula,
+              isEnabled: current.isEnabled,
+            }
+          : null,
+        after: {
+          fixedAmount: created.fixedAmount,
+          percentageValue: created.percentageValue,
+          percentageOf: created.percentageOf,
+          formula: created.formula,
+          isEnabled: created.isEnabled,
+        },
+      },
+    });
+
+    return created;
   }
 
   // Resolves an employee's current monthly value for a single component

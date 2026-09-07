@@ -21,6 +21,12 @@ export async function deptScopedEmployeeIds(
   actor: DeptScopeActor,
   organizationId: string,
 ): Promise<string[]> {
+  // A departmentless actor must be scoped to nobody, not to every other
+  // departmentless employee — `departmentId: null` in a Prisma where-clause
+  // matches every row with a null department, which would otherwise let any
+  // two unassigned managers see (and, via the checks below, act on) each
+  // other's unassigned direct reports.
+  if (actor.departmentId === null) return [];
   const deptEmployees = await prisma.user.findMany({
     where: { organizationId, departmentId: actor.departmentId },
     select: { id: true },
@@ -62,7 +68,14 @@ export async function assertManagerDeptScope(
     where: { id: targetEmployeeId, organizationId },
     select: { departmentId: true },
   });
-  if (!target || target.departmentId !== actor.departmentId) {
+  // actor.departmentId === null is deliberately excluded from matching —
+  // otherwise two departmentless managers would satisfy `null === null`
+  // and be treated as sharing a department.
+  if (
+    !target ||
+    actor.departmentId === null ||
+    target.departmentId !== actor.departmentId
+  ) {
     throw new ForbiddenException(
       'You can only act on employees in your own department.',
     );
@@ -88,11 +101,27 @@ export async function assertManagerScopeOrDelegate(
     where: { id: targetEmployeeId, organizationId },
     select: { departmentId: true, reportingManagerId: true },
   });
-  if (target && target.departmentId === actor.departmentId) return;
+  if (!target) {
+    throw new ForbiddenException(
+      'You can only act on employees in your own department (or whose manager has delegated to you).',
+    );
+  }
+  // The actual reporting relationship always grants access, independent of
+  // department — this covers a manager/employee pair that predates (or
+  // simply never got) a department assignment.
+  if (target.reportingManagerId === actor.id) return;
+  // actor.departmentId === null is deliberately excluded — see
+  // assertManagerDeptScope's identical guard against null-department
+  // managers matching every other null-department employee.
+  if (
+    actor.departmentId !== null &&
+    target.departmentId === actor.departmentId
+  ) {
+    return;
+  }
 
   if (
-    target?.reportingManagerId &&
-    target.reportingManagerId !== actor.id &&
+    target.reportingManagerId &&
     (await delegationService.isActiveDelegate(
       target.reportingManagerId,
       actor.id,
