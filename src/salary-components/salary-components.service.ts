@@ -202,6 +202,20 @@ export class SalaryComponentsService {
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
     // code is immutable — stripped from the update payload even if sent.
+    // A built-in's name is locked too — payslips/reports reference it by
+    // the same reserved code (see reserved-codes.ts's SALARY_COMPONENT_CODES),
+    // so relabeling "Provident Fund" to something else would be confusing
+    // even though it wouldn't break the calculation itself. Custom
+    // components' names stay freely editable.
+    if (
+      existing.isSystemDefault &&
+      dto.name !== undefined &&
+      dto.name !== existing.name
+    ) {
+      throw new ConflictException(
+        'This is a built-in salary component — its name cannot be changed.',
+      );
+    }
     const calcType = dto.calcType ?? existing.calcType;
     const percentageValue =
       dto.percentageValue ?? existing.percentageValue ?? undefined;
@@ -297,6 +311,17 @@ export class SalaryComponentsService {
 
   async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+
+    // Built-ins (BASIC/HRA/PF/ESI/PT/LWF/INCOME_TAX/etc.) are looked up by
+    // exact code throughout payroll/statutory calculation regardless of
+    // whether any employee currently has a per-employee override row for
+    // them — the in-use check below only catches the override case, which
+    // most built-ins never have, so it was never actually protecting these.
+    if (existing.isSystemDefault) {
+      throw new ConflictException(
+        'This is a built-in salary component and cannot be deleted — deactivate it instead.',
+      );
+    }
 
     const inUse = await this.scopedPrisma.employeeSalaryComponent.count({
       where: { organizationId, componentCode: existing.code },

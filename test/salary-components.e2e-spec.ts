@@ -255,4 +255,61 @@ describe('Salary Components (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
   });
+
+  it('a built-in component (seeded, e.g. PF) cannot be renamed or deleted, even with zero employee overrides', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const pf = (
+      list.body as { data: (ComponentBody & { name: string; isSystemDefault: boolean })[] }
+    ).data.find((c) => c.code === 'PF');
+    expect(pf).toBeDefined();
+    expect(pf!.isSystemDefault).toBe(true);
+
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${pf!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Renamed PF' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .delete(`/salary-components/${pf!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(409);
+
+    // Non-identity fields (e.g. displayOrder) stay editable on a built-in.
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${pf!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ displayOrder: 5 })
+      .expect(200);
+
+    // toggling active/inactive is unaffected by isSystemDefault.
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${pf!.id}/toggle`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${pf!.id}/toggle`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
+  it('a custom (non-built-in) component can still be renamed normally', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Custom Allowance', type: 'EARNING' })
+      .expect(201);
+    const id = (created.body as ComponentBody).id;
+    expect(
+      (created.body as ComponentBody & { isSystemDefault: boolean }).isSystemDefault,
+    ).toBe(false);
+
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Renamed Custom Allowance' })
+      .expect(200);
+  });
 });
