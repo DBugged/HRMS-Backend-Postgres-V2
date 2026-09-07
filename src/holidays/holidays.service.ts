@@ -150,19 +150,23 @@ export class HolidaysService {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
     // Attendance/leave-tracker/dashboard all look up a specific day's
-    // holiday by `isActive: true` at whatever time they run — including a
-    // recalculation of a PAST day (e.g. a regularization or manual
-    // correction). Flipping isActive on an already-past holiday would
-    // silently change how that historical day gets reinterpreted on the
-    // next recalculation, rather than just affecting the calendar going
-    // forward. Every other field stays editable regardless of date.
-    if (
-      dto.isActive !== undefined &&
-      dto.isActive !== existing.isActive &&
-      existing.date < todayStr()
-    ) {
+    // holiday by date + isActive:true + department at whatever time they
+    // run — including a recalculation of a PAST day (e.g. a
+    // regularization or manual correction). Changing any of those three on
+    // an already-past holiday would silently change how that historical
+    // day gets reinterpreted on the next recalculation, rather than just
+    // affecting the calendar going forward. Cosmetic/reporting-only fields
+    // (name, description, type, isOptional, state) stay editable regardless
+    // of date — they aren't part of that lookup, see the schema's own
+    // comment on Holiday.type.
+    const changesLookupAffectingField =
+      (dto.date !== undefined && dto.date !== existing.date) ||
+      (dto.department !== undefined &&
+        dto.department !== existing.departmentId) ||
+      (dto.isActive !== undefined && dto.isActive !== existing.isActive);
+    if (changesLookupAffectingField && existing.date < todayStr()) {
       throw new BadRequestException(
-        "This holiday's date has already passed — its Active status can't be changed, to avoid altering how that day's attendance/leave calculations are interpreted.",
+        "This holiday's date has already passed — its date, department, and Active status can't be changed, to avoid altering how that day's attendance/leave calculations are interpreted. Name, description, type, and Optional can still be corrected.",
       );
     }
 
@@ -204,6 +208,16 @@ export class HolidaysService {
 
   async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+    // Deleting is strictly more destructive than deactivating (it drops
+    // the record's own audit/reporting history entirely, not just its
+    // effect on future lookups) — same past-date protection as update()'s
+    // date/department/isActive guard, applied unconditionally here since
+    // there's no "which field changed" to check.
+    if (existing.date < todayStr()) {
+      throw new BadRequestException(
+        "This holiday's date has already passed and can't be deleted, to preserve the attendance/leave history calculated against it.",
+      );
+    }
     await this.scopedPrisma.holiday.deleteMany({
       where: { id, organizationId },
     });

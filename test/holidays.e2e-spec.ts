@@ -210,7 +210,7 @@ describe('Holidays (e2e)', () => {
       .expect(200);
   });
 
-  it("rejects toggling isActive on a holiday whose date has already passed, but still allows editing its other fields", async () => {
+  it("rejects changing isActive/date/department on a holiday whose date has already passed, but still allows correcting its cosmetic fields, and rejects deleting it", async () => {
     const created = await request(app.getHttpServer())
       .post('/holidays')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -223,23 +223,33 @@ describe('Holidays (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ isActive: false })
       .expect(400);
-
-    // Sending the same (unchanged) value isn't a real toggle — allowed.
     await request(app.getHttpServer())
       .put(`/holidays/${pastId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ isActive: true })
+      .send({ date: '2020-01-02' })
+      .expect(400);
+
+    // Sending the same (unchanged) values isn't a real change — allowed.
+    await request(app.getHttpServer())
+      .put(`/holidays/${pastId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isActive: true, date: '2020-01-01' })
       .expect(200);
 
-    // Non-status fields are still editable regardless of date.
+    // Cosmetic/reporting-only fields are still editable regardless of date.
     const res = await request(app.getHttpServer())
       .put(`/holidays/${pastId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ description: 'Updated after the fact' })
+      .send({ description: 'Updated after the fact', type: 'NATIONAL', isOptional: true })
       .expect(200);
     expect((res.body as HolidayBody & { description: string }).description).toBe(
       'Updated after the fact',
     );
+
+    await request(app.getHttpServer())
+      .delete(`/holidays/${pastId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
   });
 
   it('bulk-import: valid rows create, invalid/duplicate rows fail without aborting the batch', async () => {
