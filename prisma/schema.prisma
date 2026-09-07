@@ -240,6 +240,7 @@ model Organization {
   employmentStatusHistory  EmploymentStatusHistory[]
   emailTemplates           EmailTemplate[]
   letterTemplates          LetterTemplate[]
+  letterOverrides          LetterOverride[]
   orgListItems             OrgListItem[]
 
   @@map("organizations")
@@ -448,6 +449,8 @@ model User {
   loans                            Loan[]                    @relation("LoanEmployee")
   loansApproved                    Loan[]                    @relation("LoanApprovedBy")
   loansClosed                      Loan[]                    @relation("LoanClosedBy")
+  letterOverrides                  LetterOverride[]          @relation("LetterOverrideEmployee")
+  letterOverridesUpdated           LetterOverride[]          @relation("LetterOverrideUpdatedBy")
   settlements                      Settlement[]              @relation("SettlementEmployee")
   settlementsProcessed             Settlement[]              @relation("SettlementProcessedBy")
   offboardingCases                 OffboardingCase[]         @relation("OffboardingCaseEmployee")
@@ -668,6 +671,43 @@ model LetterTemplate {
   @@unique([organizationId, key])
   @@index([organizationId])
   @@map("letter_templates")
+}
+
+// A saved per-employee, per-letter-key override of a LetterTemplate's
+// rendered title/body — HR edits the wording for one specific employee
+// (e.g. a one-off clause) via the Send Letter modal's "Save" action. Once
+// saved, this row — not the template's own {{placeholder}} rendering —
+// becomes what both Download and Send produce for that employee+key, until
+// it's reset. The LetterTemplate itself, and every other employee's copy,
+// are untouched. See LettersService.computeLetterContent.
+model LetterOverride {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("LetterOverrideEmployee", fields: [employeeId], references: [id])
+
+  // Matches LetterTemplate.key — not a foreign key to it (a template can be
+  // edited/re-keyed independently; this just needs the string to match at
+  // read time, same loose coupling occasionKey/EmailTemplate already uses).
+  key String
+
+  // Already-rendered, human-edited text — no {{placeholder}} substitution
+  // is re-applied to these; see the Body field's own \n-per-paragraph
+  // convention in LettersService.
+  title String
+  body  String @db.Text
+
+  updatedById String?
+  updatedBy   User?   @relation("LetterOverrideUpdatedBy", fields: [updatedById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId, key])
+  @@index([organizationId, employeeId])
+  @@map("letter_overrides")
 }
 
 // Mirrors the old MySQL backend's WorkLocation.fenceType ENUM exactly.

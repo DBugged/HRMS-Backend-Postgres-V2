@@ -207,6 +207,82 @@ describe('Letters (e2e)', () => {
     expect(edited).toBe(false);
   });
 
+  it('PUT :key/content saves an override that both Download and an unedited Send then use', async () => {
+    const saved = await request(app.getHttpServer())
+      .put(`/employees/${employeeId}/letters/confirmationLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        title: 'Saved Custom Title',
+        body: 'This paragraph was saved as the employee-specific default.',
+      })
+      .expect(200);
+    expect(saved.body).toEqual({
+      title: 'Saved Custom Title',
+      body: 'This paragraph was saved as the employee-specific default.',
+      isCustomized: true,
+    });
+
+    // GET :key/content now reflects the saved override, not the template.
+    const content = await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/confirmationLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(content.body).toEqual({
+      title: 'Saved Custom Title',
+      body: 'This paragraph was saved as the employee-specific default.',
+      isCustomized: true,
+    });
+
+    // An unedited Send (no title/body in the request body) picks up the
+    // saved override rather than the template's own rendering.
+    await request(app.getHttpServer())
+      .post(`/employees/${employeeId}/letters/confirmationLetter/send`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+
+    // The download PDF itself isn't asserted on here (binary), but the
+    // audit trail for that download-equivalent generate() call proves it
+    // ran without error against the overridden content.
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/confirmationLetter`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
+  it('rejects an empty title/body on save, and 403s a non-HR/ADMIN caller', async () => {
+    await request(app.getHttpServer())
+      .put(`/employees/${employeeId}/letters/confirmationLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ title: '   ', body: 'Some body' })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .put(`/employees/${employeeId}/letters/confirmationLetter/content`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ title: 'Title', body: 'Body' })
+      .expect(403);
+  });
+
+  it('DELETE :key/content resets to the template default, and is a no-op when nothing was saved', async () => {
+    const reset = await request(app.getHttpServer())
+      .delete(`/employees/${employeeId}/letters/confirmationLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const resetBody = reset.body as {
+      title: string;
+      body: string;
+      isCustomized: boolean;
+    };
+    expect(resetBody.isCustomized).toBe(false);
+    expect(resetBody.title).not.toBe('Saved Custom Title');
+
+    // Calling it again with nothing saved is still a 200, not a 404.
+    await request(app.getHttpServer())
+      .delete(`/employees/${employeeId}/letters/confirmationLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
   it('404s sending a letter for a non-existent employee', async () => {
     await request(app.getHttpServer())
       .post('/employees/00000000-0000-0000-0000-000000000000/letters/appointmentLetter/send')

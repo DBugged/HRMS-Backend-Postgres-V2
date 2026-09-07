@@ -1,8 +1,10 @@
 // Purpose: Exposes letter generation as a PDF download, mounted at /employees/:id/letters/:key — key is a
 //   LetterTemplate's key (see letter-templates module), not a fixed set: any active template, built-in or
-//   admin-created custom, is downloadable here. Also exposes :key/content (the same title/body as plain
-//   editable text, for the Send modal's edit step) and :key/send, which generates the PDF — using HR's
-//   edited text if any was given — and emails it to the employee. See LettersService.
+//   admin-created custom, is downloadable here. Also exposes :key/content — GET returns the same title/body
+//   as plain editable text (for the Send modal's edit step), PUT saves an edit as this employee's new
+//   default (a LetterOverride — Download and future Sends then use it too), DELETE clears it back to the
+//   template's own rendering — and :key/send, which generates the PDF (using a per-request title/body if
+//   given, else the saved override if any, else the template) and emails it. See LettersService.
 // Important: Self-or-role scoped (self, or ADMIN/HR/MANAGER — MANAGER further restricted to own
 //   department in the service), same pattern as /employees/:id/timeline. :key/content and :key/send are
 //   narrower — ADMIN/HR only, not self or MANAGER: emailing someone official correspondence (and editing
@@ -11,9 +13,11 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
+  Put,
   Res,
   UseGuards,
 } from '@nestjs/common';
@@ -23,6 +27,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { LettersService } from './letters.service';
 import { SendLetterDto } from './dto/send-letter.dto';
+import { SaveLetterContentDto } from './dto/save-letter-content.dto';
 import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -83,6 +88,48 @@ export class LettersController {
     @CurrentUser() caller: Caller,
   ) {
     return this.lettersService.previewContent(
+      id,
+      key,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // Saves HR's edited title/body as this employee's new default for this
+  // letter key — Download and every future unedited Send pick it up from
+  // here on, until DELETE :key/content resets it.
+  @Put(':key/content')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  async saveContent(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @Body() dto: SaveLetterContentDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.lettersService.saveOverride(
+      id,
+      key,
+      caller,
+      caller.organizationId,
+      {
+        title: dto.title,
+        body: dto.body,
+      },
+    );
+  }
+
+  // Clears a saved override — Download/Send fall back to the template's
+  // own rendering again. Not a 404 when nothing was saved.
+  @Delete(':key/content')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  async resetContent(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.lettersService.resetOverride(
       id,
       key,
       caller,

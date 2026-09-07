@@ -324,36 +324,141 @@ export class LettersService {
         break;
     }
 
-    const title = this.letterTemplatesService.render(template.title, variables);
+    let title = this.letterTemplatesService.render(template.title, variables);
     const renderedBody = this.letterTemplatesService.render(
       template.bodyText,
       variables,
     );
-    const paragraphs = renderedBody
+    let paragraphs = renderedBody
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
 
-    return { template, employee, organization, companyName, title, paragraphs };
+    // A saved per-employee override (HR clicked Save in the Send modal,
+    // not just a one-off edited send) replaces the template's own
+    // rendering entirely — this is what makes Download and a future
+    // unedited Send pick up the customized wording too.
+    const override = await this.scopedPrisma.letterOverride.findUnique({
+      where: {
+        organizationId_employeeId_key: { organizationId, employeeId, key },
+      },
+    });
+    const isCustomized = !!override;
+    if (override) {
+      title = override.title;
+      paragraphs = override.body
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+    }
+
+    return {
+      template,
+      employee,
+      organization,
+      companyName,
+      title,
+      paragraphs,
+      isCustomized,
+    };
   }
 
   // Text-only, no-side-effect counterpart to generate() — lets the Send
   // flow show HR the exact title/body they're about to email (as plain
   // editable text, not a PDF) without issuing a document number the way
-  // every generate()/send() call does.
+  // every generate()/send() call does. Reflects any saved override, so an
+  // employee whose letter has already been customized opens the edit
+  // fields on their customized text, not the template's default.
   async previewContent(
     employeeId: string,
     key: string,
     actor: Actor,
     organizationId: string,
-  ): Promise<{ title: string; body: string }> {
-    const { title, paragraphs } = await this.computeLetterContent(
+  ): Promise<{ title: string; body: string; isCustomized: boolean }> {
+    const { title, paragraphs, isCustomized } = await this.computeLetterContent(
       employeeId,
       key,
       actor,
       organizationId,
     );
-    return { title, body: paragraphs.join('\n') };
+    return { title, body: paragraphs.join('\n'), isCustomized };
+  }
+
+  // Persists HR's edited title/body for this one employee+letter — unlike
+  // the per-send `overrides` param below (which only affects a single
+  // email and is never stored), this becomes the new default: Download and
+  // every future Send use it until resetOverride() is called. The
+  // LetterTemplate row itself, and every other employee's copy, are
+  // untouched.
+  async saveOverride(
+    employeeId: string,
+    key: string,
+    actor: Actor,
+    organizationId: string,
+    content: { title: string; body: string },
+  ): Promise<{ title: string; body: string; isCustomized: boolean }> {
+    // Reuses the same template/employee/view-scope validation as
+    // generate() — no point saving an override for an employee the actor
+    // can't view, or a key with no active template.
+    await this.computeLetterContent(employeeId, key, actor, organizationId);
+
+    const title = content.title.trim();
+    const body = content.body.trim();
+    if (!title || !body) {
+      throw new BadRequestException('Title and body cannot be empty.');
+    }
+
+    await this.scopedPrisma.letterOverride.upsert({
+      where: {
+        organizationId_employeeId_key: { organizationId, employeeId, key },
+      },
+      create: {
+        organizationId,
+        employeeId,
+        key,
+        title,
+        body,
+        updatedById: actor.id,
+      },
+      update: { title, body, updatedById: actor.id },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LETTER_CONTENT_SAVED',
+      module: AuditModule.DOCUMENT,
+      organizationId,
+      targetId: employeeId,
+      details: { key },
+    });
+
+    return { title, body, isCustomized: true };
+  }
+
+  // Deletes a saved override — Download and future Sends fall back to the
+  // template's own {{placeholder}} rendering again. A no-op (not a 404) if
+  // nothing was saved, matching this being reachable from a "Reset" button
+  // shown unconditionally.
+  async resetOverride(
+    employeeId: string,
+    key: string,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<{ title: string; body: string; isCustomized: boolean }> {
+    await this.scopedPrisma.letterOverride.deleteMany({
+      where: { organizationId, employeeId, key },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LETTER_CONTENT_RESET',
+      module: AuditModule.DOCUMENT,
+      organizationId,
+      targetId: employeeId,
+      details: { key },
+    });
+
+    return this.previewContent(employeeId, key, actor, organizationId);
   }
 
   async generate(
