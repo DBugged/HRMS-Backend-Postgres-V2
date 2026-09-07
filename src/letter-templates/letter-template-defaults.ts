@@ -11,7 +11,7 @@ export interface LetterTemplateDefault {
 
 // Seeded at registration (LetterTemplatesService.seedDefaults, same
 // integration point as EmailTemplatesService's Birthday/Work Anniversary)
-// — starting content for the 17 built-in letter types, fully editable
+// — starting content for the 25 built-in letter types, fully editable
 // afterward from Organization Settings > Letter Templates. Every
 // {{placeholder}} used here is documented in LettersService's variable
 // list; BASIC vars (employeeName, firstName, employeeId, designation,
@@ -256,6 +256,100 @@ export const LETTER_TEMPLATE_DEFAULTS: LetterTemplateDefault[] = [
       'During the term of employment as {{designation}}, the Employee agrees not to engage in any business, employment, or consulting activity that directly competes with the Company, without prior written consent from the Company.',
       'This agreement is limited to the period of active employment; any restriction intended to apply after the end of employment must be separately reviewed for enforceability under applicable law before being relied upon.',
       'This document is a starting template only and should be reviewed by legal counsel before use.',
+    ].join('\n'),
+  },
+  {
+    key: 'nonSolicitationAgreement',
+    name: 'Non-Solicitation Agreement',
+    title: 'Non-Solicitation Agreement',
+    addressedToEmployee: true,
+    dataProfile: LetterDataProfile.BASIC,
+    bodyText: [
+      'This Non-Solicitation Agreement is entered into between {{companyName}} ("Company") and {{employeeName}} ("Employee"), effective {{issueDate}}.',
+      'The Employee agrees that, during the term of employment as {{designation}} and for a reasonable period thereafter, they will not solicit or induce any employee, client, or business partner of the Company to end or reduce their relationship with the Company.',
+      'This document is a starting template only and should be reviewed by legal counsel before use, including as to what "reasonable period" and scope are enforceable under applicable law.',
+    ].join('\n'),
+  },
+  {
+    key: 'letterOfIntent',
+    name: 'Letter of Intent',
+    title: 'Letter of Intent',
+    addressedToEmployee: true,
+    dataProfile: LetterDataProfile.BASIC,
+    bodyText: [
+      'Dear {{employeeName}},',
+      'This letter is to express our intent to offer you the position of {{designation}} in the {{department}} department at {{companyName}}, with an expected joining date of {{joiningDate}}, subject to the successful completion of our standard hiring formalities.',
+      'A formal offer of employment with complete terms and conditions will follow separately. This letter does not itself constitute a binding offer of employment.',
+    ].join('\n'),
+  },
+  {
+    key: 'backgroundVerificationConsent',
+    name: 'Background Verification Consent Letter',
+    title: 'Background Verification Consent',
+    addressedToEmployee: true,
+    dataProfile: LetterDataProfile.BASIC,
+    bodyText: [
+      'Dear {{employeeName}},',
+      'As part of our standard onboarding process, {{companyName}} will be conducting a background verification check in relation to your employment as {{designation}}, covering information such as your prior employment, education, and address history.',
+      'This process is carried out to confirm the accuracy of the information provided during your hiring, and any information collected will be used solely for that purpose and handled confidentially.',
+    ].join('\n'),
+  },
+  {
+    key: 'showCauseNotice',
+    name: 'Show-Cause Notice',
+    title: 'Show-Cause Notice',
+    addressedToEmployee: true,
+    dataProfile: LetterDataProfile.BASIC,
+    bodyText: [
+      'Dear {{employeeName}},',
+      'This notice is to bring to your attention a conduct/performance matter concerning your role as {{designation}} in the {{department}} department, which requires an explanation from you.',
+      'You are hereby asked to submit a written explanation regarding this matter within a reasonable period from the date of this notice. Please note that failure to respond, or an unsatisfactory response, may result in further action, including disciplinary proceedings, in accordance with company policy.',
+    ].join('\n'),
+  },
+  {
+    key: 'suspensionLetter',
+    name: 'Suspension Letter',
+    title: 'Letter of Suspension',
+    addressedToEmployee: true,
+    dataProfile: LetterDataProfile.BASIC,
+    bodyText: [
+      'Dear {{employeeName}},',
+      'This is to inform you that you are being placed under suspension from your duties as {{designation}} in the {{department}} department, with effect from {{issueDate}}, pending an internal investigation into a conduct/performance matter.',
+      'You will be informed separately of the outcome of this investigation and any further action, in accordance with company policy. Please make yourself available for any communication from the Company during this period.',
+    ].join('\n'),
+  },
+  {
+    key: 'retirementLetter',
+    name: 'Retirement Letter',
+    title: 'Letter of Retirement',
+    addressedToEmployee: true,
+    dataProfile: LetterDataProfile.EXIT,
+    bodyText: [
+      'Dear {{employeeName}},',
+      'This letter acknowledges your retirement from {{companyName}} from your position as {{designation}}, with your last working day being {{lastWorkingDay}}.',
+      'On behalf of everyone at {{companyName}}, we thank you for your years of dedicated service and contribution to the organization, and wish you a happy and fulfilling retirement.',
+    ].join('\n'),
+  },
+  {
+    key: 'internshipCertificate',
+    name: 'Internship Certificate',
+    title: 'Certificate of Internship',
+    addressedToEmployee: false,
+    dataProfile: LetterDataProfile.EXIT,
+    bodyText: [
+      'This is to certify that {{employeeName}} completed an internship with {{companyName}} as {{designation}} in the {{department}} department, from {{joiningDate}} to {{lastWorkingDay}}.',
+      'During this period, {{firstName}} was involved in tasks related to the role and demonstrated a good understanding of the work assigned. This certificate is issued at the request of the intern for whatever purpose it may serve.',
+    ].join('\n'),
+  },
+  {
+    key: 'employmentVerificationLetter',
+    name: 'Employment Verification Letter',
+    title: 'Employment Verification',
+    addressedToEmployee: false,
+    dataProfile: LetterDataProfile.BASIC,
+    bodyText: [
+      'This is to certify that {{employeeName}} (Employee ID: {{employeeId}}) is currently employed with {{companyName}} as {{designation}} in the {{department}} department, since {{joiningDate}}.',
+      'This letter is issued at the request of the employee for whatever purpose it may serve, and does not disclose any compensation details.',
     ].join('\n'),
   },
 ];

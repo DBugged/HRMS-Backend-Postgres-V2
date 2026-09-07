@@ -216,4 +216,31 @@ describe('Letters (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
   });
+
+  it('second-batch BASIC letter types generate with no prerequisite', async () => {
+    for (const key of [
+      'nonSolicitationAgreement',
+      'letterOfIntent',
+      'backgroundVerificationConsent',
+      'showCauseNotice',
+      'suspensionLetter',
+      'employmentVerificationLetter',
+    ]) {
+      await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters/${key}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    }
+  });
+
+  it('Retirement Letter and Internship Certificate need an offboarding case, same as Relieving Letter (offboarding already initiated by the earlier test)', async () => {
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/retirementLetter`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/internshipCertificate`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
 });

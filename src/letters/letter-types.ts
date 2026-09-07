@@ -1,7 +1,4 @@
-// The Document Numbering types (Offer Letter, Appointment Letter, Relieving Letter, Experience Letter,
-// Experience Certificate, Salary Certificate, Full & Final Settlement, plus Confirmation/Probation
-// Extension/Promotion/Increment/Transfer/Resignation Acceptance/Termination/Warning Letters and the
-// NDA/Non-Compete Agreements) this module documents — see organizations/document-numbering.ts for the
+// The Document Numbering types this module documents — see organizations/document-numbering.ts for the
 // numbering mechanism, and prisma/schema.prisma's Organization.documentNumbering default for the exact
 // keys/labels these must match (employeeId/payslip are handled elsewhere already — this module only
 // covers the letter types). Kept in sync with letter-template-defaults.ts's keys, but not itself consumed
@@ -25,6 +22,14 @@ export const LETTER_TYPES = [
   'warningLetter',
   'nda',
   'nonCompeteAgreement',
+  'nonSolicitationAgreement',
+  'letterOfIntent',
+  'backgroundVerificationConsent',
+  'showCauseNotice',
+  'suspensionLetter',
+  'retirementLetter',
+  'internshipCertificate',
+  'employmentVerificationLetter',
 ] as const;
 
 export type LetterType = (typeof LETTER_TYPES)[number];
