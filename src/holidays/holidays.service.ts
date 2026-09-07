@@ -149,24 +149,30 @@ export class HolidaysService {
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
-    // Attendance/leave-tracker/dashboard all look up a specific day's
-    // holiday by date + isActive:true + department at whatever time they
-    // run — including a recalculation of a PAST day (e.g. a
-    // regularization or manual correction). Changing any of those three on
-    // an already-past holiday would silently change how that historical
-    // day gets reinterpreted on the next recalculation, rather than just
-    // affecting the calendar going forward. Cosmetic/reporting-only fields
-    // (name, description, type, isOptional, state) stay editable regardless
-    // of date — they aren't part of that lookup, see the schema's own
-    // comment on Holiday.type.
-    const changesLookupAffectingField =
+    // A past holiday is fully read-only — simpler and more consistent
+    // with every other built-in-style lock in this app (Leave Types/
+    // Employee Categories/Salary Components all fully block Edit rather
+    // than allow a partial edit) than trying to enumerate which fields are
+    // "safe": date/department/isActive directly affect the live
+    // attendance/leave-tracker/dashboard lookup for that day (see
+    // attendance.service.ts's holiday.findFirst), and even a cosmetic
+    // rename could confuse whoever's reading last year's records against
+    // whatever the UI showed at the time.
+    const anyFieldChanges =
+      (dto.name !== undefined && dto.name.trim() !== existing.name) ||
       (dto.date !== undefined && dto.date !== existing.date) ||
       (dto.department !== undefined &&
         dto.department !== existing.departmentId) ||
+      (dto.isOptional !== undefined &&
+        dto.isOptional !== existing.isOptional) ||
+      (dto.type !== undefined && dto.type !== existing.type) ||
+      (dto.state !== undefined && dto.state !== existing.state) ||
+      (dto.description !== undefined &&
+        dto.description !== existing.description) ||
       (dto.isActive !== undefined && dto.isActive !== existing.isActive);
-    if (changesLookupAffectingField && existing.date < todayStr()) {
+    if (anyFieldChanges && existing.date < todayStr()) {
       throw new BadRequestException(
-        "This holiday's date has already passed — its date, department, and Active status can't be changed, to avoid altering how that day's attendance/leave calculations are interpreted. Name, description, type, and Optional can still be corrected.",
+        "This holiday's date has already passed and can't be edited.",
       );
     }
 

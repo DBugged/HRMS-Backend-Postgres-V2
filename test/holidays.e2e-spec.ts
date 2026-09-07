@@ -210,7 +210,7 @@ describe('Holidays (e2e)', () => {
       .expect(200);
   });
 
-  it("rejects changing isActive/date/department on a holiday whose date has already passed, but still allows correcting its cosmetic fields, and rejects deleting it", async () => {
+  it('a holiday whose date has already passed is fully read-only — no field can be changed, and it cannot be deleted', async () => {
     const created = await request(app.getHttpServer())
       .post('/holidays')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -228,23 +228,21 @@ describe('Holidays (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ date: '2020-01-02' })
       .expect(400);
-
-    // Sending the same (unchanged) values isn't a real change — allowed.
+    // Even cosmetic/reporting-only fields are locked once past — a past
+    // holiday is fully read-only, not partially editable.
     await request(app.getHttpServer())
       .put(`/holidays/${pastId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ isActive: true, date: '2020-01-01' })
-      .expect(200);
+      .send({ description: 'Updated after the fact', type: 'NATIONAL', isOptional: true })
+      .expect(400);
 
-    // Cosmetic/reporting-only fields are still editable regardless of date.
+    // Sending the same (unchanged) values isn't a real change — allowed.
     const res = await request(app.getHttpServer())
       .put(`/holidays/${pastId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ description: 'Updated after the fact', type: 'NATIONAL', isOptional: true })
+      .send({ isActive: true, date: '2020-01-01', name: 'Past Holiday' })
       .expect(200);
-    expect((res.body as HolidayBody & { description: string }).description).toBe(
-      'Updated after the fact',
-    );
+    expect((res.body as HolidayBody).name).toBe('Past Holiday');
 
     await request(app.getHttpServer())
       .delete(`/holidays/${pastId}`)
