@@ -147,6 +147,66 @@ describe('Letters (e2e)', () => {
       .expect(201);
   });
 
+  it('GET :key/content returns the rendered title/body as plain text, with no document number side effect', async () => {
+    const res = await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/appointmentLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const body = res.body as { title: string; body: string };
+    expect(body.title).toContain('Appointment');
+    expect(body.body).toContain('Plain Employee');
+
+    // EMPLOYEE/MANAGER can't reach it either — same HR/ADMIN-only gate as
+    // :key/send, not the self-or-role gate the plain :key download uses.
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/appointmentLetter/content`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(403);
+  });
+
+  it('sending with an edited title/body uses that text verbatim and is flagged as edited in the audit log', async () => {
+    const res = await request(app.getHttpServer())
+      .post(`/employees/${employeeId}/letters/appointmentLetter/send`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        title: 'A Custom Edited Title',
+        body: 'A hand-edited paragraph for this one send only.',
+      })
+      .expect(201);
+    expect((res.body as SendResultBody).message).toContain(
+      'Appointment Letter',
+    );
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'LETTER_EMAILED', targetId: employeeId },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect((audit?.details as { edited?: boolean } | null)?.edited).toBe(true);
+
+    // The stored template itself is untouched by an edited send.
+    const contentAfter = await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/appointmentLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((contentAfter.body as { title: string }).title).not.toBe(
+      'A Custom Edited Title',
+    );
+  });
+
+  it('sending unedited (no title/body in the request) is flagged as not edited', async () => {
+    await request(app.getHttpServer())
+      .post(`/employees/${employeeId}/letters/appointmentLetter/send`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+
+    const audit = await prisma.auditLog.findFirst({
+      where: { action: 'LETTER_EMAILED', targetId: employeeId },
+      orderBy: { createdAt: 'desc' },
+    });
+    const edited = (audit?.details as { edited?: boolean } | null)?.edited;
+    expect(edited).toBe(false);
+  });
+
   it('404s sending a letter for a non-existent employee', async () => {
     await request(app.getHttpServer())
       .post('/employees/00000000-0000-0000-0000-000000000000/letters/appointmentLetter/send')

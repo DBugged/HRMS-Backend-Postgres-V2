@@ -167,12 +167,17 @@ export class LettersService {
     });
   }
 
-  async generate(
+  // Shared by generate() and previewContent() — fetches the real employee/
+  // org/dataProfile-specific data and renders the template's {{placeholder}}
+  // title/body into final text. No side effects (no document number issued,
+  // no PDF rendered) so previewContent() can call this freely for an
+  // editable-text preview without burning a document number on every call.
+  private async computeLetterContent(
     employeeId: string,
     key: string,
     actor: Actor,
     organizationId: string,
-  ): Promise<{ buffer: Buffer; filename: string }> {
+  ) {
     const template = await this.letterTemplatesService.findActiveByKey(
       key,
       organizationId,
@@ -329,6 +334,56 @@ export class LettersService {
       .map((line) => line.trim())
       .filter(Boolean);
 
+    return { template, employee, organization, companyName, title, paragraphs };
+  }
+
+  // Text-only, no-side-effect counterpart to generate() — lets the Send
+  // flow show HR the exact title/body they're about to email (as plain
+  // editable text, not a PDF) without issuing a document number the way
+  // every generate()/send() call does.
+  async previewContent(
+    employeeId: string,
+    key: string,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<{ title: string; body: string }> {
+    const { title, paragraphs } = await this.computeLetterContent(
+      employeeId,
+      key,
+      actor,
+      organizationId,
+    );
+    return { title, body: paragraphs.join('\n') };
+  }
+
+  async generate(
+    employeeId: string,
+    key: string,
+    actor: Actor,
+    organizationId: string,
+    // HR's edited title/body for this one send — see SendLetterDto. Blank/
+    // omitted falls back to the template's own rendered content, same as
+    // before this existed. Only ever passed from send(); the plain
+    // download route never overrides anything.
+    overrides?: { title?: string; body?: string },
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const {
+      template,
+      employee,
+      organization,
+      companyName,
+      title: computedTitle,
+      paragraphs: computedParagraphs,
+    } = await this.computeLetterContent(employeeId, key, actor, organizationId);
+
+    const title = overrides?.title?.trim() || computedTitle;
+    const paragraphs = overrides?.body?.trim()
+      ? overrides.body
+          .split('\n')
+          .map((line) => line.trim())
+          .filter(Boolean)
+      : computedParagraphs;
+
     const documentNumber = await this.scopedPrisma.$transaction((tx) =>
       issueDocumentNumber(tx, organizationId, key),
     );
@@ -383,18 +438,23 @@ export class LettersService {
 
   // HR/Admin-only follow-up to generate() — everything is pulled from the
   // same real employee/org/computed data, nothing to fill in; HR reviews
-  // the PDF (via generate()/the Download button) and this then emails that
-  // same content to the employee's registered address. Deliberately a
-  // second call to generate() rather than threading the caller's already-
-  // fetched buffer through: this issues its own document number for the
-  // copy that actually goes out, same as any other independent
-  // download/generate call — see generate()'s own docstring, numbers were
-  // never meant to be contiguous or deduped across repeat generations.
+  // the PDF (via generate()/the Download button), optionally edits the
+  // title/body text for this one send (overrides — see SendLetterDto), and
+  // this then emails that content to the employee's registered address.
+  // Deliberately a second call to generate() rather than threading the
+  // caller's already-fetched buffer through: this issues its own document
+  // number for the copy that actually goes out, same as any other
+  // independent download/generate call — see generate()'s own docstring,
+  // numbers were never meant to be contiguous or deduped across repeat
+  // generations.
   async send(
     employeeId: string,
     key: string,
     actor: Actor,
     organizationId: string,
+    // HR's edited title/body for this one send, if they changed anything in
+    // the Send modal — see SendLetterDto and generate()'s own comment.
+    overrides?: { title?: string; body?: string },
   ): Promise<{ message: string }> {
     const template = await this.letterTemplatesService.findActiveByKey(
       key,
@@ -422,6 +482,7 @@ export class LettersService {
       key,
       actor,
       organizationId,
+      overrides,
     );
 
     const organization = await this.scopedPrisma.organization.findFirst({
@@ -451,13 +512,14 @@ export class LettersService {
       attachments: [{ filename, content: buffer }],
     });
 
+    const edited = !!(overrides?.title?.trim() || overrides?.body?.trim());
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'LETTER_EMAILED',
       module: AuditModule.DOCUMENT,
       organizationId,
       targetId: employeeId,
-      details: { key, templateName: template.name, to: employee.email },
+      details: { key, templateName: template.name, to: employee.email, edited },
     });
     await this.timelineService.logEvent({
       organizationId,
@@ -470,7 +532,10 @@ export class LettersService {
     return { message: `${template.name} emailed to ${employee.email}.` };
   }
 
-  private async latestOffboardingCase(employeeId: string, organizationId: string) {
+  private async latestOffboardingCase(
+    employeeId: string,
+    organizationId: string,
+  ) {
     const offboardingCase = await this.scopedPrisma.offboardingCase.findFirst({
       where: { organizationId, employeeId },
       orderBy: { createdAt: 'desc' },
