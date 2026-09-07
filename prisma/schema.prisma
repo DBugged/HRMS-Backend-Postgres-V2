@@ -784,6 +784,14 @@ model LeaveType {
   isPaid       Boolean @default(true)
   displayOrder Int     @default(0)
 
+  // True only for the rows seedDefaults() creates at registration (Earned
+  // Leave, Comp-Off, etc.) — several modules (leaves/leave-tracker via
+  // LEAVE_TYPE_CODES, see common/reserved-codes.ts) look these up by exact
+  // code, so name/code are locked for these once created. Everything else
+  // (quota, accrual, applicability, carry forward...) stays editable — an
+  // org still needs to tune its own policy on top of the seeded defaults.
+  isSystemDefault Boolean @default(false)
+
   allocationType        AllocationType   @default(FIXED_ANNUAL)
   annualQuota           Float            @default(0)
   accrualFrequency      AccrualFrequency @default(YEARLY)

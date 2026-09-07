@@ -236,6 +236,84 @@ describe('Leave Types (e2e)', () => {
     expect(body.description).toBe('Standard annual leave');
   });
 
+  it('a built-in (seeded) leave type cannot have its name or code changed, but other fields still can', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const casual = (list.body as { data: (LeaveTypeBody & { code: string; isSystemDefault: boolean })[] }).data.find(
+      (t) => t.code === 'CL',
+    );
+    expect(casual).toBeDefined();
+    expect(casual!.isSystemDefault).toBe(true);
+
+    await request(app.getHttpServer())
+      .put(`/leave-types/${casual!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Renamed Casual Leave' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .put(`/leave-types/${casual!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ code: 'CL2' })
+      .expect(409);
+
+    // Quota (and everything else non-identity) stays editable.
+    const okRes = await request(app.getHttpServer())
+      .put(`/leave-types/${casual!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ annualQuota: 15 })
+      .expect(200);
+    expect((okRes.body as LeaveTypeBody).annualQuota).toBe(15);
+  });
+
+  it('a built-in leave type cannot be deleted; a custom one with no history can', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const casual = (list.body as { data: (LeaveTypeBody & { code: string; isSystemDefault: boolean })[] }).data.find(
+      (t) => t.code === 'CL',
+    );
+    await request(app.getHttpServer())
+      .delete(`/leave-types/${casual!.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(409);
+
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Disposable Leave', code: 'DISP', allocationType: 'FIXED_ANNUAL' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .delete(`/leave-types/${(created.body as LeaveTypeBody).id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
+  it('a leave type with existing balances/requests cannot be deleted', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'In-Use Leave',
+        code: 'INUSE',
+        allocationType: 'EARNED_MONTHLY',
+        accrualAmountPerCycle: 1,
+      })
+      .expect(201);
+    const inUseId = (created.body as LeaveTypeBody).id;
+    await request(app.getHttpServer())
+      .post(`/leave-types/${inUseId}/run-accrual`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .delete(`/leave-types/${inUseId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+  });
+
   it('run-accrual credits the current-year balance row for an EARNED_MONTHLY type', async () => {
     // 'Casual Leave'/'CL' would collide with the auto-seeded default (see
     // LeaveTypesService.seedDefaults), so this uses a distinct name/code.

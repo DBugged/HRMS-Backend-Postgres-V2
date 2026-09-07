@@ -5,6 +5,7 @@
 // Important: rules/carryForward/negativeBalance/encashment are opaque JSON columns validated only by the
 // DTO shape, not by a DB schema — keep leave-type-defaults.ts's shapes in sync with what the engine expects.
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -84,6 +85,7 @@ export class LeaveTypesService {
           ...rest,
           organizationId,
           createdById,
+          isSystemDefault: true,
           rules: { ...DEFAULT_RULES, ...rules },
           ...(carryForward !== undefined && {
             carryForward: carryForward,
@@ -162,6 +164,21 @@ export class LeaveTypesService {
 
   async update(id: string, dto: UpdateLeaveTypeDto, organizationId: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+
+    // A built-in's name/code is what other modules key off of (see
+    // reserved-codes.ts's LEAVE_TYPE_CODES.COMPOFF) — everything else about
+    // it (quota, accrual, applicability...) still needs to stay editable
+    // per-org, so only these two fields are locked.
+    if (
+      existing.isSystemDefault &&
+      ((dto.name !== undefined && dto.name !== existing.name) ||
+        (dto.code !== undefined && dto.code !== existing.code))
+    ) {
+      throw new ConflictException(
+        'This is a built-in leave type — its name and code cannot be changed.',
+      );
+    }
+
     await this.assertNoDuplicate(
       organizationId,
       dto.name ?? existing.name,
@@ -253,7 +270,31 @@ export class LeaveTypesService {
   }
 
   async remove(id: string, organizationId: string) {
-    await this.findByIdOrThrow(id, organizationId);
+    const existing = await this.findByIdOrThrow(id, organizationId);
+    if (existing.isSystemDefault) {
+      throw new ConflictException(
+        'This is a built-in leave type and cannot be deleted — deactivate it instead.',
+      );
+    }
+
+    // Deleting a leave type that already has balances or requests against
+    // it would otherwise hit the FK constraint (Leave/LeaveBalance both
+    // reference leaveTypeId with no onDelete) as an unhandled 500 — this
+    // turns that into a clear, actionable message instead.
+    const [balanceCount, leaveCount] = await Promise.all([
+      this.scopedPrisma.leaveBalance.count({
+        where: { leaveTypeId: id, organizationId },
+      }),
+      this.scopedPrisma.leave.count({
+        where: { leaveTypeId: id, organizationId },
+      }),
+    ]);
+    if (balanceCount > 0 || leaveCount > 0) {
+      throw new BadRequestException(
+        'This leave type has existing balances or leave requests and cannot be deleted — deactivate it instead.',
+      );
+    }
+
     await this.scopedPrisma.leaveType.deleteMany({
       where: { id, organizationId },
     });
