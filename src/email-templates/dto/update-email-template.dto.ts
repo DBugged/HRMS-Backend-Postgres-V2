@@ -1,5 +1,12 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+} from 'class-validator';
+import { EMAIL_TEMPLATE_CATEGORIES } from '../email-template-categories';
 
 export class UpdateEmailTemplateDto {
   @ApiPropertyOptional({ example: 'Birthday Wish' })
@@ -37,4 +44,11 @@ export class UpdateEmailTemplateDto {
   @IsOptional()
   @IsString()
   signatureId?: string;
+
+  // Re-groups this template on the Email Templates table — editable for
+  // both built-in and custom templates, same as any other field here.
+  @ApiPropertyOptional({ enum: EMAIL_TEMPLATE_CATEGORIES })
+  @IsOptional()
+  @IsIn(EMAIL_TEMPLATE_CATEGORIES)
+  category?: string;
 }

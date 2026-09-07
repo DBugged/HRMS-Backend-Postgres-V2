@@ -5,12 +5,19 @@
 // signature block at all, so one is added here using the
 // {{companyName}}/{{companyPhone}}/{{companyWebsite}}/{{companyEmail}}/
 // {{companyAddress}} placeholders EmailTemplatesService.render() supports.
+import { EmailTemplateCategory } from './email-template-categories';
+
 export interface EmailTemplateDefault {
   occasionKey: string;
   name: string;
   subject: string;
   bodyHtml: string;
   ccAllActive: boolean;
+  // One of EMAIL_TEMPLATE_CATEGORIES — stored on the row (not derived) so a
+  // custom template can carry the exact same field. The "// --- Section ---"
+  // comments below are just a human map onto this list; category is the
+  // actual source of truth read by the frontend's grouped table.
+  category: EmailTemplateCategory;
 }
 
 export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
@@ -23,6 +30,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Warm regards,<br/>{{companyName}}</p>' +
       '<p style="color:#888;font-size:12px;">{{companyName}} | {{companyAddress}} | {{companyPhone}} | {{companyEmail}} | {{companyWebsite}}</p>',
     ccAllActive: true,
+    category: 'General',
   },
   {
     occasionKey: 'NEW_JOINER_ANNOUNCEMENT',
@@ -36,6 +44,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Warm regards,<br/>{{companyName}}</p>' +
       '<p style="color:#888;font-size:12px;">{{companyName}} | {{companyAddress}} | {{companyPhone}} | {{companyEmail}} | {{companyWebsite}}</p>',
     ccAllActive: true,
+    category: 'General',
   },
   {
     occasionKey: 'WORK_ANNIVERSARY',
@@ -46,6 +55,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Warm regards,<br/>{{companyName}}</p>' +
       '<p style="color:#888;font-size:12px;">{{companyName}} | {{companyAddress}} | {{companyPhone}} | {{companyEmail}} | {{companyWebsite}}</p>',
     ccAllActive: true,
+    category: 'General',
   },
 
   // --- Attendance ---
@@ -56,6 +66,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>You were marked absent for {{date}}. Contact HR if this looks wrong.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Attendance',
   },
   {
     occasionKey: 'WFH_DECISION',
@@ -64,6 +75,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your Work From Home request for {{date}} has been {{decision}}.</p><p>{{comments}}</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Attendance',
   },
   {
     occasionKey: 'REGULARIZATION_DECISION',
@@ -72,6 +84,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your attendance regularization request for {{date}} has been {{decision}}.</p><p>{{comments}}</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Attendance',
   },
 
   // --- Leave / Comp-Off / Overtime ---
@@ -82,6 +95,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your leave request from {{startDate}} to {{endDate}} has been {{decision}}.</p><p>{{comments}}</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Leave & Comp-Off',
   },
   {
     occasionKey: 'COMP_OFF_DECISION',
@@ -90,6 +104,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your comp-off request for {{earnedForDate}} has been {{decision}}.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Leave & Comp-Off',
   },
   {
     occasionKey: 'OVERTIME_STATUS',
@@ -98,6 +113,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your overtime of {{hours}} hour(s) on {{date}} has been {{status}}.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Leave & Comp-Off',
   },
   {
     occasionKey: 'LEAVE_ENCASHMENT_STATUS',
@@ -106,6 +122,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your leave encashment request for {{days}} day(s) ({{amount}}) has been {{status}}.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Leave & Comp-Off',
   },
 
   // --- Loans / Reimbursements / Payroll ---
@@ -116,6 +133,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>A {{loanType}} loan of {{principal}} has been sanctioned for you, repayable as {{emiAmount}}/month over {{tenureMonths}} month(s).</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Payroll & Finance',
   },
   {
     occasionKey: 'LOAN_STATUS_UPDATE',
@@ -124,6 +142,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your {{loanType}} loan status is now {{status}}.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Payroll & Finance',
   },
   {
     occasionKey: 'REIMBURSEMENT_STATUS',
@@ -132,6 +151,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your reimbursement claim of {{amount}} for {{category}} has been {{status}}.</p><p>{{comments}}</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Payroll & Finance',
   },
   {
     occasionKey: 'PAYSLIP_ISSUED',
@@ -140,6 +160,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your salary for {{month}}/{{year}} has been paid. Net pay: {{netPay}}. Your payslip is attached.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Payroll & Finance',
   },
   {
     occasionKey: 'TAX_DECLARATION_VERIFIED',
@@ -148,6 +169,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your tax declaration for FY {{financialYear}} has been verified.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Payroll & Finance',
   },
   {
     occasionKey: 'PERFORMANCE_RATING_PUBLISHED',
@@ -156,6 +178,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your performance rating for FY {{financialYear}} has been published: {{rating}}.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Payroll & Finance',
   },
 
   // --- Exit ---
@@ -166,6 +189,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your offboarding has been initiated with a last working day of {{lastWorkingDay}}. HR will reach out with the exit checklist.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Exit',
   },
   {
     occasionKey: 'SETTLEMENT_PROCESSED',
@@ -174,6 +198,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your full & final settlement has been processed. Net settlement amount: {{netSettlementAmount}} ({{netSettlementAmountInWords}}). Your payslip for this settlement will follow separately.</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Exit',
   },
 
   // --- Documents ---
@@ -184,6 +209,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Your document "{{fileName}}" has been {{status}}.</p><p>{{reason}}</p><p>{{companyName}}</p>',
     ccAllActive: false,
+    category: 'Documents',
   },
 
   // --- Account / Auth ---
@@ -196,6 +222,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Login URL: <a href="{{loginUrl}}">{{loginUrl}}</a><br/>Employee ID: <strong>{{employeeId}}</strong><br/>Email: <strong>{{email}}</strong><br/>Password: <strong>{{password}}</strong></p>' +
       "<p>You'll be asked to set a new password the first time you sign in. Please keep these details confidential.</p>",
     ccAllActive: false,
+    category: 'Account & Access',
   },
   {
     occasionKey: 'LOGIN_CREDENTIALS_RESENT',
@@ -206,6 +233,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Login URL: <a href="{{loginUrl}}">{{loginUrl}}</a><br/>Employee ID: <strong>{{employeeId}}</strong><br/>Email: <strong>{{email}}</strong><br/>Password: <strong>{{password}}</strong></p>' +
       "<p>You'll be asked to set a new password the first time you sign in. Please keep these details confidential.</p>",
     ccAllActive: false,
+    category: 'Account & Access',
   },
   {
     occasionKey: 'FOUNDER_ACCOUNT_WELCOME',
@@ -220,6 +248,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p><a href="{{loginUrl}}">Log in to your account →</a></p>' +
       "<p>If you didn't create this account, you can safely ignore this email.</p>",
     ccAllActive: false,
+    category: 'Account & Access',
   },
   {
     occasionKey: 'PASSWORD_RESET',
@@ -228,6 +257,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hello {{employeeName}},</p><p>Click the link below to reset your password. This link expires in 30 minutes.</p><p><a href="{{resetUrl}}">{{resetUrl}}</a></p>',
     ccAllActive: false,
+    category: 'Account & Access',
   },
   {
     occasionKey: 'ACCOUNT_ACTIVATED',
@@ -236,6 +266,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hello {{employeeName}},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address ({{email}}).</p>',
     ccAllActive: false,
+    category: 'Account & Access',
   },
   {
     occasionKey: 'SETUP_COMPLETE',
@@ -244,6 +275,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     bodyHtml:
       '<p>Hi {{employeeName}},</p><p>Setup for {{companyName}} is complete — the HRMS is ready to use.</p>',
     ccAllActive: false,
+    category: 'Account & Access',
   },
   {
     // Fires from LettersService.send() — HR/Admin reviews the generated
@@ -257,5 +289,6 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Warm regards,<br/>{{companyName}}</p>' +
       '<p style="color:#888;font-size:12px;">{{companyName}} | {{companyAddress}} | {{companyPhone}} | {{companyEmail}} | {{companyWebsite}}</p>',
     ccAllActive: false,
+    category: 'Documents',
   },
 ];

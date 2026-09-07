@@ -63,6 +63,7 @@ export class EmailTemplatesService {
           bodyHtml: def.bodyHtml,
           ccAllActive: def.ccAllActive,
           isCustom: false,
+          category: def.category,
         },
       });
     }
@@ -108,6 +109,7 @@ export class EmailTemplatesService {
           ccAllActive: dto.ccAllActive,
         }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+        ...(dto.category !== undefined && { category: dto.category }),
         // '' from the frontend's "Use default" option means "clear it back
         // to null" — undefined (the key omitted) means "leave unchanged".
         ...(dto.signatureId !== undefined && {
@@ -186,6 +188,10 @@ export class EmailTemplatesService {
         bodyHtml: dto.bodyHtml,
         ccAllActive: dto.ccAllActive ?? false,
         isCustom: true,
+        // Defaults to 'General' when the admin doesn't pick one — same
+        // fallback a built-in template would never need since every
+        // EMAIL_TEMPLATE_DEFAULTS entry sets its own.
+        category: dto.category || 'General',
         signatureId: dto.signatureId || null,
       },
     });

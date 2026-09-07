@@ -23,6 +23,7 @@ interface EmailTemplateBody {
   bodyHtml: string;
   ccAllActive: boolean;
   isActive: boolean;
+  category: string;
 }
 
 const PASSWORD = 'TestPass123!';
@@ -141,6 +142,18 @@ describe('EmailTemplates (e2e)', () => {
       'WORK_ANNIVERSARY',
     ]);
     expect(data.every((t) => t.isActive)).toBe(true);
+
+    // Every built-in row also has its curated category, matching
+    // email-template-defaults.ts — spot-check a few across categories
+    // rather than re-listing all 26 here.
+    const byKey = Object.fromEntries(data.map((t) => [t.occasionKey, t]));
+    expect(byKey.BIRTHDAY.category).toBe('General');
+    expect(byKey.ABSENT_MARKED.category).toBe('Attendance');
+    expect(byKey.LEAVE_DECISION.category).toBe('Leave & Comp-Off');
+    expect(byKey.LOAN_SANCTIONED.category).toBe('Payroll & Finance');
+    expect(byKey.OFFBOARDING_INITIATED.category).toBe('Exit');
+    expect(byKey.LETTER_SENT.category).toBe('Documents');
+    expect(byKey.SETUP_COMPLETE.category).toBe('Account & Access');
   });
 
   it('any authenticated caller can get a template by occasionKey', async () => {
@@ -207,6 +220,69 @@ describe('EmailTemplates (e2e)', () => {
       .put('/email-templates/WORK_ANNIVERSARY')
       .set('Authorization', `Bearer ${hrToken}`)
       .send({ isActive: false })
+      .expect(200);
+  });
+
+  it('a custom template can be created with a category, and defaults to General when omitted', async () => {
+    const withCategory = await request(app.getHttpServer())
+      .post('/email-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Custom Exit Notice',
+        subject: 'A note about {{employeeName}}',
+        bodyHtml: '<p>Custom body</p>',
+        category: 'Exit',
+      })
+      .expect(201);
+    expect((withCategory.body as EmailTemplateBody).category).toBe('Exit');
+
+    const withoutCategory = await request(app.getHttpServer())
+      .post('/email-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Uncategorized Custom Template',
+        subject: 'Hi {{employeeName}}',
+        bodyHtml: '<p>Custom body</p>',
+      })
+      .expect(201);
+    expect((withoutCategory.body as EmailTemplateBody).category).toBe(
+      'General',
+    );
+  });
+
+  it('rejects a category outside the fixed list, on both create and update', async () => {
+    await request(app.getHttpServer())
+      .post('/email-templates')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Bad Category Template',
+        subject: 'Hi',
+        bodyHtml: '<p>Body</p>',
+        category: 'Not A Real Category',
+      })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .put('/email-templates/BIRTHDAY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ category: 'Not A Real Category' })
+      .expect(400);
+  });
+
+  it('a built-in template\'s category can be re-grouped like any other field', async () => {
+    const res = await request(app.getHttpServer())
+      .put('/email-templates/WORK_ANNIVERSARY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ category: 'Account & Access' })
+      .expect(200);
+    expect((res.body as EmailTemplateBody).category).toBe('Account & Access');
+
+    // Restore it — this occasion is General everywhere else, keep the
+    // fixture's default set intact for any later test relying on it.
+    await request(app.getHttpServer())
+      .put('/email-templates/WORK_ANNIVERSARY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ category: 'General' })
       .expect(200);
   });
 

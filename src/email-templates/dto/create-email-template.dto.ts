@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  MinLength,
+} from 'class-validator';
+import { EMAIL_TEMPLATE_CATEGORIES } from '../email-template-categories';
 
 export class CreateEmailTemplateDto {
   @ApiProperty()
@@ -31,4 +38,12 @@ export class CreateEmailTemplateDto {
   @IsOptional()
   @IsString()
   signatureId?: string;
+
+  // Groups this template on the Email Templates table, same field a
+  // built-in occasion is seeded with (email-template-defaults.ts) — omitted
+  // defaults to 'General' (see EmailTemplatesService.create).
+  @ApiPropertyOptional({ enum: EMAIL_TEMPLATE_CATEGORIES })
+  @IsOptional()
+  @IsIn(EMAIL_TEMPLATE_CATEGORIES)
+  category?: string;
 }

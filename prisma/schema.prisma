@@ -588,6 +588,14 @@ model EmailTemplate {
   // via EmailTemplatesController's send endpoint and can be deleted freely.
   isCustom Boolean @default(true)
 
+  // Groups this template on the frontend's Email Templates table (General,
+  // Attendance, Leave & Comp-Off, Payroll & Finance, Exit, Documents,
+  // Account & Access — see email-template-categories.ts). A built-in row is
+  // seeded with its EMAIL_TEMPLATE_DEFAULTS entry's category; a custom row
+  // defaults to 'General' at create time and can be changed like any other
+  // field.
+  category String @default("General")
+
   // Which of Organization.emailSignatures this template's email uses when
   // sent — null means "whichever one has isDefault:true". Not a real FK
   // (emailSignatures is a JSON list, not its own table) — validated
