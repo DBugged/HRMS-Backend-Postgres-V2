@@ -12,6 +12,9 @@ export const EMAIL_TEMPLATE_CATEGORIES = [
   'Exit',
   'Documents',
   'Account & Access',
+  // Catch-all for a custom template that doesn't fit any category above —
+  // no built-in occasion is seeded with this.
+  'Other',
 ] as const;
 
 export type EmailTemplateCategory = (typeof EMAIL_TEMPLATE_CATEGORIES)[number];
