@@ -13,6 +13,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 import { LetterTemplatesModule } from '../letter-templates/letter-templates.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { OrgListItemsModule } from '../org-list-items/org-list-items.module';
 
 @Module({
   imports: [
@@ -46,6 +47,11 @@ import { NotificationsModule } from '../notifications/notifications.module';
     // Settlement) at registration, same integration point as
     // EmailTemplatesModule above.
     LetterTemplatesModule,
+    // For OrgListItemsService.seedDefaults — every new org gets the
+    // standard built-in Employee Category set (Full-Time/Part-Time/
+    // Contract/Intern) at registration, same integration point as
+    // LetterTemplatesModule above.
+    OrgListItemsModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService

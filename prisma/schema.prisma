@@ -2267,6 +2267,13 @@ model OrgListItem {
   name     String
   isActive Boolean     @default(true)
 
+  // Built-in only for type=EMPLOYEE_CATEGORY (Full-Time/Part-Time/Contract/
+  // Intern, seeded by OrgListItemsService.seedDefaults()) — Designations
+  // and Grades get no such protection, there's nothing else in the app
+  // that depends on a specific one of those existing. A built-in
+  // category's name is locked and it can't be deleted; isActive still is.
+  isSystemDefault Boolean @default(false)
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

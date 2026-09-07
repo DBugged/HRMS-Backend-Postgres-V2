@@ -28,6 +28,7 @@ import { UsersService } from '../users/users.service';
 import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { LeaveTypesService } from '../leave-types/leave-types.service';
+import { OrgListItemsService } from '../org-list-items/org-list-items.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -75,6 +76,7 @@ export class AuthService {
     private readonly employeeIdService: EmployeeIdService,
     private readonly statutoryConfigService: StatutoryConfigService,
     private readonly leaveTypesService: LeaveTypesService,
+    private readonly orgListItemsService: OrgListItemsService,
     private readonly salaryComponentsService: SalaryComponentsService,
     private readonly holidaysService: HolidaysService,
     private readonly emailTemplatesService: EmailTemplatesService,
@@ -159,6 +161,12 @@ export class AuthService {
         // integration point as the seeds above.
         await this.emailTemplatesService.seedDefaults(tx, organization.id);
         await this.letterTemplatesService.seedDefaults(tx, organization.id);
+        // Every new org also starts with the standard built-in Employee
+        // Category set (Full-Time/Part-Time/Contract/Intern) instead of an
+        // empty Employee Categories page — admin can still add custom ones
+        // alongside these, same registration-time integration point as the
+        // seeds above.
+        await this.orgListItemsService.seedDefaults(tx, organization.id);
         return { organization, user };
       },
     );

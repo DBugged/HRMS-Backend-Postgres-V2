@@ -4,8 +4,13 @@
 //   Promise.allSettled per-row-isolation pattern as DocumentRequirement's bulk import.
 // Important: `name` is stored as a plain string on the Employee record wherever it's selected (no FK) —
 //   deleting or renaming an OrgListItem never orphans an employee who already has that value set.
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { AuditModule, OrgListType } from '@prisma/client';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { AuditModule, OrgListType, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -16,12 +21,42 @@ import { wrapAll } from '../common/pagination';
 
 type Actor = { id: string };
 
+// The only type with a built-in set — see OrgListItem.isSystemDefault's
+// schema comment. Designations/Grades stay fully free-form.
+export const BUILTIN_EMPLOYEE_CATEGORIES = [
+  'Full-Time',
+  'Part-Time',
+  'Contract',
+  'Intern',
+];
+
 @Injectable()
 export class OrgListItemsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  // Every new org starts with the standard Employee Category set instead
+  // of an empty list — admin can still add custom ones alongside these.
+  // Same registration-time integration point as LeaveTypesService/
+  // HolidaysService.seedDefaults; existing orgs got the equivalent one-off
+  // backfill via this migration's own SQL (add_employee_category_defaults).
+  async seedDefaults(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    for (const name of BUILTIN_EMPLOYEE_CATEGORIES) {
+      await tx.orgListItem.create({
+        data: {
+          organizationId,
+          type: OrgListType.EMPLOYEE_CATEGORY,
+          name,
+          isSystemDefault: true,
+        },
+      });
+    }
+  }
 
   async findAll(
     type: OrgListType | undefined,
@@ -69,6 +104,11 @@ export class OrgListItemsService {
     if (!item) throw new NotFoundException('List item not found.');
 
     const trimmed = dto.name?.trim();
+    if (item.isSystemDefault && trimmed !== undefined && trimmed !== item.name) {
+      throw new ConflictException(
+        'This is a built-in category — its name cannot be changed.',
+      );
+    }
     // updateMany (not update) — its `where` accepts arbitrary filters, so
     // it can be organizationId-scoped directly, matching the same
     // tenant-scope pattern DepartmentsService.update() uses.
@@ -103,6 +143,11 @@ export class OrgListItemsService {
       where: { id, organizationId },
     });
     if (!item) throw new NotFoundException('List item not found.');
+    if (item.isSystemDefault) {
+      throw new ConflictException(
+        'This is a built-in category and cannot be deleted — deactivate it instead.',
+      );
+    }
 
     await this.scopedPrisma.orgListItem.deleteMany({
       where: { id, organizationId },
