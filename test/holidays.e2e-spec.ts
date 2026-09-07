@@ -210,6 +210,38 @@ describe('Holidays (e2e)', () => {
       .expect(200);
   });
 
+  it("rejects toggling isActive on a holiday whose date has already passed, but still allows editing its other fields", async () => {
+    const created = await request(app.getHttpServer())
+      .post('/holidays')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Past Holiday', date: '2020-01-01', type: 'COMPANY' })
+      .expect(201);
+    const pastId = (created.body as HolidayBody).id;
+
+    await request(app.getHttpServer())
+      .put(`/holidays/${pastId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isActive: false })
+      .expect(400);
+
+    // Sending the same (unchanged) value isn't a real toggle — allowed.
+    await request(app.getHttpServer())
+      .put(`/holidays/${pastId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ isActive: true })
+      .expect(200);
+
+    // Non-status fields are still editable regardless of date.
+    const res = await request(app.getHttpServer())
+      .put(`/holidays/${pastId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ description: 'Updated after the fact' })
+      .expect(200);
+    expect((res.body as HolidayBody & { description: string }).description).toBe(
+      'Updated after the fact',
+    );
+  });
+
   it('bulk-import: valid rows create, invalid/duplicate rows fail without aborting the batch', async () => {
     const res = await request(app.getHttpServer())
       .post('/holidays/bulk-import')

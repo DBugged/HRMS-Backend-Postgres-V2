@@ -7,6 +7,7 @@
 // are collected into `failed` rather than aborting the whole batch, and duplicates are checked both against
 // existing DB rows and within the same batch.
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -24,6 +25,10 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 
 const VALID_TYPES = new Set(Object.values(HolidayType));
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function todayStr(): string {
+  return new Date().toISOString().slice(0, 10);
+}
 
 // Bulk-import rows are untyped, client-parsed spreadsheet cells — this
 // coerces only actual strings/numbers/booleans (the values a spreadsheet
@@ -143,6 +148,23 @@ export class HolidaysService {
     actorId?: string,
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+
+    // Attendance/leave-tracker/dashboard all look up a specific day's
+    // holiday by `isActive: true` at whatever time they run — including a
+    // recalculation of a PAST day (e.g. a regularization or manual
+    // correction). Flipping isActive on an already-past holiday would
+    // silently change how that historical day gets reinterpreted on the
+    // next recalculation, rather than just affecting the calendar going
+    // forward. Every other field stays editable regardless of date.
+    if (
+      dto.isActive !== undefined &&
+      dto.isActive !== existing.isActive &&
+      existing.date < todayStr()
+    ) {
+      throw new BadRequestException(
+        "This holiday's date has already passed — its Active status can't be changed, to avoid altering how that day's attendance/leave calculations are interpreted.",
+      );
+    }
 
     const nextName = (dto.name ?? existing.name).trim();
     const nextDate = dto.date ?? existing.date;
