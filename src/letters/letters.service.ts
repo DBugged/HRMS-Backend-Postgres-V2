@@ -30,6 +30,9 @@ import { formatDateDisplay } from '../payroll/format-date';
 import { amountInWords } from '../payroll/number-to-words';
 import { LetterPdfService } from './letter-pdf.service';
 import { LetterTemplatesService } from '../letter-templates/letter-templates.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -62,6 +65,9 @@ export class LettersService {
     private readonly pdfService: LetterPdfService,
     private readonly auditLogService: AuditLogService,
     private readonly letterTemplatesService: LetterTemplatesService,
+    private readonly timelineService: EmployeeTimelineService,
+    private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   // Powers the Letters & Certificates tab's list — which of the org's
@@ -360,6 +366,95 @@ export class LettersService {
       buffer,
       filename: `${key}-${employee.employeeId}.pdf`,
     };
+  }
+
+  // HR/Admin-only follow-up to generate() — everything is pulled from the
+  // same real employee/org/computed data, nothing to fill in; HR reviews
+  // the PDF (via generate()/the Download button) and this then emails that
+  // same content to the employee's registered address. Deliberately a
+  // second call to generate() rather than threading the caller's already-
+  // fetched buffer through: this issues its own document number for the
+  // copy that actually goes out, same as any other independent
+  // download/generate call — see generate()'s own docstring, numbers were
+  // never meant to be contiguous or deduped across repeat generations.
+  async send(
+    employeeId: string,
+    key: string,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<{ message: string }> {
+    const template = await this.letterTemplatesService.findActiveByKey(
+      key,
+      organizationId,
+    );
+    if (!template) {
+      throw new BadRequestException(
+        `No active letter template found for '${key}' — configure one in Organization Settings > Letter Templates.`,
+      );
+    }
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { name: true, email: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    if (!employee.email) {
+      throw new BadRequestException(
+        'This employee has no email address on file to send the letter to.',
+      );
+    }
+
+    const { buffer, filename } = await this.generate(
+      employeeId,
+      key,
+      actor,
+      organizationId,
+    );
+
+    const organization = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { companyName: true, registeredAddress: true },
+    });
+    const companyName = organization?.companyName || 'the Company';
+
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      organizationId,
+      'LETTER_SENT',
+      {
+        employeeName: employee.name,
+        letterName: template.name,
+        companyName,
+      },
+      {
+        subject: `Your ${template.name} from ${companyName}`,
+        html: `<p>Hi ${employee.name},</p><p>Please find your ${template.name} attached.</p><p>${companyName}</p>`,
+      },
+    );
+
+    await this.emailService.send({
+      to: employee.email,
+      subject: rendered.subject,
+      html: rendered.html,
+      attachments: [{ filename, content: buffer }],
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LETTER_EMAILED',
+      module: AuditModule.DOCUMENT,
+      organizationId,
+      targetId: employeeId,
+      details: { key, templateName: template.name, to: employee.email },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId,
+      eventKey: 'LETTER_EMAILED',
+      performedById: actor.id,
+      description: `${template.name} emailed to ${employee.email}.`,
+    });
+
+    return { message: `${template.name} emailed to ${employee.email}.` };
   }
 
   private async latestLastWorkingDay(

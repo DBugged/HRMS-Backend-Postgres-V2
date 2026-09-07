@@ -43,6 +43,7 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   },
   ASSET_ALLOCATED: { category: 'EMPLOYMENT', title: 'Asset Allocated' },
   ASSET_RETURNED: { category: 'EMPLOYMENT', title: 'Asset Returned' },
+  LETTER_EMAILED: { category: 'EMPLOYMENT', title: 'Letter Emailed' },
   ASSET_STATUS_CHANGED: {
     category: 'EMPLOYMENT',
     title: 'Asset Status Changed',

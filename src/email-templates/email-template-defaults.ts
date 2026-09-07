@@ -245,4 +245,17 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
       '<p>Hi {{employeeName}},</p><p>Setup for {{companyName}} is complete — the HRMS is ready to use.</p>',
     ccAllActive: false,
   },
+  {
+    // Fires from LettersService.send() — HR/Admin reviews the generated
+    // PDF (any letter type: Appointment, Relieving, Experience...) and
+    // clicks Send; {{letterName}} names whichever template was sent.
+    occasionKey: 'LETTER_SENT',
+    name: 'Letter Sent',
+    subject: 'Your {{letterName}} from {{companyName}}',
+    bodyHtml:
+      '<p>Hi {{employeeName}},</p><p>Please find your {{letterName}} attached.</p>' +
+      '<p>Warm regards,<br/>{{companyName}}</p>' +
+      '<p style="color:#888;font-size:12px;">{{companyName}} | {{companyAddress}} | {{companyPhone}} | {{companyEmail}} | {{companyWebsite}}</p>',
+    ccAllActive: false,
+  },
 ];

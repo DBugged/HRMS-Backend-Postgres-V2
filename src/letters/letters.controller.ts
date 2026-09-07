@@ -1,15 +1,19 @@
 // Purpose: Exposes letter generation as a PDF download, mounted at /employees/:id/letters/:key — key is a
 //   LetterTemplate's key (see letter-templates module), not a fixed set: any active template, built-in or
-//   admin-created custom, is downloadable here.
+//   admin-created custom, is downloadable here. Also exposes :key/send, which generates the same PDF and
+//   emails it to the employee — see LettersService.send.
 // Important: Self-or-role scoped (self, or ADMIN/HR/MANAGER — MANAGER further restricted to own
-//   department in the service), same pattern as /employees/:id/timeline.
-import { Controller, Get, Param, Res, UseGuards } from '@nestjs/common';
+//   department in the service), same pattern as /employees/:id/timeline. :key/send is narrower —
+//   ADMIN/HR only, not self or MANAGER: emailing someone official correspondence is an HR action, not
+//   something an employee (who can already download their own copy) or a department head needs to do.
+import { Controller, Get, Param, Post, Res, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { LettersService } from './letters.service';
 import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
@@ -54,5 +58,17 @@ export class LettersController {
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
     res.send(buffer);
+  }
+
+  @Post(':key/send')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  async send(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.lettersService.send(id, key, caller, caller.organizationId);
   }
 }

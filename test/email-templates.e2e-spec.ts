@@ -121,6 +121,7 @@ describe('EmailTemplates (e2e)', () => {
       'FOUNDER_ACCOUNT_WELCOME',
       'LEAVE_DECISION',
       'LEAVE_ENCASHMENT_STATUS',
+      'LETTER_SENT',
       'LOAN_SANCTIONED',
       'LOAN_STATUS_UPDATE',
       'LOGIN_CREDENTIALS_RESENT',
