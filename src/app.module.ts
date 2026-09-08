@@ -54,6 +54,7 @@ import { LettersModule } from './letters/letters.module';
 import { LetterTemplatesModule } from './letter-templates/letter-templates.module';
 import { LeaveTrackerModule } from './leave-tracker/leave-tracker.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { RolesGuard } from './common/guards/roles.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
@@ -140,6 +141,16 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // Runs after JwtAuthGuard in the guard chain (registration order),
     // so an already-401'd request doesn't also consume a rate-limit slot.
     { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // Defense in depth: @Roles()/@SelfOrRoles() previously did nothing
+    // unless the route ALSO carried @UseGuards(RolesGuard) — every
+    // decorated route currently pairs them correctly, but the failure mode
+    // was silent (a forgotten @UseGuards left an HR-only route wide open,
+    // with no type error and no failing test). Registering it globally
+    // makes the decorator alone sufficient. Routes with neither decorator
+    // are unaffected: the guard returns true before reading request.user,
+    // so @Public() routes still work. Routes that keep their explicit
+    // @UseGuards(RolesGuard) simply run the same pure check twice.
+    { provide: APP_GUARD, useClass: RolesGuard },
     // Every error response (HttpException or not) comes out in one
     // consistent {statusCode, message, error, path, timestamp} shape —
     // see the filter for why message/error are preserved as Nest

@@ -131,9 +131,15 @@ describe('Payroll Settings (e2e)', () => {
   });
 
   it("CompOff.earn now reads the org's real compOffExpiryDays instead of a hardcoded default", async () => {
+    // Must be a past weekly off, not just "yesterday" — earn() rejects a
+    // regular working day ("Comp-off can only be earned for a weekly off
+    // or a holiday"). Hardcoding yesterday made this test pass only when
+    // it happened to run on a Monday and fail the other six days.
+    // Walks back to the most recent Sunday (the default weekly off).
     const earnedForDate = (() => {
       const d = new Date();
       d.setUTCDate(d.getUTCDate() - 1);
+      while (d.getUTCDay() !== 0) d.setUTCDate(d.getUTCDate() - 1);
       return d.toISOString().slice(0, 10);
     })();
 

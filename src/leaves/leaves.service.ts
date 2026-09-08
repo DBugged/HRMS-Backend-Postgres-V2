@@ -706,11 +706,24 @@ export class LeavesService {
     // Atomic decrement — see the comment on the apply() pending update
     // above for why `row.field - delta` here would lose an update under
     // concurrent cancellations/reversals.
+    //
+    // Only PENDING still holds a `pending` reservation. review() already
+    // releases it when it sets REJECTED/RETURNED, so decrementing again
+    // here for those statuses double-releases: a RETURNED leave that the
+    // employee then cancels (a legal transition — see cancel()'s
+    // cancellableStatuses) drove `pending` negative, and since
+    // checkAffordability computes available as `... - pending`, that
+    // *inflated* the employee's usable balance by the leave's length,
+    // repeatably and invisibly (LeaveBalance.closing ignores `pending`).
     const data: Prisma.LeaveBalanceUpdateManyMutationInput = {};
     if (leave.status === LeaveStatus.APPROVED) {
       data.availed = { decrement: leave.totalDays };
-    } else {
+    } else if (leave.status === LeaveStatus.PENDING) {
       data.pending = { decrement: leave.totalDays };
+    } else {
+      // REJECTED/RETURNED — hold already released by review(); nothing to
+      // reverse, and recalculate() below would only re-derive the same row.
+      return;
     }
     await tx.leaveBalance.updateMany({
       where: { id: row.id, organizationId },

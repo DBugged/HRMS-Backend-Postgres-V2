@@ -456,4 +456,51 @@ describe('Leaves (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
   });
+
+  // Regression: review(RETURNED) releases the pending hold, and cancel()
+  // legally accepts a RETURNED leave — but releaseHold() then decremented
+  // `pending` a second time, driving it negative. Since affordability is
+  // computed as `... - pending`, a negative pending INFLATED the
+  // employee's usable balance, repeatably and invisibly (LeaveBalance
+  // .closing doesn't include pending, so the balance screen looked fine).
+  it('returning then cancelling a leave does not drive pending negative', async () => {
+    const year = new Date().getFullYear();
+    const before = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId: elLeaveTypeId, year },
+    });
+    const pendingBefore = before?.pending ?? 0;
+
+    const applied = await request(app.getHttpServer())
+      .post('/leaves')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({
+        leaveType: elLeaveTypeId,
+        // Deliberately inside the CURRENT calendar year: deriveLeaveYear()
+        // attributes the hold to startDate's year, so a far-future range
+        // would move it to next year's LeaveBalance row and this
+        // assertion would read an untouched row and pass either way.
+        startDate: offsetDate(60),
+        endDate: offsetDate(62),
+      })
+      .expect(201);
+    const leaveId = (applied.body as LeaveBody).id;
+
+    await request(app.getHttpServer())
+      .patch(`/leaves/${leaveId}/review`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ decision: 'RETURNED', comments: 'please correct the dates' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/leaves/${leaveId}/cancel`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+
+    const after = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId: elLeaveTypeId, year },
+    });
+    // Net zero: the hold was taken on apply and released exactly once.
+    expect(after?.pending).toBe(pendingBefore);
+    expect(after?.pending).toBeGreaterThanOrEqual(0);
+  });
 });

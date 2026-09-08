@@ -404,4 +404,56 @@ describe('checkLeaveRules', () => {
       expect(result.totalDays).toBe(0.5);
     });
   });
+
+  describe('request shape guards', () => {
+    // Regression: isHalfDay short-circuited totalDays to 0.5 for ANY range
+    // while approval still wrote HALF_DAY attendance across every date in
+    // it — a month-long "half day" cost the employee 0.5 days of balance.
+    it('rejects a half-day request spanning more than one date', () => {
+      const result = checkLeaveRules(
+        permissiveRules,
+        {
+          startDate: '2026-06-01',
+          endDate: '2026-06-30',
+          isHalfDay: true,
+          hasAttachment: false,
+        },
+        baseContext,
+      );
+      expect(result.ok).toBe(false);
+      expect(result.errors.join(' ')).toContain('same date');
+    });
+
+    it('still allows a half-day request on a single date', () => {
+      const result = checkLeaveRules(
+        permissiveRules,
+        {
+          startDate: '2026-06-10',
+          endDate: '2026-06-10',
+          isHalfDay: true,
+          hasAttachment: false,
+        },
+        baseContext,
+      );
+      expect(result.ok).toBe(true);
+      expect(result.totalDays).toBe(0.5);
+    });
+
+    // countDaysInclusive would return a negative count, which then slips
+    // past the balance check since a negative never exceeds available.
+    it('rejects an end date before the start date', () => {
+      const result = checkLeaveRules(
+        permissiveRules,
+        {
+          startDate: '2026-06-12',
+          endDate: '2026-06-10',
+          isHalfDay: false,
+          hasAttachment: false,
+        },
+        baseContext,
+      );
+      expect(result.ok).toBe(false);
+      expect(result.errors.join(' ')).toContain('End date cannot be before');
+    });
+  });
 });

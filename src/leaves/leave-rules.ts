@@ -127,6 +127,22 @@ export function checkLeaveRules(
 ): LeaveRuleResult {
   const errors: string[] = [];
 
+  // Shape checks before any day-count arithmetic — both of these produce a
+  // totalDays that silently misrepresents the request otherwise.
+  if (request.endDate < request.startDate) {
+    // countDaysInclusive would return a negative day count, which then
+    // slips past the balance check (a negative never exceeds available).
+    errors.push('End date cannot be before start date.');
+  } else if (request.isHalfDay && request.startDate !== request.endDate) {
+    // A half day is by definition one date. Without this, the 0.5
+    // short-circuit below charged 0.5 days for an arbitrarily long range
+    // while attendance still wrote HALF_DAY across every date in it —
+    // e.g. a month-long "half day" cost the employee half a day of balance.
+    errors.push(
+      'A half-day leave must start and end on the same date. Uncheck half day to apply for a date range.',
+    );
+  }
+
   let totalDays = request.isHalfDay
     ? 0.5
     : countDaysInclusive(request.startDate, request.endDate);

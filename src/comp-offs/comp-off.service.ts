@@ -422,6 +422,16 @@ export class CompOffService {
         organizationId,
         employeeId,
         status: { in: CONSUMABLE_STATUSES },
+        // Expiry is only swept lazily (sweepExpired runs on the read paths,
+        // never on a schedule), so an expired credit can still be sitting
+        // in a CONSUMABLE status at approval time — status alone is not
+        // proof of validity. Without this, a comp-off leave applied for
+        // while the credit was valid but approved after expiry consumed
+        // the expired credit. Null expiryDate means "never expires".
+        OR: [
+          { expiryDate: null },
+          { expiryDate: { gte: new Date().toISOString().slice(0, 10) } },
+        ],
       },
     });
     const result = consumeCompOff(rows, days);
