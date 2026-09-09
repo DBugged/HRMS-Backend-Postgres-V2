@@ -1,4 +1,30 @@
-import { evaluateTenantScope } from './tenant-scope.guard-logic';
+import * as fs from 'fs';
+import * as path from 'path';
+import {
+  evaluateTenantScope,
+  TENANT_SCOPED_MODELS,
+} from './tenant-scope.guard-logic';
+
+// Every model that carries an organizationId belongs in the safety net.
+// LetterOverride was silently left out when it was added — one model out of
+// 44 with no compile-time or runtime signal, which is exactly the failure
+// mode a hand-maintained list has. Reading the schema keeps the list honest
+// as models are added.
+describe('TENANT_SCOPED_MODELS covers the schema', () => {
+  it('lists every model with an organizationId field', () => {
+    const schema = fs.readFileSync(
+      path.join(__dirname, '../../prisma/schema.prisma'),
+      'utf8',
+    );
+    const owned = [...schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)]
+      .filter(([, , body]) => /^\s*organizationId\s/m.test(body))
+      .map(([, name]) => name);
+
+    expect(owned.length).toBeGreaterThan(30); // sanity: the regex matched
+    const missing = owned.filter((m) => !TENANT_SCOPED_MODELS.has(m));
+    expect(missing).toEqual([]);
+  });
+});
 
 describe('evaluateTenantScope', () => {
   describe('non-scoped models', () => {

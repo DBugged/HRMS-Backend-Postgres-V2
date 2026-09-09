@@ -59,6 +59,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EmploymentStatusHistory',
   'EmailTemplate',
   'LetterTemplate',
+  'LetterOverride',
   'OrgListItem',
   'WorkSchedule',
 ]);

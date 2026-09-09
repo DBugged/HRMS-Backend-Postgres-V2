@@ -339,10 +339,13 @@ export class LettersService {
     // not just a one-off edited send) replaces the template's own
     // rendering entirely — this is what makes Download and a future
     // unedited Send pick up the customized wording too.
-    const override = await this.scopedPrisma.letterOverride.findUnique({
-      where: {
-        organizationId_employeeId_key: { organizationId, employeeId, key },
-      },
+    // findFirst, not findUnique: LetterOverride is tenant-scoped, and the
+    // scope extension refuses findUnique on scoped models because a
+    // compound-unique `where` leaves it nowhere to inject organizationId.
+    // The @@unique([organizationId, employeeId, key]) makes this equally
+    // selective.
+    const override = await this.scopedPrisma.letterOverride.findFirst({
+      where: { organizationId, employeeId, key },
     });
     const isCustomized = !!override;
     if (override) {
@@ -409,20 +412,25 @@ export class LettersService {
       throw new BadRequestException('Title and body cannot be empty.');
     }
 
-    await this.scopedPrisma.letterOverride.upsert({
-      where: {
-        organizationId_employeeId_key: { organizationId, employeeId, key },
-      },
-      create: {
-        organizationId,
-        employeeId,
-        key,
-        title,
-        body,
-        updatedById: actor.id,
-      },
-      update: { title, body, updatedById: actor.id },
+    // updateMany-then-create rather than upsert, for the same reason
+    // findUnique became findFirst above — the scope extension can't inject
+    // organizationId into an upsert's compound-unique `where`.
+    const updated = await this.scopedPrisma.letterOverride.updateMany({
+      where: { organizationId, employeeId, key },
+      data: { title, body, updatedById: actor.id },
     });
+    if (updated.count === 0) {
+      await this.scopedPrisma.letterOverride.create({
+        data: {
+          organizationId,
+          employeeId,
+          key,
+          title,
+          body,
+          updatedById: actor.id,
+        },
+      });
+    }
 
     await this.auditLogService.log({
       actorId: actor.id,
