@@ -360,6 +360,14 @@ model User {
   emailVerified      Boolean   @default(true)
   lastLoginAt        DateTime?
 
+  // Per-account brute-force lockout. The @Throttle() on POST /auth/login is
+  // per-IP only, so a distributed attempt against ONE account (credential
+  // stuffing from a botnet) never trips it — each IP stays under its own
+  // limit while the account takes unlimited guesses. Counter resets on a
+  // successful login or a completed password reset; see AuthService.login.
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
   // Employee fields — Employee IS the User row, same as the old system
   // (no separate Employee entity). Unique per-org (not globally, unlike
   // email) via the composite unique index below, matching the old system's

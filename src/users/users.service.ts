@@ -63,4 +63,38 @@ export class UsersService {
       data: { lastLoginAt: new Date() },
     });
   }
+
+  // Brute-force lockout bookkeeping (see AuthService.login). Once the
+  // threshold is reached the counter is reset alongside setting lockedUntil,
+  // so when the lock expires the account gets a fresh window rather than
+  // re-locking on the very next wrong password.
+  recordFailedLogin(
+    user: Pick<User, 'id' | 'organizationId' | 'failedLoginAttempts'>,
+    maxAttempts: number,
+    lockoutMinutes: number,
+  ): Promise<{ locked: boolean }> {
+    const attempts = user.failedLoginAttempts + 1;
+    const locked = attempts >= maxAttempts;
+    return this.prisma.user
+      .updateMany({
+        where: { id: user.id, organizationId: user.organizationId },
+        data: locked
+          ? {
+              failedLoginAttempts: 0,
+              lockedUntil: new Date(Date.now() + lockoutMinutes * 60_000),
+            }
+          : { failedLoginAttempts: attempts },
+      })
+      .then(() => ({ locked }));
+  }
+
+  clearLoginFailures(
+    id: string,
+    organizationId: string,
+  ): Promise<Prisma.BatchPayload> {
+    return this.prisma.user.updateMany({
+      where: { id, organizationId },
+      data: { failedLoginAttempts: 0, lockedUntil: null },
+    });
+  }
 }

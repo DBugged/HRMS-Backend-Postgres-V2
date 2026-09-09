@@ -42,6 +42,13 @@ export class AttendanceController {
 
   // Machine-to-machine webhook from the Face API device — exempt from the
   // global JwtAuthGuard, authenticated instead by a shared-secret header.
+  //
+  // Deliberately left on the app-wide throttle (100 req/min per IP) rather
+  // than a tighter per-route one: the key is 24 random bytes per org
+  // (OrganizationSettingsService.regenerateFaceApiKey), so guessing it is
+  // infeasible at any rate limit, while a device gateway relaying a whole
+  // site's punches at shift start is exactly the burst a tighter limit
+  // would start dropping.
   @Post('punch/ingest')
   @Public()
   @ApiHeader({ name: 'x-face-api-key', required: true })

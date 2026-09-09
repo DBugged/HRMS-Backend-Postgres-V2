@@ -19,3 +19,20 @@ function parseAccessTtlToSeconds(value: string): number {
   const multiplier = { s: 1, m: 60, h: 3600, d: 86400 }[unit] ?? 60;
   return amount * multiplier;
 }
+
+// Per-account brute-force lockout. @Throttle() on POST /auth/login is
+// per-IP, which does nothing against a distributed attack on a single
+// account — every IP stays under its own limit while the account itself
+// takes unlimited guesses. These cap the account instead.
+//
+// 10 (not 5) because the per-IP limit already absorbs casual hammering and
+// a lower number makes it trivial for anyone to lock a colleague out by
+// typing a wrong password at them. Overridable per-environment, same
+// pattern as AUTH_THROTTLE_LIMIT — the e2e suite needs a small value so a
+// lockout test doesn't take 10 real bcrypt rounds to set up.
+export const LOGIN_MAX_FAILED_ATTEMPTS = Number(
+  process.env.LOGIN_MAX_FAILED_ATTEMPTS ?? 10,
+);
+export const LOGIN_LOCKOUT_MINUTES = Number(
+  process.env.LOGIN_LOCKOUT_MINUTES ?? 15,
+);

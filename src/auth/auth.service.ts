@@ -46,6 +46,8 @@ import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import {
   REFRESH_TOKEN_TTL_DAYS,
   ACCESS_TOKEN_TTL_SECONDS,
+  LOGIN_MAX_FAILED_ATTEMPTS,
+  LOGIN_LOCKOUT_MINUTES,
 } from './auth.constants';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
@@ -225,11 +227,44 @@ export class AuthService {
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Invalid email or password.');
     }
-    const valid = await bcrypt.compare(dto.password, user.password);
-    if (!valid) {
+
+    // Locked accounts are rejected BEFORE the password is checked, and a
+    // rejection here does not extend the lock — otherwise a bot hammering
+    // the endpoint would keep a legitimate user locked out indefinitely.
+    //
+    // The message is deliberately the same generic one used for a bad
+    // password: this codebase keeps auth responses non-enumerable (see the
+    // matching forgot-password behaviour), and a distinct "account locked"
+    // reply would confirm that an email exists. A locked-out legitimate user
+    // still has a self-service way back in — completing a password reset
+    // clears the lock (see resetPassword below).
+    if (user.lockedUntil && user.lockedUntil > new Date()) {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
+    const valid = await bcrypt.compare(dto.password, user.password);
+    if (!valid) {
+      const { locked } = await this.usersService.recordFailedLogin(
+        user,
+        LOGIN_MAX_FAILED_ATTEMPTS,
+        LOGIN_LOCKOUT_MINUTES,
+      );
+      if (locked) {
+        await this.auditLogService.log({
+          actorId: user.id,
+          action: 'LOGIN_LOCKED',
+          module: 'AUTH',
+          organizationId: user.organizationId,
+          ipAddress: meta.ip ?? '',
+          details: { lockoutMinutes: LOGIN_LOCKOUT_MINUTES },
+        });
+      }
+      throw new UnauthorizedException('Invalid email or password.');
+    }
+
+    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+      await this.usersService.clearLoginFailures(user.id, user.organizationId);
+    }
     await this.usersService.updateLastLogin(user.id, user.organizationId);
     const tokens = await this.issueTokenPair(
       user.id,
@@ -393,6 +428,11 @@ export class AuthService {
           resetPasswordToken: null,
           resetPasswordExpires: null,
           mustChangePassword: false,
+          // Completing a reset is the self-service way out of a brute-force
+          // lockout — the owner proved control of the mailbox, so there is
+          // nothing left to protect against here.
+          failedLoginAttempts: 0,
+          lockedUntil: null,
         },
       }),
       this.scopedPrisma.refreshToken.updateMany({
