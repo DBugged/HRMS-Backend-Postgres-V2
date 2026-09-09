@@ -42,9 +42,7 @@ export class EmployeeTypesService {
     return (org?.customEmployeeTypes as EmployeeTypeEntry[] | null) ?? [];
   }
 
-  private async getInactiveBuiltins(
-    organizationId: string,
-  ): Promise<string[]> {
+  private async getInactiveBuiltins(organizationId: string): Promise<string[]> {
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
       select: { inactiveBuiltinEmployeeTypes: true },

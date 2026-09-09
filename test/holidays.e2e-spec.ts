@@ -233,7 +233,11 @@ describe('Holidays (e2e)', () => {
     await request(app.getHttpServer())
       .put(`/holidays/${pastId}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ description: 'Updated after the fact', type: 'NATIONAL', isOptional: true })
+      .send({
+        description: 'Updated after the fact',
+        type: 'NATIONAL',
+        isOptional: true,
+      })
       .expect(400);
 
     // Sending the same (unchanged) values isn't a real change — allowed.

@@ -201,7 +201,11 @@ describe('Performance Ratings (e2e)', () => {
     await request(app.getHttpServer())
       .post('/performance-ratings')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ employeeId: outsideEmployeeId, financialYear: '2026-27', rating: 5 })
+      .send({
+        employeeId: outsideEmployeeId,
+        financialYear: '2026-27',
+        rating: 5,
+      })
       .expect(403);
   });
 

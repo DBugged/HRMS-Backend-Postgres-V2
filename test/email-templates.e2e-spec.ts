@@ -269,7 +269,7 @@ describe('EmailTemplates (e2e)', () => {
       .expect(400);
   });
 
-  it('a built-in template\'s category can be re-grouped like any other field', async () => {
+  it("a built-in template's category can be re-grouped like any other field", async () => {
     const res = await request(app.getHttpServer())
       .put('/email-templates/WORK_ANNIVERSARY')
       .set('Authorization', `Bearer ${adminToken}`)

@@ -55,6 +55,7 @@ import { LetterTemplatesModule } from './letter-templates/letter-templates.modul
 import { LeaveTrackerModule } from './leave-tracker/leave-tracker.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
+import { PasswordRotationGuard } from './common/guards/password-rotation.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
@@ -151,6 +152,11 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // so @Public() routes still work. Routes that keep their explicit
     // @UseGuards(RolesGuard) simply run the same pure check twice.
     { provide: APP_GUARD, useClass: RolesGuard },
+    // Blocks every non-allowlisted route while User.mustChangePassword is
+    // still true. The clients already show a blocking force-change screen,
+    // but nothing enforced it server-side: an emailed temporary password
+    // could drive the whole API without ever being rotated.
+    { provide: APP_GUARD, useClass: PasswordRotationGuard },
     // Every error response (HttpException or not) comes out in one
     // consistent {statusCode, message, error, path, timestamp} shape —
     // see the filter for why message/error are preserved as Nest

@@ -262,7 +262,9 @@ describe('Salary Components (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const pf = (
-      list.body as { data: (ComponentBody & { name: string; isSystemDefault: boolean })[] }
+      list.body as {
+        data: (ComponentBody & { name: string; isSystemDefault: boolean })[];
+      }
     ).data.find((c) => c.code === 'PF');
     expect(pf).toBeDefined();
     expect(pf!.isSystemDefault).toBe(true);
@@ -303,7 +305,8 @@ describe('Salary Components (e2e)', () => {
       .expect(201);
     const id = (created.body as ComponentBody).id;
     expect(
-      (created.body as ComponentBody & { isSystemDefault: boolean }).isSystemDefault,
+      (created.body as ComponentBody & { isSystemDefault: boolean })
+        .isSystemDefault,
     ).toBe(false);
 
     await request(app.getHttpServer())

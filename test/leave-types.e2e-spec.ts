@@ -241,9 +241,11 @@ describe('Leave Types (e2e)', () => {
       .get('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const casual = (list.body as { data: (LeaveTypeBody & { code: string; isSystemDefault: boolean })[] }).data.find(
-      (t) => t.code === 'CL',
-    );
+    const casual = (
+      list.body as {
+        data: (LeaveTypeBody & { code: string; isSystemDefault: boolean })[];
+      }
+    ).data.find((t) => t.code === 'CL');
     expect(casual).toBeDefined();
     expect(casual!.isSystemDefault).toBe(true);
 
@@ -272,9 +274,11 @@ describe('Leave Types (e2e)', () => {
       .get('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    const casual = (list.body as { data: (LeaveTypeBody & { code: string; isSystemDefault: boolean })[] }).data.find(
-      (t) => t.code === 'CL',
-    );
+    const casual = (
+      list.body as {
+        data: (LeaveTypeBody & { code: string; isSystemDefault: boolean })[];
+      }
+    ).data.find((t) => t.code === 'CL');
     await request(app.getHttpServer())
       .delete(`/leave-types/${casual!.id}`)
       .set('Authorization', `Bearer ${adminToken}`)
@@ -283,7 +287,11 @@ describe('Leave Types (e2e)', () => {
     const created = await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Disposable Leave', code: 'DISP', allocationType: 'FIXED_ANNUAL' })
+      .send({
+        name: 'Disposable Leave',
+        code: 'DISP',
+        allocationType: 'FIXED_ANNUAL',
+      })
       .expect(201);
     await request(app.getHttpServer())
       .delete(`/leave-types/${(created.body as LeaveTypeBody).id}`)

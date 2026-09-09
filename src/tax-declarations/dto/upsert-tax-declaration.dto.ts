@@ -42,14 +42,27 @@ export class UpsertTaxDeclarationDto {
   regimeChosen?: TaxRegime;
 
   @ApiPropertyOptional({ maximum: SECTION_80C_CAP })
-  @IsOptional() @IsNumber() @Min(0) @Max(SECTION_80C_CAP)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(SECTION_80C_CAP)
   section80C?: number;
   @ApiPropertyOptional({ maximum: SECTION_80CCD1B_CAP })
-  @IsOptional() @IsNumber() @Min(0) @Max(SECTION_80CCD1B_CAP)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(SECTION_80CCD1B_CAP)
   section80CCD1B?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) section80CCD2?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  section80CCD2?: number;
   @ApiPropertyOptional({ maximum: SECTION_80D_CAP })
-  @IsOptional() @IsNumber() @Min(0) @Max(SECTION_80D_CAP)
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(SECTION_80D_CAP)
   section80D?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) section80E?: number;
   @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) section80G?: number;

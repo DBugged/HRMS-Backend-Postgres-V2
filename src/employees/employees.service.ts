@@ -753,8 +753,7 @@ function asString(value: unknown): string {
 // withSignedUrls.
 function toSafe(user: User) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
-  const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
-    user;
+  const { password, resetPasswordToken, resetPasswordExpires, ...safe } = user;
   if (safe.profileImage) {
     // Held in AuthContext for the whole session, not re-fetched on every
     // navigation — see SESSION_ASSET_TTL_SECONDS' comment.

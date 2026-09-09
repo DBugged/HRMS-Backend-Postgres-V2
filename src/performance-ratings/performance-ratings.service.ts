@@ -83,7 +83,8 @@ export class PerformanceRatingsService {
     if (query.financialYear) where.financialYear = query.financialYear;
     // EMPLOYEE's status is force-set above and must never be widened back
     // to SUBMITTED/REJECTED by a query param.
-    if (query.status && actor.role !== Role.EMPLOYEE) where.status = query.status;
+    if (query.status && actor.role !== Role.EMPLOYEE)
+      where.status = query.status;
 
     return paginate(
       () =>

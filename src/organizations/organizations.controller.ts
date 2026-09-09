@@ -23,6 +23,7 @@ import { BulkImportEmployeeTypesDto } from './dto/bulk-import-employee-types.dto
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { AllowPendingPasswordChange } from '../common/decorators/allow-pending-password-change.decorator';
 
 type Caller = Omit<User, 'password'>;
 
@@ -63,6 +64,10 @@ export class OrganizationsController {
   // claiming HR can view; the actual enforced behavior is ADMIN-only,
   // ported as-is.
 
+  // Branding only (logo/colors/name) — the app shell and the
+  // force-password-change screen both render it, so it stays reachable
+  // while the user is still on a temporary password.
+  @AllowPendingPasswordChange()
   @Get('settings/public')
   getPublicBranding(@CurrentUser() caller: Caller) {
     return this.organizationSettingsService.getPublicBranding(

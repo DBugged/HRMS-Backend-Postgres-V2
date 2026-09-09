@@ -527,7 +527,11 @@ export class PayrollService {
     // rounding-order fix as earnings above, so totalDeductions and the
     // persisted `deductions` array always agree with each other.
     for (const d of deductionsResults) {
-      d.amount = round(d.amount, settings.roundingRule, settings.roundingDecimals);
+      d.amount = round(
+        d.amount,
+        settings.roundingRule,
+        settings.roundingDecimals,
+      );
     }
 
     const includedDeductions = deductionsResults.filter(
@@ -550,7 +554,11 @@ export class PayrollService {
     );
     // Same rounding-order fix as earnings/deductions above.
     for (const e of employerResults) {
-      e.amount = round(e.amount, settings.roundingRule, settings.roundingDecimals);
+      e.amount = round(
+        e.amount,
+        settings.roundingRule,
+        settings.roundingDecimals,
+      );
     }
     const totalEmployerContributions = round(
       employerResults.reduce((s, e) => s + e.amount, 0),

@@ -65,7 +65,11 @@ describe('Letters (e2e)', () => {
     const hrCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'HR Person', email: 'letters-e2e-hr@example.test', role: 'HR' });
+      .send({
+        name: 'HR Person',
+        email: 'letters-e2e-hr@example.test',
+        role: 'HR',
+      });
     const hrLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -77,7 +81,11 @@ describe('Letters (e2e)', () => {
     const managerCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Manager Person', email: 'letters-e2e-mgr@example.test', role: 'MANAGER' });
+      .send({
+        name: 'Manager Person',
+        email: 'letters-e2e-mgr@example.test',
+        role: 'MANAGER',
+      });
     const managerLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -124,7 +132,9 @@ describe('Letters (e2e)', () => {
       .post(`/employees/${employeeId}/letters/appointmentLetter/send`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(201);
-    expect((res.body as SendResultBody).message).toContain('Appointment Letter');
+    expect((res.body as SendResultBody).message).toContain(
+      'Appointment Letter',
+    );
     expect((res.body as SendResultBody).message).toContain(
       'letters-e2e-emp@example.test',
     );
@@ -285,12 +295,14 @@ describe('Letters (e2e)', () => {
 
   it('404s sending a letter for a non-existent employee', async () => {
     await request(app.getHttpServer())
-      .post('/employees/00000000-0000-0000-0000-000000000000/letters/appointmentLetter/send')
+      .post(
+        '/employees/00000000-0000-0000-0000-000000000000/letters/appointmentLetter/send',
+      )
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(404);
   });
 
-  it("400s sending an unknown letter key (no active template)", async () => {
+  it('400s sending an unknown letter key (no active template)', async () => {
     await request(app.getHttpServer())
       .post(`/employees/${employeeId}/letters/notARealKey/send`)
       .set('Authorization', `Bearer ${adminToken}`)

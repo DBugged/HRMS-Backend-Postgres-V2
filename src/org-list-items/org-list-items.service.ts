@@ -104,7 +104,11 @@ export class OrgListItemsService {
     if (!item) throw new NotFoundException('List item not found.');
 
     const trimmed = dto.name?.trim();
-    if (item.isSystemDefault && trimmed !== undefined && trimmed !== item.name) {
+    if (
+      item.isSystemDefault &&
+      trimmed !== undefined &&
+      trimmed !== item.name
+    ) {
       throw new ConflictException(
         'This is a built-in category — its name cannot be changed.',
       );

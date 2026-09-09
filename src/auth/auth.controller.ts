@@ -22,6 +22,7 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { AuthResponseDto, RegisterResponseDto } from './dto/auth-response.dto';
 import { Public } from '../common/decorators/public.decorator';
+import { AllowPendingPasswordChange } from '../common/decorators/allow-pending-password-change.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import {
   REFRESH_COOKIE_NAME,
@@ -120,12 +121,17 @@ export class AuthController {
     return { success: true };
   }
 
+  // Reachable on a temporary password — the clients read mustChangePassword
+  // from here to decide whether to show the force-change screen at all.
+  @AllowPendingPasswordChange()
   @Get('me')
   @ApiBearerAuth('access-token')
   me(@CurrentUser() user: { id: string; organizationId: string }) {
     return this.authService.me(user.id, user.organizationId);
   }
 
+  // The rotation itself — necessarily reachable while the flag is set.
+  @AllowPendingPasswordChange()
   @Post('change-password')
   @ApiBearerAuth('access-token')
   changePassword(
