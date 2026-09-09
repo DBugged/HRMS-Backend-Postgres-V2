@@ -418,6 +418,14 @@ export class PayrollService {
       amount: round(e.amount, settings.roundingRule, settings.roundingDecimals),
     }));
 
+    // NOTE: includeInGross is deliberately NOT applied here. Excluding a
+    // line from gross also excludes it from netPay (= gross - deductions),
+    // i.e. it would stop being paid at all — and "pay it but keep it out of
+    // the statutory base" needs netPay and the payslip's
+    // "Gross - Deductions" band to grow a separate non-gross earnings
+    // concept first. Every seeded component with includeInGross:false is an
+    // employer contribution, which never reaches earningsLines anyway, so
+    // this only affects custom components. Flagged rather than guessed.
     const grossSalary = round(
       earningsLines.reduce((s, e) => s + e.amount, 0),
       settings.roundingRule,
@@ -585,13 +593,17 @@ export class PayrollService {
       // as-is rather than rounded a second time, so these are exactly the
       // line amounts the gross/deduction/employer totals below were summed
       // from.
+      // deductions carries only the lines that make up totalDeductions. The
+      // payslip prints this array against run.totalDeductions, so listing an
+      // includeInNet:false line here (while the total left it out) made the
+      // printed column stop adding up to its own printed total.
       earnings: earningsLines.map((e) => ({
         code: e.code,
         name: e.name,
         amount: e.amount,
         taxable: e.taxable,
       })),
-      deductions: deductionsResults.map((d) => ({
+      deductions: includedDeductions.map((d) => ({
         code: d.code,
         name: d.name,
         amount: d.amount,

@@ -365,6 +365,58 @@ describe('Payroll (e2e)', () => {
     await prisma.salaryComponent.delete({ where: { id: compB.id } });
   });
 
+  // Regression: totalDeductions excluded includeInNet:false components but
+  // the persisted `deductions` array listed them anyway. The payslip PDF
+  // prints that array against run.totalDeductions, so the deductions column
+  // did not add up to its own printed total.
+  it('the deduction lines on a run always sum to its printed totalDeductions', async () => {
+    // FORMULA, not FIXED: a non-statutory FIXED component only applies to
+    // an employee who has an explicit EmployeeSalaryComponent row for it
+    // (see isApplicable), so a constant formula is the light way to get a
+    // deduction line onto this run.
+    const realDeduction = await prisma.salaryComponent.create({
+      data: {
+        organizationId,
+        name: 'Canteen',
+        code: 'CANTEEN_TEST',
+        type: 'DEDUCTION',
+        calcType: 'FORMULA',
+        formula: '300',
+      },
+    });
+    const informational = await prisma.salaryComponent.create({
+      data: {
+        organizationId,
+        name: 'Informational Only',
+        code: 'INFO_ONLY',
+        type: 'DEDUCTION',
+        calcType: 'FORMULA',
+        formula: '500',
+        includeInNet: false,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .post('/payroll/calculate')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ month: MONTH, year: YEAR, employeeId })
+      .expect(201);
+    const run = (res.body as CalculateResponseBody).payrolls[0];
+
+    const sum = run.deductions.reduce((total, d) => total + d.amount, 0);
+    expect(run.deductions.find((d) => d.code === 'CANTEEN_TEST')?.amount).toBe(
+      300,
+    );
+    expect(sum).toBe(run.totalDeductions);
+    // The excluded line is left out of the listing, not silently added to
+    // the total.
+    expect(run.deductions.find((d) => d.code === 'INFO_ONLY')).toBeUndefined();
+    expect(run.netPay).toBe(run.grossSalary - run.totalDeductions);
+
+    await prisma.salaryComponent.delete({ where: { id: informational.id } });
+    await prisma.salaryComponent.delete({ where: { id: realDeduction.id } });
+  });
+
   it('an income-tax line only appears once a TaxSlabConfig exists for the FY/regime', async () => {
     // INCOME_TAX is auto-seeded on every new org already (see
     // LeaveTypesService/SalaryComponentsService.seedDefaults).
