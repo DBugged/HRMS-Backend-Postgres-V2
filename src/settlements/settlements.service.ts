@@ -42,6 +42,7 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
+import { calculateGratuity } from './gratuity-math';
 
 type Actor = Omit<User, 'password'>;
 
@@ -55,10 +56,6 @@ interface SettlementPayrollLine {
   amount: number;
   taxable?: boolean;
 }
-
-// An employee below this length of service isn't gratuity-eligible (Payment
-// of Gratuity Act, 1972) — ported verbatim from the old settlementController.
-const YEARS_FOR_GRATUITY_ELIGIBILITY = 5;
 
 @Injectable()
 export class SettlementsService {
@@ -204,9 +201,9 @@ export class SettlementsService {
       const yearsOfService =
         (lwd.getTime() - employee.joiningDate.getTime()) /
         (1000 * 60 * 60 * 24 * 365.25);
-      if (yearsOfService >= YEARS_FOR_GRATUITY_ELIGIBILITY) {
-        gratuityAmount = Math.round(basicMonthly * (15 / 26) * yearsOfService);
-      }
+      // Completed years (part-year over six months rounds up) and the
+      // 20-lakh statutory ceiling — see gratuity-math.ts.
+      gratuityAmount = calculateGratuity(basicMonthly, yearsOfService);
     }
 
     const bonusAmount = dto.bonusAmount ?? 0;

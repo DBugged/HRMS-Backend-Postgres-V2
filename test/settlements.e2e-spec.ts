@@ -10,6 +10,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { calculateGratuity } from '../src/settlements/gratuity-math';
 import { AttendanceStatus } from '@prisma/client';
 
 interface AuthBody {
@@ -265,7 +266,9 @@ describe('Settlements (e2e)', () => {
       (new Date(LAST_WORKING_DAY).getTime() -
         new Date('2020-01-01').getTime()) /
       (1000 * 60 * 60 * 24 * 365.25);
-    expectedGratuity = Math.round(BASIC_MONTHLY * (15 / 26) * yearsOfService);
+    // Completed years, not the fraction served, and never above the 20-lakh
+    // statutory ceiling — the same rules the service applies.
+    expectedGratuity = calculateGratuity(BASIC_MONTHLY, yearsOfService);
     const expectedLeaveEncashment = Math.round(24 * (BASIC_MONTHLY / 30));
     expectedNet = Math.round(
       BASIC_MONTHLY +
@@ -297,6 +300,11 @@ describe('Settlements (e2e)', () => {
     expect(body.loanBalanceRecovered).toBe(5000);
     expect(body.gratuityAmount).toBe(expectedGratuity);
     expect(body.gratuityAmount).toBeGreaterThan(0);
+    // Independent of the helper: the payout must be a whole number of
+    // completed years' worth. It used to be the raw fraction served
+    // (5.6 years here), which this catches.
+    const yearsPaidFor = body.gratuityAmount / (BASIC_MONTHLY * (15 / 26));
+    expect(yearsPaidFor).toBeCloseTo(Math.round(yearsPaidFor), 4);
     expect(body.netSettlementAmount).toBe(expectedNet);
   });
 
