@@ -23,7 +23,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { calculateEmi } from './loan-math';
+import { calculateEmi, splitRepayment } from './loan-math';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
@@ -612,6 +612,7 @@ export class LoansService {
     }
 
     let principalComponent = 0;
+    let interestComponent = 0;
     let outstandingBalance = 0;
     const result = await this.scopedPrisma.$transaction(async (tx) => {
       // Re-read inside the transaction and write via a compare-and-swap
@@ -627,10 +628,17 @@ export class LoansService {
       const current = await tx.loan.findFirstOrThrow({
         where: { id, organizationId },
       });
-      principalComponent = Math.min(dto.amount, current.outstandingBalance);
+      // Interest first, then principal — see splitRepayment(). Only the
+      // principal part reduces the balance.
+      ({ principalComponent, interestComponent } = splitRepayment(
+        dto.amount,
+        current.outstandingBalance,
+        current.interestRate,
+      ));
       outstandingBalance = Math.max(
         0,
-        current.outstandingBalance - principalComponent,
+        Math.round((current.outstandingBalance - principalComponent) * 100) /
+          100,
       );
       const status =
         outstandingBalance === 0 ? LoanStatus.CLOSED : current.status;
@@ -658,7 +666,7 @@ export class LoansService {
           year: dto.year,
           amount: dto.amount,
           principalComponent,
-          interestComponent: Math.max(0, dto.amount - principalComponent),
+          interestComponent,
           balanceAfter: outstandingBalance,
         },
       });

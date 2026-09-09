@@ -10,6 +10,10 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import {
+  disablePasswordRotationGuard,
+  restorePasswordRotationGuard,
+} from './password-rotation-guard.testing';
 
 interface AuthBody {
   accessToken: string;
@@ -38,6 +42,11 @@ describe('Password rotation enforcement (e2e)', () => {
   let employeeUserId: string;
 
   beforeAll(async () => {
+    // test/setup-e2e.ts disables the guard for every other suite (their
+    // fixtures log in with the temporary password POST /employees returns).
+    // This is the suite that actually exercises it.
+    restorePasswordRotationGuard();
+
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -85,11 +94,10 @@ describe('Password rotation enforcement (e2e)', () => {
   });
 
   beforeEach(async () => {
-    // test/setup-e2e.ts clears mustChangePassword after every successful
-    // login so the other ~40 specs can keep using their temporary-password
-    // fixtures. This is the one suite that needs the flag ON, so put it back
-    // — JwtAccessStrategy re-reads the user row per request, which is exactly
-    // why the guard works on an already-issued token.
+    // The last test rotates the password for real; put the flag back so each
+    // test starts from "still on a temporary password". Safe because
+    // JwtAccessStrategy re-reads the user row per request — which is also
+    // exactly why the guard bites on an already-issued token.
     await prisma.user.updateMany({
       where: { id: employeeUserId },
       data: { mustChangePassword: true },
@@ -97,6 +105,7 @@ describe('Password rotation enforcement (e2e)', () => {
   });
 
   afterAll(async () => {
+    disablePasswordRotationGuard();
     await prisma.$executeRawUnsafe(
       'TRUNCATE TABLE "refresh_tokens", "users", "organizations" RESTART IDENTITY CASCADE',
     );

@@ -89,6 +89,7 @@ import { issueDocumentNumber } from '../organizations/document-numbering';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { LoansService } from '../loans/loans.service';
+import { payoffAmount } from '../loans/loan-math';
 
 type Actor = Omit<User, 'password'>;
 
@@ -1596,7 +1597,14 @@ export class PayrollService {
       )
       .map((l) => ({
         loan: l,
-        amount: Math.min(l.emiAmount, l.outstandingBalance),
+        // Capped at the full payoff (balance + this month's interest), not
+        // the bare balance: the EMI is split interest-first, so a final
+        // installment capped at the balance alone would leave the interest
+        // unpaid and the balance could never reach zero.
+        amount: Math.min(
+          l.emiAmount,
+          payoffAmount(l.outstandingBalance, l.interestRate),
+        ),
       }))
       .filter(({ amount }) => amount > 0);
   }

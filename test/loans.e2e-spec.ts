@@ -28,7 +28,12 @@ interface LoanBody {
   employee?: { id: string; name: string; employeeId: string };
 }
 interface RepaymentResultBody {
-  repayment: { id: string; principalComponent: number; balanceAfter: number };
+  repayment: {
+    id: string;
+    principalComponent: number;
+    interestComponent: number;
+    balanceAfter: number;
+  };
   loan: LoanBody;
 }
 interface PaginatedBody<T> {
@@ -285,6 +290,79 @@ describe('Loans (e2e)', () => {
     expect(body.repayment.principalComponent).toBe(5000);
     expect(body.loan.outstandingBalance).toBe(0);
     expect(body.loan.status).toBe('CLOSED');
+  });
+
+  // Regression: recordRepayment used to set principalComponent to the whole
+  // EMI and interestComponent to 0, so the balance dropped by the full
+  // payment. The lender's interest was silently written off and the loan
+  // closed ahead of schedule.
+  it('splits an interest-bearing repayment into interest and principal', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        loanType: 'LOAN',
+        principal: 100000,
+        interestRate: 12,
+        tenureMonths: 12,
+        startMonth: 9,
+        startYear: 2026,
+      })
+      .expect(201);
+    const interestLoanId = (loan.body as LoanBody).id;
+
+    const res = await request(app.getHttpServer())
+      .post(`/loans/${interestLoanId}/repayments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ month: 9, year: 2026, amount: 8885 })
+      .expect(201);
+    const body = res.body as RepaymentResultBody;
+
+    // 12% p.a. on 100,000 = 1,000 for the month; the rest reduces principal.
+    expect(body.repayment.interestComponent).toBe(1000);
+    expect(body.repayment.principalComponent).toBe(7885);
+    expect(body.repayment.balanceAfter).toBe(92115);
+    expect(body.loan.outstandingBalance).toBe(92115);
+    expect(body.loan.status).toBe('ACTIVE');
+  });
+
+  it('an interest-bearing loan only closes once the final interest is paid too', async () => {
+    const loan = await request(app.getHttpServer())
+      .post('/loans')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        loanType: 'LOAN',
+        principal: 10000,
+        interestRate: 12,
+        tenureMonths: 6,
+        startMonth: 10,
+        startYear: 2026,
+      })
+      .expect(201);
+    const smallInterestLoanId = (loan.body as LoanBody).id;
+
+    // Paying exactly the balance leaves the month's interest unpaid, so
+    // 100 of principal survives and the loan stays ACTIVE.
+    const partial = await request(app.getHttpServer())
+      .post(`/loans/${smallInterestLoanId}/repayments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ month: 10, year: 2026, amount: 10000 })
+      .expect(201);
+    expect((partial.body as RepaymentResultBody).loan.outstandingBalance).toBe(
+      100,
+    );
+    expect((partial.body as RepaymentResultBody).loan.status).toBe('ACTIVE');
+
+    // Balance + this month's interest (1% of 100) clears it.
+    const final = await request(app.getHttpServer())
+      .post(`/loans/${smallInterestLoanId}/repayments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ month: 11, year: 2026, amount: 101 })
+      .expect(201);
+    expect((final.body as RepaymentResultBody).loan.outstandingBalance).toBe(0);
+    expect((final.body as RepaymentResultBody).loan.status).toBe('CLOSED');
   });
 
   it('the owning EMPLOYEE now sees the recorded repayment history', async () => {
