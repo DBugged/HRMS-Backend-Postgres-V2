@@ -616,7 +616,12 @@ describe('Payroll (e2e)', () => {
       expect((res.body as PayrollRunBody).status).toBe('APPROVED');
     });
 
-    it('lock moves APPROVED -> LOCKED and marks approved LeaveEncashments as PROCESSED', async () => {
+    // Regression: afterLock() used to mark EVERY approved encashment
+    // PROCESSED against the run being locked, re-reading live state instead
+    // of the frozen payslip. An encashment approved after this run was
+    // calculated is not on its payslip, so marking it paid meant the
+    // employee never received the money.
+    it('lock moves APPROVED -> LOCKED and leaves an encashment approved after calculate alone', async () => {
       const leaveType = await prisma.leaveType.create({
         data: {
           organizationId,
@@ -644,12 +649,15 @@ describe('Payroll (e2e)', () => {
         .expect(201);
       expect((res.body as PayrollRunBody).status).toBe('LOCKED');
 
-      const updatedEncashment = await prisma.leaveEncashment.findFirstOrThrow({
+      const untouched = await prisma.leaveEncashment.findFirstOrThrow({
         where: { id: encashment.id },
       });
-      expect(updatedEncashment.status).toBe('PROCESSED');
-      expect(updatedEncashment.payrollRunId).toBe(runId);
-      expect(updatedEncashment.processedAt).not.toBeNull();
+      expect(untouched.status).toBe('APPROVED');
+      expect(untouched.payrollRunId).toBeNull();
+      expect(untouched.processedAt).toBeNull();
+
+      await prisma.leaveEncashment.delete({ where: { id: encashment.id } });
+      await prisma.leaveType.delete({ where: { id: leaveType.id } });
     });
 
     it('adjust is rejected once LOCKED — must unlock first', async () => {
@@ -1021,6 +1029,138 @@ describe('Payroll (e2e)', () => {
         where: { loanId: loan.id, month: finalMonth },
       });
       expect(repayment.amount).toBe(1500); // capped at what was left, not the full 3000 EMI
+    });
+  });
+
+  // afterLock() settles what the LOCKED payslip contains, not whatever is
+  // live at lock time. Both halves of that used to re-query.
+  describe('Lock settles exactly what the payslip contains', () => {
+    const EMI_GAP_MONTH = 10;
+    const ENCASHMENT_MONTH = 9;
+
+    const runThroughLock = async (month: number) => {
+      const run = await prisma.payrollRun.findFirstOrThrow({
+        where: { employeeId, month, year: YEAR },
+      });
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${run.id}/lock`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      return run;
+    };
+
+    it('does not charge a loan that only became due after the run was calculated', async () => {
+      await markFullMonthPresent(
+        prisma,
+        organizationId,
+        employeeId,
+        EMI_GAP_MONTH,
+      );
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: EMI_GAP_MONTH, year: YEAR, employeeId })
+        .expect(201);
+      expect(
+        (res.body as CalculateResponseBody).payrolls[0].deductions.filter(
+          (d) => d.code === 'LOAN_EMI',
+        ),
+      ).toHaveLength(0);
+
+      // Approved and made due only now — after the payslip was frozen.
+      const lateLoan = await prisma.loan.create({
+        data: {
+          organizationId,
+          employeeId,
+          loanType: 'LOAN',
+          principal: 8000,
+          interestRate: 0,
+          tenureMonths: 4,
+          emiAmount: 2000,
+          startMonth: EMI_GAP_MONTH,
+          startYear: YEAR,
+          outstandingBalance: 8000,
+          status: 'ACTIVE',
+        },
+      });
+
+      const run = await runThroughLock(EMI_GAP_MONTH);
+
+      // The employee's payslip has no EMI line, so nothing may be taken.
+      const untouched = await prisma.loan.findFirstOrThrow({
+        where: { id: lateLoan.id },
+      });
+      expect(untouched.outstandingBalance).toBe(8000);
+      expect(
+        await prisma.loanRepayment.count({
+          where: { loanId: lateLoan.id, payrollRunId: run.id },
+        }),
+      ).toBe(0);
+
+      await prisma.loan.delete({ where: { id: lateLoan.id } });
+    });
+
+    it('still processes an encashment that WAS on the payslip at calculate time', async () => {
+      await markFullMonthPresent(
+        prisma,
+        organizationId,
+        employeeId,
+        ENCASHMENT_MONTH,
+      );
+      const leaveType = await prisma.leaveType.create({
+        data: {
+          organizationId,
+          name: 'Encashment Lock Leave',
+          code: 'ENCL',
+          allocationType: 'UNLIMITED',
+        },
+      });
+      const encashment = await prisma.leaveEncashment.create({
+        data: {
+          organizationId,
+          employeeId,
+          leaveTypeId: leaveType.id,
+          days: 3,
+          ratePerDay: 1000,
+          amount: 3000,
+          financialYear: '2026-27',
+          status: 'APPROVED',
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: ENCASHMENT_MONTH, year: YEAR, employeeId })
+        .expect(201);
+      const calculated = (res.body as CalculateResponseBody).payrolls[0];
+      expect(
+        calculated.earnings.find((e) => e.code === 'LEAVE_ENCASHMENT')?.amount,
+      ).toBe(3000);
+
+      const run = await runThroughLock(ENCASHMENT_MONTH);
+
+      const processed = await prisma.leaveEncashment.findFirstOrThrow({
+        where: { id: encashment.id },
+      });
+      expect(processed.status).toBe('PROCESSED');
+      expect(processed.payrollRunId).toBe(run.id);
+      expect(processed.processedAt).not.toBeNull();
+
+      await prisma.leaveEncashment.update({
+        where: { id: encashment.id },
+        data: { payrollRunId: null },
+      });
+      await prisma.leaveEncashment.delete({ where: { id: encashment.id } });
+      await prisma.leaveType.delete({ where: { id: leaveType.id } });
     });
   });
 

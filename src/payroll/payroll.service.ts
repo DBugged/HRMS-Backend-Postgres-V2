@@ -142,18 +142,41 @@ const TRANSITIONS: Record<PayrollTransitionAction, TransitionConfig> = {
   },
 };
 
+// The shape the earnings/deductions JSON columns are read back as.
+interface PayrollLineRecord {
+  code: string;
+  name: string;
+  amount: number;
+  sourceIds?: string[];
+}
+
 interface ResolvedLine {
   code: string;
   name: string;
   amount: number;
   taxable?: boolean;
   component?: SalaryComponent;
+  // Rows this line was built from (encashment ids on LEAVE_ENCASHMENT, the
+  // loan id on LOAN_EMI). Persisted with the line so afterLock() settles
+  // exactly what the locked payslip actually contains — see afterLock().
+  sourceIds?: string[];
 }
 
 export interface CalculatedPayroll {
   attendanceSummary: AttendanceSummary;
-  earnings: { code: string; name: string; amount: number; taxable?: boolean }[];
-  deductions: { code: string; name: string; amount: number }[];
+  earnings: {
+    code: string;
+    name: string;
+    amount: number;
+    taxable?: boolean;
+    sourceIds?: string[];
+  }[];
+  deductions: {
+    code: string;
+    name: string;
+    amount: number;
+    sourceIds?: string[];
+  }[];
   employerContributions: { code: string; name: string; amount: number }[];
   taxDetails: TaxDetails | null;
   grossSalary: number;
@@ -400,6 +423,7 @@ export class PayrollService {
         name: 'Leave Encashment',
         amount: encashmentAmount,
         taxable: true,
+        sourceIds: pendingEncashments.map((e) => e.id),
       });
     }
 
@@ -528,6 +552,7 @@ export class PayrollService {
         code: 'LOAN_EMI',
         name: `${loan.loanType === LoanType.ADVANCE ? 'Advance' : 'Loan'} EMI`,
         amount,
+        sourceIds: [loan.id],
       });
     }
 
@@ -602,11 +627,13 @@ export class PayrollService {
         name: e.name,
         amount: e.amount,
         taxable: e.taxable,
+        ...(e.sourceIds ? { sourceIds: e.sourceIds } : {}),
       })),
       deductions: includedDeductions.map((d) => ({
         code: d.code,
         name: d.name,
         amount: d.amount,
+        ...(d.sourceIds ? { sourceIds: d.sourceIds } : {}),
       })),
       employerContributions: employerResults.map((e) => ({
         code: e.code,
@@ -1531,27 +1558,47 @@ export class PayrollService {
     return updated[0];
   }
 
-  // Locking freezes the calculation — any approved-but-unprocessed leave
-  // encashment folded into this run's earnings at calculate time is now
-  // final; mark it processed so it doesn't get picked up again by a
-  // future run.
+  // Locking freezes the calculation, so everything settled here must be
+  // settled against what this run's LOCKED payslip actually contains — not
+  // against whatever the world looks like at lock time.
+  //
+  // Both halves used to re-query live state instead, which broke whenever
+  // something changed in the calculate -> lock window:
+  //   * an encashment approved after calculate was marked PROCESSED against
+  //     a payslip that never paid it, so the employee never got the money;
+  //   * a loan that became due after calculate had a real EMI charged
+  //     against its balance with no matching line on the locked payslip.
+  // The calculate step now records the source row ids on the lines it
+  // builds (see ResolvedLine.sourceIds), and this reads them back.
   private async afterLock(run: PayrollRun, organizationId: string) {
-    await this.scopedPrisma.leaveEncashment.updateMany({
-      where: {
-        organizationId,
-        employeeId: run.employeeId,
-        status: LeaveEncashmentStatus.APPROVED,
-      },
-      data: {
-        status: LeaveEncashmentStatus.PROCESSED,
-        payrollRunId: run.id,
-        processedAt: new Date(),
-      },
-    });
+    const earnings = (run.earnings ?? []) as unknown as PayrollLineRecord[];
+    const deductions = (run.deductions ?? []) as unknown as PayrollLineRecord[];
 
-    // Actually deduct each active loan/advance's EMI now that the run is
-    // locked (not at calculate — a recalculation before lock must stay a
-    // free preview, same reasoning as leave encashment above). Reuses
+    const encashmentLine = earnings.find((e) => e.code === 'LEAVE_ENCASHMENT');
+    if (encashmentLine) {
+      await this.scopedPrisma.leaveEncashment.updateMany({
+        where: {
+          organizationId,
+          employeeId: run.employeeId,
+          status: LeaveEncashmentStatus.APPROVED,
+          // Runs calculated before sourceIds existed have none; fall back to
+          // the old "every approved row" behaviour for those rather than
+          // silently paying an encashment line and processing nothing.
+          ...(encashmentLine.sourceIds
+            ? { id: { in: encashmentLine.sourceIds } }
+            : {}),
+        },
+        data: {
+          status: LeaveEncashmentStatus.PROCESSED,
+          payrollRunId: run.id,
+          processedAt: new Date(),
+        },
+      });
+    }
+
+    // Actually deduct each loan/advance EMI now that the run is locked (not
+    // at calculate — a recalculation before lock must stay a free preview,
+    // same reasoning as leave encashment above). Reuses
     // LoansService.recordRepayment so the balance-decrement/auto-close-at-
     // zero logic lives in exactly one place, not duplicated here.
     //
@@ -1563,18 +1610,38 @@ export class PayrollService {
     // below), so in the normal unlock-fix-relock flow this guard never
     // actually skips anything real; it only protects against a relock
     // that, for whatever reason, runs before the reversal has landed.
-    for (const { loan, amount } of await this.getDueLoanEmis(
-      run.employeeId,
-      run.month,
-      run.year,
-      organizationId,
-    )) {
+    const emiLines = deductions.filter((d) => d.code === 'LOAN_EMI');
+    const charges = emiLines.every((l) => l.sourceIds?.length)
+      ? emiLines.map((l) => ({
+          loanId: l.sourceIds![0],
+          amount: l.amount,
+        }))
+      : // Legacy run with no sourceIds on its EMI lines — recompute the way
+        // this used to, so an old DRAFT locked after this change still has
+        // its loans charged.
+        (
+          await this.getDueLoanEmis(
+            run.employeeId,
+            run.month,
+            run.year,
+            organizationId,
+          )
+        ).map(({ loan, amount }) => ({ loanId: loan.id, amount }));
+
+    for (const { loanId, amount } of charges) {
       const alreadyCharged = await this.scopedPrisma.loanRepayment.findFirst({
-        where: { organizationId, loanId: loan.id, payrollRunId: run.id },
+        where: { organizationId, loanId, payrollRunId: run.id },
       });
       if (alreadyCharged) continue;
+      // The loan may have been closed or fully repaid between calculate and
+      // lock; recordRepayment rejects a non-ACTIVE loan, and that is not a
+      // reason to fail the whole lock.
+      const loan = await this.scopedPrisma.loan.findFirst({
+        where: { id: loanId, organizationId, status: LoanStatus.ACTIVE },
+      });
+      if (!loan) continue;
       await this.loansService.recordRepayment(
-        loan.id,
+        loanId,
         { month: run.month, year: run.year, amount, payrollRun: run.id },
         organizationId,
       );
