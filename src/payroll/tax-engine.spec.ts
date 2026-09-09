@@ -132,7 +132,7 @@ describe('calculateTax', () => {
       section80C: 150000,
       section80CCD1B: 60000, // capped to 50,000
       section80CCD2: 80000, // capped to 10% of basicAnnual (60,000)
-      section80D: 100000,
+      section80D: 100000, // capped to the 75,000 statutory ceiling
       section80E: 10000,
       section80G: 5000,
       otherDeductions: 2000,
@@ -157,13 +157,13 @@ describe('calculateTax', () => {
     expect(result.deductions.section80C).toBe(150000);
     expect(result.deductions.section80CCD1B).toBe(50000);
     expect(result.deductions.section80CCD2).toBe(60000);
-    expect(result.deductions.section80D).toBe(100000);
-    expect(result.taxableIncome).toBe(518000);
-    expect(result.taxBeforeCess).toBe(16100);
+    expect(result.deductions.section80D).toBe(75000);
+    expect(result.taxableIncome).toBe(543000);
+    expect(result.taxBeforeCess).toBe(21100);
     expect(result.rebate).toBe(0); // taxable income exceeds the old-regime 87A limit (5L)
-    expect(result.cess).toBe(644);
-    expect(result.totalAnnualTax).toBe(16744);
-    expect(result.monthlyTDS).toBe(1395);
+    expect(result.cess).toBe(844);
+    expect(result.totalAnnualTax).toBe(21944);
+    expect(result.monthlyTDS).toBe(1829);
   });
 
   it('OLD regime with no declaration: no old-regime-only exemptions/deductions apply', () => {
@@ -185,6 +185,68 @@ describe('calculateTax', () => {
     expect(result.deductions.section80C).toBe(0);
     expect(result.deductions.section80CCD2).toBe(0); // declaration null -> 0, even though capped-by-basic logic runs
     expect(result.deductions.standard).toBe(taxSlabConfig.standardDeduction);
+  });
+
+  // Regression: previousEmployerIncome was added to the annual gross while
+  // previousEmployerTDS — collected on the same declaration form — was never
+  // read, so every mid-year joiner was taxed on the old salary as if no tax
+  // had been withheld on it.
+  it('credits TDS the previous employer already deducted', () => {
+    const taxSlabConfig = {
+      regime: TaxRegime.NEW,
+      ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+    };
+    const base = {
+      month: 10,
+      year: 2026,
+      currentMonthGross: 150000,
+      ytdGross: 900000,
+      ytdTDS: 0,
+      taxSlabConfig,
+      financialYearStartMonth: 4,
+    };
+    const withoutCredit = calculateTax({
+      ...base,
+      declaration: { previousEmployerIncome: 600000, previousEmployerTDS: 0 },
+    });
+    const withCredit = calculateTax({
+      ...base,
+      declaration: {
+        previousEmployerIncome: 600000,
+        previousEmployerTDS: 45000,
+      },
+    });
+
+    // Same liability — the credit is tax already paid, not a deduction.
+    expect(withCredit.totalAnnualTax).toBe(withoutCredit.totalAnnualTax);
+    expect(withCredit.taxableIncome).toBe(withoutCredit.taxableIncome);
+    expect(withCredit.previousEmployerTDS).toBe(45000);
+
+    // ...spread over the months left in the year.
+    expect(withCredit.monthlyTDS).toBe(
+      withoutCredit.monthlyTDS - Math.round(45000 / withCredit.remainingMonths),
+    );
+  });
+
+  it('never turns an over-credit into a refund through monthlyTDS', () => {
+    const taxSlabConfig = {
+      regime: TaxRegime.NEW,
+      ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+    };
+    const result = calculateTax({
+      month: 10,
+      year: 2026,
+      currentMonthGross: 150000,
+      ytdGross: 900000,
+      ytdTDS: 0,
+      declaration: {
+        previousEmployerIncome: 600000,
+        previousEmployerTDS: 9999999,
+      },
+      taxSlabConfig,
+      financialYearStartMonth: 4,
+    });
+    expect(result.monthlyTDS).toBe(0);
   });
 
   it('reduces monthlyTDS by TDS already paid YTD', () => {

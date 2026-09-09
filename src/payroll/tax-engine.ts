@@ -76,6 +76,7 @@ export function computeHraExemption({
 
 export interface DeclarationLike {
   previousEmployerIncome?: number | null;
+  previousEmployerTDS?: number | null;
   otherIncome?: number | null;
   hraRentPaidAnnual?: number | null;
   isMetroCity?: boolean | null;
@@ -134,6 +135,9 @@ export interface TaxDetails {
   cess: number;
   totalAnnualTax: number;
   ytdTDS: number;
+  // TDS the previous employer already deducted this financial year, credited
+  // against the annual liability alongside ytdTDS.
+  previousEmployerTDS: number;
   remainingMonths: number;
   monthlyTDS: number;
 }
@@ -164,6 +168,11 @@ export function calculateTax({
   );
   const projectedRemainingGross = currentMonthGross * remainingMonths;
   const previousEmployerIncome = declaration?.previousEmployerIncome || 0;
+  // Tax the previous employer already deducted on that income. Collected on
+  // the declaration form since day one but never read, so previous-employer
+  // income was added to the annual gross while the tax already paid on it was
+  // ignored — a systematic over-deduction for every mid-year joiner.
+  const previousEmployerTDS = declaration?.previousEmployerTDS || 0;
   const otherIncome = declaration?.otherIncome || 0;
 
   const grossAnnualIncome =
@@ -194,7 +203,18 @@ export function calculateTax({
       declaration.section80CCD1B || 0,
       50000,
     );
-    deductions.section80D = Math.min(declaration.section80D || 0, 100000);
+    // Section 80D statutory ceiling. The Act allows 25,000 for self/family
+    // plus 25,000 for parents, each rising to 50,000 where the person
+    // covered is a senior citizen — so 100,000 is only reachable when the
+    // EMPLOYEE themselves is a senior citizen, which the payroll case
+    // essentially never is. Nothing in the schema records anyone's age, so
+    // the cap here is the highest a non-senior employee can legitimately
+    // claim: 25,000 for self/family + 50,000 for senior parents.
+    //
+    // Exact per-employee handling needs senior-citizen status captured on
+    // the declaration; until then this errs toward the statute instead of
+    // the old flat 100,000, which over-relieved everyone.
+    deductions.section80D = Math.min(declaration.section80D || 0, 75000);
     deductions.section80E = declaration.section80E || 0;
     deductions.section80G = declaration.section80G || 0;
     deductions.other = declaration.otherDeductions || 0;
@@ -236,7 +256,12 @@ export function calculateTax({
     ((taxAfterRebate + surcharge) * (taxSlabConfig.cessRate || 0)) / 100;
 
   const totalAnnualTax = Math.round(taxAfterRebate + surcharge + cess);
-  const remainingTax = Math.max(0, totalAnnualTax - ytdTDS);
+  // Credit everything already withheld this year — this employer's YTD TDS
+  // and whatever the previous employer deducted.
+  const remainingTax = Math.max(
+    0,
+    totalAnnualTax - ytdTDS - previousEmployerTDS,
+  );
   const monthlyTDS = Math.round(remainingTax / remainingMonths);
 
   return {
@@ -252,6 +277,7 @@ export function calculateTax({
     cess: Math.round(cess),
     totalAnnualTax,
     ytdTDS,
+    previousEmployerTDS,
     remainingMonths,
     monthlyTDS,
   };
