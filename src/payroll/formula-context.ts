@@ -14,17 +14,40 @@ const DEFAULT_PT_SLABS: PtSlab[] = [
   { upTo: null, amount: 200 },
 ];
 
+// The number of slabs the pre-PT_SLAB_AMOUNT default formula spelled out by
+// hand. Orgs seeded before that formula changed still reference
+// PT_SLAB1_UPTO, PT_SLAB2_UPTO and PT_SLAB3_AMOUNT literally.
+const LEGACY_PT_SLAB_COUNT = 3;
+
+// An open-ended slab still needs a numeric ceiling for those legacy formulas
+// to compare against — "everything above the previous slab" in practice.
+const NO_CEILING = Number.MAX_SAFE_INTEGER;
+
 function buildPtSlabContext(ptSlabs: PtSlab[]): Record<string, number> {
   const slabs =
     Array.isArray(ptSlabs) && ptSlabs.length > 0 ? ptSlabs : DEFAULT_PT_SLABS;
   const context: Record<string, number> = {};
   slabs.forEach((slab, idx) => {
     const n = idx + 1;
-    if (slab.upTo !== null && slab.upTo !== undefined) {
-      context[`PT_SLAB${n}_UPTO`] = slab.upTo;
-    }
+    context[`PT_SLAB${n}_UPTO`] =
+      slab.upTo === null || slab.upTo === undefined ? NO_CEILING : slab.upTo;
     context[`PT_SLAB${n}_AMOUNT`] = slab.amount;
   });
+
+  // Pad up to the legacy slab count by repeating the top slab. An org with
+  // fewer slabs than that used to throw 'Unknown reference
+  // "PT_SLAB3_AMOUNT"' out of the seeded formula, which dropped every
+  // affected employee into the payroll run's failures[]. Repeating the top
+  // slab makes the legacy formula fall through to the right answer instead.
+  //
+  // Padding only ever ADDS keys beyond the configured slabs, so
+  // PT_SLAB_AMOUNT() (which stops at the first slab with no ceiling) is
+  // unaffected by it.
+  const top = slabs[slabs.length - 1];
+  for (let n = slabs.length + 1; n <= LEGACY_PT_SLAB_COUNT; n += 1) {
+    context[`PT_SLAB${n}_UPTO`] = NO_CEILING;
+    context[`PT_SLAB${n}_AMOUNT`] = top.amount;
+  }
   return context;
 }
 

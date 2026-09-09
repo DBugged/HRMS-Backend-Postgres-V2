@@ -154,3 +154,77 @@ describe('topoSortComponents', () => {
     );
   });
 });
+
+// The seeded PT formula used to enumerate exactly three slabs, so it threw
+// for an org with two and silently capped an org with four. PT_SLAB_AMOUNT
+// walks whatever the org actually configured.
+describe('PT_SLAB_AMOUNT', () => {
+  const MAX = Number.MAX_SAFE_INTEGER;
+  const twoSlabs = {
+    PT_SLAB1_UPTO: 15000,
+    PT_SLAB1_AMOUNT: 0,
+    PT_SLAB2_UPTO: MAX,
+    PT_SLAB2_AMOUNT: 200,
+  };
+  const threeSlabs = {
+    PT_SLAB1_UPTO: 7500,
+    PT_SLAB1_AMOUNT: 0,
+    PT_SLAB2_UPTO: 10000,
+    PT_SLAB2_AMOUNT: 175,
+    PT_SLAB3_UPTO: MAX,
+    PT_SLAB3_AMOUNT: 200,
+  };
+  const fourSlabs = {
+    ...threeSlabs,
+    PT_SLAB3_UPTO: 20000,
+    PT_SLAB4_UPTO: MAX,
+    PT_SLAB4_AMOUNT: 300,
+  };
+
+  it('picks the right slab in a three-slab config', () => {
+    const f = 'PT_SLAB_AMOUNT(GROSS_EARNINGS)';
+    expect(evaluateFormula(f, { ...threeSlabs, GROSS_EARNINGS: 7000 })).toBe(0);
+    expect(evaluateFormula(f, { ...threeSlabs, GROSS_EARNINGS: 9000 })).toBe(
+      175,
+    );
+    expect(evaluateFormula(f, { ...threeSlabs, GROSS_EARNINGS: 90000 })).toBe(
+      200,
+    );
+  });
+
+  it('works for a two-slab org instead of throwing on a missing slab 3', () => {
+    const f = 'PT_SLAB_AMOUNT(GROSS_EARNINGS)';
+    expect(evaluateFormula(f, { ...twoSlabs, GROSS_EARNINGS: 12000 })).toBe(0);
+    expect(evaluateFormula(f, { ...twoSlabs, GROSS_EARNINGS: 50000 })).toBe(
+      200,
+    );
+  });
+
+  it('reaches the fourth slab instead of capping at the third', () => {
+    const f = 'PT_SLAB_AMOUNT(GROSS_EARNINGS)';
+    expect(evaluateFormula(f, { ...fourSlabs, GROSS_EARNINGS: 15000 })).toBe(
+      200,
+    );
+    expect(evaluateFormula(f, { ...fourSlabs, GROSS_EARNINGS: 50000 })).toBe(
+      300,
+    );
+  });
+
+  it('returns the top slab when every ceiling is exceeded', () => {
+    // No open-ended slab configured at all — still resolves rather than
+    // running off the end.
+    expect(
+      evaluateFormula('PT_SLAB_AMOUNT(GROSS_EARNINGS)', {
+        PT_SLAB1_UPTO: 5000,
+        PT_SLAB1_AMOUNT: 0,
+        PT_SLAB2_UPTO: 10000,
+        PT_SLAB2_AMOUNT: 150,
+        GROSS_EARNINGS: 99999,
+      }),
+    ).toBe(150);
+  });
+
+  it('is 0 when no slabs are configured', () => {
+    expect(evaluateFormula('PT_SLAB_AMOUNT(10000)', {})).toBe(0);
+  });
+});

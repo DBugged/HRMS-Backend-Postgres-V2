@@ -185,8 +185,10 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     code: 'PT',
     type: SalaryComponentType.DEDUCTION,
     calcType: CalcType.FORMULA,
-    formula:
-      'IF(GROSS_EARNINGS <= PT_SLAB1_UPTO, PT_SLAB1_AMOUNT, IF(GROSS_EARNINGS <= PT_SLAB2_UPTO, PT_SLAB2_AMOUNT, PT_SLAB3_AMOUNT))',
+    // Resolves against however many PT slabs the org has configured. The
+    // previous formula spelled out three slabs by hand, which threw for a
+    // two-slab org and silently capped a four-slab one at slab 3.
+    formula: 'PT_SLAB_AMOUNT(GROSS_EARNINGS)',
     isStatutory: true,
     statutoryKey: StatutoryKey.PT,
     displayOrder: 32,

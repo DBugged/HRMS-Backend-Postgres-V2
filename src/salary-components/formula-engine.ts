@@ -274,21 +274,46 @@ function safeMod(a: number, b: number): number {
   return b === 0 ? 0 : a % b;
 }
 
-const FUNCTIONS: Record<string, (args: number[]) => number> = {
-  IF: (args) => (args[0] ? args[1] : args[2]),
-  AND: (args) => (args.every((a) => a) ? 1 : 0),
-  OR: (args) => (args.some((a) => a) ? 1 : 0),
-  NOT: (args) => (args[0] ? 0 : 1),
-  ROUND: (args) => {
-    const decimals = args[1] ?? 0;
-    const factor = 10 ** decimals;
-    return Math.round(args[0] * factor) / factor;
-  },
-  MIN: (args) => Math.min(...args),
-  MAX: (args) => Math.max(...args),
-  ABS: (args) => Math.abs(args[0]),
-  PERCENT: (args) => (args[0] * args[1]) / 100,
-};
+const FUNCTIONS: Record<string, (args: number[], context: Context) => number> =
+  {
+    IF: (args) => (args[0] ? args[1] : args[2]),
+    AND: (args) => (args.every((a) => a) ? 1 : 0),
+    OR: (args) => (args.some((a) => a) ? 1 : 0),
+    NOT: (args) => (args[0] ? 0 : 1),
+    ROUND: (args) => {
+      const decimals = args[1] ?? 0;
+      const factor = 10 ** decimals;
+      return Math.round(args[0] * factor) / factor;
+    },
+    MIN: (args) => Math.min(...args),
+    MAX: (args) => Math.max(...args),
+    ABS: (args) => Math.abs(args[0]),
+    PERCENT: (args) => (args[0] * args[1]) / 100,
+    // Professional Tax for a given monthly gross, resolved against however
+    // many PT slabs the org has configured (buildPtSlabContext puts them in
+    // the context as PT_SLAB<n>_UPTO / PT_SLAB<n>_AMOUNT).
+    //
+    // The seeded PT formula used to spell the slabs out by hand and so was
+    // welded to exactly three of them: a two-slab org threw
+    // 'Unknown reference "PT_SLAB3_AMOUNT"' and dropped the employee into the
+    // run's failures[], and a four-slab org silently taxed everyone above
+    // slab 3's ceiling at slab 3's amount. Walking the context instead is
+    // correct for any slab count.
+    //
+    // Slabs are in ascending order; the last one is open-ended (no _UPTO), so
+    // running off the end returns the top slab's amount.
+    PT_SLAB_AMOUNT: (args, context) => {
+      const gross = args[0] ?? 0;
+      let amount = 0;
+      for (let n = 1; ; n += 1) {
+        const amountKey = `PT_SLAB${n}_AMOUNT`;
+        if (!(amountKey in context)) return amount;
+        amount = context[amountKey];
+        const upToKey = `PT_SLAB${n}_UPTO`;
+        if (!(upToKey in context) || gross <= context[upToKey]) return amount;
+      }
+    },
+  };
 
 function evaluateNode(node: AstNode, context: Context): number {
   switch (node.type) {
@@ -342,7 +367,7 @@ function evaluateNode(node: AstNode, context: Context): number {
       const fn = FUNCTIONS[node.name];
       if (!fn) throw new Error(`Unknown function "${node.name}" in formula`);
       const args = node.args.map((a) => evaluateNode(a, context));
-      return fn(args);
+      return fn(args, context);
     }
   }
   throw new Error('Unreachable formula node');

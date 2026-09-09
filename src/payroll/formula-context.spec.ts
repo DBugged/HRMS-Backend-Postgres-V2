@@ -1,6 +1,12 @@
 import type { AttendanceSummary } from './attendance-summary';
 import type { OverlaidSettings } from './statutory-overlay';
 import { buildBaseContext } from './formula-context';
+import { evaluateFormula } from '../salary-components/formula-engine';
+
+// The default PT formula seeded before PT_SLAB_AMOUNT existed. Orgs created
+// back then still have this exact string on their PT component.
+const LEGACY_PT_FORMULA =
+  'IF(GROSS_EARNINGS <= PT_SLAB1_UPTO, PT_SLAB1_AMOUNT, IF(GROSS_EARNINGS <= PT_SLAB2_UPTO, PT_SLAB2_AMOUNT, PT_SLAB3_AMOUNT))';
 
 function attendance(
   overrides: Partial<AttendanceSummary> = {},
@@ -80,12 +86,35 @@ describe('buildBaseContext', () => {
     expect(ctx.LWF_EMPLOYER_AMOUNT).toBe(75);
   });
 
-  it('flattens ptSlabs into PT_SLAB{n}_UPTO/AMOUNT, omitting UPTO on a null (last) slab', () => {
+  it('flattens ptSlabs into PT_SLAB{n}_UPTO/AMOUNT, giving the open-ended last slab a numeric ceiling', () => {
     const ctx = buildBaseContext(attendance(), settings(), 4);
     expect(ctx.PT_SLAB1_UPTO).toBe(7500);
     expect(ctx.PT_SLAB1_AMOUNT).toBe(0);
-    expect(ctx.PT_SLAB2_UPTO).toBeUndefined();
+    expect(ctx.PT_SLAB2_UPTO).toBe(Number.MAX_SAFE_INTEGER);
     expect(ctx.PT_SLAB2_AMOUNT).toBe(200);
+  });
+
+  // Regression: an org with fewer than three slabs used to leave
+  // PT_SLAB3_AMOUNT undefined, so the seeded PT formula threw
+  // 'Unknown reference "PT_SLAB3_AMOUNT"' and every affected employee landed
+  // in the run's failures[].
+  it('pads a short slab list up to the legacy three the old default formula expects', () => {
+    const ctx = buildBaseContext(attendance(), settings(), 4);
+    expect(ctx.PT_SLAB3_UPTO).toBe(Number.MAX_SAFE_INTEGER);
+    expect(ctx.PT_SLAB3_AMOUNT).toBe(200); // repeats the real top slab
+  });
+
+  it('a two-slab org can still evaluate the legacy three-slab PT formula', () => {
+    const ctx = buildBaseContext(attendance(), settings(), 4);
+    expect(() =>
+      evaluateFormula(LEGACY_PT_FORMULA, { ...ctx, GROSS_EARNINGS: 50000 }),
+    ).not.toThrow();
+    expect(
+      evaluateFormula(LEGACY_PT_FORMULA, { ...ctx, GROSS_EARNINGS: 5000 }),
+    ).toBe(0);
+    expect(
+      evaluateFormula(LEGACY_PT_FORMULA, { ...ctx, GROSS_EARNINGS: 50000 }),
+    ).toBe(200);
   });
 
   it('falls back to the default 3-slab PT config when ptSlabs is empty', () => {
