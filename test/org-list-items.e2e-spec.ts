@@ -81,6 +81,35 @@ describe('Org List Items (e2e)', () => {
     expect(data.every((i) => i.isSystemDefault)).toBe(true);
   });
 
+  // Regression: findAll() ordered purely by name, so a custom category
+  // whose name sorted alphabetically ahead of a built-in one (e.g.
+  // "Apprentice" before "Contract") interleaved with the built-ins instead
+  // of following them — the Employee form's Category <select> renders this
+  // list order as-is, with no client-side sort of its own.
+  it('sorts built-in Employee Categories ahead of a custom one that would otherwise sort first alphabetically', async () => {
+    await request(app.getHttpServer())
+      .post('/org-list-items')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ type: 'EMPLOYEE_CATEGORY', name: 'Apprentice' })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get('/org-list-items')
+      .query({ type: 'EMPLOYEE_CATEGORY' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const data = (res.body as { data: OrgListItemBody[] }).data;
+
+    const lastBuiltInIndex = Math.max(
+      ...data.map((i, idx) => (i.isSystemDefault ? idx : -1)),
+    );
+    const apprenticeIndex = data.findIndex((i) => i.name === 'Apprentice');
+    expect(apprenticeIndex).toBeGreaterThan(lastBuiltInIndex);
+    // Built-ins themselves stay alphabetical within their own group.
+    const builtInNames = data.filter((i) => i.isSystemDefault).map((i) => i.name);
+    expect(builtInNames).toEqual(['Contract', 'Full-Time', 'Intern', 'Part-Time']);
+  });
+
   it('a Designation created fresh is never built-in — no protection outside Employee Category', async () => {
     const res = await request(app.getHttpServer())
       .post('/org-list-items')

@@ -65,7 +65,13 @@ export class OrgListItemsService {
   ) {
     const data = await this.scopedPrisma.orgListItem.findMany({
       where: { organizationId, type, ...(activeOnly && { isActive: true }) },
-      orderBy: { name: 'asc' },
+      // Built-in entries (isSystemDefault) always sort ahead of custom
+      // ones, alphabetically within each group — matters for the
+      // Designation/Grade/Employee Category <select>s in the employee
+      // form, which just render this list order as-is with no client
+      // sort of their own. Designations/Grades have no built-ins (all
+      // isSystemDefault: false), so this is a no-op there.
+      orderBy: [{ isSystemDefault: 'desc' }, { name: 'asc' }],
     });
     return wrapAll(data);
   }
