@@ -64,7 +64,11 @@ import {
   computeAttendanceSummary,
   type AttendanceSummary,
 } from './attendance-summary';
-import { buildBaseContext, deriveStatutoryContext } from './formula-context';
+import {
+  buildBaseContext,
+  deriveStatutoryContext,
+  splitEmployerPf,
+} from './formula-context';
 import { calculateTax, type TaxDetails, type TaxSlab } from './tax-engine';
 import { amountInWords } from './number-to-words';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
@@ -177,7 +181,13 @@ export interface CalculatedPayroll {
     amount: number;
     sourceIds?: string[];
   }[];
-  employerContributions: { code: string; name: string; amount: number }[];
+  employerContributions: {
+    code: string;
+    name: string;
+    amount: number;
+    // Employer PF only: how the amount splits between EPS (pension) and EPF, for ECR filing.
+    breakup?: { eps: number; epf: number };
+  }[];
   taxDetails: TaxDetails | null;
   grossSalary: number;
   totalDeductions: number;
@@ -710,6 +720,9 @@ export class PayrollService {
         code: e.code,
         name: e.name,
         amount: e.amount,
+        ...(e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER
+          ? { breakup: splitEmployerPf(e.amount, afterEarnings, settings) }
+          : {}),
       })),
       taxDetails,
       grossSalary,

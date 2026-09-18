@@ -21,6 +21,7 @@ interface EmployeeCreateBody {
 interface Line {
   code: string;
   amount: number;
+  breakup?: { eps: number; epf: number };
 }
 interface CalcBody {
   failures: unknown[];
@@ -93,7 +94,9 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
       r.deductions.find((d) => d.code === code)?.amount;
     const emp = (code: string) =>
       r.employerContributions.find((d) => d.code === code)?.amount;
-    return { ded, emp };
+    const line = (code: string) =>
+      r.employerContributions.find((d) => d.code === code);
+    return { ded, emp, line };
   }
 
   const version = (module: string, effectiveFrom: string, config: object) =>
@@ -235,6 +238,14 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
     expect(oct.emp('PF_EMPLOYER')).toBe(1800);
     expect(oct.emp('EDLI_EMPLOYER')).toBe(75); // 0.5% of 15,000
     expect(oct.emp('EPF_ADMIN_EMPLOYER')).toBe(75);
+  });
+
+  it('EDLI is capped at the statutory monthly maximum; employer PF is split into EPS and EPF for the ECR', async () => {
+    const nov = await run(empA, 11);
+    // 0.5% of the 20,500 PF wages would be 103, but EDLI is capped at 75 a month.
+    expect(nov.emp('EDLI_EMPLOYER')).toBe(75);
+    // Employer PF 2,460 = EPS 8.33% of 20,500 (1,708) + EPF (752).
+    expect(nov.line('PF_EMPLOYER')?.breakup).toEqual({ eps: 1708, epf: 752 });
   });
 
   it('ESI: an employee covered earlier in the contribution period stays covered after wages cross the ceiling', async () => {

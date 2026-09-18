@@ -88,6 +88,10 @@ export interface OverlaidSettings {
   // Employer-only PF costs on top of the 12%: EDLI and administration charges, % of PF wages.
   pfEdliRate: number;
   pfAdminRate: number;
+  // EDLI is capped at a fixed monthly amount (₹75 today), independent of the PF wage ceiling.
+  pfEdliMax: number;
+  // Employer PF split: the EPS (pension) share of the employer's 12%, on wages up to the ceiling.
+  pfEpsRate: number;
 
   // Payment of Bonus Act: rate %, eligibility ceiling (Basic + DA) and calculation ceiling.
   bonusRate: number;
@@ -138,6 +142,8 @@ export function applyStatutoryOverrides(
     gratuityUseWagesRule: false,
     pfEdliRate: 0.5,
     pfAdminRate: 0.5,
+    pfEdliMax: 75,
+    pfEpsRate: 8.33,
     bonusRate: 8.33,
     bonusEligibilityCeiling: 21000,
     bonusCalcCeiling: 7000,
@@ -152,10 +158,14 @@ export function applyStatutoryOverrides(
       applyFiftyPercentRule?: boolean;
       edliRate?: number;
       adminChargeRate?: number;
+      epsRate?: number;
+      edliMaxAmount?: number;
     };
     resolved.pfUseWagesRule = c.applyFiftyPercentRule === true;
     resolved.pfEdliRate = c.edliRate ?? resolved.pfEdliRate;
     resolved.pfAdminRate = c.adminChargeRate ?? resolved.pfAdminRate;
+    resolved.pfEpsRate = c.epsRate ?? resolved.pfEpsRate;
+    resolved.pfEdliMax = c.edliMaxAmount ?? resolved.pfEdliMax;
     resolved.pfEmployeeRate = c.employeeRate;
     resolved.pfEmployerRate = c.employerRate;
     resolved.pfWageCeiling = c.wageCeiling;

@@ -292,7 +292,9 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     code: 'EDLI_EMPLOYER',
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
-    formula: 'ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_EDLI_RATE / 100, 0)',
+    // Capped at the statutory monthly maximum (PF_EDLI_MAX, ₹75) — not simply the % of the PF ceiling.
+    formula:
+      'MIN(PF_EDLI_MAX, ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_EDLI_RATE / 100, 0))',
     isStatutory: true,
     statutoryKey: StatutoryKey.PF,
     isEmployerContribution: true,

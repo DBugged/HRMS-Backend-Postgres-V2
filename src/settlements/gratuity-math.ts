@@ -4,6 +4,37 @@
 // s.2A: five years of continuous service before gratuity is payable at all.
 export const YEARS_FOR_GRATUITY_ELIGIBILITY = 5;
 
+// Code on Social Security, 2020 (in force 21-Nov-2025): a fixed-term employee is gratuity-eligible after ONE year of
+// continuous service (pro-rata to the contract), not five.
+export const YEARS_FOR_FIXED_TERM_GRATUITY = 1;
+
+// Built-in employee types that are fixed-term engagements — a contract or temporary employee. Interns, apprentices,
+// trainees, freelancers and third-party payroll aren't the employer's employees for gratuity purposes. A custom
+// type whose name says fixed-term / contract / temporary counts too.
+export function isFixedTermEmployeeType(
+  employeeType: string | null | undefined,
+): boolean {
+  return /(^|[_\s-])(contract|temporary|fixed[_\s-]?term)$/i.test(
+    (employeeType ?? '').trim(),
+  );
+}
+
+// The Code requires gratuity within 30 days of it becoming payable (the last working day); later payment attracts
+// interest and a 10% penalty. Returns the due date (YYYY-MM-DD) and whether a payment on `paidOn` (or today, if
+// not yet paid) is late.
+export const GRATUITY_PAYOUT_DAYS = 30;
+export function gratuityPayoutStatus(
+  lastWorkingDay: string,
+  paidOn: Date | null,
+  today: Date = new Date(),
+): { dueBy: string; overdue: boolean } {
+  const due = new Date(`${lastWorkingDay}T00:00:00.000Z`);
+  due.setUTCDate(due.getUTCDate() + GRATUITY_PAYOUT_DAYS);
+  const dueBy = due.toISOString().slice(0, 10);
+  const compare = (paidOn ?? today).toISOString().slice(0, 10);
+  return { dueBy, overdue: compare > dueBy };
+}
+
 // s.4(3): the statutory ceiling on gratuity payable, raised to 20 lakh in
 // 2018. There was no cap here at all, so a long-serving senior employee's
 // settlement could pay out well above it.
@@ -24,8 +55,12 @@ export function completedYearsOfService(yearsOfService: number): number {
 export function calculateGratuity(
   basicMonthly: number,
   yearsOfService: number,
+  opts: { fixedTerm?: boolean } = {},
 ): number {
-  if (yearsOfService < YEARS_FOR_GRATUITY_ELIGIBILITY) return 0;
+  const required = opts.fixedTerm
+    ? YEARS_FOR_FIXED_TERM_GRATUITY
+    : YEARS_FOR_GRATUITY_ELIGIBILITY;
+  if (yearsOfService < required) return 0;
   const raw =
     basicMonthly * (15 / 26) * completedYearsOfService(yearsOfService);
   return Math.min(Math.round(raw), GRATUITY_STATUTORY_CAP);

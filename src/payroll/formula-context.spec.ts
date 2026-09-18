@@ -4,6 +4,7 @@ import {
   buildBaseContext,
   deriveStatutoryContext,
   resolvePtSlabs,
+  splitEmployerPf,
 } from './formula-context';
 import { evaluateFormula } from '../salary-components/formula-engine';
 
@@ -71,6 +72,8 @@ function settings(overrides: Partial<OverlaidSettings> = {}): OverlaidSettings {
     gratuityUseWagesRule: false,
     pfEdliRate: 0.5,
     pfAdminRate: 0.5,
+    pfEdliMax: 75,
+    pfEpsRate: 8.33,
     bonusRate: 8.33,
     bonusEligibilityCeiling: 21000,
     bonusCalcCeiling: 7000,
@@ -344,5 +347,42 @@ describe("org-wide women's PT ladder", () => {
       resolvePtSlabs(settings({ ptSlabs: men }), 5, { gender: 'FEMALE' }),
     ).toEqual(men);
     expect(resolvePtSlabs(s(), 2, { gender: 'FEMALE' })[1].amount).toBe(300);
+  });
+});
+
+describe('splitEmployerPf', () => {
+  it('splits employer PF into EPS on wages up to the ceiling and EPF for the rest, always summing to the line', () => {
+    // 12% of 25,000 = 3,000: EPS 8.33% of 25,000 = 2,083 (rounded), EPF = 917.
+    const r = splitEmployerPf(
+      3000,
+      { PF_WAGES: 25000 },
+      settings({ pfWageCeiling: 25000 }),
+    );
+    expect(r).toEqual({ eps: 2083, epf: 917 });
+    // Wages above the ceiling: EPS is still on the ceiling.
+    expect(
+      splitEmployerPf(
+        3000,
+        { PF_WAGES: 90000 },
+        settings({ pfWageCeiling: 25000 }),
+      ).eps,
+    ).toBe(2083);
+    // Old 15,000 ceiling: the familiar ₹1,250.
+    expect(
+      splitEmployerPf(
+        1800,
+        { PF_WAGES: 15000 },
+        settings({ pfWageCeiling: 15000 }),
+      ).eps,
+    ).toBe(1250);
+  });
+  it('never lets EPS exceed the employer PF actually charged', () => {
+    const r = splitEmployerPf(
+      500,
+      { PF_WAGES: 25000 },
+      settings({ pfWageCeiling: 25000 }),
+    );
+    expect(r.eps + r.epf).toBe(500);
+    expect(r.epf).toBeGreaterThanOrEqual(0);
   });
 });

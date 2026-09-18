@@ -42,7 +42,11 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
-import { calculateGratuity } from './gratuity-math';
+import {
+  calculateGratuity,
+  gratuityPayoutStatus,
+  isFixedTermEmployeeType,
+} from './gratuity-math';
 
 type Actor = Omit<User, 'password'>;
 
@@ -71,6 +75,30 @@ export class SettlementsService {
     private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
+  // Adds the Code on Social Security's 30-day gratuity deadline (from the last working day) to a settlement, and
+  // whether it is / was paid late — informational, computed on read (paid date is when the row last changed to PAID).
+  private withGratuityPayout<
+    T extends {
+      gratuityAmount: number;
+      lastWorkingDay: string;
+      status: SettlementStatus;
+      updatedAt: Date;
+    },
+  >(settlement: T) {
+    return {
+      ...settlement,
+      gratuityPayout:
+        settlement.gratuityAmount > 0
+          ? gratuityPayoutStatus(
+              settlement.lastWorkingDay,
+              settlement.status === SettlementStatus.PAID
+                ? settlement.updatedAt
+                : null,
+            )
+          : null,
+    };
+  }
+
   async findAll(
     query: ListSettlementsQueryDto,
     actor: Actor,
@@ -90,16 +118,18 @@ export class SettlementsService {
     }
 
     return paginate(
-      () =>
-        this.scopedPrisma.settlement.findMany({
-          where,
-          include: {
-            employee: { select: { id: true, name: true, employeeId: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-          skip: skip(query.page, query.limit),
-          take: query.limit,
-        }),
+      async () =>
+        (
+          await this.scopedPrisma.settlement.findMany({
+            where,
+            include: {
+              employee: { select: { id: true, name: true, employeeId: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+            skip: skip(query.page, query.limit),
+            take: query.limit,
+          })
+        ).map((row) => this.withGratuityPayout(row)),
       () => this.scopedPrisma.settlement.count({ where }),
       query.page,
       query.limit,
@@ -203,7 +233,9 @@ export class SettlementsService {
         (1000 * 60 * 60 * 24 * 365.25);
       // Completed years (part-year over six months rounds up) and the
       // 20-lakh statutory ceiling — see gratuity-math.ts.
-      gratuityAmount = calculateGratuity(basicMonthly, yearsOfService);
+      gratuityAmount = calculateGratuity(basicMonthly, yearsOfService, {
+        fixedTerm: isFixedTermEmployeeType(employee.employeeType),
+      });
     }
 
     const bonusAmount = dto.bonusAmount ?? 0;
@@ -245,9 +277,11 @@ export class SettlementsService {
         where: { id: existing.id, organizationId },
         data,
       });
-      return this.scopedPrisma.settlement.findFirstOrThrow({
-        where: { id: existing.id, organizationId },
-      });
+      return this.withGratuityPayout(
+        await this.scopedPrisma.settlement.findFirstOrThrow({
+          where: { id: existing.id, organizationId },
+        }),
+      );
     }
     const created = await this.scopedPrisma.settlement.create({
       data: { organizationId, employeeId: dto.employeeId, ...data },
@@ -261,7 +295,7 @@ export class SettlementsService {
       eventKey: 'FNF_INITIATED',
       performedById: actor.id,
     });
-    return created;
+    return this.withGratuityPayout(created);
   }
 
   // Locks in the settlement: creates the linked PayrollRun (isFinalSettlement)
@@ -496,7 +530,9 @@ export class SettlementsService {
           },
         });
       }
-      return tx.settlement.findFirstOrThrow({ where: { id, organizationId } });
+      return this.withGratuityPayout(
+        await tx.settlement.findFirstOrThrow({ where: { id, organizationId } }),
+      );
     });
   }
 }

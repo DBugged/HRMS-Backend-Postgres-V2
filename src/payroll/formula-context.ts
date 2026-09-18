@@ -135,6 +135,21 @@ export function deriveStatutoryContext(
   };
 }
 
+// The EPS (pension) / EPF split of the employer's PF for the ECR: EPS is its rate on PF wages up to the ceiling,
+// EPF is the remainder of whatever the employer PF line came to, so the two always add back to the line.
+export function splitEmployerPf(
+  employerPfAmount: number,
+  context: Record<string, number>,
+  settings: OverlaidSettings,
+): { eps: number; epf: number } {
+  const wages = Math.min(context.PF_WAGES ?? 0, settings.pfWageCeiling);
+  const eps = Math.min(
+    employerPfAmount,
+    Math.round((wages * settings.pfEpsRate) / 100),
+  );
+  return { eps, epf: employerPfAmount - eps };
+}
+
 export function buildBaseContext(
   attendance: AttendanceSummary,
   settings: OverlaidSettings,
@@ -148,6 +163,7 @@ export function buildBaseContext(
     DA: 0,
     PF_EDLI_RATE: settings.pfEdliRate,
     PF_ADMIN_RATE: settings.pfAdminRate,
+    PF_EDLI_MAX: settings.pfEdliMax,
     BONUS_RATE: settings.bonusRate,
     BONUS_ELIGIBILITY_CEILING: settings.bonusEligibilityCeiling,
     BONUS_CALC_CEILING: settings.bonusCalcCeiling,

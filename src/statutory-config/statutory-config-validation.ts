@@ -27,6 +27,8 @@ function validatePfOrEsi(config: unknown): void {
     applyFiftyPercentRule?: unknown;
     edliRate?: unknown;
     adminChargeRate?: unknown;
+    epsRate?: unknown;
+    edliMaxAmount?: unknown;
   };
   if (!isPercent(c.employeeRate))
     throw new Error('employeeRate must be a number between 0 and 100.');
@@ -35,10 +37,17 @@ function validatePfOrEsi(config: unknown): void {
   if (!isNonNegative(c.wageCeiling))
     throw new Error('wageCeiling must be a non-negative number.');
   validateOptionalBoolean(c.applyFiftyPercentRule, 'applyFiftyPercentRule');
-  for (const key of ['edliRate', 'adminChargeRate'] as const) {
+  validateEdliMax(c.edliMaxAmount);
+  for (const key of ['edliRate', 'adminChargeRate', 'epsRate'] as const) {
     if (c[key] !== undefined && !isPercent(c[key]))
       throw new Error(`${key} must be a number between 0 and 100.`);
   }
+}
+
+// Statutory cap on the monthly EDLI contribution (₹75 today); editable because it moves with the PF wage ceiling.
+function validateEdliMax(v: unknown): void {
+  if (v !== undefined && !isNonNegative(v))
+    throw new Error('edliMaxAmount must be a non-negative number.');
 }
 
 function validateOptionalBoolean(v: unknown, name: string): void {
@@ -282,6 +291,8 @@ export const SEED_DEFAULTS: Record<
       wageCeiling: 25000,
       edliRate: 0.5,
       adminChargeRate: 0.5,
+      epsRate: 8.33,
+      edliMaxAmount: 75,
     },
     isEnabled: false,
   },

@@ -2,6 +2,8 @@ import {
   GRATUITY_STATUTORY_CAP,
   calculateGratuity,
   completedYearsOfService,
+  gratuityPayoutStatus,
+  isFixedTermEmployeeType,
 } from './gratuity-math';
 
 describe('completedYearsOfService', () => {
@@ -40,5 +42,70 @@ describe('calculateGratuity', () => {
 
   it('leaves an uncapped amount alone', () => {
     expect(calculateGratuity(50000, 10)).toBe(288462);
+  });
+});
+
+describe('fixed-term gratuity (Code on Social Security)', () => {
+  it('a fixed-term employee is eligible after 1 year; a permanent one still needs 5', () => {
+    expect(calculateGratuity(26000, 1.2, { fixedTerm: true })).toBeGreaterThan(
+      0,
+    );
+    expect(calculateGratuity(26000, 0.9, { fixedTerm: true })).toBe(0);
+    expect(calculateGratuity(26000, 3)).toBe(0);
+    expect(calculateGratuity(26000, 5)).toBeGreaterThan(0);
+  });
+
+  it('treats contract / temporary / fixed-term types as fixed-term, not interns or permanent staff', () => {
+    for (const t of [
+      'contract',
+      'temporary',
+      'fixed_term',
+      'Fixed-Term',
+      'fixed term',
+    ]) {
+      expect(isFixedTermEmployeeType(t)).toBe(true);
+    }
+    for (const t of [
+      'permanent',
+      'probation',
+      'intern',
+      'apprentice',
+      'consultant',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect(isFixedTermEmployeeType(t)).toBe(false);
+    }
+  });
+});
+
+describe('gratuity payout deadline', () => {
+  it('is 30 days after the last working day', () => {
+    expect(
+      gratuityPayoutStatus('2026-09-30', null, new Date('2026-10-15')).dueBy,
+    ).toBe('2026-10-30');
+  });
+  it('is overdue only once the deadline has passed (paid or still unpaid)', () => {
+    expect(
+      gratuityPayoutStatus('2026-09-30', null, new Date('2026-10-30')).overdue,
+    ).toBe(false);
+    expect(
+      gratuityPayoutStatus('2026-09-30', null, new Date('2026-10-31')).overdue,
+    ).toBe(true);
+    expect(
+      gratuityPayoutStatus(
+        '2026-09-30',
+        new Date('2026-10-20'),
+        new Date('2027-01-01'),
+      ).overdue,
+    ).toBe(false);
+    expect(
+      gratuityPayoutStatus(
+        '2026-09-30',
+        new Date('2026-11-05'),
+        new Date('2027-01-01'),
+      ).overdue,
+    ).toBe(true);
   });
 });
