@@ -135,7 +135,7 @@ export class DashboardService {
       reimbRejected,
       reimbAmountPendingAgg,
       upcomingHolidays,
-      lowBalanceRows,
+      leaveBalanceRows,
       deptLeaveSummaryRaw,
     ] = await Promise.all([
       this.scopedPrisma.user.count({
@@ -221,14 +221,16 @@ export class DashboardService {
         orderBy: { date: 'asc' },
         take: 3,
       }),
+      // Unfiltered — a single low-quota leave type (e.g. a 1-day "Birthday
+      // Leave") would otherwise dominate this list every time regardless of
+      // how much leave the employee actually has left overall. Grouped into
+      // one total per employee below, same convention the mobile Dashboard
+      // already uses for its own "Leave Balance" stat.
       this.scopedPrisma.leaveBalance.findMany({
-        where: { organizationId, year: currentYear, closing: { lt: 2 } },
+        where: { organizationId, year: currentYear },
         include: {
           employee: { select: { id: true, name: true, employeeId: true } },
-          leaveType: { select: { id: true, name: true, code: true } },
         },
-        orderBy: { closing: 'asc' },
-        take: 10,
       }),
       this.scopedPrisma.leave.findMany({
         where: {
@@ -259,6 +261,34 @@ export class DashboardService {
     const pendingRegularizationCount = pendingRegularizations.filter(
       (r) => (r.regularization as { status?: string })?.status === 'pending',
     ).length;
+
+    // Total remaining leave per employee across every leave type they have a
+    // balance row for this year, not any single type's own closing figure —
+    // an employee with 1 day of "Birthday Leave" left but 15 days of Earned
+    // Leave isn't actually low on leave. Threshold (5 days) is a flat cutoff
+    // across all leave types combined, not per-type.
+    const LOW_TOTAL_BALANCE_THRESHOLD = 5;
+    const balanceTotalsByEmployee = new Map<
+      string,
+      { employee: { id: string; name: string; employeeId: string }; totalDays: number }
+    >();
+    for (const b of leaveBalanceRows) {
+      const entry = balanceTotalsByEmployee.get(b.employeeId) ?? {
+        employee: b.employee,
+        totalDays: 0,
+      };
+      entry.totalDays += b.closing;
+      balanceTotalsByEmployee.set(b.employeeId, entry);
+    }
+    const lowBalanceEmployees = [...balanceTotalsByEmployee.entries()]
+      .filter(([, v]) => v.totalDays < LOW_TOTAL_BALANCE_THRESHOLD)
+      .sort((a, b) => a[1].totalDays - b[1].totalDays)
+      .slice(0, 10)
+      .map(([employeeId, v]) => ({
+        id: employeeId,
+        employee: v.employee,
+        totalDays: Math.round(v.totalDays * 100) / 100,
+      }));
 
     const deptTotals = new Map<string, number>();
     for (const l of deptLeaveSummaryRaw) {
@@ -349,7 +379,7 @@ export class DashboardService {
       },
       upcomingPayrun,
       upcomingHolidays,
-      lowBalanceEmployees: lowBalanceRows,
+      lowBalanceEmployees,
       departmentLeaveSummary,
     };
   }
