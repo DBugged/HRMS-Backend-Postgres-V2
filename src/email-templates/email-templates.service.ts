@@ -365,6 +365,23 @@ export class EmailTemplatesService {
     return renderTemplate(template, variables);
   }
 
+  // Renders the code-default template (subject + body) for an occasion. Used as the caller-supplied
+  // fallback for occasions added after an org was seeded (or whose template the org disabled), so
+  // those still get the designed body instead of a bare sentence.
+  defaultFor(
+    occasionKey: string,
+    variables: Record<string, string>,
+  ): { subject: string; html: string } {
+    const def = EMAIL_TEMPLATE_DEFAULTS.find(
+      (d) => d.occasionKey === occasionKey,
+    );
+    if (!def) throw new Error(`No default email template for ${occasionKey}`);
+    return {
+      subject: this.render(def.subject, variables),
+      html: this.render(def.bodyHtml, variables),
+    };
+  }
+
   // Renders the org's active email template for `occasionKey`, falling back
   // to the caller's hardcoded subject/html when none is active (an org
   // predating this occasion's seeding, or one that's disabled the

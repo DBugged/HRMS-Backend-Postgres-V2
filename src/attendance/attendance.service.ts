@@ -439,22 +439,24 @@ export class AttendanceService {
           message: `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`,
           category: NotificationCategory.ATTENDANCE,
         });
-      }
-      // The email fires every recalculation run, not deduped — matches the
-      // old system's behavior exactly (only the Notification row is deduped).
-      const employee = await this.scopedPrisma.user.findFirst({
-        where: { id: employeeId, organizationId },
-      });
-      if (employee) {
-        const fallbackHtml = `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`;
-        const { subject, html } =
-          await this.emailTemplatesService.renderOccasion(
-            organizationId,
-            'ABSENT_MARKED',
-            { employeeName: employee.name, date: displayDate },
-            { subject: title, html: fallbackHtml },
-          );
-        await this.emailService.send({ to: employee.email, subject, html });
+        // The email is sent only alongside the first Notification row for this employee + date
+        // (same dedupe key as the in-app notice), so repeated recalculations of the same day don't
+        // re-mail the employee (e.g. the daily job plus a manual "notify absentees" run). It used
+        // to fire on every recalculation.
+        const employee = await this.scopedPrisma.user.findFirst({
+          where: { id: employeeId, organizationId },
+        });
+        if (employee) {
+          const fallbackHtml = `You were marked absent for ${displayDate}. Contact HR if this looks wrong.`;
+          const { subject, html } =
+            await this.emailTemplatesService.renderOccasion(
+              organizationId,
+              'ABSENT_MARKED',
+              { employeeName: employee.name, date: displayDate },
+              { subject: title, html: fallbackHtml },
+            );
+          await this.emailService.send({ to: employee.email, subject, html });
+        }
       }
       return;
     }

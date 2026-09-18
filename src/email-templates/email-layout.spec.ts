@@ -70,6 +70,21 @@ const SUPPLIED: Record<string, string[]> = {
   ACCOUNT_ACTIVATED: ['email'],
   SETUP_COMPLETE: ['loginUrl'],
   LETTER_SENT: ['letterName'],
+  PASSWORD_CHANGED: ['changedAt'],
+  ROLE_CHANGED: ['previousRole', 'newRole'],
+  EXIT_COMPLETED: ['lastWorkingDay'],
+  APPROVALS_DIGEST: [
+    'totalPending',
+    'leaveCount',
+    'regularizationCount',
+    'wfhCount',
+    'compOffCount',
+    'overtimeCount',
+    'encashmentCount',
+    'reimbursementCount',
+    'loanCount',
+    'reviewUrl',
+  ],
 };
 
 describe('email layout', () => {

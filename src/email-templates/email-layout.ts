@@ -115,14 +115,20 @@ export interface CardRow {
   optionalValue?: string; // placeholder text that decides whether this row is shown
 }
 
-export function infoCard(rows: CardRow[]): string {
+// `dividers: false` drops the hairlines between rows — use it when rows can be individually hidden
+// (optionalValue), since a divider belonging to a hidden row would otherwise be left dangling.
+export function infoCard(
+  rows: CardRow[],
+  opts: { dividers?: boolean } = {},
+): string {
+  const dividers = opts.dividers !== false;
   const body = rows
     .map((row, i) => {
       const last = i === rows.length - 1;
       const cell =
         `<tr><td class="stack lbl" width="38%" valign="top" style="padding:12px 20px;font-family:${FONT_BODY};font-size:12px;line-height:20px;font-weight:500;color:${T.mutedFg};">${row.label}</td>` +
         `<td class="stack val" valign="top" style="padding:12px 20px;font-family:${FONT_BODY};font-size:14px;line-height:20px;font-weight:600;color:${T.ink};word-break:break-word;overflow-wrap:anywhere;">${row.value}</td></tr>` +
-        (last
+        (last || !dividers
           ? ''
           : `<tr><td colspan="2" style="padding:0 20px;"><div style="height:1px;line-height:1px;font-size:1px;background:${T.divider};">&nbsp;</div></td></tr>`);
       return row.optionalValue !== undefined

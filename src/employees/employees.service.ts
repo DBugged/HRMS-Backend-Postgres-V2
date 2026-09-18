@@ -551,6 +551,17 @@ export class EmployeesService {
 
     await this.logChangesIfAny(before, clean, actor.id, organizationId);
 
+    // Tell the affected person their access role changed (security-relevant, and rare). Skipped
+    // for a self-edit and for a deactivated account; best-effort, never fails the update.
+    if (
+      clean.role !== undefined &&
+      clean.role !== before.role &&
+      before.isActive &&
+      before.id !== actor.id
+    ) {
+      void this.sendRoleChangedEmail(before, clean.role, organizationId);
+    }
+
     // isActive isn't covered by logChangesIfAny (that only watches role/
     // designation/department/employmentStatus) — without this, toggling
     // it via this generic endpoint (as opposed to the dedicated
@@ -592,6 +603,34 @@ export class EmployeesService {
     });
 
     return toSafe(await this.findByIdOrThrow(id, organizationId));
+  }
+
+  private async sendRoleChangedEmail(
+    before: User,
+    newRole: Role,
+    organizationId: string,
+  ): Promise<void> {
+    try {
+      const label = (r: Role) => r.charAt(0) + r.slice(1).toLowerCase();
+      const variables = {
+        employeeName: before.name,
+        previousRole: label(before.role),
+        newRole: label(newRole),
+      };
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'ROLE_CHANGED',
+        variables,
+        this.emailTemplatesService.defaultFor('ROLE_CHANGED', variables),
+      );
+      await this.emailService.send({
+        to: before.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
+    } catch {
+      // best-effort notice — the role change itself has already been saved
+    }
   }
 
   // Append-only audit trail of role/designation/department/employmentStatus

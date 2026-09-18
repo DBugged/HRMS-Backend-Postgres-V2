@@ -445,6 +445,8 @@ export class AuthService {
       }),
     ]);
 
+    this.sendPasswordChangedEmail(user);
+
     return { message: 'Password updated successfully. Please log in.' };
   }
 
@@ -515,7 +517,44 @@ export class AuthService {
       });
     }
 
+    // A routine voluntary change gets a security notice; the first-login change above already
+    // sends the (friendlier) account-activated email, so it doesn't get both.
+    if (!wasFirstTimeChange) this.sendPasswordChangedEmail(user);
+
     return { message: 'Password changed successfully.' };
+  }
+
+  // Best-effort, fire-and-forget security notice — a send failure must never fail the password
+  // change/reset itself. Never includes the password; the timestamp is UTC so it is unambiguous
+  // regardless of the reader's timezone.
+  private sendPasswordChangedEmail(user: {
+    name: string;
+    email: string;
+    organizationId: string;
+  }): void {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const hour12 = d.getUTCHours() % 12 || 12;
+    const changedAt = `${pad(d.getUTCDate())}-${pad(d.getUTCMonth() + 1)}-${d.getUTCFullYear()}, ${pad(hour12)}:${pad(d.getUTCMinutes())} ${d.getUTCHours() >= 12 ? 'PM' : 'AM'} UTC`;
+    void (async () => {
+      const variables = { employeeName: user.name, changedAt };
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        user.organizationId,
+        'PASSWORD_CHANGED',
+        variables,
+        this.emailTemplatesService.defaultFor('PASSWORD_CHANGED', variables),
+      );
+      await this.emailService.send({
+        to: user.email,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
+    })().catch((err: Error) => {
+      this.logger.error(
+        `Failed to send password-changed email: ${err.message}`,
+        err.stack,
+      );
+    });
   }
 
   private async issueTokenPair(

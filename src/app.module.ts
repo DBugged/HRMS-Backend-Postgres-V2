@@ -46,6 +46,7 @@ import { EmployeeTimelineModule } from './employee-timeline/employee-timeline.mo
 import { ApprovalDelegationModule } from './approval-delegation/approval-delegation.module';
 import { DocumentsModule } from './documents/documents.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { ApprovalsDigestModule } from './approvals-digest/approvals-digest.module';
 import { HrEventsModule } from './hr-events/hr-events.module';
 import { EmailTemplatesModule } from './email-templates/email-templates.module';
 import { OrgListItemsModule } from './org-list-items/org-list-items.module';
@@ -123,6 +124,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     DocumentsModule,
     NotificationsModule,
     HrEventsModule,
+    ApprovalsDigestModule,
     EmailTemplatesModule,
     OrgListItemsModule,
     WorkSchedulesModule,

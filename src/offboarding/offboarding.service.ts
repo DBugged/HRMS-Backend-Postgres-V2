@@ -357,7 +357,58 @@ export class OffboardingService {
       performedById: actor.id,
       status: 'inactive',
     });
+    void this.sendExitCompletedEmail(
+      record.employeeId,
+      record.lastWorkingDay,
+      organizationId,
+    );
     return this.findOne(id, organizationId);
+  }
+
+  // Goes to the employee's PERSONAL email only — completing the exit deactivates the work account,
+  // so a message to it would never be read — and is skipped entirely when no personal email is on
+  // file. Best-effort: the exit has already been completed and must not fail on a mail problem.
+  private async sendExitCompletedEmail(
+    employeeId: string,
+    lastWorkingDay: string,
+    organizationId: string,
+  ): Promise<void> {
+    try {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        select: { name: true, personalData: true },
+      });
+      const personalData = (employee?.personalData ?? {}) as Record<
+        string,
+        unknown
+      >;
+      const personalEmail =
+        typeof personalData.personalEmail === 'string'
+          ? personalData.personalEmail
+          : '';
+      if (!employee || !personalEmail) return;
+      const { dateFormat } = await resolveOrgDateTimeFormat(
+        this.scopedPrisma,
+        organizationId,
+      );
+      const variables = {
+        employeeName: employee.name,
+        lastWorkingDay: formatDateDisplay(lastWorkingDay, '', dateFormat),
+      };
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'EXIT_COMPLETED',
+        variables,
+        this.emailTemplatesService.defaultFor('EXIT_COMPLETED', variables),
+      );
+      await this.emailService.send({
+        to: personalEmail,
+        subject: rendered.subject,
+        html: rendered.html,
+      });
+    } catch {
+      // best-effort notice
+    }
   }
 
   async cancel(id: string, organizationId: string) {

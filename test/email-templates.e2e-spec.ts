@@ -116,9 +116,11 @@ describe('EmailTemplates (e2e)', () => {
     expect(occasionKeys).toEqual([
       'ABSENT_MARKED',
       'ACCOUNT_ACTIVATED',
+      'APPROVALS_DIGEST',
       'BIRTHDAY',
       'COMP_OFF_DECISION',
       'DOCUMENT_STATUS',
+      'EXIT_COMPLETED',
       'FOUNDER_ACCOUNT_WELCOME',
       'LEAVE_DECISION',
       'LEAVE_ENCASHMENT_STATUS',
@@ -129,11 +131,13 @@ describe('EmailTemplates (e2e)', () => {
       'NEW_JOINER_ANNOUNCEMENT',
       'OFFBOARDING_INITIATED',
       'OVERTIME_STATUS',
+      'PASSWORD_CHANGED',
       'PASSWORD_RESET',
       'PAYSLIP_ISSUED',
       'PERFORMANCE_RATING_PUBLISHED',
       'REGULARIZATION_DECISION',
       'REIMBURSEMENT_STATUS',
+      'ROLE_CHANGED',
       'SETTLEMENT_PROCESSED',
       'SETUP_COMPLETE',
       'TAX_DECLARATION_VERIFIED',
@@ -145,7 +149,7 @@ describe('EmailTemplates (e2e)', () => {
 
     // Every built-in row also has its curated category, matching
     // email-template-defaults.ts — spot-check a few across categories
-    // rather than re-listing all 26 here.
+    // rather than re-listing all 30 here.
     const byKey = Object.fromEntries(data.map((t) => [t.occasionKey, t]));
     expect(byKey.BIRTHDAY.category).toBe('General');
     expect(byKey.ABSENT_MARKED.category).toBe('Attendance');

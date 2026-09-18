@@ -11,6 +11,7 @@ import {
   checkList,
   emailBody,
   infoCard,
+  mutedText,
   notice,
   optionalNote,
   orderedSteps,
@@ -94,6 +95,11 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
   SETUP_COMPLETE:
     'Setup for {{companyName}} is complete — the HRMS is ready to use.',
   LETTER_SENT: 'Your {{letterName}} is attached.',
+  PASSWORD_CHANGED: 'Your account password was changed on {{changedAt}}.',
+  ROLE_CHANGED: 'Your HRMS role changed from {{previousRole}} to {{newRole}}.',
+  EXIT_COMPLETED:
+    'Your exit process is complete and your HRMS access is closed.',
+  APPROVALS_DIGEST: '{{totalPending}} request(s) are waiting for your review.',
 };
 
 // Shared shape for the many "your <thing> was <decision>" emails.
@@ -625,5 +631,123 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     }),
     ccAllActive: false,
     category: 'Documents',
+  },
+  {
+    // Fires from AuthService.changePassword() (voluntary changes only — the
+    // first-login change already sends ACCOUNT_ACTIVATED) and resetPassword().
+    // A security notice, so it never carries the password itself.
+    occasionKey: 'PASSWORD_CHANGED',
+    name: 'Password Changed',
+    subject: 'Your password was changed',
+    bodyHtml: emailBody({
+      category: 'Account & Access',
+      title: 'Your password was changed',
+      blocks: [
+        hello,
+        paragraph(
+          'The password for your HRMS account was changed on {{changedAt}}.',
+        ),
+        infoCard([row('Changed on', '{{changedAt}}')]),
+        notice(
+          "If you didn't make this change, contact your HR administrator immediately.",
+          'warning',
+        ),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Account & Access',
+  },
+  {
+    // Fires from EmployeesService.update() when an employee's role actually changes.
+    occasionKey: 'ROLE_CHANGED',
+    name: 'Role Changed',
+    subject: 'Your HRMS role was updated',
+    bodyHtml: emailBody({
+      category: 'Account & Access',
+      title: 'Your HRMS role was updated',
+      blocks: [
+        hello,
+        paragraph(
+          'Your role in the HRMS was changed from {{previousRole}} to {{newRole}}.',
+        ),
+        infoCard([
+          row('Previous role', '{{previousRole}}'),
+          row('New role', '{{newRole}}'),
+        ]),
+        notice(
+          "If you weren't expecting this change, contact your HR administrator.",
+          'info',
+        ),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Account & Access',
+  },
+  {
+    // Fires from OffboardingService.complete() — sent to the PERSONAL email only
+    // (the work mailbox is deactivated by the same action), and skipped when none is on file.
+    occasionKey: 'EXIT_COMPLETED',
+    name: 'Exit Completed',
+    subject: 'Your exit process is complete',
+    bodyHtml: emailBody({
+      category: 'Exit',
+      title: 'Your exit process is complete',
+      blocks: [
+        greet,
+        paragraph(
+          'Your exit process has been completed and your HRMS access has now been closed.',
+        ),
+        infoCard([row('Last working day', '{{lastWorkingDay}}')]),
+        paragraph('Thank you for your time with us.'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Exit',
+  },
+  {
+    // Fires from ApprovalsDigestService (weekday mornings) — one email per approver, and only
+    // when at least one request is waiting. Each count is '' when zero, which hides its row.
+    occasionKey: 'APPROVALS_DIGEST',
+    name: 'Pending Approvals Digest',
+    subject: 'Pending approvals: {{totalPending}} waiting for your review',
+    bodyHtml: emailBody({
+      category: 'General',
+      title: 'Pending approvals',
+      blocks: [
+        greet,
+        paragraph('{{totalPending}} request(s) are waiting for your review.'),
+        infoCard(
+          [
+            row('Leave requests', '{{leaveCount}}', '{{leaveCount}}'),
+            row(
+              'Attendance regularizations',
+              '{{regularizationCount}}',
+              '{{regularizationCount}}',
+            ),
+            row('Work From Home requests', '{{wfhCount}}', '{{wfhCount}}'),
+            row('Comp-off requests', '{{compOffCount}}', '{{compOffCount}}'),
+            row('Overtime requests', '{{overtimeCount}}', '{{overtimeCount}}'),
+            row(
+              'Leave encashments',
+              '{{encashmentCount}}',
+              '{{encashmentCount}}',
+            ),
+            row(
+              'Reimbursement claims',
+              '{{reimbursementCount}}',
+              '{{reimbursementCount}}',
+            ),
+            row('Loan / advance requests', '{{loanCount}}', '{{loanCount}}'),
+          ],
+          { dividers: false },
+        ),
+        button('{{reviewUrl}}', 'Review requests'),
+        mutedText(
+          'You receive this summary at most once a day, and only when something is waiting.',
+        ),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'General',
   },
 ];
