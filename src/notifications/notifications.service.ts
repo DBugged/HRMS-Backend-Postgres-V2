@@ -21,6 +21,8 @@ import { UpdateNotificationPreferencesDto } from './dto/update-notification-pref
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
 import { paginate, skip } from '../common/pagination';
+import { emailBody, wrapEmailShell } from '../email-templates/email-layout';
+import { companyLogoImgTag } from '../email-templates/company-logo';
 
 type Actor = Omit<User, 'password'>;
 
@@ -215,6 +217,38 @@ export class NotificationsService {
     );
 
     if (dto.sendEmailToo) {
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: {
+          name: true,
+          companyName: true,
+          phone: true,
+          website: true,
+          contactEmail: true,
+          registeredAddress: true,
+          emailLogoUrl: true,
+        },
+      });
+      // Same branded shell as every template email; the admin's own title/message stay the content.
+      const broadcastHtml = wrapEmailShell(
+        emailBody({
+          category: 'General',
+          title: dto.title,
+          blocks: [
+            `<div style="font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#232733;word-break:break-word;">${dto.message}</div>`,
+          ],
+        }),
+        {
+          branding: {
+            companyName: org?.companyName || org?.name,
+            phone: org?.phone,
+            website: org?.website,
+            contactEmail: org?.contactEmail,
+            registeredAddress: org?.registeredAddress,
+            logoImgTag: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+          },
+        },
+      );
       await Promise.all(
         recipients
           .filter(
@@ -224,7 +258,7 @@ export class NotificationsService {
             this.emailService.send({
               to: r.email,
               subject: dto.title,
-              html: dto.message,
+              html: broadcastHtml,
             }),
           ),
       );

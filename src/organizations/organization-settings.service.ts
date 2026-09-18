@@ -19,6 +19,13 @@ import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { frontendUrl } from '../common/frontend-url';
 import {
+  button,
+  checkList,
+  emailBody,
+  notice,
+  paragraph,
+} from '../email-templates/email-layout';
+import {
   signFileToken,
   resolveIncomingFileValue,
   SESSION_ASSET_TTL_SECONDS,
@@ -422,7 +429,11 @@ export class OrganizationSettingsService {
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
         'SETUP_COMPLETE',
-        { employeeName: actor.name, companyName },
+        {
+          employeeName: actor.name,
+          companyName,
+          loginUrl: `${frontendUrl()}/login`,
+        },
         {
           subject: `Your ${companyName} HRMS Setup Is Complete`,
           html: fallbackHtml,
@@ -496,89 +507,37 @@ export class OrganizationSettingsService {
   }
 }
 
-// Sent once, right after completeSetup() succeeds — see the call site
-// above. Table-based layout + inline styles (not the raw <div>-and-class
-// markup the rest of this file's simpler emails use) since this one is
-// meant to actually look designed rather than be a quick notice, and
-// inline styles are what survive stripping in real email clients.
+// Hardcoded fallback for the SETUP_COMPLETE email, used only when the org has no active
+// SETUP_COMPLETE template — same content as the seeded default, composed from the shared
+// email-layout components (the branded shell, footer and preheader are added by
+// EmailTemplatesService.renderOccasion, not here).
 function setupCompleteEmailHtml(params: {
   recipientName: string;
   organizationName: string;
 }): string {
   const loginUrl = `${frontendUrl()}/login`;
-  const items = [
-    'Add and manage employees',
-    'Manage attendance',
-    'Manage leave',
-    'Process payroll',
-    'Configure HRMS settings',
-    'Access workforce information and reports',
-  ];
-  return `
-  <div style="background-color:#f4f5f7;padding:32px 16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #e5e7eb;">
-      <tr>
-        <td style="background:#14161d;padding:28px 32px;">
-          <span style="color:#ffffff;font-size:16px;font-weight:700;letter-spacing:0.2px;">D&rsquo;Bugged Programmers HRMS</span>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:36px 32px 8px;">
-          <h1 style="margin:0 0 16px;font-size:22px;line-height:1.3;color:#14161d;">You&rsquo;re All Set</h1>
-          <p style="margin:0 0 12px;font-size:14px;line-height:1.6;color:#3f3f46;">Hello ${params.recipientName},</p>
-          <p style="margin:0 0 20px;font-size:14px;line-height:1.6;color:#3f3f46;">
-            Your basic HRMS setup for <strong>${params.organizationName}</strong> has been successfully completed.
-            Your organization is now ready to use D&rsquo;Bugged Programmers HRMS. Log in to your account and start
-            managing your workforce from one place.
-          </p>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:0 32px 24px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:12px;">
-            <tr>
-              <td style="padding:16px 20px;">
-                <table role="presentation" cellpadding="0" cellspacing="0">
-                  <tr>
-                    <td style="vertical-align:top;padding-right:12px;">
-                      <span style="display:inline-block;width:28px;height:28px;line-height:28px;border-radius:50%;background:#10b981;color:#ffffff;text-align:center;font-size:15px;font-weight:700;">&check;</span>
-                    </td>
-                    <td>
-                      <p style="margin:0;font-size:14px;font-weight:600;color:#065f46;">Setup Complete</p>
-                      <p style="margin:2px 0 0;font-size:13px;color:#047857;">Your organization is ready to use HRMS.</p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:0 32px 8px;">
-          <p style="margin:0 0 12px;font-size:15px;font-weight:600;color:#14161d;">Start Using Your HRMS</p>
-          <p style="margin:0 0 8px;font-size:14px;color:#3f3f46;">You can now:</p>
-          <ul style="margin:0 0 24px;padding-left:20px;font-size:14px;line-height:1.9;color:#3f3f46;">
-            ${items.map((item) => `<li>${item}</li>`).join('')}
-          </ul>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:0 32px 28px;" align="center">
-          <a href="${loginUrl}" style="display:inline-block;background:#5546e0;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 28px;border-radius:8px;">Log in to HRMS &rarr;</a>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:0 32px 32px;">
-          <p style="margin:0 0 8px;font-size:13px;color:#71717a;">You&rsquo;re all set. Log in whenever you&rsquo;re ready to get started.</p>
-          <p style="margin:0;font-size:13px;color:#71717a;">If you need any assistance, please contact our support team.</p>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:20px 32px;background:#f9fafb;border-top:1px solid #e5e7eb;">
-          <p style="margin:0;font-size:12px;color:#a1a1aa;">Regards,<br>D&rsquo;Bugged Programmers Team<br>HRMS Platform</p>
-        </td>
-      </tr>
-    </table>
-  </div>`;
+  return emailBody({
+    category: 'Account & Access',
+    title: "You're all set",
+    blocks: [
+      paragraph(`Hi ${params.recipientName},`),
+      paragraph(
+        `Setup for ${params.organizationName} is complete — the HRMS is ready to use. Log in to your account and start managing your workforce from one place.`,
+      ),
+      notice(
+        '<strong>Setup complete.</strong> Your organization is ready to use HRMS.',
+        'success',
+      ),
+      paragraph('<strong>You can now:</strong>'),
+      checkList([
+        'Add and manage employees',
+        'Manage attendance',
+        'Manage leave',
+        'Process payroll',
+        'Configure HRMS settings',
+        'Access workforce information and reports',
+      ]),
+      button(loginUrl, 'Log in to HRMS'),
+    ],
+  });
 }

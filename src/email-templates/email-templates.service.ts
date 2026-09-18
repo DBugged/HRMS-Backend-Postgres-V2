@@ -22,7 +22,11 @@ import { EmailService } from '../notifications/email.service';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
 import { SendEmailTemplateDto } from './dto/send-email-template.dto';
-import { EMAIL_TEMPLATE_DEFAULTS } from './email-template-defaults';
+import {
+  EMAIL_PREHEADERS,
+  EMAIL_TEMPLATE_DEFAULTS,
+} from './email-template-defaults';
+import { finalizeEmailHtml, wrapEmailShell } from './email-layout';
 import { renderTemplate } from './render-template';
 import { wrapAll } from '../common/pagination';
 import { companyLogoImgTag } from './company-logo';
@@ -313,11 +317,18 @@ export class EmailTemplatesService {
         return this.emailService.send({
           to: employee.email,
           subject: renderTemplate(template.subject, variables),
-          html: await this.appendSignature(
-            renderTemplate(template.bodyHtml, variables),
+          html: await this.applyShell(
+            await this.appendSignature(
+              renderTemplate(template.bodyHtml, variables),
+              organizationId,
+              variables,
+              template.signatureId,
+            ),
             organizationId,
             variables,
-            template.signatureId,
+            // A built-in template sent manually keeps its own preheader;
+            // an org-authored custom one has none.
+            template.isCustom ? null : template.occasionKey,
           ),
           ...(cc.length && { cc }),
         });
@@ -377,25 +388,80 @@ export class EmailTemplatesService {
     if (!template) {
       return {
         subject: fallback.subject,
-        html: await this.appendSignature(
-          fallback.html,
+        html: await this.applyShell(
+          await this.appendSignature(
+            fallback.html,
+            organizationId,
+            variables,
+            null,
+          ),
           organizationId,
           variables,
-          null,
+          occasionKey,
         ),
         ccAllActive: false,
       };
     }
     return {
       subject: this.render(template.subject, variables),
-      html: await this.appendSignature(
-        this.render(template.bodyHtml, variables),
+      html: await this.applyShell(
+        await this.appendSignature(
+          this.render(template.bodyHtml, variables),
+          organizationId,
+          variables,
+          template.signatureId,
+        ),
         organizationId,
         variables,
-        template.signatureId,
+        occasionKey,
       ),
       ccAllActive: template.ccAllActive,
     };
+  }
+
+  // Final step for every outgoing template email: resolves the post-render
+  // markers (status pills, empty optional rows) and wraps the body in the
+  // shared branded page shell (header, footer, hidden preheader) from
+  // email-layout.ts. Applied here — not stored in the template — so an org's
+  // own edited/custom template and every call site's hardcoded fallback get
+  // the same shell, and the Email Templates editor keeps showing just the
+  // body. Idempotent (see wrapEmailShell).
+  private async applyShell(
+    html: string,
+    organizationId: string,
+    variables: Record<string, string>,
+    occasionKey: string | null,
+  ): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        name: true,
+        companyName: true,
+        phone: true,
+        website: true,
+        contactEmail: true,
+        registeredAddress: true,
+        emailLogoUrl: true,
+      },
+    });
+    const preheaderTemplate = occasionKey
+      ? EMAIL_PREHEADERS[occasionKey]
+      : undefined;
+    return wrapEmailShell(finalizeEmailHtml(html), {
+      preheader: preheaderTemplate
+        ? this.render(preheaderTemplate, variables)
+        : undefined,
+      branding: {
+        // Orgs that haven't completed Organization Setup have no companyName yet — fall back to the
+        // organization's registered name so the header/footer aren't blank.
+        companyName: org?.companyName || org?.name,
+        phone: org?.phone,
+        website: org?.website,
+        contactEmail: org?.contactEmail,
+        registeredAddress: org?.registeredAddress,
+        logoImgTag: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+      },
+    });
   }
 
   // Appends the resolved signature (the template's own signatureId, or —

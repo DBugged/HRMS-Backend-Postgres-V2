@@ -26,11 +26,17 @@ export interface SendEmailInput {
 // so time-sensitive content is never silently lost, only the delivery
 // channel. Ported verbatim from the old system's sendEmail.js.
 function stripHtml(html: string): string {
-  return (html || '')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/\n{2,}/g, '\n')
-    .trim();
+  return (
+    (html || '')
+      // Drop <head>/<style>/hidden preheader so the dry-run log shows readable text, not CSS.
+      .replace(/<head[\s\S]*?<\/head>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '')
+      .replace(/&(zwnj|nbsp);/g, ' ')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\n{2,}/g, '\n')
+      .trim()
+  );
 }
 
 // Which provider actually sends the mail. Same opt-in-driver convention as
