@@ -419,7 +419,23 @@ describe('Payroll (e2e)', () => {
 
   it('an income-tax line only appears once a TaxSlabConfig exists for the FY/regime', async () => {
     // INCOME_TAX is auto-seeded on every new org already (see
-    // LeaveTypesService/SalaryComponentsService.seedDefaults).
+    // LeaveTypesService/SalaryComponentsService.seedDefaults). Registration also seeds both regimes' slabs
+    // for the CURRENT financial year, so clear any FY 2026-27 NEW-regime config first to test the
+    // "no config" case regardless of when the suite runs.
+    const existingSlabs = await request(app.getHttpServer())
+      .get('/tax-slabs')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    for (const slab of (
+      existingSlabs.body as {
+        data: { id: string; financialYear: string; regime: string }[];
+      }
+    ).data.filter((t) => t.financialYear === '2026-27' && t.regime === 'NEW')) {
+      await request(app.getHttpServer())
+        .delete(`/tax-slabs/${slab.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    }
     const withoutSlab = await request(app.getHttpServer())
       .post('/payroll/calculate')
       .set('Authorization', `Bearer ${adminToken}`)

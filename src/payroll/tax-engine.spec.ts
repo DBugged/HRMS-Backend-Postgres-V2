@@ -3,6 +3,7 @@ import { getDefaultTaxSlabConfig } from '../tax-slabs/default-tax-slabs';
 import {
   applySlabs,
   applySurcharge,
+  applySurchargeWithMarginalRelief,
   calculateTax,
   computeHraExemption,
   monthsRemainingInFY,
@@ -276,5 +277,72 @@ describe('calculateTax', () => {
     });
     expect(withYtd.totalAnnualTax).toBe(withoutYtd.totalAnnualTax);
     expect(withYtd.monthlyTDS).toBeLessThan(withoutYtd.monthlyTDS);
+  });
+});
+
+describe('marginal relief', () => {
+  const newRegime = {
+    regime: TaxRegime.NEW,
+    ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+  };
+  const taxFor = (regimeConfig: typeof newRegime, taxable: number) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      // Annualised gross = taxable + standard deduction, so taxable income lands exactly where asked.
+      currentMonthGross: (taxable + regimeConfig.standardDeduction) / 12,
+      declaration: null,
+      taxSlabConfig: regimeConfig,
+      financialYearStartMonth: 4,
+    });
+
+  it('NEW regime 87A: income just above ₹12L pays only the excess over ₹12L, not the full slab tax', () => {
+    const r = taxFor(newRegime, 1210000);
+    expect(r.taxableIncome).toBe(1210000);
+    expect(r.taxBeforeCess).toBe(61500); // slab tax before relief
+    // relief caps tax at the ₹10,000 earned above ₹12,00,000 (+4% cess)
+    expect(r.rebate).toBe(51500);
+    expect(r.totalAnnualTax).toBe(10400);
+  });
+
+  it('NEW regime 87A: no relief once the slab tax is already below the excess', () => {
+    const r = taxFor(newRegime, 1275000); // tax 71,250 vs excess 75,000
+    expect(r.rebate).toBe(0);
+    expect(r.taxBeforeCess).toBe(71250);
+  });
+
+  it('OLD regime keeps the hard 87A cliff (no marginal relief)', () => {
+    const oldRegime = {
+      regime: TaxRegime.OLD,
+      ...getDefaultTaxSlabConfig(TaxRegime.OLD),
+    };
+    const r = taxFor(oldRegime as never, 510000);
+    expect(r.rebate).toBe(0);
+    expect(r.taxBeforeCess).toBeGreaterThan(0);
+  });
+
+  it('surcharge marginal relief: crossing ₹50L costs no more than the income earned above it', () => {
+    const slabs = newRegime.slabs;
+    const surcharge = newRegime.surchargeSlabs;
+    const tax = applySlabs(5010000, slabs); // 10,83,000
+    expect(tax).toBe(1083000);
+    // plain surcharge would be 10% = 1,08,300; relief caps total at tax(50L) + ₹10,000 excess
+    expect(applySurcharge(tax, 5010000, surcharge)).toBe(108300);
+    expect(
+      applySurchargeWithMarginalRelief(tax, 5010000, surcharge, slabs),
+    ).toBe(7000);
+  });
+
+  it('surcharge marginal relief leaves the plain surcharge alone well above the threshold', () => {
+    const slabs = newRegime.slabs;
+    const tax = applySlabs(6000000, slabs);
+    expect(
+      applySurchargeWithMarginalRelief(
+        tax,
+        6000000,
+        newRegime.surchargeSlabs,
+        slabs,
+      ),
+    ).toBe(applySurcharge(tax, 6000000, newRegime.surchargeSlabs));
   });
 });

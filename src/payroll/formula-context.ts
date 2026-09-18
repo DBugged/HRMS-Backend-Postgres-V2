@@ -1,6 +1,13 @@
 import type { AttendanceSummary } from './attendance-summary';
 import type { OverlaidSettings, PtSlab } from './statutory-overlay';
 
+// Who the statutory rules are being resolved for — drives state-wise LWF and Professional Tax. `state` is the
+// state of the employee's department's work location; `gender` picks a state's women-specific PT ladder.
+export interface EmployeeStatutoryProfile {
+  state?: string | null;
+  gender?: string | null;
+}
+
 /**
  * Pure port of the old backend's payrollEngine.js buildBaseContext +
  * buildPtSlabContext — the flat formula-engine context every salary
@@ -74,14 +81,70 @@ export function resolveLwfRate(
   };
 }
 
+// The Professional Tax ladder for one employee in one month: their state's ladder when the org has one for it
+// (the women's ladder for a woman where that state defines one), otherwise the org-wide default; then February's
+// own amount is swapped in where a slab defines it.
+export function resolvePtSlabs(
+  settings: OverlaidSettings,
+  month: number,
+  profile?: EmployeeStatutoryProfile,
+): PtSlab[] {
+  const stateRate = profile?.state
+    ? settings.ptStateRates.find((r) => r.state === profile.state)
+    : undefined;
+  const base =
+    stateRate && profile?.gender === 'FEMALE' && stateRate.womenSlabs
+      ? stateRate.womenSlabs
+      : (stateRate?.slabs ?? settings.ptSlabs);
+  return month === 2
+    ? base.map((s) =>
+        s.februaryAmount === undefined ? s : { ...s, amount: s.februaryAmount },
+      )
+    : base;
+}
+
+// Wage bases that depend on this month's earnings, so they can only be computed once GROSS_EARNINGS is known.
+// PF_WAGES / GRATUITY_WAGES are Basic + DA, lifted to 50% of gross where the org has switched the Labour Codes
+// "50% wages" rule on for that module. ESI_APPLICABLE keeps an employee covered for the rest of an ESI
+// contribution period (Apr-Sep / Oct-Mar) once they were covered, even if wages cross the ceiling mid-period.
+export function deriveStatutoryContext(
+  context: Record<string, number>,
+  settings: OverlaidSettings,
+  hadEsiThisPeriod: boolean,
+): Record<string, number> {
+  const basicDa = (context.BASIC ?? 0) + (context.DA ?? 0);
+  const floor = (context.GROSS_EARNINGS ?? 0) * 0.5;
+  const wages = (useRule: boolean) =>
+    useRule ? Math.max(basicDa, floor) : basicDa;
+  return {
+    BASIC_DA: basicDa,
+    PF_WAGES: wages(settings.pfUseWagesRule),
+    GRATUITY_WAGES: wages(settings.gratuityUseWagesRule),
+    NPS_WAGES: basicDa,
+    ESI_APPLICABLE:
+      (context.GROSS_EARNINGS ?? 0) <= settings.esiWageCeiling ||
+      hadEsiThisPeriod
+        ? 1
+        : 0,
+  };
+}
+
 export function buildBaseContext(
   attendance: AttendanceSummary,
   settings: OverlaidSettings,
   month: number,
-  lwfState?: string | null,
+  profile?: EmployeeStatutoryProfile,
 ): Record<string, number> {
-  const lwf = resolveLwfRate(settings, month, lwfState);
+  const lwf = resolveLwfRate(settings, month, profile?.state);
   return {
+    // Dearness Allowance is optional (seeded inactive) — 0 unless the org's DA component is applicable, in
+    // which case the earnings pass overwrites this with the real amount.
+    DA: 0,
+    PF_EDLI_RATE: settings.pfEdliRate,
+    PF_ADMIN_RATE: settings.pfAdminRate,
+    BONUS_RATE: settings.bonusRate,
+    BONUS_ELIGIBILITY_CEILING: settings.bonusEligibilityCeiling,
+    BONUS_CALC_CEILING: settings.bonusCalcCeiling,
     WORKING_DAYS: attendance.workingDays,
     TOTAL_DAYS_IN_MONTH: attendance.totalDaysInMonth,
     PRESENT_DAYS: attendance.presentDays,
@@ -106,6 +169,6 @@ export function buildBaseContext(
     LWF_EMPLOYER_AMOUNT: lwf.employerAmount,
     NPS_EMPLOYER_RATE: settings.npsEmployerRate,
     GRATUITY_RATE: settings.gratuityRate,
-    ...buildPtSlabContext(settings.ptSlabs),
+    ...buildPtSlabContext(resolvePtSlabs(settings, month, profile)),
   };
 }

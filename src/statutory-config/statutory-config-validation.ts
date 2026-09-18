@@ -24,6 +24,9 @@ function validatePfOrEsi(config: unknown): void {
     employeeRate?: unknown;
     employerRate?: unknown;
     wageCeiling?: unknown;
+    applyFiftyPercentRule?: unknown;
+    edliRate?: unknown;
+    adminChargeRate?: unknown;
   };
   if (!isPercent(c.employeeRate))
     throw new Error('employeeRate must be a number between 0 and 100.');
@@ -31,6 +34,16 @@ function validatePfOrEsi(config: unknown): void {
     throw new Error('employerRate must be a number between 0 and 100.');
   if (!isNonNegative(c.wageCeiling))
     throw new Error('wageCeiling must be a non-negative number.');
+  validateOptionalBoolean(c.applyFiftyPercentRule, 'applyFiftyPercentRule');
+  for (const key of ['edliRate', 'adminChargeRate'] as const) {
+    if (c[key] !== undefined && !isPercent(c[key]))
+      throw new Error(`${key} must be a number between 0 and 100.`);
+  }
+}
+
+function validateOptionalBoolean(v: unknown, name: string): void {
+  if (v !== undefined && typeof v !== 'boolean')
+    throw new Error(`${name} must be true or false.`);
 }
 
 function validatePt(config: unknown): void {
@@ -116,9 +129,31 @@ function validateLwf(config: unknown): void {
 }
 
 function validateGratuity(config: unknown): void {
-  const c = config as { rate?: unknown };
+  const c = config as { rate?: unknown; applyFiftyPercentRule?: unknown };
   if (!isNonNegative(c.rate))
     throw new Error('rate must be a non-negative number.');
+  validateOptionalBoolean(c.applyFiftyPercentRule, 'applyFiftyPercentRule');
+}
+
+// Payment of Bonus Act (now Chapter VIII of the Code on Wages): bonus is 8.33%-20% of the wage base, only for
+// employees whose Basic + DA is within the eligibility ceiling, and the base itself is capped at a calculation
+// ceiling — higher of ₹7,000 or the applicable minimum wage, which the admin sets. All three are optional so an
+// org that only ever switched the module on keeps working.
+function validateBonus(config: unknown): void {
+  const c = config as {
+    rate?: unknown;
+    eligibilityCeiling?: unknown;
+    calculationCeiling?: unknown;
+  };
+  if (
+    c.rate !== undefined &&
+    !(isFiniteNumber(c.rate) && c.rate >= 8.33 && c.rate <= 20)
+  )
+    throw new Error('rate must be between 8.33 and 20 (Payment of Bonus Act).');
+  for (const key of ['eligibilityCeiling', 'calculationCeiling'] as const) {
+    if (c[key] !== undefined && !isNonNegative(c[key]))
+      throw new Error(`${key} must be a non-negative number.`);
+  }
 }
 
 function validateNps(config: unknown): void {
@@ -170,9 +205,7 @@ const VALIDATORS: Record<StatutoryModule, (config: unknown) => void> = {
   [StatutoryModule.PT]: validatePt,
   [StatutoryModule.LWF]: validateLwf,
   [StatutoryModule.GRATUITY]: validateGratuity,
-  [StatutoryModule.BONUS]: () => {
-    /* no fields today — isEnabled on the version row is the entire config */
-  },
+  [StatutoryModule.BONUS]: validateBonus,
   [StatutoryModule.NPS]: validateNps,
   [StatutoryModule.PAYROLL_CALENDAR]: validatePayrollCalendar,
   [StatutoryModule.ROUNDING]: validateRounding,
@@ -199,7 +232,13 @@ export const SEED_DEFAULTS: Record<
     // EPFO raised the mandatory PF wage ceiling from 15,000 to 25,000 effective 17-Sep-2026 (Cabinet
     // approval), so new orgs start at the current ceiling. Existing orgs keep their stored version and
     // are prompted in the Statutory Compliance Center to add a new one.
-    config: { employeeRate: 12, employerRate: 12, wageCeiling: 25000 },
+    config: {
+      employeeRate: 12,
+      employerRate: 12,
+      wageCeiling: 25000,
+      edliRate: 0.5,
+      adminChargeRate: 0.5,
+    },
     isEnabled: false,
   },
   [StatutoryModule.ESI]: {
@@ -211,7 +250,8 @@ export const SEED_DEFAULTS: Record<
       slabs: [
         { upTo: 7500, amount: 0 },
         { upTo: 10000, amount: 175 },
-        { upTo: null, amount: 200 },
+        // Maharashtra charges ₹300 in February so the year totals its ₹2,500 cap.
+        { upTo: null, amount: 200, februaryAmount: 300 },
       ],
     },
     isEnabled: false,
@@ -225,7 +265,7 @@ export const SEED_DEFAULTS: Record<
     isEnabled: false,
   },
   [StatutoryModule.BONUS]: {
-    config: {},
+    config: { rate: 8.33, eligibilityCeiling: 21000, calculationCeiling: 7000 },
     isEnabled: false,
   },
   [StatutoryModule.NPS]: {

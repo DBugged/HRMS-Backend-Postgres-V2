@@ -1,6 +1,10 @@
 import type { AttendanceSummary } from './attendance-summary';
 import type { OverlaidSettings } from './statutory-overlay';
-import { buildBaseContext } from './formula-context';
+import {
+  buildBaseContext,
+  deriveStatutoryContext,
+  resolvePtSlabs,
+} from './formula-context';
 import { evaluateFormula } from '../salary-components/formula-engine';
 
 // The default PT formula seeded before PT_SLAB_AMOUNT existed. Orgs created
@@ -60,8 +64,16 @@ function settings(overrides: Partial<OverlaidSettings> = {}): OverlaidSettings {
     lwfEmployerAmount: 75,
     lwfMonths: [6, 12],
     lwfStateRates: [],
+    ptStateRates: [],
     npsEmployerRate: 10,
     gratuityRate: 4.81,
+    pfUseWagesRule: false,
+    gratuityUseWagesRule: false,
+    pfEdliRate: 0.5,
+    pfAdminRate: 0.5,
+    bonusRate: 8.33,
+    bonusEligibilityCeiling: 21000,
+    bonusCalcCeiling: 7000,
     ...overrides,
   };
 }
@@ -143,11 +155,15 @@ describe('state-wise LWF', () => {
   const withStates = () => settings({ lwfStateRates: stateRates });
 
   it("uses the employee's state rate and months when the org has one for that state", () => {
-    const dec = buildBaseContext(attendance(), withStates(), 12, 'Karnataka');
+    const dec = buildBaseContext(attendance(), withStates(), 12, {
+      state: 'Karnataka',
+    });
     expect(dec.LWF_EMPLOYEE_AMOUNT).toBe(50);
     expect(dec.LWF_EMPLOYER_AMOUNT).toBe(100);
     // Karnataka deducts only in December — June is a Maharashtra month, not a Karnataka one.
-    const jun = buildBaseContext(attendance(), withStates(), 6, 'Karnataka');
+    const jun = buildBaseContext(attendance(), withStates(), 6, {
+      state: 'Karnataka',
+    });
     expect(jun.LWF_EMPLOYEE_AMOUNT).toBe(0);
     expect(jun.LWF_EMPLOYER_AMOUNT).toBe(0);
   });
@@ -155,18 +171,145 @@ describe('state-wise LWF', () => {
   it('falls back to the org-wide default for an unknown or missing state', () => {
     const s = withStates();
     for (const state of [undefined, null, '', 'Kerala']) {
-      const jun = buildBaseContext(attendance(), s, 6, state);
+      const jun = buildBaseContext(attendance(), s, 6, { state });
       expect(jun.LWF_EMPLOYEE_AMOUNT).toBe(25); // default rate, default months [6, 12]
       expect(jun.LWF_EMPLOYER_AMOUNT).toBe(75);
     }
     expect(
-      buildBaseContext(attendance(), s, 5, 'Kerala').LWF_EMPLOYEE_AMOUNT,
+      buildBaseContext(attendance(), s, 5, { state: 'Kerala' })
+        .LWF_EMPLOYEE_AMOUNT,
     ).toBe(0);
   });
 
   it('behaves exactly as before when no state rates are configured', () => {
-    const ctx = buildBaseContext(attendance(), settings(), 6, 'Karnataka');
+    const ctx = buildBaseContext(attendance(), settings(), 6, {
+      state: 'Karnataka',
+    });
     expect(ctx.LWF_EMPLOYEE_AMOUNT).toBe(25);
     expect(ctx.LWF_EMPLOYER_AMOUNT).toBe(75);
+  });
+});
+
+describe('state-wise Professional Tax', () => {
+  const mh = [
+    { upTo: 7500, amount: 0 },
+    { upTo: 10000, amount: 175 },
+    { upTo: null, amount: 200, februaryAmount: 300 },
+  ];
+  const mhWomen = [
+    { upTo: 25000, amount: 0 },
+    { upTo: null, amount: 200, februaryAmount: 300 },
+  ];
+  const ka = [
+    { upTo: 24999, amount: 0 },
+    { upTo: null, amount: 200, februaryAmount: 300 },
+  ];
+  const s = () =>
+    settings({
+      ptSlabs: [{ upTo: null, amount: 100 }],
+      ptStateRates: [
+        { state: 'Maharashtra', slabs: mh, womenSlabs: mhWomen },
+        { state: 'Karnataka', slabs: ka },
+      ],
+    });
+
+  it("picks the state ladder, the women's ladder where defined, else the org default", () => {
+    expect(resolvePtSlabs(s(), 5, { state: 'Maharashtra' })).toEqual(mh);
+    expect(
+      resolvePtSlabs(s(), 5, { state: 'Maharashtra', gender: 'FEMALE' }),
+    ).toEqual(mhWomen);
+    // Karnataka defines no women's ladder, so a woman there uses the state ladder.
+    expect(
+      resolvePtSlabs(s(), 5, { state: 'Karnataka', gender: 'FEMALE' }),
+    ).toEqual(ka);
+    expect(resolvePtSlabs(s(), 5, { state: 'Kerala' })).toEqual([
+      { upTo: null, amount: 100 },
+    ]);
+    expect(resolvePtSlabs(s(), 5)).toEqual([{ upTo: null, amount: 100 }]);
+  });
+
+  it('charges February its own amount, so the year lands on the statutory cap', () => {
+    const feb = resolvePtSlabs(s(), 2, { state: 'Maharashtra' });
+    expect(feb[2].amount).toBe(300);
+    expect(resolvePtSlabs(s(), 3, { state: 'Maharashtra' })[2].amount).toBe(
+      200,
+    );
+    const months = Array.from(
+      { length: 12 },
+      (_, i) => resolvePtSlabs(s(), i + 1, { state: 'Maharashtra' })[2].amount,
+    );
+    expect(months.reduce((a, b) => a + b, 0)).toBe(2500); // 11 x 200 + 300
+  });
+
+  it('feeds the resolved ladder into the formula context PT_SLAB_AMOUNT reads', () => {
+    const ctx = buildBaseContext(attendance(), s(), 2, {
+      state: 'Maharashtra',
+    });
+    expect(ctx.PT_SLAB3_AMOUNT).toBe(300);
+    expect(
+      buildBaseContext(attendance(), s(), 2, { state: 'Kerala' })
+        .PT_SLAB1_AMOUNT,
+    ).toBe(100);
+  });
+});
+
+describe('deriveStatutoryContext', () => {
+  const ctx = { BASIC: 20000, DA: 5000, GROSS_EARNINGS: 100000 };
+
+  it('wage bases are Basic + DA by default', () => {
+    const d = deriveStatutoryContext(ctx, settings(), false);
+    expect(d.BASIC_DA).toBe(25000);
+    expect(d.PF_WAGES).toBe(25000);
+    expect(d.GRATUITY_WAGES).toBe(25000);
+  });
+
+  it('lifts PF / gratuity wages to 50% of gross only where the module opted in', () => {
+    const d = deriveStatutoryContext(
+      ctx,
+      settings({ pfUseWagesRule: true }),
+      false,
+    );
+    expect(d.PF_WAGES).toBe(50000);
+    expect(d.GRATUITY_WAGES).toBe(25000); // gratuity not opted in
+    const both = deriveStatutoryContext(
+      ctx,
+      settings({ pfUseWagesRule: true, gratuityUseWagesRule: true }),
+      false,
+    );
+    expect(both.GRATUITY_WAGES).toBe(50000);
+  });
+
+  it('never lowers wages when Basic + DA already exceeds 50% of gross', () => {
+    const d = deriveStatutoryContext(
+      { BASIC: 60000, DA: 0, GROSS_EARNINGS: 100000 },
+      settings({ pfUseWagesRule: true }),
+      false,
+    );
+    expect(d.PF_WAGES).toBe(60000);
+  });
+
+  it('treats a missing DA as 0', () => {
+    expect(
+      deriveStatutoryContext(
+        { BASIC: 20000, GROSS_EARNINGS: 40000 },
+        settings(),
+        false,
+      ).BASIC_DA,
+    ).toBe(20000);
+  });
+
+  it('ESI stays applicable within the ceiling, or after coverage earlier in the same period', () => {
+    const s = settings({ esiWageCeiling: 21000 });
+    expect(
+      deriveStatutoryContext({ GROSS_EARNINGS: 20000 }, s, false)
+        .ESI_APPLICABLE,
+    ).toBe(1);
+    expect(
+      deriveStatutoryContext({ GROSS_EARNINGS: 22000 }, s, false)
+        .ESI_APPLICABLE,
+    ).toBe(0);
+    expect(
+      deriveStatutoryContext({ GROSS_EARNINGS: 22000 }, s, true).ESI_APPLICABLE,
+    ).toBe(1);
   });
 });

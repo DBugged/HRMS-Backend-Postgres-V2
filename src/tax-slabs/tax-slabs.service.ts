@@ -8,6 +8,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxSlabDto } from './dto/upsert-tax-slab.dto';
 import { getDefaultTaxSlabConfig } from './default-tax-slabs';
+import { getFinancialYear } from '../payroll-settings/financial-year';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
 
@@ -28,6 +29,38 @@ export class TaxSlabsService {
       orderBy: [{ financialYear: 'desc' }, { regime: 'asc' }],
     });
     return wrapAll(data);
+  }
+
+  // Registration-time seed: a slab set for BOTH regimes for the current financial year. Payroll silently skips
+  // income tax for an employee whose FY/regime has no slab config, and an employee with no declaration defaults
+  // to the NEW regime — so an org that only ever configured one regime was quietly under-withholding TDS.
+  async seedDefaults(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    now: Date = new Date(),
+  ): Promise<void> {
+    // The FY start month is a PayrollSettings default (April) at registration — no row exists yet.
+    const financialYear = getFinancialYear(
+      now.getMonth() + 1,
+      now.getFullYear(),
+      4,
+    );
+    for (const regime of [TaxRegime.NEW, TaxRegime.OLD]) {
+      const d = getDefaultTaxSlabConfig(regime);
+      await tx.taxSlabConfig.create({
+        data: {
+          organizationId,
+          financialYear,
+          regime,
+          slabs: d.slabs as unknown as Prisma.InputJsonValue,
+          standardDeduction: d.standardDeduction,
+          cessRate: d.cessRate,
+          surchargeSlabs: d.surchargeSlabs as unknown as Prisma.InputJsonValue,
+          rebate87ALimit: d.rebate87ALimit,
+          rebate87AAmount: d.rebate87AAmount,
+        },
+      });
+    }
   }
 
   async upsert(

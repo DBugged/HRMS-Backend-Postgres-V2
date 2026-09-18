@@ -15,6 +15,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrgListItemsModule } from '../org-list-items/org-list-items.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { TaxSlabsModule } from '../tax-slabs/tax-slabs.module';
 
 @Module({
   imports: [
@@ -55,6 +56,8 @@ import { DocumentsModule } from '../documents/documents.module';
     OrgListItemsModule,
     // For DocumentsService.seedDefaults — every new org starts with the baseline document checklist.
     DocumentsModule,
+    // For TaxSlabsService.seedDefaults — every new org starts with both regimes' slabs for the current FY.
+    TaxSlabsModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService

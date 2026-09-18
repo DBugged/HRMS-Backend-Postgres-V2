@@ -30,6 +30,7 @@ import { StatutoryConfigService } from '../statutory-config/statutory-config.ser
 import { LeaveTypesService } from '../leave-types/leave-types.service';
 import { OrgListItemsService } from '../org-list-items/org-list-items.service';
 import { DocumentsService } from '../documents/documents.service';
+import { TaxSlabsService } from '../tax-slabs/tax-slabs.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -81,6 +82,7 @@ export class AuthService {
     private readonly leaveTypesService: LeaveTypesService,
     private readonly orgListItemsService: OrgListItemsService,
     private readonly documentsService: DocumentsService,
+    private readonly taxSlabsService: TaxSlabsService,
     private readonly salaryComponentsService: SalaryComponentsService,
     private readonly holidaysService: HolidaysService,
     private readonly emailTemplatesService: EmailTemplatesService,
@@ -174,6 +176,8 @@ export class AuthService {
         // ...and the baseline Document Required checklist (PAN Card, Aadhaar Card, Passport
         // Photo, Educational Certificate), optional until an admin marks them mandatory.
         await this.documentsService.seedDefaults(tx, organization.id);
+        // ...and both income-tax regimes' slab sets for the current financial year.
+        await this.taxSlabsService.seedDefaults(tx, organization.id);
         return { organization, user };
       },
     );

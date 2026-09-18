@@ -164,7 +164,9 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     code: 'PF',
     type: SalaryComponentType.DEDUCTION,
     calcType: CalcType.FORMULA,
-    formula: 'ROUND(MIN(BASIC, PF_WAGE_CEILING) * PF_EMPLOYEE_RATE / 100, 0)',
+    // PF_WAGES = Basic + DA (lifted to 50% of gross where the PF version opts into the Labour Codes wages rule).
+    formula:
+      'ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_EMPLOYEE_RATE / 100, 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.PF,
     displayOrder: 30,
@@ -175,7 +177,8 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     type: SalaryComponentType.DEDUCTION,
     calcType: CalcType.FORMULA,
     formula:
-      'IF(GROSS_EARNINGS <= ESI_WAGE_CEILING, ROUND(GROSS_EARNINGS * ESI_EMPLOYEE_RATE / 100, 0), 0)',
+      // ESI_APPLICABLE: within the ceiling, or still covered from earlier in the ESI contribution period.
+      'IF(ESI_APPLICABLE == 1, ROUND(GROSS_EARNINGS * ESI_EMPLOYEE_RATE / 100, 0), 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.ESI,
     displayOrder: 31,
@@ -219,7 +222,8 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     code: 'PF_EMPLOYER',
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
-    formula: 'ROUND(MIN(BASIC, PF_WAGE_CEILING) * PF_EMPLOYER_RATE / 100, 0)',
+    formula:
+      'ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_EMPLOYER_RATE / 100, 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.PF,
     isEmployerContribution: true,
@@ -234,7 +238,7 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
     formula:
-      'IF(GROSS_EARNINGS <= ESI_WAGE_CEILING, ROUND(GROSS_EARNINGS * ESI_EMPLOYER_RATE / 100, 0), 0)',
+      'IF(ESI_APPLICABLE == 1, ROUND(GROSS_EARNINGS * ESI_EMPLOYER_RATE / 100, 0), 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.ESI,
     isEmployerContribution: true,
@@ -260,7 +264,7 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     code: 'NPS_EMPLOYER',
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
-    formula: 'PERCENT(BASIC, NPS_EMPLOYER_RATE)',
+    formula: 'PERCENT(NPS_WAGES, NPS_EMPLOYER_RATE)',
     isStatutory: true,
     statutoryKey: StatutoryKey.NPS,
     isEmployerContribution: true,
@@ -273,12 +277,57 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     code: 'GRATUITY_ACCRUAL',
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
-    formula: 'PERCENT(BASIC, GRATUITY_RATE)',
+    formula: 'PERCENT(GRATUITY_WAGES, GRATUITY_RATE)',
     isStatutory: true,
     statutoryKey: StatutoryKey.GRATUITY,
     isEmployerContribution: true,
     includeInGross: false,
     includeInNet: false,
     displayOrder: 44,
+  },
+  {
+    // Employer-only PF costs on top of the 12%: EDLI insurance and the EPFO administration charge, both a % of
+    // PF wages (capped at the ceiling). Accrued, never deducted from the employee.
+    name: 'Employer EDLI Contribution',
+    code: 'EDLI_EMPLOYER',
+    type: SalaryComponentType.EARNING,
+    calcType: CalcType.FORMULA,
+    formula: 'ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_EDLI_RATE / 100, 0)',
+    isStatutory: true,
+    statutoryKey: StatutoryKey.PF,
+    isEmployerContribution: true,
+    includeInGross: false,
+    includeInNet: false,
+    displayOrder: 45,
+  },
+  {
+    name: 'EPF Administration Charges',
+    code: 'EPF_ADMIN_EMPLOYER',
+    type: SalaryComponentType.EARNING,
+    calcType: CalcType.FORMULA,
+    formula: 'ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_ADMIN_RATE / 100, 0)',
+    isStatutory: true,
+    statutoryKey: StatutoryKey.PF,
+    isEmployerContribution: true,
+    includeInGross: false,
+    includeInNet: false,
+    displayOrder: 46,
+  },
+  {
+    // Payment of Bonus Act (Chapter VIII, Code on Wages) monthly accrual: only for employees whose Basic + DA is
+    // within the eligibility ceiling, on the wage base capped at the calculation ceiling. Paid out annually, so
+    // like gratuity it is an employer accrual, not an earning.
+    name: 'Statutory Bonus (Accrual)',
+    code: 'BONUS_ACCRUAL',
+    type: SalaryComponentType.EARNING,
+    calcType: CalcType.FORMULA,
+    formula:
+      'IF(BASIC_DA <= BONUS_ELIGIBILITY_CEILING, ROUND(MIN(BASIC_DA, BONUS_CALC_CEILING) * BONUS_RATE / 100, 0), 0)',
+    isStatutory: true,
+    statutoryKey: StatutoryKey.BONUS,
+    isEmployerContribution: true,
+    includeInGross: false,
+    includeInNet: false,
+    displayOrder: 47,
   },
 ];

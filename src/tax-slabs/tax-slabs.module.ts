@@ -7,5 +7,6 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
   imports: [AuditLogModule],
   controllers: [TaxSlabsController],
   providers: [TaxSlabsService],
+  exports: [TaxSlabsService],
 })
 export class TaxSlabsModule {}

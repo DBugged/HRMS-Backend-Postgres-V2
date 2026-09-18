@@ -53,6 +53,34 @@ export function applySurcharge(
   return 0;
 }
 
+// Surcharge with marginal relief: the total of tax + surcharge on income just above a surcharge threshold may not
+// exceed the tax (with the lower band's surcharge) at that threshold plus the income earned above it — otherwise
+// crossing a threshold by ₹1 would cost lakhs. `incomeSlabs` are the regime's slabs, needed to price the tax at the
+// threshold. Falls back to the plain surcharge when nothing in the band is capped.
+export function applySurchargeWithMarginalRelief(
+  tax: number,
+  taxableIncome: number,
+  surchargeSlabs: TaxSlab[],
+  incomeSlabs: TaxSlab[],
+): number {
+  const plain = applySurcharge(tax, taxableIncome, surchargeSlabs);
+  if (plain <= 0) return plain;
+  const band = surchargeSlabs.find((s) => {
+    const from = s.from || 0;
+    const to = s.to === null || s.to === undefined ? Infinity : s.to;
+    return taxableIncome > from && taxableIncome <= to;
+  });
+  if (!band) return plain;
+  const threshold = band.from || 0;
+  // The surcharge rate in force just below the threshold (0 for the first band).
+  const lower = surchargeSlabs.find((s) => (s.to ?? Infinity) === threshold);
+  const lowerRate = lower ? lower.rate : 0;
+  const taxAtThreshold = applySlabs(threshold, incomeSlabs);
+  const maxTotal =
+    taxAtThreshold * (1 + lowerRate / 100) + (taxableIncome - threshold);
+  return Math.max(0, Math.min(plain, maxTotal - tax));
+}
+
 export interface HraExemptionInput {
   hraReceivedAnnual: number;
   basicAnnual: number;
@@ -242,15 +270,27 @@ export function calculateTax({
   const taxBeforeCess = applySlabs(taxableIncome, taxSlabConfig.slabs);
 
   let rebate = 0;
-  if (taxableIncome <= (taxSlabConfig.rebate87ALimit || 0)) {
+  const rebateLimit = taxSlabConfig.rebate87ALimit || 0;
+  if (taxableIncome <= rebateLimit) {
     rebate = Math.min(taxBeforeCess, taxSlabConfig.rebate87AAmount || 0);
+  } else if (
+    regime === TaxRegime.NEW &&
+    rebateLimit > 0 &&
+    (taxSlabConfig.rebate87AAmount || 0) > 0
+  ) {
+    // 87A marginal relief (new regime only — the old regime's rebate is a hard cliff): for income just above
+    // the rebate limit, tax before cess may not exceed the income earned over that limit. Without this, ₹1
+    // above ₹12 lakh would cost the full ~₹60,000 the rebate was waiving.
+    const cap = taxableIncome - rebateLimit;
+    if (taxBeforeCess > cap) rebate = taxBeforeCess - cap;
   }
   const taxAfterRebate = Math.max(0, taxBeforeCess - rebate);
 
-  const surcharge = applySurcharge(
+  const surcharge = applySurchargeWithMarginalRelief(
     taxAfterRebate,
     taxableIncome,
     taxSlabConfig.surchargeSlabs,
+    taxSlabConfig.slabs,
   );
   const cess =
     ((taxAfterRebate + surcharge) * (taxSlabConfig.cessRate || 0)) / 100;

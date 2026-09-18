@@ -64,7 +64,7 @@ import {
   computeAttendanceSummary,
   type AttendanceSummary,
 } from './attendance-summary';
-import { buildBaseContext } from './formula-context';
+import { buildBaseContext, deriveStatutoryContext } from './formula-context';
 import { calculateTax, type TaxDetails, type TaxSlab } from './tax-engine';
 import { amountInWords } from './number-to-words';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
@@ -228,6 +228,43 @@ export class PayrollService {
     private readonly loansService: LoansService,
   ) {}
 
+  // Whether ESI was already deducted for this employee earlier in the current ESI contribution period
+  // (April-September or October-March). Under the ESI Act an employee covered during a period stays covered until
+  // it ends even if wages cross the ceiling mid-period — see ESI_APPLICABLE in formula-context.ts.
+  private async hadEsiThisContributionPeriod(
+    employeeId: string,
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<boolean> {
+    const startMonth = month >= 10 ? 10 : month >= 4 ? 4 : 10;
+    const startYear = month <= 3 ? year - 1 : year;
+    const earlier: { month: number; year: number }[] = [];
+    for (
+      let m = startMonth, y = startYear;
+      y < year || (y === year && m < month);
+      m = m === 12 ? 1 : m + 1, y = m === 1 ? y + 1 : y
+    ) {
+      earlier.push({ month: m, year: y });
+    }
+    if (earlier.length === 0) return false;
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        isFinalSettlement: false,
+        status: { not: PayrollRunStatus.DRAFT },
+        OR: earlier,
+      },
+      select: { deductions: true },
+    });
+    return runs.some((r) =>
+      ((r.deductions ?? []) as { code: string; amount: number }[]).some(
+        (d) => d.code === 'ESI' && d.amount > 0,
+      ),
+    );
+  }
+
   // Computes a full payroll snapshot for one employee for one month/year.
   // Does NOT persist anything — callers (draft/calculate) decide when to
   // write a PayrollRun row. Ported verbatim from the old backend's
@@ -312,23 +349,25 @@ export class PayrollService {
       year,
     );
 
-    // State-wise LWF: the employee's state is their department's work location's state. Only looked up when
-    // the org has state rates configured, so orgs on the single org-wide rate pay no extra query.
-    let lwfState: string | null = null;
-    if (settings.lwfStateRates.length > 0 && employee.departmentId) {
+    // State-wise statutory rules (LWF, Professional Tax): the employee's state is their department's work
+    // location's state. Only looked up when the org actually has state rates configured, so orgs on the single
+    // org-wide rate pay no extra query.
+    let state: string | null = null;
+    if (
+      (settings.lwfStateRates.length > 0 || settings.ptStateRates.length > 0) &&
+      employee.departmentId
+    ) {
       const department = await this.scopedPrisma.department.findFirst({
         where: { id: employee.departmentId, organizationId },
         select: { workLocation: { select: { state: true } } },
       });
-      lwfState = department?.workLocation?.state || null;
+      state = department?.workLocation?.state || null;
     }
 
-    const baseContext = buildBaseContext(
-      attendanceSummary,
-      settings,
-      month,
-      lwfState,
-    );
+    const baseContext = buildBaseContext(attendanceSummary, settings, month, {
+      state,
+      gender: employee.gender,
+    });
 
     const [allComponents, overrideRows] = await Promise.all([
       this.scopedPrisma.salaryComponent.findMany({
@@ -472,6 +511,22 @@ export class PayrollService {
       settings.roundingDecimals,
     );
     afterEarnings.GROSS_EARNINGS = grossSalary;
+    // Wage bases and the ESI coverage flag — all depend on this month's gross, so they're derived here.
+    Object.assign(
+      afterEarnings,
+      deriveStatutoryContext(
+        afterEarnings,
+        settings,
+        settings.esiEnabled
+          ? await this.hadEsiThisContributionPeriod(
+              employeeId,
+              month,
+              year,
+              organizationId,
+            )
+          : false,
+      ),
+    );
 
     const deductionComponents = applicable.filter(
       (c) =>

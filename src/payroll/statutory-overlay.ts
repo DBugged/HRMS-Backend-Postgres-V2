@@ -11,6 +11,16 @@ import { PayrollSettings, StatutoryModule } from '@prisma/client';
 export interface PtSlab {
   upTo: number | null;
   amount: number;
+  // Optional different amount charged in February only (e.g. Maharashtra/Karnataka ₹300 vs ₹200).
+  februaryAmount?: number;
+}
+
+// A state's own Professional Tax ladder — replaces the org-wide slabs for employees whose work location is in
+// that state; `womenSlabs` (when set) applies to women instead of `slabs`.
+export interface PtStateRate {
+  state: string;
+  slabs: PtSlab[];
+  womenSlabs?: PtSlab[];
 }
 
 // A state's own Labour Welfare Fund rate — overrides the org-wide default for employees whose work location is
@@ -55,6 +65,7 @@ export interface OverlaidSettings {
   esiEmployerRate: number;
   esiWageCeiling: number;
   ptSlabs: PtSlab[];
+  ptStateRates: PtStateRate[];
 
   lwfEmployeeAmount: number;
   lwfEmployerAmount: number;
@@ -67,6 +78,19 @@ export interface OverlaidSettings {
 
   npsEmployerRate: number;
   gratuityRate: number;
+
+  // Labour Codes "50% wages" rule (in force 21-Nov-2025): where enabled on the module's version, the PF /
+  // gratuity wage base is at least 50% of gross earnings. Off by default — opt-in per module.
+  pfUseWagesRule: boolean;
+  gratuityUseWagesRule: boolean;
+  // Employer-only PF costs on top of the 12%: EDLI and administration charges, % of PF wages.
+  pfEdliRate: number;
+  pfAdminRate: number;
+
+  // Payment of Bonus Act: rate %, eligibility ceiling (Basic + DA) and calculation ceiling.
+  bonusRate: number;
+  bonusEligibilityCeiling: number;
+  bonusCalcCeiling: number;
 
   // Not a PayrollSettings column — only ever set when a payroll_calendar
   // version exists, carried through for parity with the old system.
@@ -101,12 +125,20 @@ export function applyStatutoryOverrides(
     esiEmployerRate: settings.esiEmployerRate,
     esiWageCeiling: settings.esiWageCeiling,
     ptSlabs: settings.ptSlabs as unknown as PtSlab[],
+    ptStateRates: [],
     lwfEmployeeAmount: settings.lwfEmployeeAmount,
     lwfEmployerAmount: settings.lwfEmployerAmount,
     lwfMonths: DEFAULT_LWF_MONTHS,
     lwfStateRates: [],
     npsEmployerRate: settings.npsEmployerRate,
     gratuityRate: settings.gratuityRate,
+    pfUseWagesRule: false,
+    gratuityUseWagesRule: false,
+    pfEdliRate: 0.5,
+    pfAdminRate: 0.5,
+    bonusRate: 8.33,
+    bonusEligibilityCeiling: 21000,
+    bonusCalcCeiling: 7000,
   };
 
   const pf = effectiveConfigs.PF;
@@ -115,7 +147,13 @@ export function applyStatutoryOverrides(
       employeeRate: number;
       employerRate: number;
       wageCeiling: number;
+      applyFiftyPercentRule?: boolean;
+      edliRate?: number;
+      adminChargeRate?: number;
     };
+    resolved.pfUseWagesRule = c.applyFiftyPercentRule === true;
+    resolved.pfEdliRate = c.edliRate ?? resolved.pfEdliRate;
+    resolved.pfAdminRate = c.adminChargeRate ?? resolved.pfAdminRate;
     resolved.pfEmployeeRate = c.employeeRate;
     resolved.pfEmployerRate = c.employerRate;
     resolved.pfWageCeiling = c.wageCeiling;
@@ -137,8 +175,9 @@ export function applyStatutoryOverrides(
 
   const pt = effectiveConfigs.PT;
   if (pt) {
-    const c = pt.config as { slabs: PtSlab[] };
+    const c = pt.config as { slabs: PtSlab[]; stateRates?: PtStateRate[] };
     resolved.ptSlabs = c.slabs;
+    resolved.ptStateRates = c.stateRates ?? [];
     resolved.ptEnabled = pt.isEnabled;
   }
 
@@ -159,13 +198,27 @@ export function applyStatutoryOverrides(
 
   const gratuity = effectiveConfigs.GRATUITY;
   if (gratuity) {
-    const c = gratuity.config as { rate: number };
+    const c = gratuity.config as {
+      rate: number;
+      applyFiftyPercentRule?: boolean;
+    };
     resolved.gratuityRate = c.rate;
+    resolved.gratuityUseWagesRule = c.applyFiftyPercentRule === true;
     resolved.gratuityEnabled = gratuity.isEnabled;
   }
 
   const bonus = effectiveConfigs.BONUS;
   if (bonus) {
+    const c = bonus.config as {
+      rate?: number;
+      eligibilityCeiling?: number;
+      calculationCeiling?: number;
+    };
+    resolved.bonusRate = c.rate ?? resolved.bonusRate;
+    resolved.bonusEligibilityCeiling =
+      c.eligibilityCeiling ?? resolved.bonusEligibilityCeiling;
+    resolved.bonusCalcCeiling =
+      c.calculationCeiling ?? resolved.bonusCalcCeiling;
     resolved.bonusEnabled = bonus.isEnabled;
   }
 
