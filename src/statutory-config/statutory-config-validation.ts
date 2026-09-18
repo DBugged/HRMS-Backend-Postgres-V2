@@ -164,7 +164,10 @@ export const SEED_DEFAULTS: Record<
   { config: object; isEnabled: boolean }
 > = {
   [StatutoryModule.PF]: {
-    config: { employeeRate: 12, employerRate: 12, wageCeiling: 15000 },
+    // EPFO raised the mandatory PF wage ceiling from 15,000 to 25,000 effective 17-Sep-2026 (Cabinet
+    // approval), so new orgs start at the current ceiling. Existing orgs keep their stored version and
+    // are prompted in the Statutory Compliance Center to add a new one.
+    config: { employeeRate: 12, employerRate: 12, wageCeiling: 25000 },
     isEnabled: false,
   },
   [StatutoryModule.ESI]: {

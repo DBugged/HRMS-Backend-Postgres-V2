@@ -155,3 +155,13 @@ describe('validateModuleConfig', () => {
     );
   });
 });
+
+describe('seeded PF defaults', () => {
+  it('start at the ₹25,000 EPFO wage ceiling (effective 17-Sep-2026) and pass validation', () => {
+    const pf = SEED_DEFAULTS[StatutoryModule.PF];
+    expect((pf.config as { wageCeiling: number }).wageCeiling).toBe(25000);
+    expect(() =>
+      validateModuleConfig(StatutoryModule.PF, pf.config),
+    ).not.toThrow();
+  });
+});
