@@ -51,12 +51,36 @@ function buildPtSlabContext(ptSlabs: PtSlab[]): Record<string, number> {
   return context;
 }
 
+// The LWF amounts and deduction months that apply to one employee: their work location's state rate when the
+// org has configured one for that state, otherwise the org-wide default. An employee with no known state
+// (no department, no work location, or a location with no state set) always gets the default.
+export function resolveLwfRate(
+  settings: OverlaidSettings,
+  month: number,
+  lwfState?: string | null,
+): { employeeAmount: number; employerAmount: number } {
+  const stateRate = lwfState
+    ? settings.lwfStateRates.find((r) => r.state === lwfState)
+    : undefined;
+  const rate = stateRate ?? {
+    employeeAmount: settings.lwfEmployeeAmount,
+    employerAmount: settings.lwfEmployerAmount,
+    months: settings.lwfMonths,
+  };
+  const isLwfMonth = rate.months.includes(month);
+  return {
+    employeeAmount: isLwfMonth ? rate.employeeAmount : 0,
+    employerAmount: isLwfMonth ? rate.employerAmount : 0,
+  };
+}
+
 export function buildBaseContext(
   attendance: AttendanceSummary,
   settings: OverlaidSettings,
   month: number,
+  lwfState?: string | null,
 ): Record<string, number> {
-  const isLwfMonth = settings.lwfMonths.includes(month);
+  const lwf = resolveLwfRate(settings, month, lwfState);
   return {
     WORKING_DAYS: attendance.workingDays,
     TOTAL_DAYS_IN_MONTH: attendance.totalDaysInMonth,
@@ -78,8 +102,8 @@ export function buildBaseContext(
     ESI_EMPLOYEE_RATE: settings.esiEmployeeRate,
     ESI_EMPLOYER_RATE: settings.esiEmployerRate,
     ESI_WAGE_CEILING: settings.esiWageCeiling,
-    LWF_EMPLOYEE_AMOUNT: isLwfMonth ? settings.lwfEmployeeAmount : 0,
-    LWF_EMPLOYER_AMOUNT: isLwfMonth ? settings.lwfEmployerAmount : 0,
+    LWF_EMPLOYEE_AMOUNT: lwf.employeeAmount,
+    LWF_EMPLOYER_AMOUNT: lwf.employerAmount,
     NPS_EMPLOYER_RATE: settings.npsEmployerRate,
     GRATUITY_RATE: settings.gratuityRate,
     ...buildPtSlabContext(settings.ptSlabs),

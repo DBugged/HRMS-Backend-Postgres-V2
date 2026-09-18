@@ -13,6 +13,15 @@ export interface PtSlab {
   amount: number;
 }
 
+// A state's own Labour Welfare Fund rate — overrides the org-wide default for employees whose work location is
+// in that state.
+export interface LwfStateRate {
+  state: string;
+  employeeAmount: number;
+  employerAmount: number;
+  months: number[];
+}
+
 export interface EffectiveModuleConfig {
   config: unknown;
   isEnabled: boolean;
@@ -53,6 +62,8 @@ export interface OverlaidSettings {
   // when no LWF StatutoryConfigVersion exists yet — not a PayrollSettings
   // column, this fallback lives here.
   lwfMonths: number[];
+  // Empty unless the org has configured state-wise rates; see resolveLwfRate() in formula-context.ts.
+  lwfStateRates: LwfStateRate[];
 
   npsEmployerRate: number;
   gratuityRate: number;
@@ -93,6 +104,7 @@ export function applyStatutoryOverrides(
     lwfEmployeeAmount: settings.lwfEmployeeAmount,
     lwfEmployerAmount: settings.lwfEmployerAmount,
     lwfMonths: DEFAULT_LWF_MONTHS,
+    lwfStateRates: [],
     npsEmployerRate: settings.npsEmployerRate,
     gratuityRate: settings.gratuityRate,
   };
@@ -136,7 +148,9 @@ export function applyStatutoryOverrides(
       employeeAmount: number;
       employerAmount: number;
       months: number[];
+      stateRates?: LwfStateRate[];
     };
+    resolved.lwfStateRates = c.stateRates ?? [];
     resolved.lwfEmployeeAmount = c.employeeAmount;
     resolved.lwfEmployerAmount = c.employerAmount;
     resolved.lwfMonths = c.months;

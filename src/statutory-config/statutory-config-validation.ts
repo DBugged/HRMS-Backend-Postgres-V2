@@ -1,4 +1,5 @@
 import { StatutoryModule } from '@prisma/client';
+import { isIndianState } from '../common/indian-states';
 
 /**
  * Pure port of the old backend's `utils/statutoryValidation.js` — one
@@ -65,12 +66,12 @@ function validatePt(config: unknown): void {
   });
 }
 
-function validateLwf(config: unknown): void {
-  const c = config as {
-    employeeAmount?: unknown;
-    employerAmount?: unknown;
-    months?: unknown;
-  };
+// One LWF rate: fixed rupee amounts per deduction month, same shape as the org-wide default.
+function validateLwfRate(c: {
+  employeeAmount?: unknown;
+  employerAmount?: unknown;
+  months?: unknown;
+}): void {
   if (!isNonNegative(c.employeeAmount))
     throw new Error('employeeAmount must be a non-negative number.');
   if (!isNonNegative(c.employerAmount))
@@ -80,6 +81,37 @@ function validateLwf(config: unknown): void {
     !c.months.every((m) => Number.isInteger(m) && m >= 1 && m <= 12)
   ) {
     throw new Error('months must be an array of integers between 1 and 12.');
+  }
+}
+
+// The top-level fields are the default rate (used for any employee whose work-location state has no entry
+// below, or who has no state). `stateRates` is optional: one entry per Indian state that has its own rate.
+function validateLwf(config: unknown): void {
+  const c = config as {
+    employeeAmount?: unknown;
+    employerAmount?: unknown;
+    months?: unknown;
+    stateRates?: unknown;
+  };
+  validateLwfRate(c);
+  if (c.stateRates === undefined) return;
+  if (!Array.isArray(c.stateRates))
+    throw new Error('stateRates must be an array.');
+  const seen = new Set<string>();
+  for (const entry of c.stateRates as {
+    state?: unknown;
+    employeeAmount?: unknown;
+    employerAmount?: unknown;
+    months?: unknown;
+  }[]) {
+    if (entry === null || typeof entry !== 'object')
+      throw new Error('Each stateRates entry must be an object.');
+    if (!isIndianState(entry.state))
+      throw new Error('Each stateRates entry needs a valid Indian state name.');
+    if (seen.has(entry.state))
+      throw new Error(`stateRates has more than one entry for ${entry.state}.`);
+    seen.add(entry.state);
+    validateLwfRate(entry);
   }
 }
 

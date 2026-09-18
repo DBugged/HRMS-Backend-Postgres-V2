@@ -112,6 +112,32 @@ describe('Work Locations (e2e)', () => {
     circleId = body.id;
   });
 
+  it('stores a valid state, defaults it to empty, and rejects an unknown one', async () => {
+    const ok = await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Blr',
+        state: 'Karnataka',
+        latitude: 12.97,
+        longitude: 77.59,
+      })
+      .expect(201);
+    expect((ok.body as { state: string }).state).toBe('Karnataka');
+    expect(
+      (
+        await request(app.getHttpServer())
+          .get(`/work-locations/${circleId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+      ).body as { state: string },
+    ).toMatchObject({ state: '' });
+    await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Nowhere', state: 'Atlantis', latitude: 1, longitude: 1 })
+      .expect(400);
+  });
+
   it('rejects a CIRCLE with missing latitude/longitude', async () => {
     await request(app.getHttpServer())
       .post('/work-locations')

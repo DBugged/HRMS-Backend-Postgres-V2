@@ -312,7 +312,23 @@ export class PayrollService {
       year,
     );
 
-    const baseContext = buildBaseContext(attendanceSummary, settings, month);
+    // State-wise LWF: the employee's state is their department's work location's state. Only looked up when
+    // the org has state rates configured, so orgs on the single org-wide rate pay no extra query.
+    let lwfState: string | null = null;
+    if (settings.lwfStateRates.length > 0 && employee.departmentId) {
+      const department = await this.scopedPrisma.department.findFirst({
+        where: { id: employee.departmentId, organizationId },
+        select: { workLocation: { select: { state: true } } },
+      });
+      lwfState = department?.workLocation?.state || null;
+    }
+
+    const baseContext = buildBaseContext(
+      attendanceSummary,
+      settings,
+      month,
+      lwfState,
+    );
 
     const [allComponents, overrideRows] = await Promise.all([
       this.scopedPrisma.salaryComponent.findMany({

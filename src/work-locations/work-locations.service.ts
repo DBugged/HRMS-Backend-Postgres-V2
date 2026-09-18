@@ -54,6 +54,7 @@ export class WorkLocationsService {
         name: dto.name,
         address: dto.address ?? '',
         description: dto.description ?? '',
+        state: dto.state ?? '',
         fenceType,
         boundary:
           fenceType === FenceType.CIRCLE
@@ -183,6 +184,7 @@ export class WorkLocationsService {
         ...(dto.description !== undefined && {
           description: dto.description,
         }),
+        ...(dto.state !== undefined && { state: dto.state }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         ...geometryData,
       },

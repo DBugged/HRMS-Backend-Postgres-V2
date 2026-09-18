@@ -59,6 +59,7 @@ function settings(overrides: Partial<OverlaidSettings> = {}): OverlaidSettings {
     lwfEmployeeAmount: 25,
     lwfEmployerAmount: 75,
     lwfMonths: [6, 12],
+    lwfStateRates: [],
     npsEmployerRate: 10,
     gratuityRate: 4.81,
     ...overrides,
@@ -121,5 +122,51 @@ describe('buildBaseContext', () => {
     const ctx = buildBaseContext(attendance(), settings({ ptSlabs: [] }), 4);
     expect(ctx.PT_SLAB1_UPTO).toBe(7500);
     expect(ctx.PT_SLAB3_AMOUNT).toBe(200);
+  });
+});
+
+describe('state-wise LWF', () => {
+  const stateRates = [
+    {
+      state: 'Karnataka',
+      employeeAmount: 50,
+      employerAmount: 100,
+      months: [12],
+    },
+    {
+      state: 'Maharashtra',
+      employeeAmount: 25,
+      employerAmount: 75,
+      months: [6, 12],
+    },
+  ];
+  const withStates = () => settings({ lwfStateRates: stateRates });
+
+  it("uses the employee's state rate and months when the org has one for that state", () => {
+    const dec = buildBaseContext(attendance(), withStates(), 12, 'Karnataka');
+    expect(dec.LWF_EMPLOYEE_AMOUNT).toBe(50);
+    expect(dec.LWF_EMPLOYER_AMOUNT).toBe(100);
+    // Karnataka deducts only in December — June is a Maharashtra month, not a Karnataka one.
+    const jun = buildBaseContext(attendance(), withStates(), 6, 'Karnataka');
+    expect(jun.LWF_EMPLOYEE_AMOUNT).toBe(0);
+    expect(jun.LWF_EMPLOYER_AMOUNT).toBe(0);
+  });
+
+  it('falls back to the org-wide default for an unknown or missing state', () => {
+    const s = withStates();
+    for (const state of [undefined, null, '', 'Kerala']) {
+      const jun = buildBaseContext(attendance(), s, 6, state);
+      expect(jun.LWF_EMPLOYEE_AMOUNT).toBe(25); // default rate, default months [6, 12]
+      expect(jun.LWF_EMPLOYER_AMOUNT).toBe(75);
+    }
+    expect(
+      buildBaseContext(attendance(), s, 5, 'Kerala').LWF_EMPLOYEE_AMOUNT,
+    ).toBe(0);
+  });
+
+  it('behaves exactly as before when no state rates are configured', () => {
+    const ctx = buildBaseContext(attendance(), settings(), 6, 'Karnataka');
+    expect(ctx.LWF_EMPLOYEE_AMOUNT).toBe(25);
+    expect(ctx.LWF_EMPLOYER_AMOUNT).toBe(75);
   });
 });

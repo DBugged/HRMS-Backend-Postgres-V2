@@ -165,3 +165,32 @@ describe('seeded PF defaults', () => {
     ).not.toThrow();
   });
 });
+
+describe('LWF state rates', () => {
+  const base = { employeeAmount: 25, employerAmount: 75, months: [6, 12] };
+  const ka = {
+    state: 'Karnataka',
+    employeeAmount: 50,
+    employerAmount: 100,
+    months: [12],
+  };
+
+  it('accepts a config with or without stateRates', () => {
+    expect(() => validateModuleConfig(StatutoryModule.LWF, base)).not.toThrow();
+    expect(() =>
+      validateModuleConfig(StatutoryModule.LWF, { ...base, stateRates: [ka] }),
+    ).not.toThrow();
+  });
+
+  it('rejects unknown states, duplicates and bad amounts/months', () => {
+    const bad = (stateRates: unknown) =>
+      expect(() =>
+        validateModuleConfig(StatutoryModule.LWF, { ...base, stateRates }),
+      ).toThrow();
+    bad('Karnataka');
+    bad([{ ...ka, state: 'Karnatka' }]);
+    bad([ka, ka]);
+    bad([{ ...ka, employeeAmount: -1 }]);
+    bad([{ ...ka, months: [13] }]);
+  });
+});

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsEnum,
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsObject,
@@ -10,6 +11,7 @@ import {
   Min,
 } from 'class-validator';
 import { FenceType } from '@prisma/client';
+import { INDIAN_STATES } from '../../common/indian-states';
 
 // boundary's shape depends on fenceType (bounds for RECTANGLE, vertices for
 // POLYGON, absent for CIRCLE) — validated by geometry-validation.ts in the
@@ -44,6 +46,15 @@ export class CreateWorkLocationDto {
   @IsOptional()
   @IsString()
   description?: string;
+
+  @ApiPropertyOptional({
+    enum: INDIAN_STATES,
+    description:
+      'State/UT this location is in ("" to clear). Used to pick state-wise statutory rates such as LWF.',
+  })
+  @IsOptional()
+  @IsIn(['', ...INDIAN_STATES])
+  state?: string;
 
   @ApiPropertyOptional({
     description:

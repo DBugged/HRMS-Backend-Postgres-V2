@@ -744,6 +744,10 @@ model WorkLocation {
   name        String
   address     String @default("")
   description String @default("")
+  // Indian state/UT this location is in ('' = not set). Drives state-wise statutory rules — today the
+  // Labour Welfare Fund rate (an employee's state is their department's work location's state).
+  // Canonical spelling from common/indian-states.ts.
+  state       String @default("")
 
   latitude     Float
   longitude    Float
