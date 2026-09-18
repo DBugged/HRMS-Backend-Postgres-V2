@@ -30,6 +30,8 @@ interface RequirementBody {
   name: string;
   displayOrder: number;
   isActive: boolean;
+  isMandatory?: boolean;
+  isSystemDefault?: boolean;
 }
 interface PaginatedBody<T> {
   data: T[];
@@ -440,6 +442,8 @@ describe('Documents (e2e)', () => {
 
   let requirementId: string;
 
+  // Registration seeds 4 baseline requirements (PAN Card, Aadhaar Card, Passport Photo, Educational
+  // Certificate), so a new one lands after them.
   it('HR creates a document requirement, defaulting displayOrder to the current count', async () => {
     const res = await request(app.getHttpServer())
       .post('/documents/requirements')
@@ -448,7 +452,57 @@ describe('Documents (e2e)', () => {
       .expect(201);
     const body = res.body as RequirementBody;
     requirementId = body.id;
-    expect(body.displayOrder).toBe(0);
+    expect(body.displayOrder).toBe(4);
+  });
+
+  it('registration seeds the 4 baseline requirements as optional', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/documents/requirements')
+      .set('Authorization', `Bearer ${outsideEmployeeToken}`)
+      .expect(200);
+    const rows = (res.body as PaginatedBody<RequirementBody>).data;
+    for (const name of [
+      'PAN Card',
+      'Aadhaar Card',
+      'Passport Photo',
+      'Educational Certificate',
+    ]) {
+      const row = rows.find((r) => r.name === name);
+      expect(row).toBeDefined();
+      expect(row?.isMandatory).toBe(false);
+      expect(row?.isSystemDefault).toBe(true);
+    }
+  });
+
+  it('built-in requirements: name locked, cannot be deleted, but can be marked mandatory or disabled', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/documents/requirements')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const pan = (list.body as PaginatedBody<RequirementBody>).data.find(
+      (r) => r.name === 'PAN Card',
+    )!;
+    expect(pan.isSystemDefault).toBe(true);
+
+    await request(app.getHttpServer())
+      .patch(`/documents/requirements/${pan.id}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ name: 'PAN' })
+      .expect(409);
+    await request(app.getHttpServer())
+      .delete(`/documents/requirements/${pan.id}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch(`/documents/requirements/${pan.id}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ isMandatory: true })
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch(`/documents/requirements/${pan.id}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ isMandatory: false })
+      .expect(200);
   });
 
   it('any authenticated employee can list requirements', async () => {

@@ -8,11 +8,13 @@
 // external URL a user pasted in.
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import {
+  Prisma,
   PolicyDocument,
   PolicyDocType,
   PolicyVisibility,
@@ -34,6 +36,17 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 
 type Actor = Omit<User, 'password'>;
 
+// Baseline document checklist every new org starts with, instead of an empty Document Required page.
+// Built-in (isSystemDefault): name locked and not deletable, like the seeded leave types and employee
+// categories. Seeded as optional (isMandatory: false) on purpose — an org decides which of them are actually
+// required; they were once hardcoded as always-mandatory and that was deliberately removed.
+export const DEFAULT_DOCUMENT_REQUIREMENTS = [
+  'PAN Card',
+  'Aadhaar Card',
+  'Passport Photo',
+  'Educational Certificate',
+];
+
 const HR_ROLES: Role[] = [Role.ADMIN, Role.HR];
 const MANAGER_ROLES: Role[] = [Role.MANAGER, Role.ADMIN, Role.HR];
 const EXTERNAL_URL_RE = /^https?:\/\//i;
@@ -44,6 +57,25 @@ export class DocumentsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  // Registration-time seed (same integration point as LeaveTypesService/OrgListItemsService
+  // .seedDefaults); existing orgs got the equivalent backfill via the
+  // seed_default_document_requirements migration.
+  async seedDefaults(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+  ): Promise<void> {
+    await tx.documentRequirement.createMany({
+      data: DEFAULT_DOCUMENT_REQUIREMENTS.map((name, displayOrder) => ({
+        organizationId,
+        name,
+        isMandatory: false,
+        isSystemDefault: true,
+        displayOrder,
+      })),
+      skipDuplicates: true,
+    });
+  }
 
   // HR/Admin bypass visibility entirely (they manage the library, not just
   // consume it) — see findPolicies. Ported from the old system's
@@ -271,7 +303,12 @@ export class DocumentsService {
   async findRequirements(organizationId: string) {
     const data = await this.scopedPrisma.documentRequirement.findMany({
       where: { organizationId },
-      orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
+      // Built-in baseline documents always sort ahead of custom ones.
+      orderBy: [
+        { isSystemDefault: 'desc' },
+        { displayOrder: 'asc' },
+        { createdAt: 'asc' },
+      ],
     });
     return wrapAll(data);
   }
@@ -321,6 +358,15 @@ export class DocumentsService {
     });
     if (!existing)
       throw new NotFoundException('Document requirement not found.');
+    if (
+      existing.isSystemDefault &&
+      dto.name !== undefined &&
+      dto.name.trim() !== existing.name
+    ) {
+      throw new ConflictException(
+        'This is a built-in document — its name cannot be changed.',
+      );
+    }
 
     await this.scopedPrisma.documentRequirement.updateMany({
       where: { id, organizationId },
@@ -366,6 +412,11 @@ export class DocumentsService {
     });
     if (!existing)
       throw new NotFoundException('Document requirement not found.');
+    if (existing.isSystemDefault) {
+      throw new ConflictException(
+        'This is a built-in document and cannot be deleted — disable it instead.',
+      );
+    }
 
     await this.scopedPrisma.documentRequirement.deleteMany({
       where: { id, organizationId },
@@ -395,6 +446,11 @@ export class DocumentsService {
     });
     if (existing.length === 0) {
       return { deleted: 0 };
+    }
+    if (existing.some((r) => r.isSystemDefault)) {
+      throw new ConflictException(
+        'Built-in documents cannot be deleted — disable them instead.',
+      );
     }
 
     await this.scopedPrisma.documentRequirement.deleteMany({

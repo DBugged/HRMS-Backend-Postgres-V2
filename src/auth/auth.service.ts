@@ -29,6 +29,7 @@ import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { LeaveTypesService } from '../leave-types/leave-types.service';
 import { OrgListItemsService } from '../org-list-items/org-list-items.service';
+import { DocumentsService } from '../documents/documents.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
 import { HolidaysService } from '../holidays/holidays.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -79,6 +80,7 @@ export class AuthService {
     private readonly statutoryConfigService: StatutoryConfigService,
     private readonly leaveTypesService: LeaveTypesService,
     private readonly orgListItemsService: OrgListItemsService,
+    private readonly documentsService: DocumentsService,
     private readonly salaryComponentsService: SalaryComponentsService,
     private readonly holidaysService: HolidaysService,
     private readonly emailTemplatesService: EmailTemplatesService,
@@ -169,6 +171,9 @@ export class AuthService {
         // alongside these, same registration-time integration point as the
         // seeds above.
         await this.orgListItemsService.seedDefaults(tx, organization.id);
+        // ...and the baseline Document Required checklist (PAN Card, Aadhaar Card, Passport
+        // Photo, Educational Certificate), optional until an admin marks them mandatory.
+        await this.documentsService.seedDefaults(tx, organization.id);
         return { organization, user };
       },
     );

@@ -14,6 +14,7 @@ import { LetterTemplatesModule } from '../letter-templates/letter-templates.modu
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { OrgListItemsModule } from '../org-list-items/org-list-items.module';
+import { DocumentsModule } from '../documents/documents.module';
 
 @Module({
   imports: [
@@ -52,6 +53,8 @@ import { OrgListItemsModule } from '../org-list-items/org-list-items.module';
     // Contract/Intern) at registration, same integration point as
     // LetterTemplatesModule above.
     OrgListItemsModule,
+    // For DocumentsService.seedDefaults — every new org starts with the baseline document checklist.
+    DocumentsModule,
     AuditLogModule,
     NotificationsModule,
     // Signing options are passed explicitly per-call in AuthService

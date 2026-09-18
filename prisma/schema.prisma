@@ -2293,6 +2293,10 @@ model DocumentRequirement {
   name String
 
   isMandatory  Boolean @default(false)
+  // Seeded baseline requirement (PAN Card, Aadhaar Card, Passport Photo, Educational Certificate):
+  // name is locked and it can't be deleted — only deactivated or marked mandatory. Same convention as
+  // LeaveType/OrgListItem.isSystemDefault.
+  isSystemDefault Boolean @default(false)
   // Soft-disable, not a delete — matches the old system: a disabled
   // requirement stops appearing as expected/missing but any already-
   // uploaded documents against it are untouched.
