@@ -194,3 +194,62 @@ describe('LWF state rates', () => {
     bad([{ ...ka, months: [13] }]);
   });
 });
+
+describe("PT default women's ladder", () => {
+  const slabs = [{ upTo: null, amount: 200 }];
+  it('is optional and validated like the main ladder', () => {
+    expect(() =>
+      validateModuleConfig(StatutoryModule.PT, { slabs }),
+    ).not.toThrow();
+    expect(() =>
+      validateModuleConfig(StatutoryModule.PT, {
+        slabs,
+        womenSlabs: [
+          { upTo: 25000, amount: 0 },
+          { upTo: null, amount: 200 },
+        ],
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateModuleConfig(StatutoryModule.PT, { slabs, womenSlabs: [] }),
+    ).toThrow();
+    expect(() =>
+      validateModuleConfig(StatutoryModule.PT, {
+        slabs,
+        womenSlabs: [{ upTo: 5, amount: -1 }],
+      }),
+    ).toThrow();
+  });
+  it("the seeded PT default carries Maharashtra's women's exemption", () => {
+    const pt = SEED_DEFAULTS[StatutoryModule.PT].config as {
+      womenSlabs: { upTo: number | null; amount: number }[];
+    };
+    expect(pt.womenSlabs[0]).toEqual({ upTo: 25000, amount: 0 });
+  });
+});
+
+describe('PT state ladders', () => {
+  const slabs = [{ upTo: null, amount: 200, februaryAmount: 300 }];
+  it('accepts valid state ladders and rejects bad ones', () => {
+    const ok = { slabs, stateRates: [{ state: 'Karnataka', slabs }] };
+    expect(() => validateModuleConfig(StatutoryModule.PT, ok)).not.toThrow();
+    const bad = (stateRates: unknown) =>
+      expect(() =>
+        validateModuleConfig(StatutoryModule.PT, { slabs, stateRates }),
+      ).toThrow();
+    bad('Karnataka');
+    bad([{ state: 'Atlantis', slabs }]);
+    bad([
+      { state: 'Karnataka', slabs },
+      { state: 'Karnataka', slabs },
+    ]);
+    bad([{ state: 'Karnataka', slabs: [] }]);
+    bad([
+      {
+        state: 'Karnataka',
+        slabs: [{ upTo: null, amount: 200, februaryAmount: -1 }],
+      },
+    ]);
+    bad([{ state: 'Karnataka', slabs, womenSlabs: [] }]);
+  });
+});

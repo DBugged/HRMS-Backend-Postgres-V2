@@ -313,3 +313,36 @@ describe('deriveStatutoryContext', () => {
     ).toBe(1);
   });
 });
+
+describe("org-wide women's PT ladder", () => {
+  const men = [
+    { upTo: 7500, amount: 0 },
+    { upTo: null, amount: 200, februaryAmount: 300 },
+  ];
+  const women = [
+    { upTo: 25000, amount: 0 },
+    { upTo: null, amount: 200, februaryAmount: 300 },
+  ];
+  const s = () => settings({ ptSlabs: men, ptWomenSlabs: women });
+
+  it("uses the women's ladder for a woman and the standard one for everyone else", () => {
+    expect(resolvePtSlabs(s(), 5, { gender: 'FEMALE' })).toEqual(women);
+    for (const gender of [
+      'MALE',
+      'OTHER',
+      'PREFER_NOT_TO_SAY',
+      null,
+      undefined,
+    ]) {
+      expect(resolvePtSlabs(s(), 5, { gender })).toEqual(men);
+    }
+    expect(resolvePtSlabs(s(), 5)).toEqual(men);
+  });
+
+  it('is ignored when the org has not set one, and applies February on it too', () => {
+    expect(
+      resolvePtSlabs(settings({ ptSlabs: men }), 5, { gender: 'FEMALE' }),
+    ).toEqual(men);
+    expect(resolvePtSlabs(s(), 2, { gender: 'FEMALE' })[1].amount).toBe(300);
+  });
+});

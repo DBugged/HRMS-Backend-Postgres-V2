@@ -82,7 +82,8 @@ export function resolveLwfRate(
 }
 
 // The Professional Tax ladder for one employee in one month: their state's ladder when the org has one for it
-// (the women's ladder for a woman where that state defines one), otherwise the org-wide default; then February's
+// (the women's ladder for a woman where that state defines one), otherwise the org-wide default (its women's
+// ladder for a woman, where one is set); then February's
 // own amount is swapped in where a slab defines it.
 export function resolvePtSlabs(
   settings: OverlaidSettings,
@@ -92,10 +93,15 @@ export function resolvePtSlabs(
   const stateRate = profile?.state
     ? settings.ptStateRates.find((r) => r.state === profile.state)
     : undefined;
-  const base =
-    stateRate && profile?.gender === 'FEMALE' && stateRate.womenSlabs
+  const isWoman = profile?.gender === 'FEMALE';
+  // A state's own ladders win; without one, the org-wide default (and its women's ladder, if it has one).
+  const base = stateRate
+    ? isWoman && stateRate.womenSlabs
       ? stateRate.womenSlabs
-      : (stateRate?.slabs ?? settings.ptSlabs);
+      : stateRate.slabs
+    : isWoman && settings.ptWomenSlabs
+      ? settings.ptWomenSlabs
+      : settings.ptSlabs;
   return month === 2
     ? base.map((s) =>
         s.februaryAmount === undefined ? s : { ...s, amount: s.februaryAmount },

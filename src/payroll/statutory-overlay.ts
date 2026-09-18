@@ -65,6 +65,8 @@ export interface OverlaidSettings {
   esiEmployerRate: number;
   esiWageCeiling: number;
   ptSlabs: PtSlab[];
+  // Women's ladder for the org-wide default (undefined = women follow ptSlabs).
+  ptWomenSlabs?: PtSlab[];
   ptStateRates: PtStateRate[];
 
   lwfEmployeeAmount: number;
@@ -175,8 +177,13 @@ export function applyStatutoryOverrides(
 
   const pt = effectiveConfigs.PT;
   if (pt) {
-    const c = pt.config as { slabs: PtSlab[]; stateRates?: PtStateRate[] };
+    const c = pt.config as {
+      slabs: PtSlab[];
+      womenSlabs?: PtSlab[];
+      stateRates?: PtStateRate[];
+    };
     resolved.ptSlabs = c.slabs;
+    resolved.ptWomenSlabs = c.womenSlabs;
     resolved.ptStateRates = c.stateRates ?? [];
     resolved.ptEnabled = pt.isEnabled;
   }

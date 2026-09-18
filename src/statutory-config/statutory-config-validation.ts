@@ -46,37 +46,81 @@ function validateOptionalBoolean(v: unknown, name: string): void {
     throw new Error(`${name} must be true or false.`);
 }
 
-function validatePt(config: unknown): void {
-  const c = config as { slabs?: unknown };
-  if (!Array.isArray(c.slabs) || c.slabs.length === 0) {
-    throw new Error('pt config requires at least one slab.');
+// One slab ladder. `februaryAmount` is optional: some states charge a different amount in February (e.g.
+// Maharashtra and Karnataka ₹300 vs ₹200) so the year lands on the statutory cap.
+function validatePtSlabs(slabs: unknown, label: string): void {
+  if (!Array.isArray(slabs) || slabs.length === 0) {
+    throw new Error(`${label} requires at least one slab.`);
   }
   let previousUpTo = -Infinity;
-  c.slabs.forEach((slab, i) => {
-    const s = slab as { upTo?: unknown; amount?: unknown };
+  slabs.forEach((slab, i) => {
+    const s = slab as {
+      upTo?: unknown;
+      amount?: unknown;
+      februaryAmount?: unknown;
+    };
     if (!isNonNegative(s.amount)) {
       throw new Error(
-        `pt slab ${i + 1}: amount must be a non-negative number.`,
+        `${label} slab ${i + 1}: amount must be a non-negative number.`,
       );
     }
-    const isLast = i === (c.slabs as unknown[]).length - 1;
+    if (s.februaryAmount !== undefined && !isNonNegative(s.februaryAmount)) {
+      throw new Error(
+        `${label} slab ${i + 1}: februaryAmount must be a non-negative number.`,
+      );
+    }
+    const isLast = i === slabs.length - 1;
     if (s.upTo === null) {
       if (!isLast)
         throw new Error(
-          'pt: only the last slab may have upTo: null ("and above").',
+          `${label}: only the last slab may have upTo: null ("and above").`,
         );
       return;
     }
     if (!isNonNegative(s.upTo)) {
       throw new Error(
-        `pt slab ${i + 1}: upTo must be a non-negative number or null.`,
+        `${label} slab ${i + 1}: upTo must be a non-negative number or null.`,
       );
     }
     if (s.upTo <= previousUpTo) {
-      throw new Error('pt slabs must have strictly ascending upTo values.');
+      throw new Error(
+        `${label} slabs must have strictly ascending upTo values.`,
+      );
     }
     previousUpTo = s.upTo;
   });
+}
+
+// `slabs` is the org-wide default ladder, with an optional `womenSlabs` (e.g. Maharashtra exempts women up to
+// ₹25,000). `stateRates` optionally overrides both per state (matched to the state of an employee's work location).
+function validatePt(config: unknown): void {
+  const c = config as {
+    slabs?: unknown;
+    womenSlabs?: unknown;
+    stateRates?: unknown;
+  };
+  validatePtSlabs(c.slabs, 'pt');
+  if (c.womenSlabs !== undefined) validatePtSlabs(c.womenSlabs, 'pt (women)');
+  if (c.stateRates === undefined) return;
+  if (!Array.isArray(c.stateRates))
+    throw new Error('stateRates must be an array.');
+  const seen = new Set<string>();
+  for (const entry of c.stateRates as {
+    state?: unknown;
+    slabs?: unknown;
+    womenSlabs?: unknown;
+  }[]) {
+    if (entry === null || typeof entry !== 'object')
+      throw new Error('Each stateRates entry must be an object.');
+    if (!isIndianState(entry.state))
+      throw new Error('Each stateRates entry needs a valid Indian state name.');
+    if (seen.has(entry.state))
+      throw new Error(`stateRates has more than one entry for ${entry.state}.`);
+    seen.add(entry.state);
+    validatePtSlabs(entry.slabs, `pt ${entry.state}`);
+    if (entry.womenSlabs !== undefined)
+      validatePtSlabs(entry.womenSlabs, `pt ${entry.state} (women)`);
+  }
 }
 
 // One LWF rate: fixed rupee amounts per deduction month, same shape as the org-wide default.
@@ -251,6 +295,11 @@ export const SEED_DEFAULTS: Record<
         { upTo: 7500, amount: 0 },
         { upTo: 10000, amount: 175 },
         // Maharashtra charges ₹300 in February so the year totals its ₹2,500 cap.
+        { upTo: null, amount: 200, februaryAmount: 300 },
+      ],
+      // Maharashtra exempts women up to ₹25,000 a month; ₹200 (₹300 in February) above.
+      womenSlabs: [
+        { upTo: 25000, amount: 0 },
         { upTo: null, amount: 200, februaryAmount: 300 },
       ],
     },

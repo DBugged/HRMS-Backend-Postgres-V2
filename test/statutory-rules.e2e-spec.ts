@@ -179,6 +179,11 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
         { upTo: 10000, amount: 175 },
         { upTo: null, amount: 200, februaryAmount: 300 },
       ],
+      // An org-wide women's ladder (e.g. Maharashtra's women's exemption; widened here so it applies at 41,000).
+      womenSlabs: [
+        { upTo: 50000, amount: 0 },
+        { upTo: null, amount: 200 },
+      ],
       stateRates: [
         { state: 'Karnataka', slabs: [{ upTo: null, amount: 250 }] },
       ],
@@ -246,6 +251,21 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
 
   it('Professional Tax: a Karnataka work location uses the Karnataka ladder, everyone else the default', async () => {
     expect((await run(empA, 12)).ded('PT')).toBe(250);
+    expect((await run(empB, 12)).ded('PT')).toBe(200);
+  });
+
+  it("Professional Tax: a woman follows the org-wide women's ladder; a man (or no gender) the standard one", async () => {
+    await request(app.getHttpServer())
+      .patch(`/employees/${empB}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ gender: 'FEMALE' })
+      .expect(200);
+    expect((await run(empB, 12)).ded('PT')).toBe(0);
+    await request(app.getHttpServer())
+      .patch(`/employees/${empB}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ gender: 'MALE' })
+      .expect(200);
     expect((await run(empB, 12)).ded('PT')).toBe(200);
   });
 
