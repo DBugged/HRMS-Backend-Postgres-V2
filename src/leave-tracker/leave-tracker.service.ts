@@ -292,6 +292,8 @@ export class LeaveTrackerService {
     // exactly what LeavesService.getBalance does for one.
     const result: {
       employeeId: string;
+      // Display code (e.g. "DP-00001"); `employeeId` above is the User.id join key.
+      employeeCode: string;
       name: string;
       leaveBalances: {
         leaveTypeCode: string;
@@ -362,6 +364,7 @@ export class LeaveTrackerService {
 
       result.push({
         employeeId: employee.id,
+        employeeCode: employee.employeeId,
         name: employee.name,
         leaveBalances,
         compOffAvailable,
