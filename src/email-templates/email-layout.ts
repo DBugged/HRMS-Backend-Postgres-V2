@@ -71,6 +71,10 @@ export function statusTone(word: string): Tone {
   return 'neutral';
 }
 
+// Alias of esc(), exported under a name that reads clearly at call sites that escape user-supplied values.
+export const escapeHtml = (value: string | null | undefined): string =>
+  esc(value);
+
 export function esc(value: string | null | undefined): string {
   return (value ?? '')
     .replace(/&/g, '&amp;')

@@ -41,6 +41,7 @@ export class UpdatePayrollSettingsDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(6)
   roundingDecimals?: number;
 
   @ApiPropertyOptional()
@@ -83,26 +84,38 @@ export class UpdatePayrollSettingsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   pfEmployeeRate?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   pfEmployerRate?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(1000000000)
   pfWageCeiling?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   esiEmployeeRate?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   esiEmployerRate?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(1000000000)
   esiWageCeiling?: number;
 
   @ApiPropertyOptional({ type: [Object], description: '[{upTo, amount}, ...]' })
@@ -113,22 +126,31 @@ export class UpdatePayrollSettingsDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(1000000000)
   lwfEmployeeAmount?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(1000000000)
   lwfEmployerAmount?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   npsEmployerRate?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   gratuityRate?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(3650)
   compOffExpiryDays?: number;
 }

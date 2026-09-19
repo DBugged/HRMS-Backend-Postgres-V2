@@ -18,6 +18,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 export class CreateHolidayDto {
   @ApiProperty({ example: 'Diwali' })
   @IsNotEmpty()
+  @IsString()
   name!: string;
 
   @ApiProperty({ example: '2026-11-08' })

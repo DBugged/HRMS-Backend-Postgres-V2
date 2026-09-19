@@ -14,6 +14,7 @@ import { User } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { FILE_CATEGORIES, makeStorage } from './file-storage.config';
 import { FilesService } from './files.service';
+import { ALLOWED_EXTENSIONS, hasAllowedExtension } from './file-signature';
 
 type Caller = Omit<User, 'password'>;
 
@@ -23,13 +24,18 @@ function categoryInterceptor(category: string) {
     storage: makeStorage(category),
     limits: { fileSize: config.maxSizeBytes },
     fileFilter: (_req, file, cb) => {
-      if (config.allowedMimePrefixes.some((p) => file.mimetype.startsWith(p))) {
+      // Both the declared type AND the file's extension must be on the category's allow-list — the extension is
+      // what the stored file keeps, and so what it is later served as.
+      if (
+        config.allowedMimePrefixes.some((p) => file.mimetype.startsWith(p)) &&
+        hasAllowedExtension(category, file.originalname)
+      ) {
         cb(null, true);
         return;
       }
       cb(
         new BadRequestException(
-          `Only ${config.allowedMimePrefixes.join(', ')} files are allowed for this category.`,
+          `Only ${config.allowedMimePrefixes.join(', ')} files (${ALLOWED_EXTENSIONS[category].join(', ')}) are allowed for this category.`,
         ),
         false,
       );

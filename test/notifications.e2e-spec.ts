@@ -452,8 +452,8 @@ describe('Notifications (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveType.id,
-        startDate: '2026-09-10',
-        endDate: '2026-09-11',
+        startDate: '2026-11-10',
+        endDate: '2026-11-11',
       })
       .expect(201);
 
@@ -470,7 +470,7 @@ describe('Notifications (e2e)', () => {
 
   it("the manager's leave decision notifies the employee", async () => {
     const leave = await prisma.leave.findFirstOrThrow({
-      where: { organizationId, employeeId, startDate: '2026-09-10' },
+      where: { organizationId, employeeId, startDate: '2026-11-10' },
     });
     await request(app.getHttpServer())
       .patch(`/leaves/${leave.id}/review`)

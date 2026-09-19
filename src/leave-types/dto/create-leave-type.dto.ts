@@ -24,6 +24,7 @@ import {
 export class CreateLeaveTypeDto {
   @ApiProperty({ example: 'Earned Leave' })
   @IsNotEmpty()
+  @IsString()
   name!: string;
 
   @ApiProperty({ example: 'EL' })

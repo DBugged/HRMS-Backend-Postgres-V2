@@ -26,10 +26,13 @@ import {
   EMAIL_PREHEADERS,
   EMAIL_TEMPLATE_DEFAULTS,
 } from './email-template-defaults';
-import { finalizeEmailHtml, wrapEmailShell } from './email-layout';
+import { escapeHtml, finalizeEmailHtml, wrapEmailShell } from './email-layout';
 import { renderTemplate } from './render-template';
 import { wrapAll } from '../common/pagination';
 import { companyLogoImgTag } from './company-logo';
+
+// Variables whose value is server-built markup rather than text (see renderHtml).
+const TRUSTED_HTML_VARIABLES = new Set(['companyLogo']);
 
 type Actor = { id: string };
 
@@ -319,7 +322,7 @@ export class EmailTemplatesService {
           subject: renderTemplate(template.subject, variables),
           html: await this.applyShell(
             await this.appendSignature(
-              renderTemplate(template.bodyHtml, variables),
+              this.renderHtml(template.bodyHtml, variables),
               organizationId,
               variables,
               template.signatureId,
@@ -365,6 +368,18 @@ export class EmailTemplatesService {
     return renderTemplate(template, variables);
   }
 
+  // Same substitution for an HTML BODY: every variable value is HTML-escaped first, so user-controlled text
+  // (an employee named `<a href=...>`, a reviewer's comment) can't inject markup or links into an email.
+  // `companyLogo` is the one variable that is deliberately markup — it is built server-side by
+  // companyLogoImgTag(). Subjects stay on plain render(): they are text, not HTML.
+  renderHtml(template: string, variables: Record<string, string>): string {
+    const safe: Record<string, string> = {};
+    for (const [k, v] of Object.entries(variables)) {
+      safe[k] = TRUSTED_HTML_VARIABLES.has(k) ? v : escapeHtml(v);
+    }
+    return renderTemplate(template, safe);
+  }
+
   // Renders the code-default template (subject + body) for an occasion. Used as the caller-supplied
   // fallback for occasions added after an org was seeded (or whose template the org disabled), so
   // those still get the designed body instead of a bare sentence.
@@ -378,7 +393,7 @@ export class EmailTemplatesService {
     if (!def) throw new Error(`No default email template for ${occasionKey}`);
     return {
       subject: this.render(def.subject, variables),
-      html: this.render(def.bodyHtml, variables),
+      html: this.renderHtml(def.bodyHtml, variables),
     };
   }
 
@@ -423,7 +438,7 @@ export class EmailTemplatesService {
       subject: this.render(template.subject, variables),
       html: await this.applyShell(
         await this.appendSignature(
-          this.render(template.bodyHtml, variables),
+          this.renderHtml(template.bodyHtml, variables),
           organizationId,
           variables,
           template.signatureId,
@@ -528,7 +543,7 @@ export class EmailTemplatesService {
       companyAddress: org?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(organizationId, org?.emailLogoUrl),
     };
-    return `${html}${this.render(signatureHtml, { ...companyVariables, ...variables })}`;
+    return `${html}${this.renderHtml(signatureHtml, { ...companyVariables, ...variables })}`;
   }
 
   async listSignatures(

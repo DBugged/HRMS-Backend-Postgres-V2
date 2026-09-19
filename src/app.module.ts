@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
+import { RequestSanityInterceptor } from './common/request-sanity.interceptor';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { LoggerModule } from 'nestjs-pino';
@@ -79,7 +80,11 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     ThrottlerModule.forRootAsync({
       inject: [RedisThrottlerStorage],
       useFactory: (storage: RedisThrottlerStorage) => ({
-        throttlers: [{ ttl: 60_000, limit: 100 }],
+        // Default 100 requests/min per client; overridable (THROTTLE_LIMIT) so load/QA runs that legitimately
+        // exceed it can be pointed at a dedicated instance without touching the shipped default.
+        throttlers: [
+          { ttl: 60_000, limit: Number(process.env.THROTTLE_LIMIT) || 100 },
+        ],
         storage: redisEnabled() ? storage : undefined,
       }),
     }),
@@ -140,6 +145,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // "forgot to protect a route" from being the default failure mode,
     // the opposite of the old backend where each route file had to
     // remember to add `protect` itself.
+    { provide: APP_INTERCEPTOR, useClass: RequestSanityInterceptor },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     // Runs after JwtAuthGuard in the guard chain (registration order),
     // so an already-401'd request doesn't also consume a rate-limit slot.

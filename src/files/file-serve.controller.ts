@@ -11,6 +11,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { UPLOAD_ROOT, fileStorageDriver } from './file-storage.config';
 import { getS3Bucket, getS3Client } from './s3-client';
 import { verifyFileToken } from './file-token';
+import { INLINE_SAFE_EXTENSIONS } from './file-signature';
 
 // Deliberately NOT behind the JwtAuthGuard — an <img src>, a
 // <link rel="icon">, or an embedded PDF viewer's <iframe> can't attach a
@@ -66,9 +67,17 @@ export class FileServeController {
     // the original upload's fileName — that lives only in the DB row this
     // controller never sees) at least gives a sane, correctly-extensioned
     // suggested name either way.
+    // Only known-safe types (PDF, raster images, video) may render inline. Anything else — including files
+    // stored before the upload allow-list existed (.html, .svg...) — is forced to download as an opaque blob, so
+    // an uploaded document can never execute script on this origin.
+    const inlineSafe = INLINE_SAFE_EXTENSIONS.has(
+      path.extname(filePath).toLowerCase(),
+    );
+    if (!inlineSafe) res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      `inline; filename="${path.basename(filePath)}"`,
+      `${inlineSafe ? 'inline' : 'attachment'}; filename="${path.basename(filePath)}"`,
     );
     res.sendFile(filePath);
   }

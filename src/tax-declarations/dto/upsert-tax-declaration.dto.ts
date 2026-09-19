@@ -5,6 +5,7 @@ import {
   IsNotEmpty,
   IsNumber,
   IsOptional,
+  IsString,
   IsUUID,
   Max,
   Min,
@@ -34,6 +35,7 @@ export class UpsertTaxDeclarationDto {
 
   @ApiProperty({ example: '2026-27' })
   @IsNotEmpty()
+  @IsString()
   financialYear!: string;
 
   @ApiPropertyOptional({ enum: TaxRegime, default: TaxRegime.NEW })
@@ -64,18 +66,55 @@ export class UpsertTaxDeclarationDto {
   @Min(0)
   @Max(SECTION_80D_CAP)
   section80D?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) section80E?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() @Min(0) section80G?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() otherDeductions?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() hraRentPaidAnnual?: number;
-  @ApiPropertyOptional() @IsOptional() @IsBoolean() isMetroCity?: boolean;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() ltaClaimed?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  section80E?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  section80G?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  otherDeductions?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  hraRentPaidAnnual?: number;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() isMetroCity?: boolean;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  ltaClaimed?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
   previousEmployerIncome?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() previousEmployerTDS?: number;
-  @ApiPropertyOptional() @IsOptional() @IsNumber() otherIncome?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  previousEmployerTDS?: number;
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  otherIncome?: number;
 
   @ApiPropertyOptional({
     enum: TaxDeclarationStatus,
