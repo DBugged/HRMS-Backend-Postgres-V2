@@ -19,6 +19,8 @@ import { Throttle } from '@nestjs/throttler';
 import { PayrollRunStatus, Role, User } from '@prisma/client';
 import { PayrollService } from './payroll.service';
 import { PayslipPdfService } from './payslip-pdf.service';
+import { PrivacyAuditService } from '../privacy/privacy-audit.service';
+import { auditSensitive } from '../common/sensitive-audit';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { AttendanceGapsQueryDto } from './dto/attendance-gaps-query.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
@@ -46,6 +48,7 @@ export class PayrollController {
   constructor(
     private readonly payrollService: PayrollService,
     private readonly payslipPdfService: PayslipPdfService,
+    private readonly privacyAudit: PrivacyAuditService,
   ) {}
 
   // No @Roles() — any authenticated caller, self/dept-scoped inline in
@@ -111,6 +114,13 @@ export class PayrollController {
         id,
         caller.organizationId,
       );
+    auditSensitive(this.privacyAudit, caller, {
+      action: 'PAYSLIP_DOWNLOADED',
+      category: 'PAYSLIP',
+      targetUserId: run.employeeId,
+      entity: 'PayrollRun',
+      entityId: id,
+    });
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename=${filename}`,

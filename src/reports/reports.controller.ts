@@ -1,7 +1,16 @@
 // Purpose: Exposes attendance/leave/payroll/employee/department/headcount/attrition reports as file exports.
 // Responsibilities: Validates each query DTO and delegates report generation/export to ReportsService.
 // Important: Base gate is ADMIN/HR/MANAGER, but payroll/employee/department/headcount/attrition routes further restrict to ADMIN/HR.
-import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Inject,
+  Query,
+  Res,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ExportAuditInterceptor } from '../common/sensitive-audit';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -36,6 +45,7 @@ type Caller = Omit<User, 'password'>;
 @Controller('reports')
 @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
 @UseGuards(RolesGuard)
+@UseInterceptors(ExportAuditInterceptor)
 // Every route here renders an Excel/CSV/PDF export, some over an org's
 // full history — a much tighter cap than the 100/min global default.
 @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })

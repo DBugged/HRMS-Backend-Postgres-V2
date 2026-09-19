@@ -1,6 +1,6 @@
 // Purpose: Single outbound-email gateway for the whole app, switchable between Resend and SMTP.
 // Responsibilities: Owns provider selection (EMAIL_DRIVER env var), lazy transporter/client construction,
-// and the dry-run/console fallback so a delivery failure never silently loses time-sensitive content.
+// and the dry-run/console fallback (recipient + subject only — the body can carry credentials and is never logged).
 // Important: send() never throws — any provider failure (or missing credentials) degrades to a console
 // dry-run log rather than propagating, so a bad SMTP/Resend config can never fail the caller's business
 // action. Only an explicit EMAIL_DRIVER=resend switches off the default SMTP path.
@@ -19,24 +19,6 @@ export interface SendEmailInput {
   html: string;
   cc?: string[];
   attachments?: EmailAttachment[];
-}
-
-// Strips HTML tags for a console-readable fallback body — used whenever the
-// email can't actually be delivered (SMTP unconfigured, or the send fails),
-// so time-sensitive content is never silently lost, only the delivery
-// channel. Ported verbatim from the old system's sendEmail.js.
-function stripHtml(html: string): string {
-  return (
-    (html || '')
-      // Drop <head>/<style>/hidden preheader so the dry-run log shows readable text, not CSS.
-      .replace(/<head[\s\S]*?<\/head>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '')
-      .replace(/&(zwnj|nbsp);/g, ' ')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/\n{2,}/g, '\n')
-      .trim()
-  );
 }
 
 // Which provider actually sends the mail. Same opt-in-driver convention as
@@ -91,7 +73,7 @@ export class EmailService {
     if (emailDriver() === 'resend') {
       if (!process.env.RESEND_API_KEY) {
         this.logger.log(
-          `[Email - DRY RUN, EMAIL_DRIVER=resend but RESEND_API_KEY not set] To: ${to}${ccNote} | Subject: ${subject}${attachmentNote}\n${stripHtml(html)}`,
+          `[Email - DRY RUN, EMAIL_DRIVER=resend but RESEND_API_KEY not set] To: ${to}${ccNote} | Subject: ${subject}${attachmentNote} | Body not logged (may contain credentials)`,
         );
         return { dryRun: true };
       }
@@ -112,7 +94,7 @@ export class EmailService {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(
-          `[Email] Resend failed to send to ${to} (Subject: ${subject}). Delivering content to console instead so it isn't lost:\n${stripHtml(html)}\nResend error: ${message}`,
+          `[Email] Resend failed to send to ${to} (Subject: ${subject}). Body not logged (may contain credentials). Resend error: ${message}`,
         );
         return { dryRun: true };
       }
@@ -120,7 +102,7 @@ export class EmailService {
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
       this.logger.log(
-        `[Email - DRY RUN, SMTP not configured] To: ${to}${ccNote} | Subject: ${subject}${attachmentNote}\n${stripHtml(html)}`,
+        `[Email - DRY RUN, SMTP not configured] To: ${to}${ccNote} | Subject: ${subject}${attachmentNote} | Body not logged (may contain credentials)`,
       );
       return { dryRun: true };
     }
@@ -138,7 +120,7 @@ export class EmailService {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(
-        `[Email] Failed to send to ${to} (Subject: ${subject}). Delivering content to console instead so it isn't lost:\n${stripHtml(html)}\nSMTP error: ${message}`,
+        `[Email] Failed to send to ${to} (Subject: ${subject}). Body not logged (may contain credentials). SMTP error: ${message}`,
       );
       return { dryRun: true };
     }

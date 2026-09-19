@@ -10,7 +10,7 @@ import { GetObjectCommand, NoSuchKey } from '@aws-sdk/client-s3';
 import { Public } from '../common/decorators/public.decorator';
 import { UPLOAD_ROOT, fileStorageDriver } from './file-storage.config';
 import { getS3Bucket, getS3Client } from './s3-client';
-import { verifyFileToken } from './file-token';
+import { isKeyAllowedForOrg, verifyFileToken } from './file-token';
 import { INLINE_SAFE_EXTENSIONS } from './file-signature';
 
 // Deliberately NOT behind the JwtAuthGuard — an <img src>, a
@@ -27,6 +27,10 @@ export class FileServeController {
     const claim = verifyFileToken(token);
     if (!claim) {
       throw new NotFoundException('This link is invalid or has expired.');
+    }
+    // The token's organizationId must agree with the key it points at (no cross-tenant or traversal keys).
+    if (!isKeyAllowedForOrg(claim.organizationId, claim.relativeKey)) {
+      throw new NotFoundException('Invalid file reference.');
     }
 
     // helmet's default X-Frame-Options: SAMEORIGIN (set in main.ts) blocks
@@ -87,10 +91,20 @@ export class FileServeController {
       const object = await getS3Client().send(
         new GetObjectCommand({ Bucket: getS3Bucket(), Key: relativeKey }),
       );
-      if (object.ContentType) res.setHeader('Content-Type', object.ContentType);
+      // Same policy as the disk path: only known-safe extensions render inline; everything else is an opaque
+      // download, and nosniff is always set.
+      const inlineSafe = INLINE_SAFE_EXTENSIONS.has(
+        path.extname(relativeKey).toLowerCase(),
+      );
+      if (inlineSafe && object.ContentType) {
+        res.setHeader('Content-Type', object.ContentType);
+      } else if (!inlineSafe) {
+        res.setHeader('Content-Type', 'application/octet-stream');
+      }
+      res.setHeader('X-Content-Type-Options', 'nosniff');
       res.setHeader(
         'Content-Disposition',
-        `inline; filename="${path.basename(relativeKey)}"`,
+        `${inlineSafe ? 'inline' : 'attachment'}; filename="${path.basename(relativeKey)}"`,
       );
       // Body is a Node Readable in the Node runtime (not a web
       // ReadableStream/Blob, which the SDK's types also allow for

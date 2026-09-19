@@ -1,4 +1,4 @@
-import { signFileToken } from '../files/file-token';
+import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 
 interface PreviousEmploymentEntry {
   documentUrl?: string;
@@ -19,7 +19,13 @@ export function signPersonalDataFileUrls(
     typeof signed.cancelledChequeUrl === 'string' &&
     signed.cancelledChequeUrl
   ) {
-    signed.cancelledChequeUrl = `/files/${signFileToken(organizationId, signed.cancelledChequeUrl)}`;
+    // Never sign a key that points outside this organization (client-supplied JSON).
+    signed.cancelledChequeUrl = isKeyAllowedForOrg(
+      organizationId,
+      signed.cancelledChequeUrl,
+    )
+      ? `/files/${signFileToken(organizationId, signed.cancelledChequeUrl)}`
+      : '';
   }
   if (Array.isArray(signed.previousEmployment)) {
     signed.previousEmployment = (
@@ -28,7 +34,9 @@ export function signPersonalDataFileUrls(
       entry && typeof entry.documentUrl === 'string' && entry.documentUrl
         ? {
             ...entry,
-            documentUrl: `/files/${signFileToken(organizationId, entry.documentUrl)}`,
+            documentUrl: isKeyAllowedForOrg(organizationId, entry.documentUrl)
+              ? `/files/${signFileToken(organizationId, entry.documentUrl)}`
+              : '',
           }
         : entry,
     );

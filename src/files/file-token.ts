@@ -116,3 +116,26 @@ export function verifyFileToken(token: string): FileTokenClaim | null {
     return null;
   }
 }
+
+const UUID_SEGMENT =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// A stored/signed relativeKey must stay inside the caller's own organization: no traversal segments, no absolute
+// or URL-like values, and — when the key is org-prefixed (every upload key is "<orgId>/<category>/<file>") — the
+// prefix must be the caller's own org. Legacy unprefixed keys are still tolerated so existing rows keep working.
+export function isKeyAllowedForOrg(
+  organizationId: string,
+  relativeKey: string,
+): boolean {
+  if (typeof relativeKey !== 'string' || !relativeKey) return false;
+  if (relativeKey.includes('\\') || relativeKey.includes('\0')) return false;
+  if (relativeKey.startsWith('/') || /^[a-z][a-z0-9+.-]*:/i.test(relativeKey)) {
+    return false;
+  }
+  const segments = relativeKey.split('/');
+  if (segments.some((s) => s === '..' || s === '.' || s === '')) return false;
+  if (UUID_SEGMENT.test(segments[0]) && segments[0] !== organizationId) {
+    return false;
+  }
+  return true;
+}

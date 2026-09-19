@@ -28,6 +28,18 @@ import { createLogShipperStream } from './log-shipper.stream';
 // Shipping and the local pino-pretty transport are mutually exclusive:
 // pretty-printing is a dev-only convenience, shipping is a prod concern,
 // and pino-http only accepts one of `transport` or a custom stream.
+// Signed file tokens (/files/<token>) and any ?token=/refreshToken= query values are bearer credentials — keep them
+// out of request logs.
+export function redactUrl(url: string | undefined): string | undefined {
+  if (typeof url !== 'string') return url;
+  return url
+    .replace(/(\/files\/)[^/?#\s]+/g, '$1[REDACTED]')
+    .replace(
+      /([?&](?:token|refreshToken|access_token|code)=)[^&#\s]*/gi,
+      '$1[REDACTED]',
+    );
+}
+
 export function loggerModuleOptions(): Params {
   const isTest = process.env.NODE_ENV === 'test';
   const isProd = process.env.NODE_ENV === 'production';
@@ -45,8 +57,19 @@ export function loggerModuleOptions(): Params {
         'req.body.currentPassword',
         'req.body.newPassword',
         'req.body.token',
+        'req.body.refreshToken',
+        'req.headers["x-refresh-token"]',
       ],
       censor: '[REDACTED]',
+    },
+    serializers: {
+      req: (req: Record<string, unknown>) => {
+        const out = pino.stdSerializers.req(
+          req as unknown as Parameters<typeof pino.stdSerializers.req>[0],
+        ) as unknown as Record<string, unknown>;
+        out.url = redactUrl(out.url as string | undefined);
+        return out;
+      },
     },
   };
 

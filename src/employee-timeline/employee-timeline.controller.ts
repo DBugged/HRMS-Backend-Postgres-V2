@@ -9,6 +9,7 @@ import {
   Query,
   Res,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -17,6 +18,7 @@ import { Role, User } from '@prisma/client';
 import { EmployeeTimelineService } from './employee-timeline.service';
 import { QueryTimelineDto } from './dto/query-timeline.dto';
 import { TIMELINE_CATEGORIES } from './timeline-events';
+import { ExportAuditInterceptor } from '../common/sensitive-audit';
 import { sendReportBranded } from '../reports/report-branding';
 import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -61,6 +63,7 @@ export class EmployeeTimelineController {
   }
 
   @Get('export/excel')
+  @UseInterceptors(ExportAuditInterceptor)
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
@@ -111,6 +114,7 @@ export class EmployeeTimelineController {
   }
 
   @Get('export/pdf')
+  @UseInterceptors(ExportAuditInterceptor)
   @SelfOrRoles('id', Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })

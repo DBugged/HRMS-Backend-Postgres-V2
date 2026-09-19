@@ -1,6 +1,7 @@
 import { Role } from '@prisma/client';
 
 export interface Actor {
+  id?: string;
   role: Role;
   departmentId: string | null;
 }
@@ -40,4 +41,17 @@ export function canManagerAccessEmployee(
   return (
     actor.departmentId !== null && actor.departmentId === targetDepartmentId
   );
+}
+
+/**
+ * A MANAGER with no department must NOT fall through to "unfiltered" (which
+ * would list every employee) — they are limited to their own record plus
+ * anyone who reports to them directly.
+ */
+export function noDepartmentManagerScope(
+  actor: Actor & { id?: string },
+): { OR: Array<{ id: string } | { reportingManagerId: string }> } | undefined {
+  if (actor.role !== Role.MANAGER || actor.departmentId) return undefined;
+  const id = actor.id ?? '';
+  return { OR: [{ id }, { reportingManagerId: id }] };
 }

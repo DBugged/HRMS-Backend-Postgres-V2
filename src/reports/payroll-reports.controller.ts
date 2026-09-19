@@ -1,7 +1,16 @@
 // Purpose: Exposes fixed payroll reports (salary register, bank transfer, income tax, PF, ESI, PT, CTC, Form16, audit) as file exports.
 // Responsibilities: Validates each query DTO and delegates report generation/export to PayrollReportsService.
 // Important: Entire controller is gated to ADMIN/HR and throttled as an expensive operation.
-import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Inject,
+  Query,
+  Res,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { ExportAuditInterceptor } from '../common/sensitive-audit';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -29,6 +38,7 @@ type Caller = Omit<User, 'password'>;
 @Controller('reports/payroll')
 @Roles(Role.ADMIN, Role.HR)
 @UseGuards(RolesGuard)
+@UseInterceptors(ExportAuditInterceptor)
 @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
 export class PayrollReportsController {
   constructor(

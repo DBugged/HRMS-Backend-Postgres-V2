@@ -2,7 +2,15 @@
 // Responsibilities: Validates DTOs and delegates all logic to LeaveTrackerService.
 // Important: Entire controller is gated to ADMIN/HR/MANAGER; MANAGER's forced own-department scoping is
 // enforced in the service, not here.
-import { Controller, Get, Inject, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Inject,
+  Query,
+  Res,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
@@ -11,6 +19,7 @@ import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
 import { QueryLeaveTrackerBalancesDto } from './dto/query-leave-tracker-balances.dto';
 import { ExportLeaveTrackerGridDto } from './dto/export-leave-tracker-grid.dto';
 import { ExportLeaveTrackerBalancesDto } from './dto/export-leave-tracker-balances.dto';
+import { ExportAuditInterceptor } from '../common/sensitive-audit';
 import { sendReportBranded } from '../reports/report-branding';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -52,6 +61,7 @@ export class LeaveTrackerController {
   }
 
   @Get('grid/export')
+  @UseInterceptors(ExportAuditInterceptor)
   async exportGrid(
     @Query() query: ExportLeaveTrackerGridDto,
     @CurrentUser() caller: Caller,
@@ -69,6 +79,7 @@ export class LeaveTrackerController {
   }
 
   @Get('balances/export')
+  @UseInterceptors(ExportAuditInterceptor)
   async exportBalances(
     @Query() query: ExportLeaveTrackerBalancesDto,
     @CurrentUser() caller: Caller,

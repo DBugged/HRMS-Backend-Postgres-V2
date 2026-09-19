@@ -62,6 +62,15 @@ export const TENANT_SCOPED_MODELS = new Set([
   'LetterOverride',
   'OrgListItem',
   'WorkSchedule',
+  // Data Privacy & Protection module (all organization-owned).
+  'PrivacySettings',
+  'PrivacyNoticeVersion',
+  'ConsentRecord',
+  'DataRequest',
+  'DataProcessor',
+  'DataSharingRecord',
+  'BreachIncident',
+  'PrivacyAuditLog',
 ]);
 
 // Operations whose `where` accepts arbitrary filters (so organizationId

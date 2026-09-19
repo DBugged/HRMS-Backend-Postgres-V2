@@ -6,9 +6,10 @@ import { PayrollReportsService } from './payroll-reports.service';
 import { CustomReportController } from './custom-report.controller';
 import { CustomReportService } from './custom-report.service';
 import { DashboardModule } from '../dashboard/dashboard.module';
+import { PrivacyModule } from '../privacy/privacy.module';
 
 @Module({
-  imports: [DashboardModule],
+  imports: [DashboardModule, PrivacyModule],
   controllers: [
     ReportsController,
     PayrollReportsController,

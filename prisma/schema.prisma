@@ -250,6 +250,14 @@ model Organization {
   letterTemplates          LetterTemplate[]
   letterOverrides          LetterOverride[]
   orgListItems             OrgListItem[]
+  privacySettings          PrivacySettings?
+  privacyNoticeVersions    PrivacyNoticeVersion[]
+  consentRecords           ConsentRecord[]
+  dataRequests             DataRequest[]
+  dataProcessors           DataProcessor[]
+  dataSharingRecords       DataSharingRecord[]
+  breachIncidents          BreachIncident[]
+  privacyAuditLogs         PrivacyAuditLog[]
 
   @@map("organizations")
 }
@@ -2547,4 +2555,276 @@ model EmploymentStatusHistory {
 
   @@index([organizationId, employeeId])
   @@map("employment_status_history")
+}
+
+
+// ---------------------------------------------------------------------------
+// Data Privacy & Protection (DPDP-aligned privacy controls). All tables are
+// tenant-scoped (organizationId). User references (userId, actorId, ...) are
+// plain ids without FKs on purpose: privacy records, and above all the
+// hash-chained PrivacyAuditLog, must outlive any change to the User row.
+// ---------------------------------------------------------------------------
+
+enum ConsentStatus {
+  GRANTED
+  WITHDRAWN
+}
+
+enum DataRequestType {
+  ACCESS
+  CORRECTION
+  UPDATE
+  EXPORT
+  ERASURE
+}
+
+enum DataRequestStatus {
+  SUBMITTED
+  UNDER_REVIEW
+  ACTION_REQUIRED
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+enum DpaStatus {
+  NOT_REQUIRED
+  PENDING
+  SIGNED
+}
+
+enum PrivacyRecordStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum PrivacyNoticeStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum BreachSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum BreachContainmentStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  CONTAINED
+}
+
+enum BreachNotificationStatus {
+  NOT_ASSESSED
+  NOT_REQUIRED
+  PENDING
+  NOTIFIED
+}
+
+enum BreachStatus {
+  OPEN
+  CLOSED
+}
+
+model PrivacySettings {
+  id             String       @id @default(uuid())
+  organizationId String       @unique
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  privacyOfficerName  String @default("")
+  privacyOfficerEmail String @default("")
+  privacyOfficerPhone String @default("")
+  grievanceInfo       String @default("")
+  // Response window for data-principal requests; dueDate = createdAt + this.
+  requestSlaDays      Int    @default(30)
+
+  processingPurposes Json @default("[]")
+  dataCategories     Json @default("[]")
+  retentionRules     Json @default("[]")
+  exportSettings     Json @default("{}")
+  deletionRules      Json @default("{}")
+
+  // Set once the built-in processor register entries were created, so an
+  // admin deleting one never sees it silently come back.
+  processorsSeededAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("privacy_settings")
+}
+
+model PrivacyNoticeVersion {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  version       Int
+  title         String
+  body          String
+  status        PrivacyNoticeStatus @default(DRAFT)
+  effectiveFrom DateTime?
+  publishedById String?
+  publishedAt   DateTime?
+  createdById   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, version])
+  @@index([organizationId, status])
+  @@map("privacy_notice_versions")
+}
+
+// Append-only: a withdrawal is a new row, never an update of the grant.
+model ConsentRecord {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  userId          String
+  purposeKey      String
+  status          ConsentStatus
+  noticeVersionId String?
+  source          String        @default("SELF_SERVICE")
+  at              DateTime      @default(now())
+
+  @@index([organizationId, userId, purposeKey, at])
+  @@map("consent_records")
+}
+
+model DataRequest {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  seqNo     Int
+  requestNo String
+  userId    String
+  type      DataRequestType
+  status    DataRequestStatus @default(SUBMITTED)
+  payload   Json              @default("{}")
+  // Outcome details: applied/controlled fields, deletion restrictions, export info.
+  result    Json              @default("{}")
+
+  assignedToId  String?
+  dueDate       DateTime
+  completedAt   DateTime?
+  resolution    String?
+  events        Json      @default("[]")
+  exportFileKey String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, seqNo])
+  @@index([organizationId, userId])
+  @@index([organizationId, status])
+  @@map("data_requests")
+}
+
+model DataProcessor {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name             String
+  service          String
+  dataProcessed    String              @default("")
+  purpose          String              @default("")
+  dpaStatus        DpaStatus           @default(PENDING)
+  status           PrivacyRecordStatus @default(ACTIVE)
+  isSystemDetected Boolean             @default(false)
+  notes            String              @default("")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("data_processors")
+}
+
+model DataSharingRecord {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  recipient      String
+  dataCategory   String
+  purpose        String              @default("")
+  integration    String              @default("")
+  status         PrivacyRecordStatus @default(ACTIVE)
+  isAutoRecorded Boolean             @default(false)
+  sharedAt       DateTime            @default(now())
+  recordedById   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, sharedAt])
+  @@map("data_sharing_records")
+}
+
+model BreachIncident {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  seqNo              Int
+  incidentNo         String
+  detectedAt         DateTime
+  reportedBy         String                   @default("")
+  affectedSystem     String                   @default("")
+  dataCategories     String[]                 @default([])
+  affectedUsersCount Int                      @default(0)
+  description        String                   @default("")
+  severity           BreachSeverity           @default(MEDIUM)
+  containmentStatus  BreachContainmentStatus  @default(NOT_STARTED)
+  investigation      String                   @default("")
+  actionsTaken       String                   @default("")
+  notificationStatus BreachNotificationStatus @default(NOT_ASSESSED)
+  resolution         String                   @default("")
+  status             BreachStatus             @default(OPEN)
+  closedAt           DateTime?
+  createdById        String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, seqNo])
+  @@index([organizationId, status])
+  @@map("breach_incidents")
+}
+
+// Append-only and hash-chained per organization: hash = sha256(prevHash +
+// canonical row). No update/delete route exists. meta never holds sensitive
+// values, only action descriptors (e.g. field names, counts).
+model PrivacyAuditLog {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  seq          Int      @default(autoincrement())
+  actorId      String?
+  actorRole    String   @default("")
+  action       String
+  category     String
+  targetUserId String?
+  entity       String?
+  entityId     String?
+  result       String   @default("SUCCESS")
+  ip           String   @default("")
+  userAgent    String   @default("")
+  meta         Json     @default("{}")
+  prevHash     String   @default("")
+  hash         String
+  createdAt    DateTime @default(now())
+
+  @@index([organizationId, seq])
+  @@index([organizationId, category, createdAt])
+  @@index([organizationId, targetUserId])
+  @@map("privacy_audit_logs")
 }

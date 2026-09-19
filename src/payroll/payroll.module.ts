@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PrivacyModule } from '../privacy/privacy.module';
 import { PayrollController } from './payroll.controller';
 import { PayrollService } from './payroll.service';
 import { PayslipPdfService } from './payslip-pdf.service';
@@ -21,6 +22,7 @@ import { LoansModule } from '../loans/loans.module';
     NotificationsModule,
     EmailTemplatesModule,
     LoansModule,
+    PrivacyModule,
   ],
   controllers: [PayrollController],
   providers: [

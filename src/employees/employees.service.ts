@@ -43,8 +43,12 @@ import { mergePersonalData } from './personal-data';
 import {
   Actor,
   canManagerAccessEmployee,
+  noDepartmentManagerScope,
   resolveDepartmentFilter,
 } from './employee-query-scope';
+import { maskPersonalData } from './personal-data-mask';
+import { PrivacyAuditService } from '../privacy/privacy-audit.service';
+import { auditSensitive } from '../common/sensitive-audit';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
@@ -70,6 +74,7 @@ export class EmployeesService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly privacyAudit: PrivacyAuditService,
   ) {}
 
   async create(
@@ -385,9 +390,11 @@ export class EmployeesService {
     organizationId: string,
   ) {
     const departmentId = resolveDepartmentFilter(actor, query.department);
+    const noDeptScope = noDepartmentManagerScope(actor);
     const where = {
       organizationId,
       ...(departmentId && { departmentId }),
+      ...(noDeptScope && { AND: [noDeptScope] }),
       ...(query.role && { role: query.role }),
       ...(query.search && {
         OR: [
@@ -414,7 +421,7 @@ export class EmployeesService {
     ]);
 
     return {
-      data: rows.map(toSafe),
+      data: rows.map((r) => toSafe(r, maskFor(actor, r.id))),
       total,
       page: query.page,
       limit: query.limit,
@@ -423,12 +430,34 @@ export class EmployeesService {
 
   async findOne(id: string, actor: Actor, organizationId: string) {
     const employee = await this.findByIdOrThrow(id, organizationId);
-    if (!canManagerAccessEmployee(actor, employee.departmentId)) {
+    const noDeptScope = noDepartmentManagerScope(actor);
+    const ownOrDirectReport =
+      !!noDeptScope &&
+      !!actor.id &&
+      (employee.id === actor.id || employee.reportingManagerId === actor.id);
+    if (
+      !ownOrDirectReport &&
+      !canManagerAccessEmployee(actor, employee.departmentId)
+    ) {
       throw new ForbiddenException(
         'You can only view employees in your own department.',
       );
     }
-    return toSafe(employee);
+    // Personal data of another employee read by HR/ADMIN/MANAGER — record who looked at whom (never the values).
+    if (actor.id && actor.id !== employee.id) {
+      auditSensitive(
+        this.privacyAudit,
+        { id: actor.id, role: actor.role, organizationId },
+        {
+          action: 'PERSONAL_DATA_VIEWED',
+          category: 'PERSONAL_DATA',
+          targetUserId: employee.id,
+          entity: 'User',
+          entityId: employee.id,
+        },
+      );
+    }
+    return toSafe(employee, maskFor(actor, employee.id));
   }
 
   async update(
@@ -791,7 +820,13 @@ function asString(value: unknown): string {
 // see file-token.ts), so every response that surfaces one signs it fresh,
 // same pattern as PolicyDocument's withSignedUrl / OrganizationSettings'
 // withSignedUrls.
-function toSafe(user: User) {
+// A MANAGER sees other employees' sensitive identifiers (PAN/Aadhaar/UAN/bank/passport) masked to the last 4
+// characters; HR/ADMIN and the employee themself see everything.
+function maskFor(actor: Actor, targetId: string): boolean {
+  return actor.role === Role.MANAGER && actor.id !== targetId;
+}
+
+function toSafe(user: User, mask = false) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
   const { password, resetPasswordToken, resetPasswordExpires, ...safe } = user;
   if (safe.profileImage) {
@@ -801,7 +836,9 @@ function toSafe(user: User) {
   }
   if (safe.personalData && typeof safe.personalData === 'object') {
     safe.personalData = signPersonalDataFileUrls(
-      safe.personalData as Record<string, unknown>,
+      mask
+        ? maskPersonalData(safe.personalData as Record<string, unknown>)
+        : (safe.personalData as Record<string, unknown>),
       safe.organizationId,
     ) as unknown as User['personalData'];
   }

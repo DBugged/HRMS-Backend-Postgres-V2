@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { PrivacyModule } from '../privacy/privacy.module';
 import { EmployeesController } from './employees.controller';
 import { EmployeesService } from './employees.service';
 import { EmployeeProfileService } from './employee-profile.service';
@@ -16,6 +17,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
     NotificationsModule,
     AuditLogModule,
     EmailTemplatesModule,
+    PrivacyModule,
   ],
   controllers: [EmployeesController],
   providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],

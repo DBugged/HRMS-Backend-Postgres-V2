@@ -25,7 +25,13 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
+import {
+  isKeyAllowedForOrg,
+  signFileToken,
+  SESSION_ASSET_TTL_SECONDS,
+} from '../files/file-token';
+import { PrivacyAuditService } from '../privacy/privacy-audit.service';
+import { auditSensitive } from '../common/sensitive-audit';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
@@ -103,6 +109,7 @@ export class EmployeeProfileService {
     private readonly emailService: EmailService,
     private readonly auditLogService: AuditLogService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly privacyAudit: PrivacyAuditService,
   ) {}
 
   private async findEmployeeOrThrow(id: string, organizationId: string) {
@@ -297,6 +304,32 @@ export class EmployeeProfileService {
         orderBy: { createdAt: 'desc' },
       }),
     ]);
+    if (actor.id !== id) {
+      const caller = {
+        id: actor.id,
+        role: actor.role,
+        organizationId,
+      };
+      auditSensitive(this.privacyAudit, caller, {
+        action: 'PERSONAL_DATA_VIEWED',
+        category: 'PERSONAL_DATA',
+        targetUserId: id,
+        entity: 'User',
+        entityId: id,
+      });
+      if (documents.length) {
+        auditSensitive(this.privacyAudit, caller, {
+          action: 'DOCUMENT_VIEWED',
+          category: 'DOCUMENT',
+          targetUserId: id,
+          entity: 'EmployeeDocument',
+          meta: {
+            documentIds: (documents as EmployeeDocument[]).map((d) => d.id),
+            count: documents.length,
+          },
+        });
+      }
+    }
     return {
       ...toSafe(employee),
       documents: documents.map(withSignedFileUrl),
@@ -417,6 +450,20 @@ export class EmployeeProfileService {
       where: { organizationId, employeeId: id, ...(category && { category }) },
       orderBy: { uploadedAt: 'desc' },
     });
+    // Signed links are minted here, so this is the "document accessed" moment (self-access is logged too).
+    if (docs.length) {
+      auditSensitive(
+        this.privacyAudit,
+        { id: actor.id, role: actor.role, organizationId },
+        {
+          action: 'DOCUMENT_VIEWED',
+          category: 'DOCUMENT',
+          targetUserId: id,
+          entity: 'EmployeeDocument',
+          meta: { documentIds: docs.map((d) => d.id), count: docs.length },
+        },
+      );
+    }
     return docs.map(withSignedFileUrl);
   }
 
@@ -435,6 +482,10 @@ export class EmployeeProfileService {
     // approved immediately instead of sitting PENDING forever. HR and
     // Employee documents still go through the normal review flow (see
     // assertMayAccessDocumentsFor).
+    // fileUrl is a client-supplied storage key that gets signed later: it must stay inside this organization.
+    if (!isKeyAllowedForOrg(organizationId, dto.fileUrl)) {
+      throw new BadRequestException('Invalid file reference.');
+    }
     const isFounderDoc = employee.role === Role.ADMIN;
     const category = dto.category ?? EmployeeDocumentCategory.DOCUMENT;
     const doc = await this.scopedPrisma.employeeDocument.create({
@@ -492,6 +543,17 @@ export class EmployeeProfileService {
       where: { id: docId, organizationId },
     });
     await this.refreshProfileCompletion(id, organizationId);
+    auditSensitive(
+      this.privacyAudit,
+      { id: actor.id, role: actor.role, organizationId },
+      {
+        action: 'DOCUMENT_DELETED',
+        category: 'DOCUMENT',
+        targetUserId: id,
+        entity: 'EmployeeDocument',
+        entityId: docId,
+      },
+    );
     return { success: true };
   }
 

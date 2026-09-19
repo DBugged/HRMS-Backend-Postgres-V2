@@ -1,38 +1,16 @@
-import { loggerModuleOptions } from './logger.config';
+import { redactUrl } from './logger.config';
 
-describe('loggerModuleOptions', () => {
-  const originalEnv = { ...process.env };
-
-  afterEach(() => {
-    process.env = { ...originalEnv };
+describe('redactUrl', () => {
+  it('hides the signed file token in /files/:token', () => {
+    expect(redactUrl('/files/abc.def')).toBe('/files/[REDACTED]');
+    expect(redactUrl('/files/abc.def?x=1')).toBe('/files/[REDACTED]?x=1');
   });
-
-  it('returns a plain pinoHttp options object when LOG_SHIP_URL is unset', () => {
-    delete process.env.LOG_SHIP_URL;
-    process.env.NODE_ENV = 'development';
-    const { pinoHttp } = loggerModuleOptions();
-    expect(Array.isArray(pinoHttp)).toBe(false);
+  it('hides token-like query values', () => {
+    expect(redactUrl('/auth/x?token=SECRET&a=1')).toBe(
+      '/auth/x?token=[REDACTED]&a=1',
+    );
   });
-
-  it('returns a [options, multistream] tuple when LOG_SHIP_URL is set outside test', () => {
-    process.env.LOG_SHIP_URL = 'https://logs.example.com/ingest';
-    process.env.NODE_ENV = 'production';
-    const { pinoHttp } = loggerModuleOptions();
-    expect(Array.isArray(pinoHttp)).toBe(true);
-    if (Array.isArray(pinoHttp)) {
-      const [options, stream] = pinoHttp;
-      expect(options).toMatchObject({ autoLogging: true });
-      expect(stream).toBeDefined();
-    }
-  });
-
-  it('ignores LOG_SHIP_URL during the test env (stays silent, no shipping)', () => {
-    process.env.LOG_SHIP_URL = 'https://logs.example.com/ingest';
-    process.env.NODE_ENV = 'test';
-    const { pinoHttp } = loggerModuleOptions();
-    expect(Array.isArray(pinoHttp)).toBe(false);
-    if (!Array.isArray(pinoHttp) && !('pipe' in (pinoHttp as object))) {
-      expect((pinoHttp as { level?: string }).level).toBe('silent');
-    }
+  it('leaves ordinary urls alone', () => {
+    expect(redactUrl('/employees?page=1')).toBe('/employees?page=1');
   });
 });

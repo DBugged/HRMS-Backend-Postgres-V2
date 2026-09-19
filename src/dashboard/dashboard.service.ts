@@ -16,6 +16,7 @@ import {
   OffboardingStatus,
   PayrollRunStatus,
   ReimbursementStatus,
+  Role,
   User,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -400,10 +401,15 @@ export class DashboardService {
     const today = localDateStr();
     const currentYear = new Date().getFullYear();
 
-    const deptEmployees = await this.scopedPrisma.user.findMany({
-      where: { organizationId, departmentId: actor.departmentId },
-      select: { id: true },
-    });
+    // A department-less MANAGER has no team: scope to nobody rather than to every unassigned user.
+    // (Other roles keep the documented null-department behaviour above.)
+    const deptEmployees =
+      actor.departmentId === null && actor.role === Role.MANAGER
+        ? []
+        : await this.scopedPrisma.user.findMany({
+            where: { organizationId, departmentId: actor.departmentId },
+            select: { id: true },
+          });
     const ids = deptEmployees.map((e) => e.id);
 
     const [

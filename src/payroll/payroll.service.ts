@@ -91,7 +91,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { paginate, skip } from '../common/pagination';
-import { assertManagerDeptScope } from '../common/dept-scope';
+import {
+  assertManagerDeptScope,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 import { mapWithConcurrency } from '../common/concurrency';
 import { issueDocumentNumber } from '../organizations/document-numbering';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
@@ -982,11 +985,12 @@ export class PayrollService {
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
     } else if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
-      const allowedIds = deptEmployees.map((e) => e.id);
+      // A department-less manager is scoped to nobody (departmentId: null would match every unassigned user).
+      const allowedIds = await deptScopedEmployeeIds(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+      );
       where.employeeId =
         query.employeeId && allowedIds.includes(query.employeeId)
           ? query.employeeId
@@ -1097,14 +1101,15 @@ export class PayrollService {
     }
 
     if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
+      const deptEmployeeIds = await deptScopedEmployeeIds(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+      );
       const deptRuns = await this.scopedPrisma.payrollRun.findMany({
         where: {
           organizationId,
-          employeeId: { in: deptEmployees.map((e) => e.id) },
+          employeeId: { in: deptEmployeeIds },
         },
         select: { id: true },
       });

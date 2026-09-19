@@ -4,8 +4,10 @@ import { LeaveTrackerService } from './leave-tracker.service';
 import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
 import { CompOffsModule } from '../comp-offs/comp-offs.module';
 
+import { PrivacyModule } from '../privacy/privacy.module';
+
 @Module({
-  imports: [LeaveBalancesModule, CompOffsModule],
+  imports: [LeaveBalancesModule, CompOffsModule, PrivacyModule],
   controllers: [LeaveTrackerController],
   providers: [LeaveTrackerService],
 })
