@@ -28,6 +28,10 @@ import {
   isValidPercentage,
 } from './salary-component-validation';
 import { SALARY_COMPONENT_DEFAULTS } from './salary-component-defaults';
+import {
+  STATUTORY_GATED_KEYS,
+  statutoryEnabledToday,
+} from './statutory-activation';
 import { AuditLogService } from '../audit-log/audit-log.service';
 
 function slugify(name: string): string {
@@ -149,7 +153,18 @@ export class SalaryComponentsService {
       where: { organizationId },
       orderBy: [{ displayOrder: 'asc' }, { createdAt: 'asc' }],
     });
-    return wrapAll(data);
+    // Statutory components show as active only while their Statutory Compliance switch is on (display-only).
+    const enabledToday = await statutoryEnabledToday(
+      this.scopedPrisma,
+      organizationId,
+    );
+    return wrapAll(
+      data.map((c) =>
+        c.statutoryKey && enabledToday.has(c.statutoryKey)
+          ? { ...c, isActive: enabledToday.get(c.statutoryKey) === true }
+          : c,
+      ),
+    );
   }
 
   validateFormula(dto: ValidateFormulaDto, organizationId: string) {
@@ -302,6 +317,16 @@ export class SalaryComponentsService {
 
   async toggle(id: string, organizationId: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+    // Statutory components follow their Statutory Compliance switch — flipping them here would
+    // contradict it (and payroll), so the switch there is the only control.
+    if (
+      existing.statutoryKey &&
+      STATUTORY_GATED_KEYS.includes(existing.statutoryKey)
+    ) {
+      throw new BadRequestException(
+        `${existing.name} is controlled by Statutory Compliance — enable or disable it there.`,
+      );
+    }
     await this.scopedPrisma.salaryComponent.updateMany({
       where: { id, organizationId },
       data: { isActive: !existing.isActive },

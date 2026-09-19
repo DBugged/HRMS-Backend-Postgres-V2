@@ -286,15 +286,11 @@ describe('Salary Components (e2e)', () => {
       .send({ displayOrder: 5 })
       .expect(200);
 
-    // toggling active/inactive is unaffected by isSystemDefault.
+    // statutory built-ins (PF) follow Statutory Compliance, so a manual toggle is rejected.
     await request(app.getHttpServer())
       .patch(`/salary-components/${pf!.id}/toggle`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .expect(200);
-    await request(app.getHttpServer())
-      .patch(`/salary-components/${pf!.id}/toggle`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(200);
+      .expect(400);
   });
 
   it('a custom (non-built-in) component can still be renamed normally', async () => {
