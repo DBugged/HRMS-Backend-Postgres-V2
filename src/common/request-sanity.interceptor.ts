@@ -18,13 +18,20 @@ import { Observable } from 'rxjs';
 export const MAX_SHORT_STRING = 2000;
 // Keys that legitimately hold long text (template bodies, HTML, messages, notes, addresses).
 export const MAX_LONG_STRING = 200000;
-const LONG_TEXT_KEY =
-  /html|body|text|message|content|description|remarks|reason|notes|comment|details|address|signature|intro|boundary/i;
+const LONG_TEXT_KEY = /html|body|text|content|signature|intro|boundary/i;
+// Short-note-like fields (reasons, remarks, comments, addresses...) get a moderate cap.
+export const MAX_NOTE_STRING = 10000;
+const NOTE_TEXT_KEY =
+  /message|description|remarks|reason|notes|comment|details|address/i;
 
 function findTooLong(value: unknown, key = '', depth = 0): string | null {
   if (depth > 12) return null;
   if (typeof value === 'string') {
-    const cap = LONG_TEXT_KEY.test(key) ? MAX_LONG_STRING : MAX_SHORT_STRING;
+    const cap = LONG_TEXT_KEY.test(key)
+      ? MAX_LONG_STRING
+      : NOTE_TEXT_KEY.test(key)
+        ? MAX_NOTE_STRING
+        : MAX_SHORT_STRING;
     return value.length > cap ? key || 'value' : null;
   }
   if (Array.isArray(value)) {

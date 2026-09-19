@@ -299,7 +299,7 @@ export class EmailTemplatesService {
             where: { id: { in: ccIds }, organizationId },
             select: { email: true },
           })
-        : Promise.resolve([]),
+        : Promise.resolve<{ email: string }[]>([]),
     ]);
     const orgVariables = {
       companyName: organization?.companyName ?? '',
@@ -312,7 +312,7 @@ export class EmailTemplatesService {
         organization?.emailLogoUrl,
       ),
     };
-    const cc = ccEmployees.map((e) => e.email);
+    const cc = (ccEmployees as { email: string }[]).map((e) => e.email);
 
     const results = await Promise.allSettled(
       employees.map(async (employee) => {

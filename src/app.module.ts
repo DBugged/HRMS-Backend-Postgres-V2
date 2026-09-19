@@ -80,10 +80,10 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     ThrottlerModule.forRootAsync({
       inject: [RedisThrottlerStorage],
       useFactory: (storage: RedisThrottlerStorage) => ({
-        // Default 100 requests/min per client; overridable (THROTTLE_LIMIT) so load/QA runs that legitimately
+        // Default 300 requests/min per client (a page load fires ~11 calls); overridable (THROTTLE_LIMIT) so load/QA runs that legitimately
         // exceed it can be pointed at a dedicated instance without touching the shipped default.
         throttlers: [
-          { ttl: 60_000, limit: Number(process.env.THROTTLE_LIMIT) || 100 },
+          { ttl: 60_000, limit: Number(process.env.THROTTLE_LIMIT) || 300 },
         ],
         storage: redisEnabled() ? storage : undefined,
       }),
