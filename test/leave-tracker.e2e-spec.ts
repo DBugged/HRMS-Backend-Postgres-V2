@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { compareEmployeeId } from '../src/common/employee-order';
 import * as dotenv from 'dotenv';
 
 dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
@@ -383,6 +384,10 @@ describe('Leave Tracker (e2e)', () => {
 
       const day8 = body.days.find((day) => day.day === 8);
       expect(day8?.holidayName).toBe('Test Holiday');
+
+      // Default order: employee ID ascending (natural), name as tiebreak.
+      const codes = body.employees.map((e) => e.employeeId);
+      expect(codes).toEqual([...codes].sort(compareEmployeeId));
 
       expect(body.employees.some((e) => e.id === empAId)).toBe(true);
       expect(body.employees.some((e) => e.id === outsideEmployeeId)).toBe(true);

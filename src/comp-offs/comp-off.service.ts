@@ -4,6 +4,7 @@
 // COMPOFF-type Leave is approved or cancelled, rather than duplicating comp-off math there.
 // Important: consumeForLeave() throws on insufficient balance rather than partially consuming — callers
 // must check availability before approving. sweepExpired() runs inline before reads, not on a cron.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -261,7 +262,7 @@ export class CompOffService {
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

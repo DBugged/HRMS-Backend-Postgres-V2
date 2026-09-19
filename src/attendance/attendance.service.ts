@@ -7,6 +7,7 @@
 // workArrangement/regularization fields owned by other write paths — see the inline comments throughout
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch since Attendance has no unique constraint on employeeId+date).
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -790,7 +791,7 @@ export class AttendanceService {
       include: {
         employee: { select: { id: true, name: true, employeeId: true } },
       },
-      orderBy: { date: 'desc' },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
     });
   }
 
@@ -954,7 +955,7 @@ export class AttendanceService {
               },
             },
           },
-          orderBy: { date: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

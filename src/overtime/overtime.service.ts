@@ -4,6 +4,7 @@
 // assertManagerDeptScope.
 // Important: rateMultiplier is fixed per type at creation and not recalculated later, so a later change to
 // RATE_MULTIPLIERS only affects new records, not historical ones.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -177,7 +178,7 @@ export class OvertimeService {
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
-          orderBy: { date: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

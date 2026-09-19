@@ -5,6 +5,7 @@
 // but is also exposed for HR to record/adjust a repayment manually.
 // Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan and MANAGER-own-dept-only checks
 // independently of findAll's filter, since it's reached directly by loan id rather than through the pre-filtered list.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -101,7 +102,7 @@ export class LoansService {
             // reads as blank even when closedById is actually set.
             closedBy: { select: { id: true, name: true } },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

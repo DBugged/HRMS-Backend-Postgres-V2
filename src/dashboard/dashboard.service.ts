@@ -6,6 +6,7 @@
 // Important: departmentHeadDashboard() intentionally ports a quirk from the old system — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
+import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AttendanceStatus,
@@ -270,7 +271,10 @@ export class DashboardService {
     const LOW_TOTAL_BALANCE_THRESHOLD = 5;
     const balanceTotalsByEmployee = new Map<
       string,
-      { employee: { id: string; name: string; employeeId: string }; totalDays: number }
+      {
+        employee: { id: string; name: string; employeeId: string };
+        totalDays: number;
+      }
     >();
     for (const b of leaveBalanceRows) {
       const entry = balanceTotalsByEmployee.get(b.employeeId) ?? {
@@ -808,6 +812,7 @@ export class DashboardService {
           joiningDate: true,
           personalData: true,
         },
+        orderBy: EMPLOYEE_ORDER_BY,
       }),
     ]);
 

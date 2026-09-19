@@ -9,6 +9,7 @@
 // with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
 // email goes to the employee's personalEmail, not their login email, since by process() time the account is
 // already deactivated.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -125,7 +126,7 @@ export class SettlementsService {
             include: {
               employee: { select: { id: true, name: true, employeeId: true } },
             },
-            orderBy: { createdAt: 'desc' },
+            orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
             skip: skip(query.page, query.limit),
             take: query.limit,
           })

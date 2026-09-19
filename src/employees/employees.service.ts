@@ -8,6 +8,7 @@
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check. officialEmail is normalized to null (not '') on clear since it's a unique column and empty
 // strings would collide across employees.
+import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -407,7 +408,7 @@ export class EmployeesService {
         where,
         skip: skip(query.page, query.limit),
         take: query.limit,
-        orderBy: { employeeId: 'asc' },
+        orderBy: EMPLOYEE_ORDER_BY,
       }),
       this.scopedPrisma.user.count({ where }),
     ]);

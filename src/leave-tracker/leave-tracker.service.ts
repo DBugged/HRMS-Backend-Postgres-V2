@@ -6,6 +6,7 @@
 // whole scoped list.
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
+import { EMPLOYEE_ORDER_BY, compareEmployees } from '../common/employee-order';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import {
   AllocationType,
@@ -140,7 +141,7 @@ export class LeaveTrackerService {
       this.scopedPrisma.user.findMany({
         where: { id: { in: employeeIds }, organizationId },
         select: { id: true, name: true, employeeId: true, joiningDate: true },
-        orderBy: { name: 'asc' },
+        orderBy: EMPLOYEE_ORDER_BY,
       }),
       this.scopedPrisma.attendance.findMany({
         where: {
@@ -173,6 +174,7 @@ export class LeaveTrackerService {
         },
       }),
     ]);
+    employees.sort(compareEmployees);
 
     const leavesByEmployee = new Map<string, typeof leaves>();
     for (const leave of leaves) {
@@ -278,8 +280,9 @@ export class LeaveTrackerService {
     const employees = await this.scopedPrisma.user.findMany({
       where: { id: { in: employeeIds }, organizationId },
       select: { id: true, name: true, employeeId: true },
-      orderBy: { name: 'asc' },
+      orderBy: EMPLOYEE_ORDER_BY,
     });
+    employees.sort(compareEmployees);
 
     const yearStart = `${query.year}-01-01`;
     const yearEnd = `${query.year}-12-31`;

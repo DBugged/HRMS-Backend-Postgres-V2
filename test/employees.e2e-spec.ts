@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { compareEmployeeId } from '../src/common/employee-order';
 import * as dotenv from 'dotenv';
 
 dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
@@ -29,7 +30,7 @@ interface DepartmentBody {
   id: string;
 }
 interface ListEmployeesBody {
-  data: { id: string; departmentId: string | null }[];
+  data: { id: string; employeeId: string; departmentId: string | null }[];
   total: number;
   page: number;
   limit: number;
@@ -350,6 +351,16 @@ describe('Employees + Departments (e2e)', () => {
       .get('/employees')
       .set('Authorization', `Bearer ${engEmployeeToken}`)
       .expect(403);
+  });
+
+  it('lists employees by employee ID ascending by default', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/employees')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const codes = (res.body as ListEmployeesBody).data.map((e) => e.employeeId);
+    expect(codes.length).toBeGreaterThan(1);
+    expect(codes).toEqual([...codes].sort(compareEmployeeId));
   });
 
   it('MANAGER listing employees only sees their own department, regardless of what they ask for', async () => {

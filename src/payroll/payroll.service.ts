@@ -10,6 +10,10 @@
 // them. afterPay()'s notification/email failures are swallowed deliberately — the payment transition has
 // already committed by that point and must not be rolled back by a PDF/email failure.
 import {
+  EMPLOYEE_ORDER_BY,
+  EMPLOYEE_RELATION_ORDER_BY,
+} from '../common/employee-order';
+import {
   BadRequestException,
   ForbiddenException,
   Inject,
@@ -1005,7 +1009,11 @@ export class PayrollService {
               },
             },
           },
-          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+          orderBy: [
+            ...EMPLOYEE_RELATION_ORDER_BY,
+            { year: 'desc' },
+            { month: 'desc' },
+          ],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),
@@ -1924,6 +1932,7 @@ export class PayrollService {
         // is the org's system/owner login rather than a paid role here.
         role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR] },
       },
+      orderBy: EMPLOYEE_ORDER_BY,
     });
   }
 

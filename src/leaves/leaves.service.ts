@@ -7,6 +7,7 @@
 // Important: review() implements a two-level workflow where a MANAGER's approval on a 2-level leave type
 // only records level-1 sign-off (status stays PENDING); only ADMIN/HR can give final approval. releaseHold()
 // is the single place that reverses whatever a leave's current status implied, shared by update() and cancel().
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -204,7 +205,7 @@ export class LeavesService {
             employee: { select: { id: true, name: true, employeeId: true } },
             leaveType: { select: { id: true, name: true, code: true } },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),
@@ -297,7 +298,7 @@ export class LeavesService {
         employee: { select: { id: true, name: true, employeeId: true } },
         leaveType: { select: { id: true, name: true, color: true } },
       },
-      orderBy: { startDate: 'asc' },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { startDate: 'asc' }],
     });
   }
 

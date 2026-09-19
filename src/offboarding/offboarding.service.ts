@@ -6,6 +6,7 @@
 // Important: complete() requires assetsReturned, accessRevoked, exitInterviewDone, and a linked settlement
 // all present before it will deactivate the account — the deactivation and case-completion write happen in
 // one transaction so the account is never left active with a "completed" case, or vice versa.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   Inject,
@@ -72,7 +73,7 @@ export class OffboardingService {
             employee: { select: { id: true, name: true, employeeId: true } },
             settlement: true,
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

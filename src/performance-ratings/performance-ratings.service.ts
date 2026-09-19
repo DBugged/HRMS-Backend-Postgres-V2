@@ -7,6 +7,7 @@
 // write directly through upsert() (publishing instantly, status APPROVED) for an employee who has no
 // reportingManagerId at all — once a manager is assigned, ADMIN/HR's role narrows to approve()/reject()
 // only, no override.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -93,7 +94,7 @@ export class PerformanceRatingsService {
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
-          orderBy: { financialYear: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { financialYear: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

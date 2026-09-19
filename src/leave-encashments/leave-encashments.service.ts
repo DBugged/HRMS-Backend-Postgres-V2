@@ -8,6 +8,7 @@
 // retried request can't double-deduct; there's no cross-request hold preventing two *different* pending
 // encashment requests from jointly overdrawing the same balance, same class of gap as leave application's
 // own affordability check.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -111,7 +112,7 @@ export class LeaveEncashmentsService {
             employee: { select: { id: true, name: true, employeeId: true } },
             leaveType: { select: { id: true, name: true, code: true } },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

@@ -3,6 +3,10 @@
 // Responsibilities: Owns per-report row/column shaping and MANAGER dept-scoping (always forced to the
 // caller's own department, never a caller-chosen one); delegates headcount/attrition math to
 // DashboardService.computeHeadcountTrend so the numbers stay consistent with the Executive Dashboard.
+import {
+  EMPLOYEE_ORDER_BY,
+  EMPLOYEE_RELATION_ORDER_BY,
+} from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import { LeaveStatus, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -73,7 +77,7 @@ export class ReportsService {
     const records = await this.scopedPrisma.attendance.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
-      orderBy: { date: 'asc' },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'asc' }],
     });
 
     const rows = records.map((r) => ({
@@ -127,7 +131,7 @@ export class ReportsService {
         employee: { select: { name: true, employeeId: true } },
         leaveType: { select: { name: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
     });
 
     const rows = leaves.map((l) => ({
@@ -189,7 +193,7 @@ export class ReportsService {
         employee: { select: { name: true, employeeId: true } },
         leaveType: { select: { name: true } },
       },
-      orderBy: { employeeId: 'asc' },
+      orderBy: EMPLOYEE_RELATION_ORDER_BY,
     });
 
     const rows = balances.map((b) => ({
@@ -347,7 +351,11 @@ export class ReportsService {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      orderBy: [
+        ...EMPLOYEE_RELATION_ORDER_BY,
+        { year: 'desc' },
+        { month: 'desc' },
+      ],
     });
 
     const rows = runs.map((p) => {
@@ -389,6 +397,7 @@ export class ReportsService {
     const employees = await this.scopedPrisma.user.findMany({
       where: { organizationId },
       include: { department: { select: { name: true } } },
+      orderBy: EMPLOYEE_ORDER_BY,
     });
 
     const rows = employees.map((e) => ({

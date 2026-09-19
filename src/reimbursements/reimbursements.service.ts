@@ -2,6 +2,7 @@
 // Responsibilities: Owns receipt-URL signing (withSignedReceipt, same relativeKey pattern as
 // DocumentsService.withSignedUrl) on every read, and department-scoped review authorization via
 // assertManagerDeptScope.
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -115,7 +116,7 @@ export class ReimbursementsService {
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),

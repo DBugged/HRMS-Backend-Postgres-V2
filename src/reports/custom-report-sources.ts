@@ -4,6 +4,10 @@ import {
   PayrollRunStatus,
   Prisma,
 } from '@prisma/client';
+import {
+  EMPLOYEE_ORDER_BY,
+  EMPLOYEE_RELATION_ORDER_BY,
+} from '../common/employee-order';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { formatDateDisplay } from '../payroll/format-date';
 
@@ -74,7 +78,7 @@ const employeesSource: CustomReportSource<
     return prisma.user.findMany({
       where,
       include: { department: { select: { name: true } } },
-      orderBy: { name: 'asc' },
+      orderBy: EMPLOYEE_ORDER_BY,
     });
   },
 };
@@ -112,7 +116,7 @@ const attendanceSource: CustomReportSource<
     return prisma.attendance.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
-      orderBy: { date: 'desc' },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
       take: FETCH_LIMIT,
     });
   },
@@ -155,7 +159,7 @@ const leavesSource: CustomReportSource<
         employee: { select: { name: true, employeeId: true } },
         leaveType: { select: { name: true } },
       },
-      orderBy: { startDate: 'desc' },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { startDate: 'desc' }],
       take: FETCH_LIMIT,
     });
   },
@@ -184,7 +188,11 @@ const payrollSource: CustomReportSource<
     return prisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      orderBy: [
+        ...EMPLOYEE_RELATION_ORDER_BY,
+        { year: 'desc' },
+        { month: 'desc' },
+      ],
       take: FETCH_LIMIT,
     });
   },

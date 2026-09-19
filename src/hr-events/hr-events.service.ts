@@ -8,6 +8,7 @@
 // same accepted precedent as the Marked Absent email in AttendanceService. The new-joiner announcement is
 // the one exception that matches the *full* calendar date (not just month/day) — unlike a birthday or
 // anniversary, it must fire exactly once, on the actual joining day, not every year after.
+import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory } from '@prisma/client';
@@ -82,6 +83,7 @@ export class HrEventsService {
 
     const employees = await this.scopedPrisma.user.findMany({
       where: { organizationId, isActive: true },
+      orderBy: EMPLOYEE_ORDER_BY,
       select: {
         id: true,
         name: true,

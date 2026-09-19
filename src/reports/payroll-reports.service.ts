@@ -6,6 +6,7 @@
 // than re-deriving current settings/statutory-overlay for the period, since a run's own snapshot is
 // authoritative for what applied at that time even if settings changed since. bankTransferReport's account
 // fields always render '-' since no bank-details fields exist on User yet (same gap as the payslip PDF).
+import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AuditModule,
@@ -78,7 +79,11 @@ export class PayrollReportsService {
     return this.scopedPrisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      orderBy: [
+        ...EMPLOYEE_RELATION_ORDER_BY,
+        { year: 'desc' },
+        { month: 'desc' },
+      ],
     });
   }
 
@@ -480,6 +485,7 @@ export class PayrollReportsService {
           status: { in: PAID_OUT_STATUSES },
         },
         include: { employee: { select: { name: true, employeeId: true } } },
+        orderBy: EMPLOYEE_RELATION_ORDER_BY,
       }),
       this.scopedPrisma.organization.findFirst({
         where: { id: organizationId },
