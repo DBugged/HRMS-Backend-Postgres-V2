@@ -452,10 +452,10 @@ describe('Documents (e2e)', () => {
       .expect(201);
     const body = res.body as RequirementBody;
     requirementId = body.id;
-    expect(body.displayOrder).toBe(4);
+    expect(body.displayOrder).toBe(10);
   });
 
-  it('registration seeds the 4 baseline requirements as optional', async () => {
+  it('registration seeds the baseline requirements as optional', async () => {
     const res = await request(app.getHttpServer())
       .get('/documents/requirements')
       .set('Authorization', `Bearer ${outsideEmployeeToken}`)
@@ -466,6 +466,12 @@ describe('Documents (e2e)', () => {
       'Aadhaar Card',
       'Passport Photo',
       'Educational Certificate',
+      'Address Proof',
+      'Bank Account Proof',
+      'Offer / Appointment Letter',
+      'Passport',
+      'Bank Statement',
+      'Salary Slips',
     ]) {
       const row = rows.find((r) => r.name === name);
       expect(row).toBeDefined();

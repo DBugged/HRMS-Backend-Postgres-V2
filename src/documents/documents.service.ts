@@ -40,11 +40,18 @@ type Actor = Omit<User, 'password'>;
 // Built-in (isSystemDefault): name locked and not deletable, like the seeded leave types and employee
 // categories. Seeded as optional (isMandatory: false) on purpose — an org decides which of them are actually
 // required; they were once hardcoded as always-mandatory and that was deliberately removed.
+// Ordered by grouping: identity, address, bank, education, employment.
 export const DEFAULT_DOCUMENT_REQUIREMENTS = [
-  'PAN Card',
   'Aadhaar Card',
+  'PAN Card',
+  'Passport',
   'Passport Photo',
+  'Address Proof',
+  'Bank Account Proof',
+  'Bank Statement',
   'Educational Certificate',
+  'Offer / Appointment Letter',
+  'Salary Slips',
 ];
 
 const HR_ROLES: Role[] = [Role.ADMIN, Role.HR];
