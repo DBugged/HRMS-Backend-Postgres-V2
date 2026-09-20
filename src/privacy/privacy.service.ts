@@ -581,16 +581,28 @@ export class PrivacyService {
     },
     actorId?: string,
   ) {
+    const key = {
+      organizationId,
+      recipient: input.recipient,
+      dataCategory: input.dataCategory,
+      purpose: input.purpose ?? '',
+      integration: input.integration ?? '',
+      isAutoRecorded: true,
+    };
+    // Refresh the existing auto-recorded row instead of adding one per export.
+    const existing = await this.scopedPrisma.dataSharingRecord.findFirst({
+      where: key,
+    });
+    if (existing) {
+      const sharedAt = new Date();
+      await this.scopedPrisma.dataSharingRecord.updateMany({
+        where: { id: existing.id, organizationId },
+        data: { sharedAt, recordedById: actorId ?? null },
+      });
+      return { ...existing, sharedAt };
+    }
     return this.scopedPrisma.dataSharingRecord.create({
-      data: {
-        organizationId,
-        recipient: input.recipient,
-        dataCategory: input.dataCategory,
-        purpose: input.purpose ?? '',
-        integration: input.integration ?? '',
-        isAutoRecorded: true,
-        recordedById: actorId ?? null,
-      },
+      data: { ...key, recordedById: actorId ?? null },
     });
   }
 

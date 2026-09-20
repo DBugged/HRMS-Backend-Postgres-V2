@@ -86,7 +86,7 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
   OFFBOARDING_INITIATED: 'Your last working day is {{lastWorkingDay}}.',
   SETTLEMENT_PROCESSED: 'Your full & final settlement has been processed.',
   DOCUMENT_STATUS: 'Your document "{{fileName}}" has been {{status}}.',
-  WELCOME_EMAIL: 'Your account is ready. Sign in with the details inside.',
+  WELCOME_EMAIL: 'Your account is ready. Set your password to get started.',
   LOGIN_CREDENTIALS_RESENT: 'Your login details are inside.',
   FOUNDER_ACCOUNT_WELCOME: 'Your organization is set up and ready to go.',
   PASSWORD_RESET:
@@ -131,20 +131,19 @@ const CREDENTIALS_BODY = emailBody({
   blocks: [
     hello,
     paragraph(
-      'Your account on {{companyName}} HRMS is ready. Here are your login details:',
+      'Your account on {{companyName}} HRMS is ready. Use the button below to set your password.',
     ),
     infoCard([
       row('Employee ID', '{{employeeId}}'),
       row('Email', '{{email}}'),
-      row('Password', '{{password}}'),
       row(
         'Login URL',
         '<a href="{{loginUrl}}" style="color:#5546e0;text-decoration:underline;">{{loginUrl}}</a>',
       ),
     ]),
-    button('{{loginUrl}}', 'Log in to your account'),
+    button('{{setPasswordUrl}}', 'Set your password'),
     notice(
-      "You'll be asked to set a new password the first time you sign in. Please keep these details confidential.",
+      'This link works once and expires in 7 days. Your password is never sent by email.',
       'warning',
     ),
   ],

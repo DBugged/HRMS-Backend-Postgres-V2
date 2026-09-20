@@ -31,6 +31,7 @@ import {
   SESSION_ASSET_TTL_SECONDS,
 } from '../files/file-token';
 import { validateOrgFields } from './org-validators';
+import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
 import { RedisCacheService } from '../common/redis-cache';
 import {
   previewDocumentNumber,
@@ -315,6 +316,27 @@ export class OrganizationSettingsService {
     if (section === 'registration' || section === 'contact') {
       const error = validateOrgFields(data);
       if (error) throw new BadRequestException(error);
+    }
+    // Keep the wizard consistent with PATCH /organizations/me.
+    const policiesTz = (data.policies as { timezone?: unknown } | undefined)
+      ?.timezone;
+    if (
+      section === 'policies' &&
+      policiesTz !== undefined &&
+      !isIanaTimeZone(policiesTz)
+    ) {
+      throw new BadRequestException(
+        'timezone must be a valid IANA timezone (e.g. Asia/Kolkata).',
+      );
+    }
+    if (section === 'profile' && typeof data.companyName === 'string') {
+      const name = data.companyName.trim();
+      if (name.length > 200 || /\p{Cc}/u.test(name)) {
+        throw new BadRequestException(
+          'companyName must be at most 200 characters with no control characters.',
+        );
+      }
+      data.companyName = name;
     }
     if (section === 'policies' && data.orgPayrollAttendancePrefs) {
       // attendancePayrollPrefs (read by AttendanceService.

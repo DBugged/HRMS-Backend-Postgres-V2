@@ -257,4 +257,46 @@ describe('Work Locations (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(404);
   });
+
+  it('rejects duplicate names case-insensitively after trimming (create and update)', async () => {
+    await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: '  hq mumbai ', latitude: 19.1, longitude: 72.9 })
+      .expect(409);
+    const other = await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Pune Office', latitude: 18.5, longitude: 73.8 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .put(`/work-locations/${(other.body as WorkLocationBody).id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'HQ MUMBAI' })
+      .expect(409);
+  });
+
+  it('DELETE returns 409 while a department or employee uses the location', async () => {
+    const loc = await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'In Use Site', latitude: 12.9, longitude: 77.6 })
+      .expect(201);
+    const id = (loc.body as WorkLocationBody).id;
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Ops', code: 'OPS' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/departments/${(dept.body as { id: string }).id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ workLocationId: id })
+      .expect(200);
+    const res = await request(app.getHttpServer())
+      .delete(`/work-locations/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(409);
+    expect(JSON.stringify(res.body)).toContain('Deactivate');
+  });
 });

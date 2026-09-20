@@ -1,9 +1,26 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsNotEmpty, MinLength } from 'class-validator';
+import { Transform } from 'class-transformer';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class RegisterDto {
   @ApiProperty({ example: 'Acme Corp' })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() : value,
+  )
+  @IsString()
   @IsNotEmpty()
+  @MaxLength(200)
+  // Same rule as UpdateOrganizationDto.name: no control characters.
+  @Matches(/^[^\p{Cc}]*$/u, {
+    message: 'organizationName must not contain control characters',
+  })
   organizationName!: string;
 
   @ApiProperty({ example: 'Jane Founder' })

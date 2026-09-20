@@ -104,6 +104,8 @@ describe('Custom Report Builder (e2e)', () => {
   });
 
   afterAll(async () => {
+    // Let fire-and-forget audit/timeline writes settle so TRUNCATE does not deadlock with them.
+    await new Promise((r) => setTimeout(r, 500));
     await prisma.$executeRawUnsafe(
       'TRUNCATE TABLE "refresh_tokens", "users", "departments", "organizations" RESTART IDENTITY CASCADE',
     );

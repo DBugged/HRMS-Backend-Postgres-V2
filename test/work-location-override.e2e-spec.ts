@@ -104,6 +104,8 @@ describe('Per-employee work location + personalData encryption (e2e)', () => {
   });
 
   afterAll(async () => {
+    // Let fire-and-forget audit/timeline writes settle so TRUNCATE does not deadlock with them.
+    await new Promise((r) => setTimeout(r, 500));
     await prisma.$executeRawUnsafe(
       'TRUNCATE TABLE "employee_movements", "employee_timeline", "refresh_tokens", "users", "departments", "work_locations", "organizations" RESTART IDENTITY CASCADE',
     );

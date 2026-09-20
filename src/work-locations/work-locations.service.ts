@@ -6,6 +6,7 @@
 // derived summary (latitude/longitude/radiusMeters) is the single source of truth for circle fences.
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -39,6 +40,7 @@ export class WorkLocationsService {
     const boundary = dto.boundary;
 
     this.assertValidGeometry(fenceType, boundary, dto.latitude, dto.longitude);
+    await this.assertNameUnique(dto.name, organizationId);
 
     const summary = deriveCircleSummary(
       fenceType,
@@ -51,7 +53,7 @@ export class WorkLocationsService {
     const location = await this.scopedPrisma.workLocation.create({
       data: {
         organizationId,
-        name: dto.name,
+        name: dto.name.trim(),
         address: dto.address ?? '',
         description: dto.description ?? '',
         state: dto.state ?? '',
@@ -126,6 +128,9 @@ export class WorkLocationsService {
     actorId?: string,
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+    if (dto.name !== undefined) {
+      await this.assertNameUnique(dto.name, organizationId, id);
+    }
 
     const GEOMETRY_KEYS = [
       'fenceType',
@@ -179,7 +184,7 @@ export class WorkLocationsService {
     await this.scopedPrisma.workLocation.updateMany({
       where: { id, organizationId },
       data: {
-        ...(dto.name !== undefined && { name: dto.name }),
+        ...(dto.name !== undefined && { name: dto.name.trim() }),
         ...(dto.address !== undefined && { address: dto.address }),
         ...(dto.description !== undefined && {
           description: dto.description,
@@ -205,6 +210,19 @@ export class WorkLocationsService {
 
   async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
+    const [departments, employees] = await Promise.all([
+      this.scopedPrisma.department.count({
+        where: { workLocationId: id, organizationId },
+      }),
+      this.scopedPrisma.user.count({
+        where: { workLocationId: id, organizationId },
+      }),
+    ]);
+    if (departments > 0 || employees > 0) {
+      throw new ConflictException(
+        `Work location is in use by ${departments} department(s) and ${employees} employee(s). Deactivate it instead of deleting.`,
+      );
+    }
     await this.scopedPrisma.workLocation.deleteMany({
       where: { id, organizationId },
     });
@@ -221,6 +239,26 @@ export class WorkLocationsService {
     }
 
     return { message: 'Work location deleted' };
+  }
+
+  // Case-insensitive, trimmed name uniqueness within the org (excluding self on update).
+  private async assertNameUnique(
+    name: string,
+    organizationId: string,
+    excludeId?: string,
+  ) {
+    const dup = await this.scopedPrisma.workLocation.findFirst({
+      where: {
+        organizationId,
+        name: { equals: name.trim(), mode: 'insensitive' },
+        ...(excludeId && { id: { not: excludeId } }),
+      },
+      select: { id: true },
+    });
+    if (dup)
+      throw new ConflictException(
+        'A work location with this name already exists.',
+      );
   }
 
   private assertValidGeometry(

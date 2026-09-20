@@ -413,10 +413,15 @@ export class EmailTemplatesService {
     variables: Record<string, string>,
     fallback: { subject: string; html: string },
   ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
-    const template = await this.findActiveByOccasion(
-      occasionKey,
-      organizationId,
-    );
+    const stored = await this.findActiveByOccasion(occasionKey, organizationId);
+    // A stored welcome/credentials template that still uses the retired {{password}} placeholder predates
+    // set-password links; never render it (it would email a credential or leave a blank row) — use the code default.
+    const template =
+      stored &&
+      /\{\{\s*password\s*\}\}/.test(stored.bodyHtml) &&
+      !('password' in variables)
+        ? null
+        : stored;
     if (!template) {
       return {
         subject: fallback.subject,

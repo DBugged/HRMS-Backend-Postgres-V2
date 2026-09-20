@@ -33,6 +33,7 @@ import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { frontendUrl } from '../common/frontend-url';
+import { escapeHtml } from '../email-templates/email-layout';
 import { mapWithConcurrency } from '../common/concurrency';
 import { skip } from '../common/pagination';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
@@ -199,12 +200,17 @@ export class EmployeesService {
         select: { companyName: true },
       });
       const companyName = org?.companyName || 'the company';
+      // The email carries a one-time set-password link, never the password itself.
+      const setPasswordUrl = await this.issueSetPasswordLink(
+        user.id,
+        organizationId,
+      );
       const fallbackHtml = welcomeEmailHtml({
         companyName,
         name: user.name,
         employeeId: user.employeeId,
         email: user.email,
-        password: generatedPassword,
+        setPasswordUrl,
       });
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,
@@ -214,7 +220,7 @@ export class EmployeesService {
           companyName,
           employeeId: user.employeeId,
           email: user.email,
-          password: generatedPassword,
+          setPasswordUrl,
           loginUrl: `${frontendUrl()}/login`,
         },
         { subject: `Welcome to ${companyName} HRMS`, html: fallbackHtml },
@@ -251,6 +257,26 @@ export class EmployeesService {
     return { employee: toSafe(user), generatedPassword };
   }
 
+  // One-time set-password link for welcome/resend emails: only the SHA-256 of the token is stored (same
+  // hashing and /reset-password/:token flow as forgot-password, see AuthService.resetPassword) with a 7-day expiry.
+  private async issueSetPasswordLink(
+    userId: string,
+    organizationId: string,
+  ): Promise<string> {
+    const rawToken = crypto.randomBytes(32).toString('hex');
+    await this.scopedPrisma.user.updateMany({
+      where: { id: userId, organizationId },
+      data: {
+        resetPasswordToken: crypto
+          .createHash('sha256')
+          .update(rawToken)
+          .digest('hex'),
+        resetPasswordExpires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    });
+    return `${frontendUrl()}/reset-password/${rawToken}`;
+  }
+
   // ADMIN/HR only (enforced in the controller) — used once an employee's
   // officialEmail has been set on their profile (it's normally unknown at
   // creation time) to also get them their login details there. The
@@ -279,12 +305,13 @@ export class EmployeesService {
       select: { companyName: true },
     });
     const companyName = org?.companyName || 'the company';
+    const setPasswordUrl = await this.issueSetPasswordLink(id, organizationId);
     const fallbackHtml = welcomeEmailHtml({
       companyName,
       name: employee.name,
       employeeId: employee.employeeId,
       email: employee.email,
-      password: generatedPassword,
+      setPasswordUrl,
     });
     const rendered = await this.emailTemplatesService.renderOccasion(
       organizationId,
@@ -294,7 +321,7 @@ export class EmployeesService {
         companyName,
         employeeId: employee.employeeId,
         email: employee.email,
-        password: generatedPassword,
+        setPasswordUrl,
         loginUrl: `${frontendUrl()}/login`,
       },
       {
@@ -1006,18 +1033,19 @@ function welcomeEmailHtml(params: {
   name: string;
   employeeId: string;
   email: string;
-  password: string;
+  setPasswordUrl: string;
 }): string {
   const loginUrl = `${frontendUrl()}/login`;
+  const name = escapeHtml(params.name);
+  const company = escapeHtml(params.companyName);
   return `
-    <p>Hello ${params.name},</p>
-    <p>Your account on ${params.companyName} HRMS is ready. Here are your login details:</p>
+    <p>Hello ${name},</p>
+    <p>Your account on ${company} HRMS is ready. Here are your login details:</p>
     <p>
       Login URL: <a href="${loginUrl}">${loginUrl}</a><br>
-      Employee ID: <strong>${params.employeeId}</strong><br>
-      Email: <strong>${params.email}</strong><br>
-      Password: <strong>${params.password}</strong>
+      Employee ID: <strong>${escapeHtml(params.employeeId)}</strong><br>
+      Email: <strong>${escapeHtml(params.email)}</strong>
     </p>
-    <p>You'll be asked to set a new password the first time you sign in. Please keep these details confidential.</p>
+    <p><a href="${params.setPasswordUrl}">Set your password</a> (this link works once and expires in 7 days).</p>
   `;
 }

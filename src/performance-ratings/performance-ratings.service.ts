@@ -69,8 +69,15 @@ export class PerformanceRatingsService {
       where.employeeId = actor.id;
       where.status = PerformanceRatingStatus.APPROVED;
     } else if (actor.role === Role.MANAGER) {
+      // Own department OR direct reports (a reportee may sit in another department).
       const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
+        where: {
+          organizationId,
+          OR: [
+            { departmentId: actor.departmentId },
+            { reportingManagerId: actor.id },
+          ],
+        },
         select: { id: true },
       });
       const deptEmployeeIds = new Set(deptEmployees.map((e) => e.id));
@@ -182,9 +189,15 @@ export class PerformanceRatingsService {
     if (!employee) throw new NotFoundException('Employee not found.');
 
     if (actor.role === Role.MANAGER) {
-      if (employee.departmentId !== actor.departmentId) {
+      if (employee.id === actor.id) {
+        throw new ForbiddenException('You cannot rate yourself.');
+      }
+      if (
+        employee.departmentId !== actor.departmentId &&
+        employee.reportingManagerId !== actor.id
+      ) {
         throw new ForbiddenException(
-          'You may only rate employees in your own department.',
+          'You may only rate employees in your own department or who report to you.',
         );
       }
     } else if (employee.reportingManager?.role === Role.MANAGER) {

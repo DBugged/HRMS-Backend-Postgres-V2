@@ -37,6 +37,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { effectiveWorkLocation } from '../common/effective-work-location';
+import { signFileToken } from '../files/file-token';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
@@ -184,6 +185,16 @@ interface ImportRow {
   outTime?: unknown;
   inLocation?: unknown;
   outLocation?: unknown;
+}
+
+// Selfies are stored as the storage relativeKey (POST /files/upload/selfies) — not servable as-is, so every read
+// signs them, like receipts/documents. External http(s) links and already-signed /files/ URLs pass through.
+function signSelfieKey(
+  organizationId: string,
+  key: string | null,
+): string | null {
+  if (!key || /^(https?:\/\/|\/files\/)/i.test(key)) return key;
+  return `/files/${signFileToken(organizationId, key)}`;
 }
 
 @Injectable()
@@ -986,7 +997,18 @@ export class AttendanceService {
                 fence,
               )
             : null;
-        return { ...record, checkinInsideGeoFence };
+        return {
+          ...record,
+          checkinSelfieUrl: signSelfieKey(
+            record.organizationId,
+            record.checkinSelfieUrl,
+          ),
+          checkoutSelfieUrl: signSelfieKey(
+            record.organizationId,
+            record.checkoutSelfieUrl,
+          ),
+          checkinInsideGeoFence,
+        };
       }),
     };
   }
@@ -1471,6 +1493,19 @@ export class AttendanceService {
         failed.push({
           row: rowNum,
           error: `Date out of range: ${date} (must be within 2 years in the past and 1 year in the future)`,
+        });
+        return;
+      }
+      // executeImportBatch does new Date(inTime/outTime) and silently counts a throw as a row error, so an
+      // unparseable time (e.g. bare "09:00") must be caught here or the batch "executes" with 0 rows imported.
+      const badTime = (['inTime', 'outTime'] as const).find((f) => {
+        const v = asString(row[f]).trim();
+        return v !== '' && Number.isNaN(new Date(v).getTime());
+      });
+      if (badTime) {
+        failed.push({
+          row: rowNum,
+          error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss)`,
         });
         return;
       }

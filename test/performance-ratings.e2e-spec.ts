@@ -549,4 +549,62 @@ describe('Performance Ratings (e2e)', () => {
       expect((res.body as RatingBody).status).toBe('APPROVED');
     });
   });
+
+  describe('manager scoping beyond department', () => {
+    it('MANAGER rates a cross-department reportee and sees them listed; self-rating and unrelated manager blocked', async () => {
+      const other = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Cross Reportee',
+          email: 'perf-e2e-cross@example.test',
+          reportingManagerId: managerId,
+        });
+      const crossId = (other.body as EmployeeCreateBody).employee.id;
+      await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ employeeId: crossId, financialYear: '2026-27', rating: 3 })
+        .expect(201);
+      const list = await request(app.getHttpServer())
+        .get('/performance-ratings')
+        .query({ employeeId: crossId })
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      expect(
+        (list.body as { data: RatingBody[] }).data.map((r) => r.employeeId),
+      ).toContain(crossId);
+
+      await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ employeeId: managerId, financialYear: '2026-27', rating: 5 })
+        .expect(403);
+
+      const dept2 = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Sales', code: 'SLS' });
+      const m2 = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Other Manager',
+          email: 'perf-e2e-mgr2@example.test',
+          role: 'MANAGER',
+          departmentId: (dept2.body as { id: string }).id,
+        });
+      const login2 = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'perf-e2e-mgr2@example.test',
+          password: (m2.body as EmployeeCreateBody).generatedPassword,
+        });
+      await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${(login2.body as AuthBody).accessToken}`)
+        .send({ employeeId: crossId, financialYear: '2026-27', rating: 2 })
+        .expect(403);
+    });
+  });
 });

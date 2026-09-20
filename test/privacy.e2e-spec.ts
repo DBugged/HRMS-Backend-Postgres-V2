@@ -12,6 +12,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { decryptPersonalData } from '../src/common/personal-data-crypto';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { PrivacyService } from '../src/privacy/privacy.service';
 
 // Dummy data only. Cleanup TRUNCATEs the test DB (never the dev DB) and removes files this suite created.
 
@@ -960,5 +961,21 @@ describe('Data Privacy & Protection (e2e)', () => {
       expect(b.brokenAtIndex).toBe(3);
       expect(b.brokenRowId).toBe(target!.id);
     });
+  });
+
+  it('auto-recorded sharing is upserted: two exports yield one row', async () => {
+    const svc = app.get(PrivacyService);
+    const input = {
+      recipient: 'EPFO (dedupe test)',
+      dataCategory: 'STATUTORY',
+      purpose: 'PF statutory export file',
+      integration: 'export',
+    };
+    await svc.recordSystemSharing(orgId, input);
+    await svc.recordSystemSharing(orgId, input);
+    const rows = await prisma.dataSharingRecord.findMany({
+      where: { organizationId: orgId, recipient: input.recipient },
+    });
+    expect(rows).toHaveLength(1);
   });
 });
