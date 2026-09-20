@@ -10,6 +10,7 @@ import cookieParser from 'cookie-parser';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
+import { decryptPersonalData } from '../src/common/personal-data-crypto';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 // Dummy data only. Cleanup TRUNCATEs the test DB (never the dev DB) and removes files this suite created.
@@ -152,6 +153,8 @@ describe('Data Privacy & Protection (e2e)', () => {
         processingPurposes: { key: string; legalBasis: string }[];
         retentionRules: {
           periodMonths: number | null;
+          action: string;
+          basis: string;
           legalReviewRequired: boolean;
         }[];
         dataCategories: { fields: unknown[] }[];
@@ -168,7 +171,11 @@ describe('Data Privacy & Protection (e2e)', () => {
       expect(s.retentionRules.length).toBeGreaterThan(0);
       expect(
         s.retentionRules.every(
-          (r) => r.periodMonths === null && r.legalReviewRequired,
+          (r) =>
+            typeof r.periodMonths === 'number' &&
+            r.legalReviewRequired &&
+            r.basis === 'Suggested default — confirm with legal counsel' &&
+            (r.action === 'ARCHIVE' || r.action === 'MANUAL_REVIEW'),
         ),
       ).toBe(true);
       expect(s.dataCategories.every((c) => c.fields.length > 0)).toBe(true);
@@ -475,7 +482,8 @@ describe('Data Privacy & Protection (e2e)', () => {
         'panNumber',
       ]);
       const user = await prisma.user.findFirst({ where: { id: e1Id } });
-      const pd = user?.personalData as {
+      // Sensitive keys are encrypted at rest; decrypt to compare.
+      const pd = decryptPersonalData(user?.personalData) as {
         panNumber: string;
         bankAccountNo: string;
       };
@@ -691,6 +699,21 @@ describe('Data Privacy & Protection (e2e)', () => {
           },
         },
       });
+      // The suggested default employee_profile retention (96 months) would rightly restrict erasure of an
+      // active employee; clear it so this case exercises the unrestricted anonymization path.
+      const cur = (await http().get('/privacy/settings').set(auth(adminToken)))
+        .body as { retentionRules: { dataType: string }[] };
+      await http()
+        .put('/privacy/settings')
+        .set(auth(adminToken))
+        .send({
+          retentionRules: cur.retentionRules.map((r) =>
+            r.dataType === 'employee_profile'
+              ? { ...r, periodMonths: null }
+              : r,
+          ),
+        })
+        .expect(200);
       const created = await http()
         .post('/privacy/me/requests')
         .set(auth(e3Token))
@@ -710,7 +733,10 @@ describe('Data Privacy & Protection (e2e)', () => {
 
       const user = await prisma.user.findFirst({ where: { id: e3Id } });
       expect(user).not.toBeNull();
-      const pd = user!.personalData as Record<string, unknown>;
+      const pd = decryptPersonalData(user!.personalData) as Record<
+        string,
+        unknown
+      >;
       expect(pd.fatherName).toBeUndefined();
       expect(pd.bloodGroup).toBeUndefined();
       expect(pd.panNumber).toBe('PQRST1234U'); // statutory/required data untouched
@@ -830,7 +856,8 @@ describe('Data Privacy & Protection (e2e)', () => {
       rules: { status: string }[];
     };
     expect(rules.reportOnly).toBe(true);
-    expect(rules.rules.every((r) => r.status === 'NOT_CONFIGURED')).toBe(true);
+    // Suggested defaults are pre-filled, so nothing is NOT_CONFIGURED out of the box.
+    expect(rules.rules.some((r) => r.status !== 'NOT_CONFIGURED')).toBe(true);
     await http()
       .get('/privacy/retention-review')
       .set(auth(hrToken))

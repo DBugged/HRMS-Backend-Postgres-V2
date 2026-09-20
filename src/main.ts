@@ -7,6 +7,7 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { initSentry } from './common/sentry';
+import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
 
 // Called before NestFactory.create() so an error during module
 // bootstrapping itself (a bad Prisma connection string, a provider that
@@ -15,6 +16,8 @@ import { initSentry } from './common/sentry';
 initSentry();
 
 async function bootstrap() {
+  // Fail fast in production when PERSONAL_DATA_ENCRYPTION_KEY is missing/invalid.
+  assertPersonalDataKeyConfigured();
   // bufferLogs holds Nest's own startup logs (module init order, route
   // registration, etc.) until app.useLogger() below installs pino as the
   // sink, instead of emitting them through Nest's default plain-text

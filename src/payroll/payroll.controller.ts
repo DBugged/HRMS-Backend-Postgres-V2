@@ -1,6 +1,6 @@
 // Purpose: Exposes the payroll run lifecycle — draft, calculate, adjust, verify/approve/lock/pay/unlock — plus payslip PDF download.
 // Responsibilities: Validates DTOs, streams payslip PDFs via raw @Res(), and delegates all logic to PayrollService/PayslipPdfService.
-// Important: Reads self/dept-scope inline in the service (EMPLOYEE own-only, MANAGER own-department); every write is ADMIN/HR.
+// Important: Reads self/dept-scope inline in the service (EMPLOYEE/MANAGER own-only); every write is ADMIN/HR.
 import {
   BadRequestException,
   Body,
@@ -52,7 +52,7 @@ export class PayrollController {
   ) {}
 
   // No @Roles() — any authenticated caller, self/dept-scoped inline in
-  // the service (EMPLOYEE forced to own, MANAGER to own department).
+  // the service (EMPLOYEE and MANAGER forced to their own payslips; HR/ADMIN org-wide).
   @Get()
   findAll(@Query() query: QueryPayrollDto, @CurrentUser() caller: Caller) {
     return this.payrollService.findAll(query, caller, caller.organizationId);
@@ -62,7 +62,7 @@ export class PayrollController {
   // route param — same reason as Holidays' bulk-import and LeaveTypes'
   // eligible/me routes.
   @Get('history')
-  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   history(@Query() query: QueryPayrollDto, @CurrentUser() caller: Caller) {
     return this.payrollService.getHistory(query, caller, caller.organizationId);
@@ -84,8 +84,8 @@ export class PayrollController {
   }
 
   // No @Roles() — self/dept/org scoping all enforced inline in the
-  // service: EMPLOYEE 403s on anyone else's payslip, MANAGER is
-  // dept-scoped (matches findAll above), ADMIN/HR unrestricted.
+  // service: EMPLOYEE and MANAGER 403 on anyone else's payslip,
+  // ADMIN/HR unrestricted.
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.payrollService.findOne(id, caller, caller.organizationId);

@@ -422,6 +422,11 @@ model User {
   departmentId String?
   department   Department? @relation("EmployeeDepartment", fields: [departmentId], references: [id])
 
+  // Per-employee override of the department's work location (geo-fence + state for state-wise statutory rules).
+  // Effective location = workLocationId ?? department.workLocationId.
+  workLocationId String?
+  workLocation   WorkLocation? @relation("EmployeeWorkLocation", fields: [workLocationId], references: [id], onDelete: SetNull)
+
   reportingManagerId String?
   reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
   subordinates       User[]  @relation("ReportingManager")
@@ -509,6 +514,7 @@ model User {
   @@index([departmentId])
   @@index([organizationId, reportingManagerId])
   @@index([organizationId, employmentStatus])
+  @@index([organizationId, workLocationId])
   @@map("users")
 }
 
@@ -786,6 +792,7 @@ model WorkLocation {
   updatedAt DateTime @updatedAt
 
   departments Department[]
+  employees   User[]       @relation("EmployeeWorkLocation")
 
   @@index([organizationId])
   @@map("work_locations")
@@ -2922,6 +2929,8 @@ model EmployeeMovement {
   newGradeLevel              String?
   previousReportingManagerId String?
   newReportingManagerId      String?
+  previousWorkLocationId     String?
+  newWorkLocationId          String?
 
   changedById String
   createdAt   DateTime @default(now())

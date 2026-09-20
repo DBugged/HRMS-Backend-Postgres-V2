@@ -47,6 +47,14 @@ export class UpdateEmployeeDto {
   @IsUUID()
   departmentId?: string;
 
+  @ApiPropertyOptional({
+    description:
+      "Per-employee work location override (geo-fence + state). Falls back to the department's location when unset; null clears the override.",
+  })
+  @IsOptional()
+  @IsUUID()
+  workLocationId?: string | null;
+
   // Locked for self-update, AND locked for HR (Admin only) — mirrors the
   // old system exactly: even hr_admin couldn't change designation.
   @ApiPropertyOptional()

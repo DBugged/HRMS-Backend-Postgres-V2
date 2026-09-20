@@ -10,6 +10,7 @@ import { UpdateEmployeeDto } from './dto/update-employee.dto';
 const LOCKED_FIELDS_FOR_EMPLOYEE: (keyof UpdateEmployeeDto)[] = [
   'role',
   'departmentId',
+  'workLocationId',
   'designation',
   // gradeLevel/employeeCategory added alongside designation/departmentId —
   // same class of structural classification, not something an employee

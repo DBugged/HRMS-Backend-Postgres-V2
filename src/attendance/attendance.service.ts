@@ -36,6 +36,7 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
+import { effectiveWorkLocation } from '../common/effective-work-location';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
@@ -594,9 +595,12 @@ export class AttendanceService {
   async selfPunch(dto: SelfPunchDto, actor: Actor, organizationId: string) {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: actor.id, organizationId },
-      include: { department: { include: { workLocation: true } } },
+      include: {
+        workLocation: true,
+        department: { include: { workLocation: true } },
+      },
     });
-    const fence = employee?.department?.workLocation;
+    const fence = employee ? effectiveWorkLocation(employee) : null;
     if (fence && fence.isActive) {
       // WFH-only, and only once approved (see WfhApprovalStatus's comment
       // on the schema) — a self-declared-but-unreviewed WFH day, or any
@@ -893,9 +897,12 @@ export class AttendanceService {
   async getMyGeoFence(actor: Actor, organizationId: string) {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: actor.id, organizationId },
-      include: { department: { include: { workLocation: true } } },
+      include: {
+        workLocation: true,
+        department: { include: { workLocation: true } },
+      },
     });
-    const fence = employee?.department?.workLocation;
+    const fence = employee ? effectiveWorkLocation(employee) : null;
     if (!fence || fence.isActive === false) {
       return { geoFence: null };
     }
@@ -951,6 +958,7 @@ export class AttendanceService {
                 id: true,
                 name: true,
                 employeeId: true,
+                workLocation: true,
                 department: { include: { workLocation: true } },
               },
             },
@@ -967,7 +975,7 @@ export class AttendanceService {
     return {
       ...result,
       data: result.data.map((record) => {
-        const fence = record.employee.department?.workLocation;
+        const fence = effectiveWorkLocation(record.employee);
         const checkinInsideGeoFence =
           fence &&
           record.checkinLatitude !== null &&

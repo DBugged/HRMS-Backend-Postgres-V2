@@ -38,6 +38,7 @@ describe('State-wise LWF by work location (e2e)', () => {
   let adminToken: string;
   let organizationId: string;
   const emp: Record<string, string> = {};
+  let kaLocationId: string;
 
   const post = (url: string, body: object) =>
     request(app.getHttpServer())
@@ -125,6 +126,7 @@ describe('State-wise LWF by work location (e2e)', () => {
       ).body as { id: string; state: string };
     const ka = await location('Bengaluru Office', 'Karnataka');
     expect(ka.state).toBe('Karnataka');
+    kaLocationId = ka.id;
     const mh = await location('Mumbai Office', 'Maharashtra');
     // workLocationId isn't accepted on create — a department is linked to its location by an update.
     const dept = async (
@@ -190,6 +192,19 @@ describe('State-wise LWF by work location (e2e)', () => {
     expect(await lwfDeduction(emp.mh)).toBe(25); // Maharashtra has no entry -> default 25
     expect(await lwfDeduction(emp.noLoc)).toBe(25);
     expect(await lwfDeduction(emp.noDept)).toBe(25);
+  });
+
+  it("an employee's own work location overrides the department's state, and clearing it falls back", async () => {
+    const patch = (workLocationId: string | null) =>
+      request(app.getHttpServer())
+        .patch(`/employees/${emp.mh}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ workLocationId })
+        .expect(200);
+    await patch(kaLocationId);
+    expect(await lwfDeduction(emp.mh)).toBe(50); // Mumbai dept, but overridden to Karnataka
+    await patch(null);
+    expect(await lwfDeduction(emp.mh)).toBe(25);
   });
 
   it('rejects an unknown state on a work location and in stateRates', async () => {

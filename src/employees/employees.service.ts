@@ -98,6 +98,8 @@ export class EmployeesService {
       throw new ConflictException('An account with this email already exists.');
     }
 
+    await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
+
     const generatedPassword =
       crypto.randomBytes(6).toString('base64url') + 'A1!';
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
@@ -118,6 +120,7 @@ export class EmployeesService {
             name: dto.name,
             role: requestedRole,
             departmentId: dto.departmentId,
+            workLocationId: dto.workLocationId ?? undefined,
             designation: dto.designation ?? '',
             gradeLevel: dto.gradeLevel ?? '',
             employeeCategory: dto.employeeCategory ?? '',
@@ -414,6 +417,7 @@ export class EmployeesService {
     const [rows, total] = await Promise.all([
       this.scopedPrisma.user.findMany({
         where,
+        include: { workLocation: WORK_LOCATION_SELECT },
         skip: skip(query.page, query.limit),
         take: query.limit,
         orderBy: EMPLOYEE_ORDER_BY,
@@ -495,6 +499,7 @@ export class EmployeesService {
       ...updateFields
     } = dto;
     const clean = stripLockedFields(updateFields, actor.role);
+    await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
     // decides whether HR/Admin *may* touch `role` at all (vs. a plain
@@ -698,6 +703,9 @@ export class EmployeesService {
     const departmentChanged =
       clean.departmentId !== undefined &&
       clean.departmentId !== before.departmentId;
+    const locationChanged =
+      clean.workLocationId !== undefined &&
+      clean.workLocationId !== before.workLocationId;
     const designationChanged =
       clean.designation !== undefined &&
       clean.designation !== before.designation;
@@ -708,6 +716,7 @@ export class EmployeesService {
       clean.reportingManagerId !== before.reportingManagerId;
     if (
       !departmentChanged &&
+      !locationChanged &&
       !designationChanged &&
       !gradeChanged &&
       !managerChanged
@@ -723,12 +732,18 @@ export class EmployeesService {
       changedById,
     };
     const rows: Prisma.EmployeeMovementUncheckedCreateInput[] = [];
-    if (departmentChanged) {
+    if (departmentChanged || locationChanged) {
       rows.push({
         ...base,
         type: 'TRANSFER',
-        previousDepartmentId: before.departmentId,
-        newDepartmentId: clean.departmentId,
+        ...(departmentChanged && {
+          previousDepartmentId: before.departmentId,
+          newDepartmentId: clean.departmentId,
+        }),
+        ...(locationChanged && {
+          previousWorkLocationId: before.workLocationId,
+          newWorkLocationId: clean.workLocationId,
+        }),
       });
     }
     if (designationChanged || gradeChanged) {
@@ -758,6 +773,15 @@ export class EmployeesService {
         organizationId,
         employeeId: before.id,
         eventKey: 'PROMOTION',
+        performedById: changedById,
+        remarks: meta.changeReason,
+      });
+    }
+    if (locationChanged) {
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: before.id,
+        eventKey: 'WORK_LOCATION_CHANGED',
         performedById: changedById,
         remarks: meta.changeReason,
       });
@@ -903,9 +927,27 @@ export class EmployeesService {
   ): Promise<User> {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id, organizationId },
+      include: { workLocation: WORK_LOCATION_SELECT },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     return employee;
+  }
+
+  // workLocationId (nullable override) must reference a location of the same organization.
+  private async assertWorkLocationInOrg(
+    workLocationId: string | null | undefined,
+    organizationId: string,
+  ) {
+    if (!workLocationId) return;
+    const loc = await this.scopedPrisma.workLocation.findFirst({
+      where: { id: workLocationId, organizationId },
+      select: { id: true },
+    });
+    if (!loc) {
+      throw new BadRequestException(
+        'The specified work location was not found.',
+      );
+    }
   }
 }
 
@@ -926,6 +968,11 @@ function asString(value: unknown): string {
 // see file-token.ts), so every response that surfaces one signs it fresh,
 // same pattern as PolicyDocument's withSignedUrl / OrganizationSettings'
 // withSignedUrls.
+// Effective work location = user.workLocationId ?? department.workLocationId (see common/effective-work-location.ts).
+const WORK_LOCATION_SELECT = {
+  select: { id: true, name: true, state: true },
+} as const;
+
 // A MANAGER sees other employees' sensitive identifiers (PAN/Aadhaar/UAN/bank/passport) masked to the last 4
 // characters; HR/ADMIN and the employee themself see everything.
 function maskFor(actor: Actor, targetId: string): boolean {

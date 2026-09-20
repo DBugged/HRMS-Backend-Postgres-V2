@@ -46,6 +46,14 @@ export class CreateEmployeeDto {
   @IsUUID()
   departmentId?: string;
 
+  @ApiPropertyOptional({
+    description:
+      "Per-employee work location override (geo-fence + state). Falls back to the department's location when unset; null clears the override.",
+  })
+  @IsOptional()
+  @IsUUID()
+  workLocationId?: string | null;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

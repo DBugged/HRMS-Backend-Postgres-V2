@@ -1,7 +1,7 @@
 // Purpose: Masks sensitive identifiers inside an employee's personalData blob for roles that don't need the full value.
 // Responsibilities: maskTail() keeps only the last 4 characters; maskPersonalData() applies it to known sensitive keys.
 // Important: Pure and DB-free. Only key names are matched, values are never inspected beyond being strings.
-const SENSITIVE_KEYS = new Set(
+export const SENSITIVE_KEYS = new Set(
   [
     'pan',
     'panNumber',

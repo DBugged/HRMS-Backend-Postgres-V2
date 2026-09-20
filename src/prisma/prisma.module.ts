@@ -2,6 +2,7 @@ import { Global, Module } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 import { PrismaService } from './prisma.service';
 import { tenantScopeExtension } from './tenant-scope.extension';
+import { personalDataEncryptionExtension } from './personal-data-encryption.extension';
 
 // Token for the tenant-scope-guarded client. $extends() returns a *new*
 // client instance rather than mutating PrismaService in place, so services
@@ -27,7 +28,9 @@ export type ExtendedPrismaClient = PrismaClient;
     {
       provide: PRISMA_CLIENT,
       useFactory: (prisma: PrismaService) =>
-        prisma.$extends(tenantScopeExtension()),
+        prisma
+          .$extends(tenantScopeExtension())
+          .$extends(personalDataEncryptionExtension()),
       inject: [PrismaService],
     },
   ],

@@ -91,14 +91,11 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { paginate, skip } from '../common/pagination';
-import {
-  assertManagerDeptScope,
-  deptScopedEmployeeIds,
-} from '../common/dept-scope';
 import { mapWithConcurrency } from '../common/concurrency';
 import { issueDocumentNumber } from '../organizations/document-numbering';
 import { PayslipEmailQueueService } from './payslip-email-queue.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
+import { effectiveWorkLocation } from '../common/effective-work-location';
 import { LoansService } from '../loans/loans.service';
 import { payoffAmount } from '../loans/loan-math';
 
@@ -366,19 +363,24 @@ export class PayrollService {
       year,
     );
 
-    // State-wise statutory rules (LWF, Professional Tax): the employee's state is their department's work
-    // location's state. Only looked up when the org actually has state rates configured, so orgs on the single
+    // State-wise statutory rules (LWF, Professional Tax): the employee's state is their effective work
+    // location's state (own override, else the department's). Only looked up when the org actually has state rates configured, so orgs on the single
     // org-wide rate pay no extra query.
     let state: string | null = null;
     if (
       (settings.lwfStateRates.length > 0 || settings.ptStateRates.length > 0) &&
-      employee.departmentId
+      (employee.departmentId || employee.workLocationId)
     ) {
-      const department = await this.scopedPrisma.department.findFirst({
-        where: { id: employee.departmentId, organizationId },
-        select: { workLocation: { select: { state: true } } },
+      const loc = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        select: {
+          workLocation: { select: { state: true } },
+          department: {
+            select: { workLocation: { select: { state: true } } },
+          },
+        },
       });
-      state = department?.workLocation?.state || null;
+      state = (loc && effectiveWorkLocation(loc)?.state) || null;
     }
 
     const baseContext = buildBaseContext(attendanceSummary, settings, month, {
@@ -1003,19 +1005,10 @@ export class PayrollService {
     if (query.year) where.year = query.year;
     if (query.status) where.status = query.status;
 
-    if (actor.role === Role.EMPLOYEE) {
+    // Only the employee themself (EMPLOYEE or MANAGER acting as an employee), HR and ADMIN may read payslips —
+    // a manager never sees their reports' payslips.
+    if (actor.role === Role.EMPLOYEE || actor.role === Role.MANAGER) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
-      // A department-less manager is scoped to nobody (departmentId: null would match every unassigned user).
-      const allowedIds = await deptScopedEmployeeIds(
-        this.scopedPrisma,
-        actor,
-        organizationId,
-      );
-      where.employeeId =
-        query.employeeId && allowedIds.includes(query.employeeId)
-          ? query.employeeId
-          : { in: allowedIds };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -1065,16 +1058,11 @@ export class PayrollService {
       },
     });
     if (!run) throw new NotFoundException('Payslip not found.');
-    if (actor.role === Role.EMPLOYEE && run.employeeId !== actor.id) {
+    if (
+      (actor.role === Role.EMPLOYEE || actor.role === Role.MANAGER) &&
+      run.employeeId !== actor.id
+    ) {
       throw new ForbiddenException('Not authorized to view this payslip.');
-    }
-    if (actor.role === Role.MANAGER) {
-      await assertManagerDeptScope(
-        this.scopedPrisma,
-        actor,
-        organizationId,
-        run.employeeId,
-      );
     }
     return run;
   }
@@ -1119,23 +1107,6 @@ export class PayrollService {
             ]
           : []),
       ];
-    }
-
-    if (actor.role === Role.MANAGER) {
-      const deptEmployeeIds = await deptScopedEmployeeIds(
-        this.scopedPrisma,
-        actor,
-        organizationId,
-      );
-      const deptRuns = await this.scopedPrisma.payrollRun.findMany({
-        where: {
-          organizationId,
-          employeeId: { in: deptEmployeeIds },
-        },
-        select: { id: true },
-      });
-      where.targetId = { in: deptRuns.map((r) => r.id) };
-      delete where.OR;
     }
 
     const logs = await this.scopedPrisma.auditLog.findMany({

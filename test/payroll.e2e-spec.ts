@@ -71,7 +71,7 @@ describe('Payroll (e2e)', () => {
   let employeeToken: string;
   let employeeId: string;
   let managerToken: string;
-  let deptEmployeeId: string;
+  let managerId: string;
   let organizationId: string;
   let otherEmployeeToken: string;
   let otherEmployeeId: string;
@@ -146,6 +146,7 @@ describe('Payroll (e2e)', () => {
         password: (managerCreate.body as EmployeeCreateBody).generatedPassword,
       });
     managerToken = (managerLogin.body as AuthBody).accessToken;
+    managerId = (managerCreate.body as EmployeeCreateBody).employee.id;
 
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
@@ -157,7 +158,6 @@ describe('Payroll (e2e)', () => {
       });
     const empBody = empCreate.body as EmployeeCreateBody;
     employeeId = empBody.employee.id;
-    deptEmployeeId = employeeId;
     const empLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -496,38 +496,42 @@ describe('Payroll (e2e)', () => {
         .expect(403);
     });
 
-    it('MANAGER can view a single payslip for someone in their own department', async () => {
+    it("MANAGER gets 403 on a direct report's payslip, its PDF and the payroll history", async () => {
       const run = await prisma.payrollRun.findFirstOrThrow({
         where: { employeeId, month: MONTH, year: YEAR },
       });
-      await request(app.getHttpServer())
+      const server = app.getHttpServer();
+      await request(server)
         .get(`/payroll/${run.id}`)
         .set('Authorization', `Bearer ${managerToken}`)
-        .expect(200);
-    });
-
-    it('MANAGER gets 403 on a single payslip for someone outside their department', async () => {
-      await request(app.getHttpServer())
-        .post('/payroll/calculate')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ month: MONTH, year: YEAR, employeeId: otherEmployeeId })
-        .expect(201);
-      const run = await prisma.payrollRun.findFirstOrThrow({
-        where: { employeeId: otherEmployeeId, month: MONTH, year: YEAR },
-      });
-      await request(app.getHttpServer())
-        .get(`/payroll/${run.id}`)
+        .expect(403);
+      await request(server)
+        .get(`/payroll/${run.id}/pdf`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(403);
+      await request(server)
+        .get('/payroll/history')
         .set('Authorization', `Bearer ${managerToken}`)
         .expect(403);
     });
 
-    it("MANAGER's list is scoped to their own department", async () => {
+    it("MANAGER's list contains only their own payslips and keeps access to their own", async () => {
+      await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: MONTH, year: YEAR, employeeId: managerId })
+        .expect(201);
       const res = await request(app.getHttpServer())
         .get('/payroll')
         .set('Authorization', `Bearer ${managerToken}`)
         .expect(200);
       const runs = (res.body as { data: PayrollRunBody[] }).data;
-      expect(runs.every((r) => r.employeeId === deptEmployeeId)).toBe(true);
+      expect(runs.length).toBeGreaterThan(0);
+      expect(runs.every((r) => r.employeeId === managerId)).toBe(true);
+      await request(app.getHttpServer())
+        .get(`/payroll/${runs[0].id}`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
     });
 
     it('ADMIN sees all runs', async () => {

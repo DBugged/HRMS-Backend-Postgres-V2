@@ -2,7 +2,8 @@
 // Responsibilities: Builds processing purposes, data categories, retention rules, the draft privacy notice v1 and
 // the system-detected processor list — every item derived from data the HRMS demonstrably handles today.
 // Important: These are TEMPLATES for the org's privacy officer and legal counsel to review, not legal advice.
-// Retention periods are deliberately null ("Not configured") — no legal period is invented here. Legal bases are
+// Retention periods are SUGGESTED conventions only (see SUGGESTED_RETENTION) — never auto-delete (ARCHIVE / MANUAL_REVIEW
+// only), always legalReviewRequired. Legal bases are
 // sensible starting points flagged legalReviewRequired where the choice is genuinely debatable (e.g. selfie/GPS
 // capture, which is currently mandatory on every punch with no consent step).
 
@@ -382,17 +383,41 @@ const RULE_LABELS: Array<[string, string]> = [
   ['notifications', 'In-app notifications'],
   ['sessions_tokens', 'Expired and revoked login sessions'],
   ['audit_logs', 'Audit log entries'],
+  ['privacy_audit_logs', 'Privacy audit log entries'],
 ];
 
+export const SUGGESTED_RETENTION_BASIS =
+  'Suggested default — confirm with legal counsel';
+
+// Common statutory/business conventions (months). Suggestions only; the action is never DELETE.
+export const SUGGESTED_RETENTION: Record<
+  string,
+  { periodMonths: number; action: RetentionAction }
+> = {
+  employee_profile: { periodMonths: 96, action: 'MANUAL_REVIEW' },
+  payroll_records: { periodMonths: 96, action: 'ARCHIVE' },
+  loan_records: { periodMonths: 96, action: 'ARCHIVE' },
+  attendance_records: { periodMonths: 96, action: 'ARCHIVE' },
+  leave_records: { periodMonths: 96, action: 'ARCHIVE' },
+  documents: { periodMonths: 96, action: 'MANUAL_REVIEW' },
+  notifications: { periodMonths: 12, action: 'ARCHIVE' },
+  sessions_tokens: { periodMonths: 12, action: 'ARCHIVE' },
+  audit_logs: { periodMonths: 36, action: 'ARCHIVE' },
+  privacy_audit_logs: { periodMonths: 36, action: 'ARCHIVE' },
+};
+
 export function defaultRetention(): RetentionRule[] {
-  return RULE_LABELS.map(([dataType, label]) => ({
-    dataType,
-    label,
-    periodMonths: null,
-    basis: '',
-    action: 'MANUAL_REVIEW',
-    legalReviewRequired: true,
-  }));
+  return RULE_LABELS.map(([dataType, label]) => {
+    const s = SUGGESTED_RETENTION[dataType];
+    return {
+      dataType,
+      label,
+      periodMonths: s.periodMonths,
+      basis: SUGGESTED_RETENTION_BASIS,
+      action: s.action,
+      legalReviewRequired: true,
+    };
+  });
 }
 
 export function defaultExportSettings() {
@@ -445,7 +470,7 @@ To run your employment relationship (onboarding, payroll, attendance, leave, loa
 Your HR and administrators can see the data needed for their role. Your reporting manager can see limited information about their team members. You can see your own data. Some data is processed by service providers that keep the system running, such as email delivery and file storage; the list is maintained by your privacy officer.
 
 5. How long we keep it
-Retention periods for each type of data are being defined by ${orgName} with legal advice. Until they are set, data is kept while it is needed for the purposes above and for legal or statutory requirements, and is reviewed by a person before any removal.
+Suggested retention periods for each type of data are shown in the app and are being confirmed by ${orgName} with legal advice. Data is kept while it is needed for the purposes above and for legal or statutory requirements, and is reviewed by a person before any removal.
 
 6. Your choices and rights
 You can ask to access your data, correct or update it, receive a copy, or ask for its erasure, using the privacy section of the app. Some low-risk contact details can be updated quickly. Changes to sensitive fields such as name, date of birth, bank details or PAN follow the normal HR verification process. Erasure may be restricted where the law or your employment records require us to keep data (for example payroll and statutory records); if so, we will tell you why. Where processing relies on your consent, you can withdraw it; withdrawal does not affect processing that the law or your employment contract requires. We aim to respond to requests within the period shown in the app.
