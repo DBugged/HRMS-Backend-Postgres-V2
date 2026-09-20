@@ -479,6 +479,7 @@ export class EmailTemplatesService {
         contactEmail: true,
         registeredAddress: true,
         emailLogoUrl: true,
+        primaryColor: true,
       },
     });
     const preheaderTemplate = occasionKey
@@ -497,6 +498,7 @@ export class EmailTemplatesService {
         contactEmail: org?.contactEmail,
         registeredAddress: org?.registeredAddress,
         logoImgTag: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+        primaryColor: org?.primaryColor,
       },
     });
   }

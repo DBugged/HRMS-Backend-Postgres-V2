@@ -4,6 +4,8 @@ import {
 } from './email-template-defaults';
 import {
   EMAIL_SHELL_MARKER,
+  button,
+  deriveBrandPalette,
   finalizeEmailHtml,
   statusTone,
   wrapEmailShell,
@@ -64,7 +66,12 @@ const SUPPLIED: Record<string, string[]> = {
   SETTLEMENT_PROCESSED: ['netSettlementAmount', 'netSettlementAmountInWords'],
   DOCUMENT_STATUS: ['fileName', 'status', 'reason'],
   WELCOME_EMAIL: ['employeeId', 'email', 'setPasswordUrl', 'loginUrl'],
-  LOGIN_CREDENTIALS_RESENT: ['employeeId', 'email', 'setPasswordUrl', 'loginUrl'],
+  LOGIN_CREDENTIALS_RESENT: [
+    'employeeId',
+    'email',
+    'setPasswordUrl',
+    'loginUrl',
+  ],
   FOUNDER_ACCOUNT_WELCOME: ['loginUrl'],
   PASSWORD_RESET: ['resetUrl'],
   ACCOUNT_ACTIVATED: ['email'],
@@ -150,5 +157,49 @@ describe('email layout', () => {
     expect(statusTone('REJECTED')).toBe('error');
     expect(statusTone('PENDING')).toBe('warning');
     expect(statusTone('CANCELLED')).toBe('neutral');
+  });
+});
+
+describe('brand colour', () => {
+  const wrap = (primaryColor?: string | null) =>
+    wrapEmailShell(button('https://x.test', 'Go'), {
+      branding: { ...branding, primaryColor },
+    });
+
+  it('default colour, missing and invalid values give identical output', () => {
+    const base = wrap('#5546e0');
+    expect(wrap(undefined)).toBe(base);
+    expect(wrap(null)).toBe(base);
+    expect(wrap('red')).toBe(base);
+    expect(wrap('#abc')).toBe(base);
+    expect(wrap('#5546E0')).toBe(base);
+  });
+
+  it('rejects malicious strings', () => {
+    const evil = '#fff;}</style><script>';
+    expect(deriveBrandPalette(evil).primary).toBe('#5546e0');
+    const html = wrap(evil);
+    expect(html).not.toContain('<script>');
+    expect(html).toBe(wrap('#5546e0'));
+  });
+
+  it('applies a custom colour to header tile, button and links', () => {
+    const html = wrap('#0f766e');
+    expect(html).toContain('background:#0f766e');
+    expect(html).toContain('a{color:#0f766e;}');
+    expect(html).not.toContain('#5546e0');
+  });
+
+  it('derives soft (lighter) and deep (darker) shades', () => {
+    const p = deriveBrandPalette('#0f766e');
+    expect(p.primarySoft).toBe('#ecf4f3');
+    expect(p.primaryDeep).toBe('#0b534d');
+  });
+
+  it('picks button text colour by luminance', () => {
+    expect(deriveBrandPalette('#0f766e').onPrimary).toBe('#ffffff');
+    expect(deriveBrandPalette('#ffe066').onPrimary).toBe('#14161d');
+    expect(wrap('#ffe066')).toContain('color:#14161d;text-decoration:none');
+    expect(wrap('#0f766e')).toContain('color:#ffffff;text-decoration:none');
   });
 });

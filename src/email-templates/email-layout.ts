@@ -28,6 +28,89 @@ const T = {
   primaryDeep: '#392e9c',
 } as const;
 
+// ---------------------------------------------------------------- brand colour
+
+export const DEFAULT_PRIMARY = '#5546e0';
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+export interface BrandPalette {
+  primary: string;
+  primarySoft: string;
+  primaryDeep: string;
+  // Text colour that stays readable on a `primary` background (button label, header initials).
+  onPrimary: string;
+}
+
+const DEFAULT_PALETTE: BrandPalette = {
+  primary: T.primary,
+  primarySoft: T.primarySoft,
+  primaryDeep: T.primaryDeep,
+  onPrimary: '#ffffff',
+};
+
+export function isValidHexColor(v: unknown): v is string {
+  return typeof v === 'string' && HEX_RE.test(v);
+}
+
+function rgbOf(hex: string): number[] {
+  return [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16));
+}
+
+function toHex(rgb: number[]): string {
+  return (
+    '#' +
+    rgb
+      .map((c) =>
+        Math.max(0, Math.min(255, Math.round(c)))
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')
+  );
+}
+
+// WCAG relative luminance (0 = black, 1 = white).
+export function relativeLuminance(hex: string): number {
+  const [r, g, b] = rgbOf(hex).map((c) => {
+    const v = c / 255;
+    return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// Derives the email accent palette from an org's Branding primary colour. Anything that is not a strict
+// #RRGGBB (or is the default colour) yields the fixed default palette, so unvalidated strings never reach
+// the generated HTML/CSS and default-coloured orgs get byte-identical output.
+export function deriveBrandPalette(
+  input: string | null | undefined,
+): BrandPalette {
+  if (!isValidHexColor(input)) return DEFAULT_PALETTE;
+  const primary = input.toLowerCase();
+  if (primary === DEFAULT_PRIMARY) return DEFAULT_PALETTE;
+  const rgb = rgbOf(primary);
+  const soft = toHex(rgb.map((c) => c + (255 - c) * 0.92));
+  const deep = toHex(rgb.map((c) => c * 0.7));
+  // Pick whichever of white / near-black gives the higher contrast ratio.
+  const L = relativeLuminance(primary);
+  const onPrimary =
+    1.05 / (L + 0.05) >= (L + 0.05) / 0.06 ? '#ffffff' : '#14161d';
+  return { primary, primarySoft: soft, primaryDeep: deep, onPrimary };
+}
+
+// Re-colours already-built email HTML (component output and org-stored templates alike carry the fixed
+// default palette as inline literals) with the org's palette. No-op for the default palette.
+function applyBrandPalette(html: string, p: BrandPalette): string {
+  if (p === DEFAULT_PALETTE) return html;
+  return html
+    .replace(
+      /(background:#5546e0;">\s*<a [^>]*?color:)#ffffff/gi,
+      `$1${p.onPrimary}`,
+    )
+    .replace(/#5546e0/gi, p.primary)
+    .replace(/#eef1ff/gi, p.primarySoft)
+    .replace(/#392e9c/gi, p.primaryDeep);
+}
+
 const FONT_BODY =
   "'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
 const FONT_DISPLAY =
@@ -213,6 +296,8 @@ export interface EmailBranding {
   registeredAddress?: string | null;
   // Ready-made <img> tag from companyLogoImgTag(), '' when the org has no Email Logo.
   logoImgTag?: string;
+  // Organization.primaryColor; validated strictly as #RRGGBB, default palette otherwise.
+  primaryColor?: string | null;
 }
 
 function initialsOf(name: string): string {
@@ -222,13 +307,13 @@ function initialsOf(name: string): string {
   return (words[0][0] + words[1][0]).toUpperCase();
 }
 
-function headerHtml(b: EmailBranding): string {
+function headerHtml(b: EmailBranding, pal: BrandPalette): string {
   const name = (b.companyName ?? '').trim();
   const mark = b.logoImgTag
     ? b.logoImgTag
         .replace('alt=""', `alt="${esc(name)}"`)
         .replace('max-height:48px', 'max-height:36px')
-    : `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" valign="middle" width="36" height="36" bgcolor="${T.primary}" style="width:36px;height:36px;border-radius:10px;background:${T.primary};font-family:${FONT_DISPLAY};font-size:14px;line-height:36px;font-weight:700;color:#ffffff;">${esc(initialsOf(name))}</td></tr></table>`;
+    : `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" valign="middle" width="36" height="36" bgcolor="${pal.primary}" style="width:36px;height:36px;border-radius:10px;background:${pal.primary};font-family:${FONT_DISPLAY};font-size:14px;line-height:36px;font-weight:700;color:${pal.onPrimary};">${esc(initialsOf(name))}</td></tr></table>`;
   return (
     `<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>` +
     `<td valign="middle" width="48" style="width:48px;min-width:48px;padding-right:12px;">${mark}</td>` +
@@ -266,6 +351,7 @@ export function wrapEmailShell(
   opts: { preheader?: string; branding: EmailBranding },
 ): string {
   if (contentHtml.includes(EMAIL_SHELL_MARKER)) return contentHtml;
+  const pal = deriveBrandPalette(opts.branding.primaryColor);
   const preheader = (opts.preheader ?? '').replace(/<[^>]+>/g, '').trim();
   // Trailing &zwnj;&nbsp; run stops clients pulling body text into the inbox preview after the preheader.
   const preheaderHtml = preheader
@@ -280,7 +366,7 @@ export function wrapEmailShell(
     `<style type="text/css">` +
     `@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Plus+Jakarta+Sans:wght@600;700;800&display=swap');` +
     `body{margin:0;padding:0;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;}` +
-    `table{border-collapse:collapse;}img{border:0;outline:none;text-decoration:none;}a{color:${T.primary};}` +
+    `table{border-collapse:collapse;}img{border:0;outline:none;text-decoration:none;}a{color:${pal.primary};}` +
     `@media only screen and (max-width:620px){` +
     `.container{width:100%!important;}.px{padding-left:20px!important;padding-right:20px!important;}` +
     `.card-pad{padding:28px 20px!important;}` +
@@ -291,8 +377,8 @@ export function wrapEmailShell(
     preheaderHtml +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${T.bg}" style="background:${T.bg};"><tr><td align="center" style="padding:32px 12px;">` +
     `<table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">` +
-    `<tr><td class="px" style="padding:0 4px 20px;">${headerHtml(opts.branding)}</td></tr>` +
-    `<tr><td class="card-pad" style="background:${T.card};border:1px solid ${T.border};border-radius:16px;padding:40px;">${contentHtml}</td></tr>` +
+    `<tr><td class="px" style="padding:0 4px 20px;">${headerHtml(opts.branding, pal)}</td></tr>` +
+    `<tr><td class="card-pad" style="background:${T.card};border:1px solid ${T.border};border-radius:16px;padding:40px;">${applyBrandPalette(contentHtml, pal)}</td></tr>` +
     `<tr><td class="px" style="padding:24px 4px 0;">${footerHtml(opts.branding)}</td></tr>` +
     `</table></td></tr></table></body></html>`
   );
