@@ -54,6 +54,21 @@ export class UsersService {
     return this.prisma.user.findFirst({ where: { id, organizationId } });
   }
 
+  /**
+   * Same row as findByIdInOrg minus the password hash + reset-token fields
+   * (used per-request by the JWT strategy, so the hash is never read).
+   */
+  findSafeByIdInOrg(id: string, organizationId: string) {
+    return this.prisma.user.findFirst({
+      where: { id, organizationId },
+      omit: {
+        password: true,
+        resetPasswordToken: true,
+        resetPasswordExpires: true,
+      },
+    });
+  }
+
   updateLastLogin(
     id: string,
     organizationId: string,

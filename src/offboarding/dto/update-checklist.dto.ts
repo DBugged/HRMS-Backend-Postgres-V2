@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateChecklistDto {
   @ApiPropertyOptional()
@@ -11,4 +11,12 @@ export class UpdateChecklistDto {
   @IsOptional()
   @IsBoolean()
   accessRevoked?: boolean;
+
+  // Explicit HR override: lets assetsReturned be marked (and the case be completed) while company assets
+  // are still allocated — e.g. written off or lost. Recorded on the case.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  assetOverrideNote?: string;
 }

@@ -15,5 +15,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
   ],
   controllers: [OffboardingController],
   providers: [OffboardingService],
+  // Exported so ResignationsService can auto-initiate the exit when a resignation is approved.
+  exports: [OffboardingService],
 })
 export class OffboardingModule {}

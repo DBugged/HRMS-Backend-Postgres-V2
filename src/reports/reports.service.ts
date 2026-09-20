@@ -30,6 +30,7 @@ import {
   LeaveReportQueryDto,
   PayrollReportQueryDto,
 } from './dto/report-queries.dto';
+import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
 
 type Actor = Omit<User, 'password'>;
 
@@ -77,8 +78,10 @@ export class ReportsService {
     const records = await this.scopedPrisma.attendance.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
+      take: REPORT_ROW_LIMIT + 1,
       orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'asc' }],
     });
+    assertWithinReportLimit(records);
 
     const rows = records.map((r) => ({
       employeeId: r.employee.employeeId,
@@ -131,8 +134,10 @@ export class ReportsService {
         employee: { select: { name: true, employeeId: true } },
         leaveType: { select: { name: true } },
       },
+      take: REPORT_ROW_LIMIT + 1,
       orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
     });
+    assertWithinReportLimit(leaves);
 
     const rows = leaves.map((l) => ({
       employeeId: l.employee.employeeId,
@@ -193,8 +198,10 @@ export class ReportsService {
         employee: { select: { name: true, employeeId: true } },
         leaveType: { select: { name: true } },
       },
+      take: REPORT_ROW_LIMIT + 1,
       orderBy: EMPLOYEE_RELATION_ORDER_BY,
     });
+    assertWithinReportLimit(balances);
 
     const rows = balances.map((b) => ({
       employeeId: b.employee.employeeId,
@@ -351,12 +358,14 @@ export class ReportsService {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
+      take: REPORT_ROW_LIMIT + 1,
       orderBy: [
         ...EMPLOYEE_RELATION_ORDER_BY,
         { year: 'desc' },
         { month: 'desc' },
       ],
     });
+    assertWithinReportLimit(runs);
 
     const rows = runs.map((p) => {
       const attendanceSummary = p.attendanceSummary as { payableDays?: number };

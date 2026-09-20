@@ -147,6 +147,10 @@ interface PayslipRun {
   month: number;
   year: number;
   paidAt: Date | null;
+  // Snapshot taken at calculation (nullable — absent on older runs and the dummy preview).
+  designation?: string | null;
+  departmentName?: string | null;
+  gradeLevel?: string | null;
   netPay: number;
   netPayInWords: string;
   grossSalary: number;
@@ -359,7 +363,9 @@ export class PayslipPdfService {
       ? await readStoredFile(template.companyLogoUrl).catch(() => null)
       : null;
 
-    const deptName = run.employee.department?.name || '-';
+    // Prefer the snapshot taken at calculation; older runs (no snapshot) fall back to the live values.
+    const deptName = run.departmentName || run.employee.department?.name || '-';
+    const designation = run.designation || run.employee.designation || '-';
     const earnings = run.earnings as PayrollLine[];
     const deductions = run.deductions as PayrollLine[];
     const employerContributions = run.employerContributions as PayrollLine[];
@@ -536,7 +542,7 @@ export class PayslipPdfService {
         ['Employee ID', run.employee.employeeId || '-'],
         ['Name', run.employee.name || '-'],
         ['Department', deptName],
-        ['Designation', run.employee.designation || '-'],
+        ['Designation', designation],
         [
           'Date of Joining',
           run.employee.joiningDate

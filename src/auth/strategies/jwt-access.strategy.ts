@@ -29,16 +29,13 @@ export class JwtAccessStrategy extends PassportStrategy(
   }
 
   async validate(payload: JwtPayload) {
-    const user = await this.usersService.findByIdInOrg(
+    const user = await this.usersService.findSafeByIdInOrg(
       payload.sub,
       payload.organizationId,
     );
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Session is no longer valid.');
     }
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
-    const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
-      user;
-    return safe; // becomes request.user
+    return user; // becomes request.user (hash + reset fields omitted in the query)
   }
 }

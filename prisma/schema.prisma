@@ -236,6 +236,8 @@ model Organization {
   loanRepayments           LoanRepayment[]
   settlements              Settlement[]
   offboardingCases         OffboardingCase[]
+  resignations             Resignation[]
+  employeeMovements        EmployeeMovement[]
   auditLogs                AuditLog[]
   timelineEvents           EmployeeTimeline[]
   approvalDelegations      ApprovalDelegation[]
@@ -480,6 +482,8 @@ model User {
   offboardingCases                 OffboardingCase[]         @relation("OffboardingCaseEmployee")
   offboardingCasesInitiated        OffboardingCase[]         @relation("OffboardingCaseInitiatedBy")
   offboardingCasesCompleted        OffboardingCase[]         @relation("OffboardingCaseCompletedBy")
+  resignations                     Resignation[]             @relation("ResignationEmployee")
+  employeeMovements                EmployeeMovement[]        @relation("EmployeeMovementEmployee")
   auditLogs                        AuditLog[]
   timelineEvents                   EmployeeTimeline[]        @relation("TimelineEmployee")
   timelineEventsPerformed          EmployeeTimeline[]        @relation("TimelinePerformedBy")
@@ -503,6 +507,8 @@ model User {
   @@unique([organizationId, employeeId])
   @@index([organizationId])
   @@index([departmentId])
+  @@index([organizationId, reportingManagerId])
+  @@index([organizationId, employmentStatus])
   @@map("users")
 }
 
@@ -1033,6 +1039,7 @@ model Leave {
   @@index([employeeId])
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
+  @@index([organizationId, employeeId, startDate])
   @@map("leaves")
 }
 
@@ -1839,6 +1846,12 @@ model PayrollRun {
   isFinalSettlement Boolean     @default(false)
   settlement        Settlement?
 
+  // Point-in-time snapshot taken at calculation so a re-issued payslip keeps the designation/department/
+  // grade the employee held that month. Nullable: older runs fall back to the live values.
+  designation    String?
+  departmentName String?
+  gradeLevel     String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2036,6 +2049,8 @@ model Settlement {
   loanBalanceRecovered  Float @default(0)
   noticePeriodRecovery  Float @default(0)
   gratuityAmount        Float @default(0)
+  // APPROVED-but-unpaid reimbursement claims settled with the final payout (marked PAID by process()).
+  reimbursementAmount   Float @default(0)
   netSettlementAmount   Float @default(0)
 
   status SettlementStatus @default(DRAFT)
@@ -2100,6 +2115,13 @@ model OffboardingCase {
 
   notes String?
 
+  // How the exit ends: the employmentStatus complete() applies (RESIGNED | RELEASED | TERMINATED | ABSCONDED).
+  exitStatus               EmploymentStatus  @default(RELEASED)
+  // The status held before initiate() moved the employee to NOTICE_PERIOD, restored by cancel().
+  previousEmploymentStatus EmploymentStatus?
+  // HR's explicit note when completing with company assets still unreturned.
+  assetOverrideNote        String?
+
   completedById String?
   completedBy   User?     @relation("OffboardingCaseCompletedBy", fields: [completedById], references: [id])
   completedAt   DateTime?
@@ -2155,6 +2177,7 @@ model AuditLog {
   @@index([organizationId, module])
   @@index([organizationId, actorId])
   @@index([organizationId, module, createdAt])
+  @@index([organizationId, targetId])
   @@map("audit_logs")
 }
 
@@ -2827,4 +2850,82 @@ model PrivacyAuditLog {
   @@index([organizationId, category, createdAt])
   @@index([organizationId, targetUserId])
   @@map("privacy_audit_logs")
+}
+enum ResignationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  WITHDRAWN
+}
+
+// An employee's own resignation request. Approving it initiates the existing OffboardingCase (linked via
+// offboardingCaseId, a plain id, no FK). decidedById is a plain id like the privacy tables' user refs.
+model Resignation {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("ResignationEmployee", fields: [employeeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Leave.startDate.
+  submittedOn      String
+  requestedLwd     String
+  approvedLwd      String?
+  noticePeriodDays Int?
+  reason           String?
+
+  status ResignationStatus @default(PENDING)
+
+  decidedById  String?
+  decidedAt    DateTime?
+  decisionNote String?
+
+  offboardingCaseId String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, employeeId])
+  @@index([organizationId, status])
+  @@map("resignations")
+}
+
+enum EmployeeMovementType {
+  TRANSFER
+  PROMOTION
+  MANAGER_CHANGE
+  DESIGNATION_CHANGE
+}
+
+// One row per department/designation/grade/reporting-manager change made through EmployeesService.update().
+// The change is applied to the user immediately; effectiveDate is recorded for history only (no future-dated
+// application). Prev/new ids are plain values with no FK so history survives deletions.
+model EmployeeMovement {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("EmployeeMovementEmployee", fields: [employeeId], references: [id])
+
+  type          EmployeeMovementType
+  // YYYY-MM-DD
+  effectiveDate String
+  reason        String?
+
+  previousDepartmentId       String?
+  newDepartmentId            String?
+  previousDesignation        String?
+  newDesignation             String?
+  previousGradeLevel         String?
+  newGradeLevel              String?
+  previousReportingManagerId String?
+  newReportingManagerId      String?
+
+  changedById String
+  createdAt   DateTime @default(now())
+
+  @@index([organizationId, employeeId])
+  @@map("employee_movements")
 }

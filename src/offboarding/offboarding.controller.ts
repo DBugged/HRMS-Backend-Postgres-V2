@@ -111,6 +111,6 @@ export class OffboardingController {
 
   @Patch(':id/cancel')
   cancel(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.offboardingService.cancel(id, caller.organizationId);
+    return this.offboardingService.cancel(id, caller.organizationId, caller.id);
   }
 }

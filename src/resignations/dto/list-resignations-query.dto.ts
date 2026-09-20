@@ -1,0 +1,26 @@
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { IsEnum, IsInt, IsOptional, Max, Min } from 'class-validator';
+import { ResignationStatus } from '@prisma/client';
+
+export class ListResignationsQueryDto {
+  @ApiPropertyOptional({ enum: ResignationStatus })
+  @IsOptional()
+  @IsEnum(ResignationStatus)
+  status?: ResignationStatus;
+
+  @ApiPropertyOptional({ default: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page: number = 1;
+
+  @ApiPropertyOptional({ default: 200, maximum: 2000 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(2000)
+  limit: number = 200;
+}

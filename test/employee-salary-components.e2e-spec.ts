@@ -200,6 +200,32 @@ describe('Employee Salary Components (e2e)', () => {
     expect(current?.effectiveTo).toBeNull();
   });
 
+  it('rejects a revision whose effectiveFrom is not after the current row, and logs SALARY_REVISION per applied revision', async () => {
+    // Current BASIC_PAY row starts at offsetDate(30); same-day and earlier dates would make effectiveTo < effectiveFrom.
+    for (const bad of [offsetDate(30), offsetDate(10)]) {
+      const res = await request(app.getHttpServer())
+        .post(`/employee-salary/${employeeId}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentId: basicId,
+          valueType: 'FIXED',
+          fixedAmount: 36000,
+          effectiveFrom: bad,
+        })
+        .expect(400);
+      expect((res.body as { message: string }).message).toContain(
+        'must be after',
+      );
+    }
+    const events = await prisma.employeeTimeline.findMany({
+      where: { employeeId, eventKey: 'SALARY_REVISION' },
+    });
+    // The two applied revisions so far (initial set + annual hike); the rejected attempts logged nothing.
+    expect(events).toHaveLength(2);
+    expect(events.some((e) => e.remarks === 'Annual hike')).toBe(true);
+    expect(JSON.stringify(events)).not.toContain('35000');
+  });
+
   it('POST /structure/bulk applies multiple lines, skipping unresolvable components', async () => {
     const res = await request(app.getHttpServer())
       .post(`/employee-salary/${employeeId}/structure/bulk`)

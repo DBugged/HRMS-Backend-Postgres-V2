@@ -2,9 +2,12 @@
 // encashment, gratuity, bonus, minus recoveries/loan balance/notice-period recovery).
 // Responsibilities: Owns settlement-figure calculation (calculate(), idempotent DRAFT preview) and
 // process() (locks the settlement in, creates a linked isFinalSettlement PayrollRun so the same universal
-// payslip renderer works, closes active loans, deactivates the employee) inside one transaction; delegates
-// the pending-salary component to PayrollService.calculatePayroll.
-// Important: gratuity requires >= 5 years of service (YEARS_FOR_GRATUITY_ELIGIBILITY, Payment of Gratuity
+// payslip renderer works, closes active loans, pays out APPROVED reimbursements) inside one transaction;
+// delegates the pending-salary component to PayrollService.calculatePayroll.
+// Important: process() does NOT deactivate the employee — that (with the exit gates, manager reassignment and
+// final employmentStatus) belongs to OffboardingService.complete(). Pending salary is 0 when a non-final
+// PayrollRun for the last-working-day month already exists (it was paid there, so paying it again would
+// double-pay). Gratuity requires >= 5 years of service (YEARS_FOR_GRATUITY_ELIGIBILITY, Payment of Gratuity
 // Act 1972, ported verbatim); leave-encashment sums every encashment-allowed LeaveType's closing balance
 // with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
 // email goes to the employee's personalEmail, not their login email, since by process() time the account is
@@ -22,6 +25,8 @@ import {
   NotificationCategory,
   Prisma,
   PayrollRunStatus,
+  ReimbursementPaymentMode,
+  ReimbursementStatus,
   Role,
   SettlementStatus,
   User,
@@ -177,7 +182,17 @@ export class SettlementsService {
     const loanEmiDeduction = calc.deductions
       .filter((d) => d.code === 'LOAN_EMI')
       .reduce((sum, d) => sum + d.amount, 0);
-    const pendingSalaryAmount = calc.netPay + loanEmiDeduction;
+    // A regular (non-final) payroll run already booked for the LWD month has paid that salary — paying it
+    // again through the settlement would double-pay. A bare DRAFT row has no figures, so it doesn't count.
+    const monthAlreadyPaid = await this.hasNonFinalPayrollRun(
+      dto.employeeId,
+      month,
+      year,
+      organizationId,
+    );
+    const pendingSalaryAmount = monthAlreadyPaid
+      ? 0
+      : calc.netPay + loanEmiDeduction;
 
     const activeLoans = await this.scopedPrisma.loan.findMany({
       where: {
@@ -239,6 +254,11 @@ export class SettlementsService {
       });
     }
 
+    const reimbursementAmount = await this.sumApprovedReimbursements(
+      this.scopedPrisma,
+      dto.employeeId,
+      organizationId,
+    );
     const bonusAmount = dto.bonusAmount ?? 0;
     const recoveriesAmount = dto.recoveriesAmount ?? 0;
     const noticePeriodRecovery = dto.noticePeriodRecovery ?? 0;
@@ -247,7 +267,8 @@ export class SettlementsService {
       pendingSalaryAmount +
         leaveEncashmentAmount +
         bonusAmount +
-        gratuityAmount -
+        gratuityAmount +
+        reimbursementAmount -
         recoveriesAmount -
         loanBalanceRecovered -
         noticePeriodRecovery,
@@ -262,9 +283,13 @@ export class SettlementsService {
       loanBalanceRecovered,
       noticePeriodRecovery,
       gratuityAmount,
+      reimbursementAmount,
       netSettlementAmount,
       processedById: actor.id,
     };
+    const pendingSalaryNote = monthAlreadyPaid
+      ? `Pending salary is 0 — the ${month}/${year} salary was already covered by a regular payroll run.`
+      : null;
 
     const existing = await this.scopedPrisma.settlement.findFirst({
       where: {
@@ -278,11 +303,14 @@ export class SettlementsService {
         where: { id: existing.id, organizationId },
         data,
       });
-      return this.withGratuityPayout(
-        await this.scopedPrisma.settlement.findFirstOrThrow({
-          where: { id: existing.id, organizationId },
-        }),
-      );
+      return {
+        ...this.withGratuityPayout(
+          await this.scopedPrisma.settlement.findFirstOrThrow({
+            where: { id: existing.id, organizationId },
+          }),
+        ),
+        pendingSalaryNote,
+      };
     }
     const created = await this.scopedPrisma.settlement.create({
       data: { organizationId, employeeId: dto.employeeId, ...data },
@@ -296,7 +324,43 @@ export class SettlementsService {
       eventKey: 'FNF_INITIATED',
       performedById: actor.id,
     });
-    return this.withGratuityPayout(created);
+    return { ...this.withGratuityPayout(created), pendingSalaryNote };
+  }
+
+  private async hasNonFinalPayrollRun(
+    employeeId: string,
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<boolean> {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        month,
+        year,
+        isFinalSettlement: false,
+        status: { not: PayrollRunStatus.DRAFT },
+      },
+      select: { id: true },
+    });
+    return !!run;
+  }
+
+  private async sumApprovedReimbursements(
+    db: Pick<ExtendedPrismaClient, 'reimbursement'>,
+    employeeId: string,
+    organizationId: string,
+  ): Promise<number> {
+    const agg = await db.reimbursement.aggregate({
+      where: {
+        organizationId,
+        employeeId,
+        status: ReimbursementStatus.APPROVED,
+      },
+      _sum: { amount: true },
+    });
+    return agg._sum.amount ?? 0;
   }
 
   // Locks in the settlement: creates the linked PayrollRun (isFinalSettlement)
@@ -319,10 +383,20 @@ export class SettlementsService {
     const month = lwd.getMonth() + 1;
     const year = lwd.getFullYear();
 
+    const salaryAlreadyPaid =
+      settlement.pendingSalaryAmount === 0 &&
+      (await this.hasNonFinalPayrollRun(
+        settlement.employeeId,
+        month,
+        year,
+        organizationId,
+      ));
     const earnings: SettlementPayrollLine[] = [
       {
         code: 'PENDING_SALARY',
-        name: 'Pending Salary',
+        name: salaryAlreadyPaid
+          ? `Pending Salary (already paid in ${month}/${year} payroll)`
+          : 'Pending Salary',
         amount: settlement.pendingSalaryAmount,
         taxable: true,
       },
@@ -339,6 +413,14 @@ export class SettlementsService {
         name: 'Bonus',
         amount: settlement.bonusAmount,
         taxable: true,
+      });
+    }
+    if (settlement.reimbursementAmount > 0) {
+      earnings.push({
+        code: 'REIMBURSEMENT',
+        name: 'Approved Reimbursements',
+        amount: settlement.reimbursementAmount,
+        taxable: false,
       });
     }
     if (settlement.gratuityAmount > 0) {
@@ -424,10 +506,34 @@ export class SettlementsService {
         where: { id, organizationId },
         data: { payrollRunId: run.id },
       });
-      await tx.user.updateMany({
-        where: { id: settlement.employeeId, organizationId },
-        data: { isActive: false },
-      });
+      // Approved reimbursements are paid out with this settlement. If the set changed since calculate(),
+      // the figure baked into the payslip would be wrong — force a recalculation instead.
+      const reimbursementNow = await this.sumApprovedReimbursements(
+        tx,
+        settlement.employeeId,
+        organizationId,
+      );
+      if (reimbursementNow !== settlement.reimbursementAmount) {
+        throw new ConflictException(
+          'Approved reimbursements changed since this settlement was calculated — recalculate it first.',
+        );
+      }
+      if (reimbursementNow > 0) {
+        await tx.reimbursement.updateMany({
+          where: {
+            organizationId,
+            employeeId: settlement.employeeId,
+            status: ReimbursementStatus.APPROVED,
+          },
+          data: {
+            status: ReimbursementStatus.PAID,
+            paidDate: now.toISOString().slice(0, 10),
+            paidById: actor.id,
+            paymentMode: ReimbursementPaymentMode.TRANSFER,
+            payrollRunId: run.id,
+          },
+        });
+      }
       await tx.loan.updateMany({
         where: {
           employeeId: settlement.employeeId,

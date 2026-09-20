@@ -42,6 +42,11 @@ export class NotificationsController {
     );
   }
 
+  @Get('unread-count')
+  unreadCount(@CurrentUser() caller: Caller) {
+    return this.notificationsService.unreadCount(caller, caller.organizationId);
+  }
+
   @Get('preferences')
   getPreferences(@CurrentUser() caller: Caller) {
     return this.notificationsService.getPreferences(caller);

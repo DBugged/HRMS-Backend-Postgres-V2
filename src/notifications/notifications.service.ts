@@ -129,6 +129,23 @@ export class NotificationsService {
     return { ...result, unreadCount };
   }
 
+  // Lightweight badge count — same muted-category filtering as findMine's
+  // unreadCount, without loading/paginating the list.
+  async unreadCount(actor: Actor, organizationId: string) {
+    const prefs = readPreferences(actor.notificationPreferences);
+    const unreadCount = await this.scopedPrisma.notification.count({
+      where: {
+        organizationId,
+        userId: actor.id,
+        isRead: false,
+        ...(prefs.mutedCategories.length > 0 && {
+          category: { notIn: prefs.mutedCategories },
+        }),
+      },
+    });
+    return { unreadCount };
+  }
+
   getPreferences(actor: Actor) {
     return readPreferences(actor.notificationPreferences);
   }

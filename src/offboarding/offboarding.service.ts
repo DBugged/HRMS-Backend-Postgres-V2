@@ -1,11 +1,14 @@
-// Purpose: Manages the employee exit workflow — initiate, checklist, exit interview, settlement linking,
-// completion (deactivates the account), and cancellation.
+// Purpose: Manages the employee exit workflow — initiate (moves the employee to NOTICE_PERIOD), checklist,
+// exit interview, settlement linking, completion (deactivates the account and sets the final exit status),
+// and cancellation (restores the previous status).
 // Responsibilities: Owns the OffboardingCase state machine (INITIATED -> IN_PROGRESS -> COMPLETED/CANCELLED)
 // and its completion gate; delegates audit/timeline logging and notification/email delivery to their
 // respective services.
 // Important: complete() requires assetsReturned, accessRevoked, exitInterviewDone, and a linked settlement
-// all present before it will deactivate the account — the deactivation and case-completion write happen in
-// one transaction so the account is never left active with a "completed" case, or vice versa.
+// all present before it will deactivate the account — the deactivation, final employmentStatus (+ status
+// history row), refresh-token revocation and case-completion write happen in one transaction so the account
+// is never left active with a "completed" case, or vice versa. assetsReturned/complete() are blocked while
+// the employee still holds ALLOCATED assets unless HR records an explicit assetOverrideNote.
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -14,6 +17,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AssetStatus,
+  EmploymentStatus,
   LeaveStatus,
   NotificationCategory,
   OffboardingStatus,
@@ -84,6 +89,14 @@ export class OffboardingService {
   }
 
   async findOne(id: string, organizationId: string) {
+    const record = await this.findCase(id, organizationId);
+    return {
+      ...record,
+      openAssets: await this.findOpenAssets(record.employeeId, organizationId),
+    };
+  }
+
+  private async findCase(id: string, organizationId: string) {
     const record = await this.scopedPrisma.offboardingCase.findFirst({
       where: { id, organizationId },
       include: {
@@ -93,6 +106,31 @@ export class OffboardingService {
     });
     if (!record) throw new NotFoundException('Offboarding case not found.');
     return record;
+  }
+
+  // Company assets still allocated (not returned/lost, not soft-deleted) to the employee.
+  private findOpenAssets(employeeId: string, organizationId: string) {
+    return this.scopedPrisma.employeeAsset.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        isActive: true,
+        status: AssetStatus.ALLOCATED,
+      },
+      select: { id: true, assetType: true, assetName: true, assetTag: true },
+    });
+  }
+
+  private async assertNoOpenAssets(employeeId: string, organizationId: string) {
+    const open = await this.findOpenAssets(employeeId, organizationId);
+    if (open.length > 0) {
+      const list = open
+        .map((a) => `${a.assetName}${a.assetTag ? ` (${a.assetTag})` : ''}`)
+        .join(', ');
+      throw new BadRequestException(
+        `Cannot mark assets as returned — ${open.length} asset(s) still allocated: ${list}. Mark them returned first, or record an assetOverrideNote.`,
+      );
+    }
   }
 
   async initiate(
@@ -139,14 +177,39 @@ export class OffboardingService {
       );
     }
 
-    const offboardingCase = await this.scopedPrisma.offboardingCase.create({
-      data: {
-        organizationId,
-        employeeId: dto.employeeId,
-        initiatedById: actor.id,
-        lastWorkingDay: dto.lastWorkingDay,
-        reason: dto.reason,
-      },
+    // The employee enters NOTICE_PERIOD (with a status-history row) in the same transaction as the case;
+    // the prior status is remembered on the case so cancel() can restore it.
+    const alreadyInNotice =
+      employee.employmentStatus === EmploymentStatus.NOTICE_PERIOD;
+    const offboardingCase = await this.scopedPrisma.$transaction(async (tx) => {
+      const created = await tx.offboardingCase.create({
+        data: {
+          organizationId,
+          employeeId: dto.employeeId,
+          initiatedById: actor.id,
+          lastWorkingDay: dto.lastWorkingDay,
+          reason: dto.reason,
+          exitStatus: dto.exitStatus ?? EmploymentStatus.RELEASED,
+          previousEmploymentStatus: employee.employmentStatus,
+        },
+      });
+      if (!alreadyInNotice) {
+        await tx.user.updateMany({
+          where: { id: dto.employeeId, organizationId },
+          data: { employmentStatus: EmploymentStatus.NOTICE_PERIOD },
+        });
+        await tx.employmentStatusHistory.create({
+          data: {
+            organizationId,
+            employeeId: dto.employeeId,
+            previousStatus: employee.employmentStatus,
+            newStatus: EmploymentStatus.NOTICE_PERIOD,
+            note: 'Offboarding initiated',
+            changedById: actor.id,
+          },
+        });
+      }
+      return created;
     });
 
     const { dateFormat } = await resolveOrgDateTimeFormat(
@@ -198,6 +261,11 @@ export class OffboardingService {
     const record = await this.assertOpenCase(id, organizationId);
 
     const data: Prisma.OffboardingCaseUpdateManyMutationInput = {};
+    if (dto.assetOverrideNote !== undefined)
+      data.assetOverrideNote = dto.assetOverrideNote.trim() || null;
+    if (dto.assetsReturned === true && !dto.assetOverrideNote?.trim()) {
+      await this.assertNoOpenAssets(record.employeeId, organizationId);
+    }
     if (dto.assetsReturned !== undefined)
       data.assetsReturned = dto.assetsReturned;
     if (dto.accessRevoked !== undefined) data.accessRevoked = dto.accessRevoked;
@@ -259,7 +327,7 @@ export class OffboardingService {
     dto: LinkSettlementDto,
     organizationId: string,
   ) {
-    const record = await this.findOne(id, organizationId);
+    const record = await this.findCase(id, organizationId);
     const settlement = await this.scopedPrisma.settlement.findFirst({
       where: { id: dto.settlementId, organizationId },
     });
@@ -299,6 +367,8 @@ export class OffboardingService {
 
     const missing: string[] = [];
     if (!record.assetsReturned) missing.push('assetsReturned');
+    else if (!record.assetOverrideNote)
+      await this.assertNoOpenAssets(record.employeeId, organizationId);
     if (!record.accessRevoked) missing.push('accessRevoked');
     if (!record.exitInterviewDone) missing.push('exitInterviewDone');
     if (!record.settlementId) missing.push('settlement');
@@ -338,9 +408,31 @@ export class OffboardingService {
           completedAt: new Date(),
         },
       });
+      // Final employment status per the case's exit type (RESIGNED/RELEASED/TERMINATED/ABSCONDED), with a
+      // history row, and every session revoked — the account can no longer refresh a token after exit.
+      const current = await tx.user.findFirst({
+        where: { id: record.employeeId, organizationId },
+        select: { employmentStatus: true },
+      });
       await tx.user.updateMany({
         where: { id: record.employeeId, organizationId },
-        data: { isActive: false },
+        data: { isActive: false, employmentStatus: record.exitStatus },
+      });
+      if (current && current.employmentStatus !== record.exitStatus) {
+        await tx.employmentStatusHistory.create({
+          data: {
+            organizationId,
+            employeeId: record.employeeId,
+            previousStatus: current.employmentStatus,
+            newStatus: record.exitStatus,
+            note: 'Offboarding completed',
+            changedById: actor.id,
+          },
+        });
+      }
+      await tx.refreshToken.updateMany({
+        where: { userId: record.employeeId, organizationId, revokedAt: null },
+        data: { revokedAt: new Date() },
       });
     });
     await this.auditLogService.log({
@@ -412,23 +504,57 @@ export class OffboardingService {
     }
   }
 
-  async cancel(id: string, organizationId: string) {
-    const record = await this.findOne(id, organizationId);
+  async cancel(id: string, organizationId: string, actorId?: string) {
+    const record = await this.findCase(id, organizationId);
     if (record.status === OffboardingStatus.COMPLETED) {
       throw new BadRequestException(
         'A completed offboarding case cannot be cancelled.',
       );
     }
 
-    await this.scopedPrisma.offboardingCase.updateMany({
-      where: { id, organizationId },
-      data: { status: OffboardingStatus.CANCELLED },
+    await this.scopedPrisma.$transaction(async (tx) => {
+      const { count } = await tx.offboardingCase.updateMany({
+        where: {
+          id,
+          organizationId,
+          status: { in: [...OPEN_STATUSES, OffboardingStatus.CANCELLED] },
+        },
+        data: { status: OffboardingStatus.CANCELLED },
+      });
+      // Restore the pre-notice status only on the first cancel of an open case, and only if the
+      // employee is still in NOTICE_PERIOD (HR may have changed it manually since).
+      const wasOpen = OPEN_STATUSES.includes(record.status);
+      if (count > 0 && wasOpen && record.previousEmploymentStatus) {
+        const restored = await tx.user.updateMany({
+          where: {
+            id: record.employeeId,
+            organizationId,
+            employmentStatus: EmploymentStatus.NOTICE_PERIOD,
+          },
+          data: { employmentStatus: record.previousEmploymentStatus },
+        });
+        if (
+          restored.count > 0 &&
+          record.previousEmploymentStatus !== EmploymentStatus.NOTICE_PERIOD
+        ) {
+          await tx.employmentStatusHistory.create({
+            data: {
+              organizationId,
+              employeeId: record.employeeId,
+              previousStatus: EmploymentStatus.NOTICE_PERIOD,
+              newStatus: record.previousEmploymentStatus,
+              note: 'Offboarding cancelled',
+              changedById: actorId ?? record.initiatedById,
+            },
+          });
+        }
+      }
     });
     return this.findOne(id, organizationId);
   }
 
   private async assertOpenCase(id: string, organizationId: string) {
-    const record = await this.findOne(id, organizationId);
+    const record = await this.findCase(id, organizationId);
     if (CLOSED_STATUSES.includes(record.status)) {
       throw new BadRequestException('This offboarding case is already closed.');
     }

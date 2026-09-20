@@ -25,6 +25,7 @@ import { Form16ReportQueryDto } from './dto/form16-report-query.dto';
 import { ReportPayload } from './reports.service';
 import { formatDateTimeDisplay } from '../payroll/format-date';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
+import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
 
 interface PayrollLine {
   code: string;
@@ -76,15 +77,18 @@ export class PayrollReportsService {
     if (query.month) where.month = query.month;
     if (query.year) where.year = query.year;
 
-    return this.scopedPrisma.payrollRun.findMany({
+    const runs = await this.scopedPrisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
+      take: REPORT_ROW_LIMIT + 1,
       orderBy: [
         ...EMPLOYEE_RELATION_ORDER_BY,
         { year: 'desc' },
         { month: 'desc' },
       ],
     });
+    assertWithinReportLimit(runs);
+    return runs;
   }
 
   // Every earning/deduction code that appears anywhere in the selected
@@ -568,8 +572,10 @@ export class PayrollReportsService {
     const logs = await this.scopedPrisma.auditLog.findMany({
       where,
       include: { actor: { select: { name: true, employeeId: true } } },
+      take: REPORT_ROW_LIMIT + 1,
       orderBy: { createdAt: 'desc' },
     });
+    assertWithinReportLimit(logs);
 
     const rows = logs.map((l) => ({
       timestamp: formatDateTimeDisplay(l.createdAt),

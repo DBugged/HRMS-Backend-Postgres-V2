@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { EmployeeSalaryComponentsController } from './employee-salary-components.controller';
 import { EmployeeSalaryComponentsService } from './employee-salary-components.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 
 @Module({
-  imports: [AuditLogModule],
+  imports: [AuditLogModule, EmployeeTimelineModule],
   controllers: [EmployeeSalaryComponentsController],
   providers: [EmployeeSalaryComponentsService],
   // Exported so LeaveEncashmentsModule can inject it for

@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
+import { EmploymentStatus } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class InitiateOffboardingDto {
@@ -15,4 +16,12 @@ export class InitiateOffboardingDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  // The employmentStatus complete() applies when the exit finishes. Defaults to RELEASED.
+  @ApiPropertyOptional({
+    enum: ['RESIGNED', 'RELEASED', 'TERMINATED', 'ABSCONDED'],
+  })
+  @IsOptional()
+  @IsIn(['RESIGNED', 'RELEASED', 'TERMINATED', 'ABSCONDED'])
+  exitStatus?: EmploymentStatus;
 }

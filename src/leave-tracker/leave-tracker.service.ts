@@ -21,6 +21,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { deptScopedEmployeeIds } from '../common/dept-scope';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
+import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
@@ -279,10 +280,36 @@ export class LeaveTrackerService {
 
     const employees = await this.scopedPrisma.user.findMany({
       where: { id: { in: employeeIds }, organizationId },
-      select: { id: true, name: true, employeeId: true },
+      select: {
+        id: true,
+        name: true,
+        employeeId: true,
+        // Fields isEligible() reads — evaluated in memory below.
+        departmentId: true,
+        employeeType: true,
+        gender: true,
+        joiningDate: true,
+      },
       orderBy: EMPLOYEE_ORDER_BY,
     });
     employees.sort(compareEmployees);
+
+    // Fetched once for the whole loop (was once per employee) — same
+    // query/ordering as LeaveBalanceService.getEligibleLeaveTypes.
+    const activeLeaveTypes = await this.scopedPrisma.leaveType.findMany({
+      where: { organizationId, isActive: true },
+      orderBy: { displayOrder: 'asc' },
+    });
+    const existingBalanceRows = await this.scopedPrisma.leaveBalance.findMany({
+      where: {
+        organizationId,
+        year: query.year,
+        employeeId: { in: employees.map((e) => e.id) },
+      },
+    });
+    const existingBalanceByKey = new Map(
+      existingBalanceRows.map((r) => [`${r.employeeId}:${r.leaveTypeId}`, r]),
+    );
 
     const yearStart = `${query.year}-01-01`;
     const yearEnd = `${query.year}-12-31`;
@@ -307,9 +334,8 @@ export class LeaveTrackerService {
     }[] = [];
 
     for (const employee of employees) {
-      const eligible = await this.leaveBalanceService.getEligibleLeaveTypes(
-        employee.id,
-        organizationId,
+      const eligible = activeLeaveTypes.filter((lt) =>
+        isEligible(lt, employee),
       );
       const balanceEligible = eligible.filter(
         (lt) =>
@@ -318,31 +344,41 @@ export class LeaveTrackerService {
           lt.allocationType !== AllocationType.UNLIMITED,
       );
 
-      const leaveBalances = await this.scopedPrisma.$transaction(async (tx) => {
-        const rows: {
-          leaveTypeCode: string;
-          leaveTypeName: string;
-          credited: number;
-          availed: number;
-          closing: number;
-        }[] = [];
-        for (const leaveType of balanceEligible) {
-          const row = await this.leaveBalanceService.ensureBalanceRow(
-            tx,
-            employee.id,
-            leaveType.id,
-            query.year,
-            organizationId,
-          );
-          rows.push({
-            leaveTypeCode: leaveType.code,
-            leaveTypeName: leaveType.name,
-            credited: row.credited,
-            availed: row.availed,
-            closing: row.closing,
-          });
-        }
-        return rows;
+      const missing = balanceEligible.filter(
+        (lt) => !existingBalanceByKey.has(`${employee.id}:${lt.id}`),
+      );
+      const ensuredRows = new Map<
+        string,
+        Awaited<ReturnType<LeaveBalanceService['ensureBalanceRow']>>
+      >();
+      if (missing.length > 0) {
+        await this.scopedPrisma.$transaction(async (tx) => {
+          for (const leaveType of missing) {
+            ensuredRows.set(
+              leaveType.id,
+              await this.leaveBalanceService.ensureBalanceRow(
+                tx,
+                employee.id,
+                leaveType.id,
+                query.year,
+                organizationId,
+              ),
+            );
+          }
+        });
+      }
+
+      const leaveBalances = balanceEligible.map((leaveType) => {
+        const row =
+          existingBalanceByKey.get(`${employee.id}:${leaveType.id}`) ??
+          ensuredRows.get(leaveType.id)!;
+        return {
+          leaveTypeCode: leaveType.code,
+          leaveTypeName: leaveType.name,
+          credited: row.credited,
+          availed: row.availed,
+          closing: row.closing,
+        };
       });
 
       const compOffAvailable = await this.compOffService.available(

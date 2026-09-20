@@ -4,7 +4,12 @@
 // modules (e.g. Leave Encashment) to resolve one component's live monthly value without a full payroll run.
 // Important: getCurrentMonthlyValue() resolves formula/percentage dependencies recursively via
 // extractDependencies/resolveComponentValue, so component definitions can reference each other by code.
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   EmployeeSalaryComponent,
   Prisma,
@@ -25,12 +30,14 @@ import {
   resolveComponentValue,
 } from './component-value-resolution';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 @Injectable()
 export class EmployeeSalaryComponentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   async getStructure(
@@ -183,14 +190,25 @@ export class EmployeeSalaryComponentsService {
         });
         continue;
       }
-      const row = await this.applyRevision(
-        employeeId,
-        component,
-        { ...line, effectiveFrom: dto.effectiveFrom },
-        actorId,
-        organizationId,
-      );
-      created.push(row);
+      try {
+        const row = await this.applyRevision(
+          employeeId,
+          component,
+          { ...line, effectiveFrom: dto.effectiveFrom },
+          actorId,
+          organizationId,
+        );
+        created.push(row);
+      } catch (err) {
+        // A revision rejected by the effectiveFrom guard is reported per row, like an unresolved component.
+        if (!(err instanceof BadRequestException)) throw err;
+        failed.push({
+          row: i + 1,
+          componentId: line.componentId,
+          componentCode: line.componentCode,
+          error: err.message,
+        });
+      }
     }
 
     return { count: created.length, rows: created, failed };
@@ -218,6 +236,14 @@ export class EmployeeSalaryComponentsService {
         effectiveTo: null,
       },
     });
+    // A revision must start after the row it closes out — otherwise effectiveTo (= day before `from`) would
+    // land before that row's own effectiveFrom, corrupting the history. Same-day or backdated edits are
+    // rejected (split-period revisions are out of scope).
+    if (current && from <= current.effectiveFrom) {
+      throw new BadRequestException(
+        `effectiveFrom (${from}) must be after the current revision's effectiveFrom (${current.effectiveFrom}) for ${component.code}.`,
+      );
+    }
     if (current) {
       await this.scopedPrisma.employeeSalaryComponent.updateMany({
         where: { id: current.id, organizationId },
@@ -277,6 +303,18 @@ export class EmployeeSalaryComponentsService {
           isEnabled: created.isEnabled,
         },
       },
+    });
+
+    // One SALARY_REVISION timeline event per applied revision. Amounts stay out on purpose — the timeline
+    // is visible to the employee; only the component code, effective date and HR's revision note are shown.
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId,
+      eventKey: 'SALARY_REVISION',
+      performedById: actorId,
+      description: component.name,
+      remarks: dto.revisionNote ?? '',
+      metadata: { componentCode: component.code, effectiveFrom: from },
     });
 
     return created;

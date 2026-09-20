@@ -168,6 +168,12 @@ export class EmployeesController {
     );
   }
 
+  @Get(':id/movements')
+  @SelfOrRoles('id', Role.ADMIN, Role.HR)
+  getMovements(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.employeeProfileService.getMovements(id, caller.organizationId);
+  }
+
   @Get(':id/employment-status-history')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

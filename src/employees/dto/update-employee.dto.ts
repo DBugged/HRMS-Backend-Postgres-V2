@@ -136,4 +136,25 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsUUID()
   reassignManagerId?: string;
+
+  // Movement-history metadata (never persisted on User) — recorded on the EmployeeMovement row(s) written
+  // when departmentId / designation / gradeLevel / reportingManagerId changes. The change itself is applied
+  // immediately; effectiveDate is history-only (no future-dated application). Defaults to today.
+  @ApiPropertyOptional({ example: '2026-10-01' })
+  @IsOptional()
+  @IsValidCalendarDateString()
+  effectiveDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  changeReason?: string;
+
+  // Flags a designation/grade change as a promotion (PROMOTION movement + timeline event) rather than a
+  // plain DESIGNATION_CHANGE.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  isPromotion?: boolean;
 }

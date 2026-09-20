@@ -831,6 +831,21 @@ export class PayrollService {
       existingRuns.map((r) => [r.employeeId, r]),
     );
 
+    // Department names for the payslip snapshot (PayrollRun.departmentName) — one batched lookup.
+    const departmentIds = [
+      ...new Set(
+        employees.map((e) => e.departmentId).filter((d): d is string => !!d),
+      ),
+    ];
+    const departmentNameById = new Map(
+      (
+        await this.scopedPrisma.department.findMany({
+          where: { organizationId, id: { in: departmentIds } },
+          select: { id: true, name: true },
+        })
+      ).map((d) => [d.id, d.name]),
+    );
+
     // Bounded concurrency, not fully sequential — each employee's
     // calculatePayroll() does several DB round-trips, and a few hundred
     // employees awaited one at a time in a single request is a real
@@ -887,6 +902,12 @@ export class PayrollService {
           netPayInWords: amountInWords(calc.netPay),
           calculatedAt: new Date(),
           calculatedById: actor.id,
+          // Point-in-time snapshot for the payslip (falls back to live values on older runs).
+          designation: employee.designation,
+          gradeLevel: employee.gradeLevel,
+          departmentName: employee.departmentId
+            ? (departmentNameById.get(employee.departmentId) ?? null)
+            : null,
         };
         if (run) {
           await this.scopedPrisma.payrollRun.updateMany({

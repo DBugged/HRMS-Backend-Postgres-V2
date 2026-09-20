@@ -4,7 +4,8 @@
 // employeeId generation to EmployeeIdService and change-history/timeline logging (logChangesIfAny) inline
 // rather than to a shared audit helper; bulkCreate() reuses create() row-by-row so seat limits and role
 // defaults stay in one place.
-// Important: update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
+// Important: update() also writes EmployeeMovement history rows for department/designation/grade/manager changes
+// (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check. officialEmail is normalized to null (not '') on clear since it's a unique column and empty
 // strings would collide across employees.
@@ -486,7 +487,13 @@ export class EmployeesService {
     // reassignManagerId is a transient instruction (see its DTO comment),
     // never a persisted column — pulled off before anything below spreads
     // the rest of the payload into the Prisma write.
-    const { reassignManagerId, ...updateFields } = dto;
+    const {
+      reassignManagerId,
+      effectiveDate,
+      changeReason,
+      isPromotion,
+      ...updateFields
+    } = dto;
     const clean = stripLockedFields(updateFields, actor.role);
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
@@ -580,6 +587,13 @@ export class EmployeesService {
     }
 
     await this.logChangesIfAny(before, clean, actor.id, organizationId);
+    await this.recordMovements(
+      before,
+      clean,
+      { effectiveDate, changeReason, isPromotion },
+      actor.id,
+      organizationId,
+    );
 
     // Tell the affected person their access role changed (security-relevant, and rare). Skipped
     // for a self-edit and for a deactivated account; best-effort, never fails the update.
@@ -667,6 +681,98 @@ export class EmployeesService {
   // transitions, written whenever update() actually changes one of them —
   // mirrors the old system's logAudit-adjacent behavior. Silent no-op for
   // any field the caller didn't touch.
+  // Writes EmployeeMovement history rows (transfer / promotion / designation / manager change). The new values
+  // were already applied to the user by update(); effectiveDate is recorded for history only — there is no
+  // effective-dated future application. Also emits the PROMOTION / REPORTING_MANAGER_CHANGED timeline events.
+  private async recordMovements(
+    before: User,
+    clean: UpdateEmployeeDto,
+    meta: {
+      effectiveDate?: string;
+      changeReason?: string;
+      isPromotion?: boolean;
+    },
+    changedById: string,
+    organizationId: string,
+  ) {
+    const departmentChanged =
+      clean.departmentId !== undefined &&
+      clean.departmentId !== before.departmentId;
+    const designationChanged =
+      clean.designation !== undefined &&
+      clean.designation !== before.designation;
+    const gradeChanged =
+      clean.gradeLevel !== undefined && clean.gradeLevel !== before.gradeLevel;
+    const managerChanged =
+      clean.reportingManagerId !== undefined &&
+      clean.reportingManagerId !== before.reportingManagerId;
+    if (
+      !departmentChanged &&
+      !designationChanged &&
+      !gradeChanged &&
+      !managerChanged
+    )
+      return;
+
+    const base = {
+      organizationId,
+      employeeId: before.id,
+      effectiveDate:
+        meta.effectiveDate ?? new Date().toISOString().slice(0, 10),
+      reason: meta.changeReason,
+      changedById,
+    };
+    const rows: Prisma.EmployeeMovementUncheckedCreateInput[] = [];
+    if (departmentChanged) {
+      rows.push({
+        ...base,
+        type: 'TRANSFER',
+        previousDepartmentId: before.departmentId,
+        newDepartmentId: clean.departmentId,
+      });
+    }
+    if (designationChanged || gradeChanged) {
+      rows.push({
+        ...base,
+        type: meta.isPromotion ? 'PROMOTION' : 'DESIGNATION_CHANGE',
+        previousDesignation: designationChanged
+          ? before.designation
+          : undefined,
+        newDesignation: designationChanged ? clean.designation : undefined,
+        previousGradeLevel: gradeChanged ? before.gradeLevel : undefined,
+        newGradeLevel: gradeChanged ? clean.gradeLevel : undefined,
+      });
+    }
+    if (managerChanged) {
+      rows.push({
+        ...base,
+        type: 'MANAGER_CHANGE',
+        previousReportingManagerId: before.reportingManagerId,
+        newReportingManagerId: clean.reportingManagerId,
+      });
+    }
+    await this.scopedPrisma.employeeMovement.createMany({ data: rows });
+
+    if ((designationChanged || gradeChanged) && meta.isPromotion) {
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: before.id,
+        eventKey: 'PROMOTION',
+        performedById: changedById,
+        remarks: meta.changeReason,
+      });
+    }
+    if (managerChanged) {
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: before.id,
+        eventKey: 'REPORTING_MANAGER_CHANGED',
+        performedById: changedById,
+        remarks: meta.changeReason,
+      });
+    }
+  }
+
   private async logChangesIfAny(
     before: User,
     clean: UpdateEmployeeDto,

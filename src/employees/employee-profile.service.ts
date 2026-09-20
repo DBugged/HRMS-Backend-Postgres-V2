@@ -345,6 +345,15 @@ export class EmployeeProfileService {
     });
   }
 
+  // Transfer / promotion / manager-change history written by EmployeesService.update().
+  async getMovements(id: string, organizationId: string) {
+    await this.findEmployeeOrThrow(id, organizationId);
+    return this.scopedPrisma.employeeMovement.findMany({
+      where: { organizationId, employeeId: id },
+      orderBy: [{ effectiveDate: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
+
   async getEmploymentStatusHistory(id: string, organizationId: string) {
     await this.findEmployeeOrThrow(id, organizationId);
     return this.scopedPrisma.employmentStatusHistory.findMany({

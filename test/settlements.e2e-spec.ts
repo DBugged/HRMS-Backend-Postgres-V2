@@ -61,6 +61,8 @@ const BASIC_MONTHLY = 30000;
 // now contributes to gross pay alongside BASIC.
 const HRA_MONTHLY = BASIC_MONTHLY * 0.4;
 const DAYS_IN_MONTH = 30;
+// An APPROVED-but-unpaid reimbursement is settled with the final payout.
+const REIMBURSEMENT_AMOUNT = 700;
 
 async function markFullMonthPresent(
   prisma: PrismaService,
@@ -275,12 +277,22 @@ describe('Settlements (e2e)', () => {
         HRA_MONTHLY +
         expectedLeaveEncashment +
         2000 +
-        expectedGratuity -
+        expectedGratuity +
+        REIMBURSEMENT_AMOUNT -
         500 -
         5000 -
         1000,
     );
 
+    await prisma.reimbursement.create({
+      data: {
+        organizationId,
+        employeeId,
+        amount: REIMBURSEMENT_AMOUNT,
+        claimDate: '2026-06-05',
+        status: 'APPROVED',
+      },
+    });
     const res = await request(app.getHttpServer())
       .post('/settlements/calculate')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -294,6 +306,10 @@ describe('Settlements (e2e)', () => {
       .expect(201);
     const body = res.body as SettlementBody;
     settlementId = body.id;
+    expect(
+      (res.body as SettlementBody & { reimbursementAmount: number })
+        .reimbursementAmount,
+    ).toBe(REIMBURSEMENT_AMOUNT);
     expect(body.status).toBe('DRAFT');
     expect(body.pendingSalaryAmount).toBe(BASIC_MONTHLY + HRA_MONTHLY); // full month present
     expect(body.leaveEncashmentAmount).toBe(expectedLeaveEncashment);
@@ -371,7 +387,7 @@ describe('Settlements (e2e)', () => {
       .expect(403);
   });
 
-  it('processes the settlement: creates an APPROVED final-settlement PayrollRun, closes the loan, deactivates the employee', async () => {
+  it('processes the settlement: creates an APPROVED final-settlement PayrollRun, closes the loan, pays approved reimbursements, leaves deactivation to offboarding', async () => {
     const res = await request(app.getHttpServer())
       .post(`/settlements/${settlementId}/process`)
       .set('Authorization', `Bearer ${hrToken}`)
@@ -390,7 +406,44 @@ describe('Settlements (e2e)', () => {
     const employee = await prisma.user.findFirstOrThrow({
       where: { id: employeeId },
     });
-    expect(employee.isActive).toBe(false);
+    // process() no longer deactivates — OffboardingService.complete() owns that (exit gates, manager
+    // reassignment, final employmentStatus).
+    expect(employee.isActive).toBe(true);
+
+    const reimbursement = await prisma.reimbursement.findFirstOrThrow({
+      where: { employeeId },
+    });
+    expect(reimbursement.status).toBe('PAID');
+    expect(reimbursement.payrollRunId).toBe(body.payrollRun.id);
+    const earnings = (
+      await prisma.payrollRun.findFirstOrThrow({
+        where: { id: body.payrollRun.id },
+      })
+    ).earnings as { code: string; amount: number }[];
+    expect(earnings.find((e) => e.code === 'REIMBURSEMENT')?.amount).toBe(
+      REIMBURSEMENT_AMOUNT,
+    );
+  });
+
+  it('does not pay the LWD month salary again when a regular payroll run already exists for it', async () => {
+    await prisma.payrollRun.create({
+      data: {
+        organizationId,
+        employeeId,
+        month: 7,
+        year: YEAR,
+        status: 'CALCULATED',
+        netPay: 12345,
+      },
+    });
+    const res = await request(app.getHttpServer())
+      .post('/settlements/calculate')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ employeeId, lastWorkingDay: `${YEAR}-07-15` })
+      .expect(201);
+    const body = res.body as SettlementBody & { pendingSalaryNote: string };
+    expect(body.pendingSalaryAmount).toBe(0);
+    expect(body.pendingSalaryNote).toContain('already covered');
   });
 
   it('processing an already-processed settlement is rejected', async () => {

@@ -39,6 +39,7 @@ import { ReimbursementsModule } from './reimbursements/reimbursements.module';
 import { LoansModule } from './loans/loans.module';
 import { SettlementsModule } from './settlements/settlements.module';
 import { OffboardingModule } from './offboarding/offboarding.module';
+import { ResignationsModule } from './resignations/resignations.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { ReportsModule } from './reports/reports.module';
 import { FilesModule } from './files/files.module';
@@ -121,6 +122,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     LoansModule,
     SettlementsModule,
     OffboardingModule,
+    ResignationsModule,
     DashboardModule,
     ReportsModule,
     FilesModule,
