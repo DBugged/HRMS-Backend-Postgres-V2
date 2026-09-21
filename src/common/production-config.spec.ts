@@ -22,11 +22,9 @@ describe('production config', () => {
   it('accepts a good config', () => {
     expect(productionConfigProblems(good)).toEqual([]);
   });
-  it('rejects missing/wildcard/localhost origins and placeholder secrets', () => {
-    expect(productionConfigProblems({ NODE_ENV: 'production' }).length).toBe(4);
-    expect(
-      productionConfigProblems({ ...good, CORS_ORIGIN: '*' }).join(),
-    ).toContain("'*'");
+  it('rejects missing frontend URL and placeholder secrets (CORS origin is unrestricted)', () => {
+    expect(productionConfigProblems({ NODE_ENV: 'production' }).length).toBe(3);
+    expect(productionConfigProblems({ ...good, CORS_ORIGIN: '*' })).toEqual([]);
     expect(
       productionConfigProblems({
         ...good,

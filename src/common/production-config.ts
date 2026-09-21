@@ -31,10 +31,6 @@ export function productionConfigProblems(
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
-  if (origins.length === 0)
-    p.push('CORS_ORIGIN or FRONTEND_URL must be set to the frontend origin(s)');
-  if (origins.some((o) => o === '*' || LOCAL_RE.test(o)))
-    p.push("CORS_ORIGIN/FRONTEND_URL must not be '*' or a localhost origin");
   const fe = env.FRONTEND_URL || origins[0];
   if (!env.FRONTEND_URL)
     p.push('FRONTEND_URL must be set (used in emailed links)');

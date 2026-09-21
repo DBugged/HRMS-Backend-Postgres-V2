@@ -10,11 +10,7 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { initSentry } from './common/sentry';
 import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
-import {
-  assertProductionConfig,
-  corsOrigins,
-  swaggerEnabled,
-} from './common/production-config';
+import { assertProductionConfig, swaggerEnabled } from './common/production-config';
 
 // Called before NestFactory.create() so an error during module
 // bootstrapping itself (a bad Prisma connection string, a provider that
@@ -86,28 +82,14 @@ async function bootstrap() {
     }),
   );
 
-  const allowedOrigins = corsOrigins();
-  // Any localhost:* origin in dev — the frontend's dev server (and this
-  // sandbox's preview tooling) doesn't always land on the same port
-  // between sessions, and re-editing CORS_ORIGIN by hand every time a
-  // preview picks a different port isn't sustainable. Production still
-  // enforces the explicit allowedOrigins list only.
-  const localhostAnyPort = /^http:\/\/localhost:\d+$/;
+  // Allow every origin, in every environment. Browsers reject a literal
+  // Access-Control-Allow-Origin: * when credentials are involved, so with
+  // credentials: true this reflects back whatever Origin header the
+  // browser sends — which means any site can make authenticated requests
+  // using a logged-in user's cookies. Opted into explicitly; see PR
+  // discussion for the tradeoff.
   app.enableCors({
-    origin:
-      process.env.NODE_ENV === 'production'
-        ? allowedOrigins
-        : (origin, callback) => {
-            if (
-              !origin ||
-              allowedOrigins.includes(origin) ||
-              localhostAnyPort.test(origin)
-            ) {
-              callback(null, true);
-            } else {
-              callback(new Error('Not allowed by CORS'));
-            }
-          },
+    origin: (origin, callback) => callback(null, true),
     credentials: true, // required for the httpOnly refresh cookie to be sent/received cross-origin
   });
 
