@@ -219,6 +219,19 @@ describe('Auth + RBAC (e2e)', () => {
       .expect(400);
   });
 
+  it('change-password rejects a weak new password with a 400 listing what is missing', async () => {
+    const loginRes = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({ email: testEmails.employee, password })
+      .expect(201);
+    const res = await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer ${(loginRes.body as AuthBody).accessToken}`)
+      .send({ currentPassword: password, newPassword: 'weakpass' })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toContain('uppercase');
+  });
+
   it('change-password succeeds, clears mustChangePassword, and the new password logs in', async () => {
     // Seeded with mustChangePassword: false in the earlier seeding step —
     // flip it on here to prove this endpoint is the one that clears it,

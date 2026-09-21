@@ -1,3 +1,4 @@
+import { cookieSecure } from '../common/production-config';
 // Purpose: Exposes registration, login, token refresh/logout, password reset, and the current-user endpoints.
 // Responsibilities: Validates DTOs, manages the refresh-token cookie, and delegates credential logic to AuthService.
 // Important: Brute-force-sensitive routes are throttled tighter than the app default; login/refresh/logout are @Public().
@@ -153,7 +154,7 @@ function getRefreshCookie(req: Request): string | undefined {
 function setRefreshCookie(res: Response, rawToken: string) {
   res.cookie(REFRESH_COOKIE_NAME, rawToken, {
     httpOnly: true,
-    secure: process.env.COOKIE_SECURE === 'true',
+    secure: cookieSecure(),
     sameSite:
       (process.env.COOKIE_SAMESITE as 'lax' | 'strict' | 'none') || 'lax',
     path: REFRESH_COOKIE_PATH,

@@ -6,8 +6,8 @@ import {
   IsString,
   Matches,
   MaxLength,
-  MinLength,
 } from 'class-validator';
+import { IsStrongPassword } from '../../common/password-policy';
 
 export class RegisterDto {
   @ApiProperty({ example: 'Acme Corp' })
@@ -31,7 +31,7 @@ export class RegisterDto {
   @IsEmail()
   email!: string;
 
-  @ApiProperty({ example: 'StrongPass123!', minLength: 8 })
-  @MinLength(8)
+  @ApiProperty({ example: 'StrongPass123!', minLength: 10 })
+  @IsStrongPassword()
   password!: string;
 }

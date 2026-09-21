@@ -3,5 +3,9 @@
 // reuses its first entry rather than introducing a second source of truth
 // that could drift from it. Same fallback as main.ts's CORS setup.
 export function frontendUrl(): string {
-  return (process.env.CORS_ORIGIN || 'http://localhost:5173').split(',')[0];
+  return (
+    process.env.FRONTEND_URL ||
+    process.env.CORS_ORIGIN ||
+    'http://localhost:5173'
+  ).split(',')[0];
 }

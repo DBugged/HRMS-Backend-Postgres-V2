@@ -33,3 +33,6 @@ prisma/generated
 
 ## Uploaded files (local-disk storage, see src/files/)
 /uploads
+
+## DB backups
+/backups

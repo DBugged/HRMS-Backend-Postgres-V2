@@ -3,11 +3,18 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
+import type { NextFunction, Request, Response } from 'express';
+import { timingSafeEqual } from 'crypto';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { initSentry } from './common/sentry';
 import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
+import {
+  assertProductionConfig,
+  corsOrigins,
+  swaggerEnabled,
+} from './common/production-config';
 
 // Called before NestFactory.create() so an error during module
 // bootstrapping itself (a bad Prisma connection string, a provider that
@@ -18,6 +25,8 @@ initSentry();
 async function bootstrap() {
   // Fail fast in production when PERSONAL_DATA_ENCRYPTION_KEY is missing/invalid.
   assertPersonalDataKeyConfigured();
+  // Fail fast on unsafe production config (CORS, JWT secrets, FRONTEND_URL).
+  assertProductionConfig();
   // bufferLogs holds Nest's own startup logs (module init order, route
   // registration, etc.) until app.useLogger() below installs pino as the
   // sink, instead of emitting them through Nest's default plain-text
@@ -77,9 +86,7 @@ async function bootstrap() {
     }),
   );
 
-  const allowedOrigins = (
-    process.env.CORS_ORIGIN || 'http://localhost:5173'
-  ).split(',');
+  const allowedOrigins = corsOrigins();
   // Any localhost:* origin in dev — the frontend's dev server (and this
   // sandbox's preview tooling) doesn't always land on the same port
   // between sessions, and re-editing CORS_ORIGIN by hand every time a
@@ -104,20 +111,44 @@ async function bootstrap() {
     credentials: true, // required for the httpOnly refresh cookie to be sent/received cross-origin
   });
 
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('HRMS Backend v2')
-    .setDescription(
-      'Auth + RBAC foundation (Phase 1 of the NestJS/Prisma/Postgres migration)',
-    )
-    .setVersion('0.1.0')
-    .addBearerAuth(
-      { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
-      'access-token',
-    )
-    .addCookieAuth('refresh_token')
-    .build();
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+  if (swaggerEnabled()) {
+    // Optional basic-auth gate for the docs when SWAGGER_USER/PASSWORD are set.
+    const { SWAGGER_USER, SWAGGER_PASSWORD } = process.env;
+    if (
+      process.env.NODE_ENV === 'production' &&
+      SWAGGER_USER &&
+      SWAGGER_PASSWORD
+    ) {
+      const expected =
+        'Basic ' +
+        Buffer.from(`${SWAGGER_USER}:${SWAGGER_PASSWORD}`).toString('base64');
+      app.use(
+        '/api/docs',
+        (req: Request, res: Response, next: NextFunction) => {
+          const got = Buffer.from(req.headers.authorization ?? '');
+          const want = Buffer.from(expected);
+          if (got.length === want.length && timingSafeEqual(got, want))
+            return next();
+          res.setHeader('WWW-Authenticate', 'Basic realm="docs"');
+          res.status(401).send('Authentication required');
+        },
+      );
+    }
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('HRMS Backend v2')
+      .setDescription(
+        'Auth + RBAC foundation (Phase 1 of the NestJS/Prisma/Postgres migration)',
+      )
+      .setVersion('0.1.0')
+      .addBearerAuth(
+        { type: 'http', scheme: 'bearer', bearerFormat: 'JWT' },
+        'access-token',
+      )
+      .addCookieAuth('refresh_token')
+      .build();
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   await app.listen(process.env.PORT ?? 4000);
 }

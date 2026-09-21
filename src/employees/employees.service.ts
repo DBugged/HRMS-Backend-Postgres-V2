@@ -20,6 +20,7 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
+import { generatePolicyPassword } from '../common/password-policy';
 import { isEmail, isDateString } from 'class-validator';
 import { Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -101,8 +102,7 @@ export class EmployeesService {
 
     await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
 
-    const generatedPassword =
-      crypto.randomBytes(6).toString('base64url') + 'A1!';
+    const generatedPassword = generatePolicyPassword();
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
 
     let user: User;
@@ -291,8 +291,7 @@ export class EmployeesService {
       );
     }
 
-    const generatedPassword =
-      crypto.randomBytes(6).toString('base64url') + 'A1!';
+    const generatedPassword = generatePolicyPassword();
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
 
     await this.scopedPrisma.user.updateMany({
