@@ -53,6 +53,20 @@ export function productionConfigProblems(
   return p;
 }
 
+/** Non-fatal production config warnings (emails still send, but assets may not render). */
+export function productionConfigWarnings(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (!isProd(env)) return [];
+  const w: string[] = [];
+  const pub = env.BACKEND_PUBLIC_URL;
+  if (!pub || LOCAL_RE.test(pub) || !/^https:\/\//i.test(pub))
+    w.push(
+      'WARNING: BACKEND_PUBLIC_URL is unset, localhost or not https - the email logo (and other emailed asset URLs) will not load in mail clients.',
+    );
+  return w;
+}
+
 export function assertProductionConfig(
   env: NodeJS.ProcessEnv = process.env,
   warn: (m: string) => void = (m) => console.warn(m),
@@ -62,6 +76,7 @@ export function assertProductionConfig(
     throw new Error(
       `Invalid production configuration:\n - ${problems.join('\n - ')}`,
     );
+  productionConfigWarnings(env).forEach((m) => warn(m));
   if (isProd(env) && env.EMAIL_DRIVER !== 'resend' && !env.SMTP_HOST)
     warn(
       'WARNING: SMTP is not configured (SMTP_HOST unset) - emails will not be delivered.',

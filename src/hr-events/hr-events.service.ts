@@ -212,6 +212,7 @@ export class HrEventsService {
       companyLogo: companyLogoImgTag(
         organizationId,
         organization?.emailLogoUrl,
+        organization?.companyName,
       ),
     };
   }

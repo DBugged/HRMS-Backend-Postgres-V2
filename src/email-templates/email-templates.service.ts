@@ -310,6 +310,7 @@ export class EmailTemplatesService {
       companyLogo: companyLogoImgTag(
         organizationId,
         organization?.emailLogoUrl,
+        organization?.companyName,
       ),
     };
     const cc = (ccEmployees as { email: string }[]).map((e) => e.email);
@@ -548,7 +549,11 @@ export class EmailTemplatesService {
       companyWebsite: org?.website ?? '',
       companyEmail: org?.contactEmail ?? '',
       companyAddress: org?.registeredAddress ?? '',
-      companyLogo: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+      companyLogo: companyLogoImgTag(
+        organizationId,
+        org?.emailLogoUrl,
+        org?.companyName,
+      ),
     };
     return `${html}${this.renderHtml(signatureHtml, { ...companyVariables, ...variables })}`;
   }

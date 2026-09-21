@@ -51,3 +51,24 @@ describe('production config', () => {
     expect(swaggerEnabled({ ...good, ENABLE_SWAGGER: 'true' })).toBe(true);
   });
 });
+
+describe('production config warnings', () => {
+  it('warns when BACKEND_PUBLIC_URL is unset, localhost or http', () => {
+    const { productionConfigWarnings } = jest.requireActual<
+      typeof import('./production-config')
+    >('./production-config');
+    expect(productionConfigWarnings(good)).toHaveLength(1);
+    expect(
+      productionConfigWarnings({
+        ...good,
+        BACKEND_PUBLIC_URL: 'http://localhost:4000',
+      }),
+    ).toHaveLength(1);
+    expect(
+      productionConfigWarnings({
+        ...good,
+        BACKEND_PUBLIC_URL: 'https://api.example.com',
+      }),
+    ).toEqual([]);
+  });
+});

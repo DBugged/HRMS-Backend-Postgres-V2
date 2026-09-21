@@ -1,29 +1,60 @@
-// Purpose: Wires Organization Settings > Branding > Email Logo into outgoing emails — it was captured and
-//   validated but nothing actually read it (the upload hint claimed "Used in email templates", which wasn't
-//   true until this file existed; the Email Templates screen didn't even offer a {{companyLogo}} placeholder).
-import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
+// Purpose: Wires Organization Settings > Branding > Email Logo into outgoing emails ({{companyLogo}} and the
+//   shell header logo).
+// Important: the URL is DURABLE — GET /public/branding/:organizationId/email-logo (see
+//   files/public-branding.controller.ts) never expires. It used to be a 24h signed /files/<token> URL, which
+//   showed a broken image for any email opened after a day. Emails also need an absolute, publicly reachable
+//   https origin, so BACKEND_PUBLIC_URL must be set in production (validated in common/production-config.ts).
+import { createHash } from 'crypto';
+import { Logger } from '@nestjs/common';
 import { backendPublicUrl } from '../common/backend-url';
 
-// Renders the org's Email Logo as a ready-to-embed <img> tag for the
-// {{companyLogo}} merge variable — returns '' when the org hasn't set one,
-// so a template using the placeholder just renders nothing extra rather
-// than a broken image. The signed URL is absolute (an email client fetches
-// images from outside this app entirely, unlike the frontend's own
-// resolveFileUrl, which only ever needs an origin-relative path) and uses
-// the same 24-hour TTL already accepted for other long-lived branding
-// assets (see file-token.ts's SESSION_ASSET_TTL_SECONDS) — an email opened
-// well after that window shows a broken image, same trade-off the rest of
-// the app already makes for a leaked/stale branding link.
+const logger = new Logger('EmailLogo');
+let warnedUnreachable = false;
+
+const LOCAL_RE = /(^|\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:|\/|$)/i;
+
+function escAttr(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Cache-buster: changes whenever the stored logo key changes (each upload gets a new generated key).
+export function logoVersion(storedKey: string): string {
+  return createHash('sha256').update(storedKey).digest('hex').slice(0, 8);
+}
+
+export function emailLogoUrl(
+  organizationId: string,
+  storedKey: string,
+): string {
+  const base = backendPublicUrl().replace(/\/+$/, '');
+  if (
+    !warnedUnreachable &&
+    process.env.NODE_ENV === 'production' &&
+    (!process.env.BACKEND_PUBLIC_URL ||
+      LOCAL_RE.test(base) ||
+      !/^https:\/\//i.test(base))
+  ) {
+    warnedUnreachable = true;
+    logger.warn(
+      `WARNING: BACKEND_PUBLIC_URL ("${base}") is not a public https URL - the email logo will not load in mail clients.`,
+    );
+  }
+  return `${base}/public/branding/${organizationId}/email-logo?v=${logoVersion(storedKey)}`;
+}
+
+// Returns '' when the org hasn't set a logo so a template using the placeholder renders nothing extra.
+// alt defaults to "" (the email shell fills in the company name); pass companyName to set it directly.
 export function companyLogoImgTag(
   organizationId: string,
-  emailLogoUrl: string | null | undefined,
+  storedEmailLogoKey: string | null | undefined,
+  companyName?: string | null,
 ): string {
-  if (!emailLogoUrl) return '';
-  const token = signFileToken(
-    organizationId,
-    emailLogoUrl,
-    SESSION_ASSET_TTL_SECONDS,
-  );
-  const url = `${backendPublicUrl()}/files/${token}`;
-  return `<img src="${url}" alt="" style="max-height:48px;max-width:220px;" />`;
+  if (!storedEmailLogoKey) return '';
+  const url = emailLogoUrl(organizationId, storedEmailLogoKey);
+  const alt = escAttr((companyName ?? '').trim());
+  return `<img src="${escAttr(url)}" alt="${alt}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`;
 }
