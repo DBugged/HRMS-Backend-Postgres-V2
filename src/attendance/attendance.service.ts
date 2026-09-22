@@ -983,6 +983,59 @@ export class AttendanceService {
       query.limit,
     );
 
+    // Additive lookups for the calendar/table day-detail tooltip: a leave
+    // type name for ON_LEAVE/HALF_DAY rows and a holiday name for HOLIDAY
+    // rows. Attendance carries no leaveId/holidayId FK (recalculateAttendanceForDay
+    // derives status from Holiday/Leave at write time, then forgets the
+    // link), so both are re-matched by (employeeId, date) the same way
+    // LeaveTrackerService.grid() already does it — only for the page of
+    // rows actually being returned, not the whole date range.
+    const holidayDates = [
+      ...new Set(
+        result.data
+          .filter((r) => r.status === AttendanceStatus.HOLIDAY)
+          .map((r) => r.date),
+      ),
+    ];
+    const leaveRows = result.data.filter(
+      (r) =>
+        r.status === AttendanceStatus.ON_LEAVE ||
+        r.status === AttendanceStatus.HALF_DAY,
+    );
+    const leaveEmployeeIds = [
+      ...new Set(leaveRows.map((r) => r.employeeId)),
+    ];
+    const leaveDates = leaveRows.map((r) => r.date);
+    const minLeaveDate = leaveDates.length ? leaveDates.reduce((a, b) => (a < b ? a : b)) : undefined;
+    const maxLeaveDate = leaveDates.length ? leaveDates.reduce((a, b) => (a > b ? a : b)) : undefined;
+
+    const [holidays, leaves] = await Promise.all([
+      holidayDates.length
+        ? this.scopedPrisma.holiday.findMany({
+            where: { organizationId, isActive: true, date: { in: holidayDates } },
+          })
+        : Promise.resolve([]),
+      leaveEmployeeIds.length && minLeaveDate && maxLeaveDate
+        ? this.scopedPrisma.leave.findMany({
+            where: {
+              organizationId,
+              employeeId: { in: leaveEmployeeIds },
+              status: LeaveStatus.APPROVED,
+              startDate: { lte: maxLeaveDate },
+              endDate: { gte: minLeaveDate },
+            },
+            include: { leaveType: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const leavesByEmployee = new Map<string, typeof leaves>();
+    for (const leave of leaves) {
+      const arr = leavesByEmployee.get(leave.employeeId) ?? [];
+      arr.push(leave);
+      leavesByEmployee.set(leave.employeeId, arr);
+    }
+
     return {
       ...result,
       data: result.data.map((record) => {
@@ -997,6 +1050,30 @@ export class AttendanceService {
                 fence,
               )
             : null;
+
+        // Prefer a department-specific holiday over a company-wide one for
+        // the same date, matching recalculateAttendanceForDay's own lookup.
+        let holidayName: string | undefined;
+        if (record.status === AttendanceStatus.HOLIDAY) {
+          const sameDate = holidays.filter((h) => h.date === record.date);
+          const employeeDepartmentId = record.employee.department?.id ?? null;
+          const holiday =
+            sameDate.find((h) => h.departmentId === employeeDepartmentId) ??
+            sameDate.find((h) => h.departmentId === null);
+          holidayName = holiday?.name;
+        }
+
+        let leaveTypeName: string | undefined;
+        if (
+          record.status === AttendanceStatus.ON_LEAVE ||
+          record.status === AttendanceStatus.HALF_DAY
+        ) {
+          const matching = (leavesByEmployee.get(record.employeeId) ?? []).find(
+            (l) => l.startDate <= record.date && l.endDate >= record.date,
+          );
+          leaveTypeName = matching?.leaveType.name;
+        }
+
         return {
           ...record,
           checkinSelfieUrl: signSelfieKey(
@@ -1008,6 +1085,8 @@ export class AttendanceService {
             record.checkoutSelfieUrl,
           ),
           checkinInsideGeoFence,
+          ...(holidayName !== undefined && { holidayName }),
+          ...(leaveTypeName !== undefined && { leaveTypeName }),
         };
       }),
     };

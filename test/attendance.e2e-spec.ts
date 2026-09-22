@@ -881,6 +881,115 @@ describe('Attendance (e2e)', () => {
     });
   });
 
+  describe('GET /attendance day-detail fields (holidayName / leaveTypeName)', () => {
+    let listLeaveTypeId: string;
+
+    beforeAll(async () => {
+      const lt = await scopedPrisma.leaveType.create({
+        data: {
+          organizationId,
+          name: 'List Endpoint Leave',
+          code: 'LEL',
+          allocationType: 'UNLIMITED',
+        },
+      });
+      listLeaveTypeId = lt.id;
+    });
+
+    it('a HOLIDAY row carries the matching holiday name', async () => {
+      const date = offsetDate(60);
+      await scopedPrisma.holiday.create({
+        data: {
+          organizationId,
+          name: 'List Endpoint Holiday',
+          date,
+          year: Number(date.slice(0, 4)),
+        },
+      });
+      await attendanceService.recalculateAttendanceForDay(
+        scopedPrisma,
+        employeeId,
+        date,
+        organizationId,
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId, from: date, to: date })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const records = (
+        res.body as { data: { status: string; holidayName?: string }[] }
+      ).data;
+      expect(records.length).toBe(1);
+      expect(records[0].status).toBe('HOLIDAY');
+      expect(records[0].holidayName).toBe('List Endpoint Holiday');
+    });
+
+    it('an ON_LEAVE row carries the approved leave\'s leave-type name', async () => {
+      const date = offsetDate(61);
+      await scopedPrisma.leave.create({
+        data: {
+          organizationId,
+          employeeId,
+          leaveTypeId: listLeaveTypeId,
+          startDate: date,
+          endDate: date,
+          totalDays: 1,
+          status: 'APPROVED',
+        },
+      });
+      await attendanceService.recalculateAttendanceForDay(
+        scopedPrisma,
+        employeeId,
+        date,
+        organizationId,
+      );
+
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId, from: date, to: date })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const data = (
+        res.body as { data: { status: string; leaveTypeName?: string }[] }
+      ).data;
+      expect(data.length).toBe(1);
+      expect(data[0].status).toBe('ON_LEAVE');
+      expect(data[0].leaveTypeName).toBe('List Endpoint Leave');
+    });
+
+    it('a PRESENT row carries neither holidayName nor leaveTypeName', async () => {
+      const date = offsetDateAvoidingHolidays(62);
+      await scopedPrisma.attendance.create({
+        data: {
+          organizationId,
+          employeeId,
+          date,
+          status: 'PRESENT',
+          inTime: new Date(`${date}T09:00:00.000Z`),
+          outTime: new Date(`${date}T18:00:00.000Z`),
+          workDurationMinutes: 540,
+        },
+      });
+
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId, from: date, to: date })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const data = (
+        res.body as {
+          data: { status: string; holidayName?: string; leaveTypeName?: string }[];
+        }
+      ).data;
+      expect(data.length).toBe(1);
+      expect(data[0].status).toBe('PRESENT');
+      expect(data[0].holidayName).toBeUndefined();
+      expect(data[0].leaveTypeName).toBeUndefined();
+    });
+  });
+
   describe('Regularization', () => {
     it('rejects a future-dated request', async () => {
       await request(app.getHttpServer())
