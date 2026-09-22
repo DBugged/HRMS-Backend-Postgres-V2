@@ -1,8 +1,9 @@
 // Purpose: Handles registration (org + founder bootstrap), login, token refresh/rotation, logout, and
 // password reset/change.
 // Responsibilities: Owns JWT access/refresh token issuance and hashing; delegates default-data seeding on
-// registration to StatutoryConfigService, LeaveTypesService, SalaryComponentsService, HolidaysService and
+// registration to StatutoryConfigService, LeaveTypesService, SalaryComponentsService and
 // EmailTemplatesService, and employeeId generation to EmployeeIdService, all inside one transaction.
+// Holiday Calendar is deliberately NOT seeded here — see the comment at the seeding call site below.
 // Important: register() and resetPassword() must run on the tenant-scope-extended client's own
 // $transaction (see constructor comment) or the tx writes silently bypass tenant scoping. Refresh tokens
 // rotate on every use (revoke-and-reissue) to limit replay of a leaked token. forgotPassword() and
@@ -32,7 +33,6 @@ import { OrgListItemsService } from '../org-list-items/org-list-items.service';
 import { DocumentsService } from '../documents/documents.service';
 import { TaxSlabsService } from '../tax-slabs/tax-slabs.service';
 import { SalaryComponentsService } from '../salary-components/salary-components.service';
-import { HolidaysService } from '../holidays/holidays.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { LetterTemplatesService } from '../letter-templates/letter-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -84,7 +84,6 @@ export class AuthService {
     private readonly documentsService: DocumentsService,
     private readonly taxSlabsService: TaxSlabsService,
     private readonly salaryComponentsService: SalaryComponentsService,
-    private readonly holidaysService: HolidaysService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly letterTemplatesService: LetterTemplatesService,
     private readonly auditLogService: AuditLogService,
@@ -158,9 +157,13 @@ export class AuthService {
           organization.id,
           user.id,
         );
-        // Every new org also starts with the current year's 3 fixed
-        // National Holidays so the Holiday Calendar isn't empty on day one.
-        await this.holidaysService.seedDefaults(tx, organization.id);
+        // Holiday Calendar intentionally starts EMPTY for a new org — unlike
+        // the other seeds above, National Holidays aren't a neutral
+        // default; the 3 fixed dates only apply to Indian establishments,
+        // so admins add their own rather than getting ones that may not
+        // even be correct for them. seedDefaults() is kept on
+        // HolidaysService for callers that do want it, just not wired into
+        // registration.
         // Every new org also starts with the standard occasion-based email
         // templates (Birthday, Work Anniversary) so HrEventsService has a
         // real template to render from day one, same registration-time

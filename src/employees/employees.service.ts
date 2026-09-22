@@ -225,11 +225,31 @@ export class EmployeesService {
         },
         { subject: `Welcome to ${companyName} HRMS`, html: fallbackHtml },
       );
-      await this.emailService.send({
-        to: dto.personalEmail,
-        subject: rendered.subject,
-        html: rendered.html,
-      });
+      // Fire-and-forget: EmailService.send() already never throws (falls
+      // back to a console dry-run log on any delivery failure internally),
+      // but it was previously awaited here anyway — so a slow/unresponsive
+      // SMTP provider (a real-world Gmail SMTP handshake routinely takes
+      // several seconds, more under load/throttling) held the whole
+      // POST /employees response hostage. The frontend's Add Employee
+      // dialog waits for that response before closing itself and
+      // refreshing the employee list, so on a slow SMTP round-trip the
+      // table would appear not to update until the admin gave up and
+      // manually reloaded the page — even though the employee row had
+      // already been committed to the database well before the email step
+      // even started. Not awaiting here lets the request resolve as soon
+      // as the DB write (and audit/timeline logging below) is done; the
+      // email still goes out moments later in the background.
+      void this.emailService
+        .send({
+          to: dto.personalEmail,
+          subject: rendered.subject,
+          html: rendered.html,
+        })
+        .catch(() => {
+          // EmailService.send() already handles/logs its own failures —
+          // this is only a backstop against an unexpected synchronous
+          // throw turning into an unhandled promise rejection.
+        });
     }
 
     await this.auditLogService.log({

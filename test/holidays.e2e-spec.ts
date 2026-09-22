@@ -117,9 +117,10 @@ describe('Holidays (e2e)', () => {
       .query({ year: 2026 })
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    // 3 auto-seeded National Holidays (see HolidaysService.seedDefaults)
-    // + the 'Diwali' row created above.
-    expect((res.body as { data: HolidayBody[] }).data).toHaveLength(4);
+    // Holiday Calendar starts empty for a new org (holidays are no longer
+    // auto-seeded at registration — see AuthService.register()), so this
+    // is just the 'Diwali' row created above.
+    expect((res.body as { data: HolidayBody[] }).data).toHaveLength(1);
   });
 
   it('a department-scoped holiday comes back with the department relation joined in, not just the id', async () => {
@@ -260,9 +261,8 @@ describe('Holidays (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         rows: [
-          // 'Republic Day'/2026-01-26 would collide with the auto-seeded
-          // National Holidays (see HolidaysService.seedDefaults), so this
-          // uses a name/date not in that set.
+          // Uses a name/date distinct from the 'Diwali' row created earlier
+          // in this suite to avoid a duplicate-detection collision.
           { name: 'Test Import Holiday', date: '2026-03-15', rowNum: 2 },
           { name: '', date: '2026-02-01', rowNum: 3 }, // missing name
           { name: 'Bad Date', date: 'not-a-date', rowNum: 4 }, // invalid date

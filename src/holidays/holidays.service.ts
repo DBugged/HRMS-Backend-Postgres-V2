@@ -1,8 +1,8 @@
-// Purpose: Manages the org's holiday calendar — CRUD, registration-time national-holiday seeding, and
-// spreadsheet bulk import.
+// Purpose: Manages the org's holiday calendar — CRUD, national-holiday seeding (available but not wired
+// into registration — see AuthService.register()), and spreadsheet bulk import.
 // Responsibilities: Owns duplicate detection (same name+date) and bulkImport()'s per-row fail-but-continue
-// validation; seedDefaults() is called once from AuthService.register() to pre-populate the current year's
-// 3 fixed National Holidays.
+// validation; seedDefaults() pre-populates the current year's 3 fixed National Holidays but is not called
+// automatically — the Holiday Calendar starts empty for a new org, same as any other admin-managed list.
 // Important: bulkImport() mirrors the old bulkImportHolidays' behavior exactly — invalid or duplicate rows
 // are collected into `failed` rather than aborting the whole batch, and duplicates are checked both against
 // existing DB rows and within the same batch.
@@ -52,11 +52,13 @@ export class HolidaysService {
   // India's 3 fixed National Holidays (Republic Day, Independence Day,
   // Gandhi Jayanti) — same date every year, mandated for every
   // establishment, distinct from festival/restricted holidays which shift
-  // by year and region. Seeded for the current year so the Holiday
-  // Calendar isn't empty on day one; fully editable/deletable afterward
-  // like any other holiday — nothing marks these as special/immutable.
-  // Same registration-time integration point as LeaveTypesService/
-  // SalaryComponentsService.seedDefaults.
+  // by year and region. NOT called from AuthService.register() — unlike
+  // LeaveTypesService/SalaryComponentsService.seedDefaults, these aren't a
+  // neutral default (only apply to Indian establishments), so the Holiday
+  // Calendar starts empty for a new org and admins add their own. Kept
+  // here for any caller that does want it; fully editable/deletable
+  // afterward like any other holiday — nothing marks these as
+  // special/immutable.
   async seedDefaults(
     tx: Prisma.TransactionClient,
     organizationId: string,

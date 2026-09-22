@@ -8,7 +8,6 @@ import { EmployeesModule } from '../employees/employees.module';
 import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
 import { LeaveTypesModule } from '../leave-types/leave-types.module';
 import { SalaryComponentsModule } from '../salary-components/salary-components.module';
-import { HolidaysModule } from '../holidays/holidays.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 import { LetterTemplatesModule } from '../letter-templates/letter-templates.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
@@ -35,13 +34,13 @@ import { TaxSlabsModule } from '../tax-slabs/tax-slabs.module';
     // standard salary-component catalog at registration, same
     // integration point as LeaveTypesModule above.
     SalaryComponentsModule,
-    // For HolidaysService.seedDefaults — every new org gets the current
-    // year's 3 fixed National Holidays at registration, same integration
-    // point as SalaryComponentsModule above.
-    HolidaysModule,
+    // Holiday Calendar is deliberately NOT seeded at registration — an org's
+    // holidays aren't a neutral default (only the 3 fixed dates apply, and
+    // only to Indian establishments), so the calendar starts empty and
+    // admins add their own. See AuthService.register() for the full note.
     // For EmailTemplatesService.seedDefaults — every new org gets the
     // standard occasion-based email templates (Birthday, Work Anniversary)
-    // at registration, same integration point as HolidaysModule above.
+    // at registration, same integration point as SalaryComponentsModule above.
     EmailTemplatesModule,
     // For LetterTemplatesService.seedDefaults — every new org gets the 7
     // built-in letter templates (Offer/Appointment/Relieving/Experience
