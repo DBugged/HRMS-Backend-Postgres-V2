@@ -11,6 +11,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { EmailService } from '../src/notifications/email.service';
 
 interface AuthBody {
   accessToken: string;
@@ -631,28 +632,300 @@ describe('Employees + Departments (e2e)', () => {
   });
 
   describe('bulk create', () => {
+    // Matches the manual "Add Employee" form, which requires personalEmail/
+    // department/employeeCategory/role/employeeType — bulk rows now require
+    // them too instead of silently skipping them (which used to mean
+    // bulk-imported employees never got personalEmail set and so never got
+    // a welcome email).
+    const validRow = (overrides: Record<string, unknown> = {}) => ({
+      name: 'Bulk Valid',
+      email: 'employees-e2e-bulk-valid@example.test',
+      personalEmail: 'employees-e2e-bulk-valid-personal@example.test',
+      department: 'Engineering',
+      employeeCategory: 'Full-Time',
+      role: 'EMPLOYEE',
+      employeeType: 'permanent',
+      ...overrides,
+    });
+
     it('creates every valid row and isolates a bad one instead of aborting the batch', async () => {
       const res = await request(app.getHttpServer())
         .post('/employees/bulk')
         .set('Authorization', `Bearer ${hrToken}`)
         .send({
           rows: [
-            { name: 'Bulk One', email: 'employees-e2e-bulk-1@example.test' },
-            {
+            validRow({
+              name: 'Bulk One',
+              email: 'employees-e2e-bulk-1@example.test',
+              personalEmail: 'employees-e2e-bulk-1-personal@example.test',
+            }),
+            validRow({
               name: 'Bulk Two',
-              email: 'employees-e2e-eng-employee@example.test',
-            }, // duplicate email — must fail in isolation
-            { name: 'Bulk Three', email: 'employees-e2e-bulk-3@example.test' },
+              email: 'employees-e2e-eng-employee@example.test', // duplicate email — must fail in isolation
+              personalEmail: 'employees-e2e-bulk-2-personal@example.test',
+            }),
+            validRow({
+              name: 'Bulk Three',
+              email: 'employees-e2e-bulk-3@example.test',
+              personalEmail: 'employees-e2e-bulk-3-personal@example.test',
+              department: 'Sales',
+              role: 'MANAGER',
+            }),
           ],
         })
         .expect(201);
       const body = res.body as {
-        created: string[];
+        created: {
+          employeeId: string;
+          name: string;
+          generatedPassword: string;
+        }[];
         failed: { row: unknown; error: string }[];
       };
       expect(body.created.length).toBe(2);
       expect(body.failed.length).toBe(1);
       expect(body.failed[0].error).toMatch(/already exists/);
+    });
+
+    it('a valid row creates the employee with department/role/employeeType resolved and personalEmail stored (welcome email attempted)', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/employees/bulk')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            validRow({
+              name: 'Bulk Full Row',
+              email: 'employees-e2e-bulk-full@example.test',
+              personalEmail: 'employees-e2e-bulk-full-personal@example.test',
+              department: 'engineering', // case-insensitive match
+              employeeCategory: 'full-time',
+              role: 'employee',
+              employeeType: 'Permanent',
+            }),
+          ],
+        })
+        .expect(201);
+      const body = res.body as {
+        created: {
+          employeeId: string;
+          name: string;
+          generatedPassword: string;
+        }[];
+        failed: { row: unknown; error: string }[];
+      };
+      expect(body.failed).toEqual([]);
+      expect(body.created.length).toBe(1);
+
+      const list = await request(app.getHttpServer())
+        .get('/employees')
+        .query({ search: 'Bulk Full Row' })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const emp = (
+        list.body as {
+          data: {
+            id: string;
+            departmentId: string;
+            role: string;
+            employeeType: string;
+            employeeCategory: string;
+          }[];
+        }
+      ).data[0];
+      expect(emp.departmentId).toBe(engDepartmentId);
+      expect(emp.role).toBe('EMPLOYEE');
+      expect(emp.employeeType).toBe('permanent');
+      expect(emp.employeeCategory).toBe('Full-Time');
+
+      const detail = await request(app.getHttpServer())
+        .get(`/employees/${emp.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect(
+        (detail.body as { personalData: { personalEmail?: string } })
+          .personalData.personalEmail,
+      ).toBe('employees-e2e-bulk-full-personal@example.test');
+    });
+
+    it('an unknown department name fails that row with a clear error', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/employees/bulk')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            validRow({
+              name: 'Bulk Bad Dept',
+              email: 'employees-e2e-bulk-bad-dept@example.test',
+              personalEmail:
+                'employees-e2e-bulk-bad-dept-personal@example.test',
+              department: 'Nonexistent Department',
+            }),
+          ],
+        })
+        .expect(201);
+      const body = res.body as {
+        created: {
+          employeeId: string;
+          name: string;
+          generatedPassword: string;
+        }[];
+        failed: { row: unknown; error: string }[];
+      };
+      expect(body.created.length).toBe(0);
+      expect(body.failed.length).toBe(1);
+      expect(body.failed[0].error).toBe(
+        'Department "Nonexistent Department" not found.',
+      );
+    });
+
+    it('an invalid role value fails that row', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/employees/bulk')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            validRow({
+              name: 'Bulk Bad Role',
+              email: 'employees-e2e-bulk-bad-role@example.test',
+              personalEmail:
+                'employees-e2e-bulk-bad-role-personal@example.test',
+              role: 'SUPERUSER',
+            }),
+          ],
+        })
+        .expect(201);
+      const body = res.body as {
+        created: {
+          employeeId: string;
+          name: string;
+          generatedPassword: string;
+        }[];
+        failed: { row: unknown; error: string }[];
+      };
+      expect(body.created.length).toBe(0);
+      expect(body.failed.length).toBe(1);
+      expect(body.failed[0].error).toMatch(/not valid/);
+    });
+
+    it('rejects a row missing personalEmail/department/employeeCategory/role/employeeType, same required fields as the manual form', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/employees/bulk')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            {
+              name: 'Bulk Minimal',
+              email: 'employees-e2e-bulk-minimal@example.test',
+            },
+          ],
+        })
+        .expect(201);
+      const body = res.body as {
+        created: {
+          employeeId: string;
+          name: string;
+          generatedPassword: string;
+        }[];
+        failed: { row: unknown; error: string }[];
+      };
+      expect(body.created.length).toBe(0);
+      expect(body.failed.length).toBe(1);
+      expect(body.failed[0].error).toMatch(/personal email is required/);
+    });
+
+    it('sendWelcomeEmail: true (or omitted) still attempts the welcome email for every created row, unchanged', async () => {
+      const emailService = app.get(EmailService);
+      const sendSpy = jest
+        .spyOn(emailService, 'send')
+        .mockResolvedValue({ dryRun: true });
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/employees/bulk')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            rows: [
+              validRow({
+                name: 'Bulk Email On',
+                email: 'employees-e2e-bulk-email-on@example.test',
+                personalEmail:
+                  'employees-e2e-bulk-email-on-personal@example.test',
+              }),
+            ],
+            // omitted defaults to true, but assert the explicit value too
+            sendWelcomeEmail: true,
+          })
+          .expect(201);
+        const body = res.body as {
+          created: {
+            employeeId: string;
+            name: string;
+            generatedPassword: string;
+          }[];
+          failed: { row: unknown; error: string }[];
+        };
+        expect(body.failed).toEqual([]);
+        expect(body.created.length).toBe(1);
+        expect(body.created[0].generatedPassword).toEqual(expect.any(String));
+        expect(body.created[0].generatedPassword.length).toBeGreaterThan(0);
+        expect(sendSpy).toHaveBeenCalledTimes(1);
+        expect(sendSpy).toHaveBeenCalledWith(
+          expect.objectContaining({
+            to: 'employees-e2e-bulk-email-on-personal@example.test',
+          }),
+        );
+      } finally {
+        sendSpy.mockRestore();
+      }
+    });
+
+    it('sendWelcomeEmail: false still creates every row and returns a usable generatedPassword, but sends no email', async () => {
+      const emailService = app.get(EmailService);
+      const sendSpy = jest
+        .spyOn(emailService, 'send')
+        .mockResolvedValue({ dryRun: true });
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/employees/bulk')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            rows: [
+              validRow({
+                name: 'Bulk No Email',
+                email: 'employees-e2e-bulk-no-email@example.test',
+                personalEmail:
+                  'employees-e2e-bulk-no-email-personal@example.test',
+              }),
+            ],
+            sendWelcomeEmail: false,
+          })
+          .expect(201);
+        const body = res.body as {
+          created: {
+            employeeId: string;
+            name: string;
+            generatedPassword: string;
+          }[];
+          failed: { row: unknown; error: string }[];
+        };
+        expect(body.failed).toEqual([]);
+        expect(body.created.length).toBe(1);
+        expect(body.created[0].name).toBe('Bulk No Email');
+        expect(body.created[0].generatedPassword).toEqual(expect.any(String));
+        expect(body.created[0].generatedPassword.length).toBeGreaterThan(0);
+        // No welcome email attempted for this batch.
+        expect(sendSpy).not.toHaveBeenCalled();
+
+        // The returned password actually logs the employee in.
+        await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({
+            email: 'employees-e2e-bulk-no-email@example.test',
+            password: body.created[0].generatedPassword,
+          })
+          .expect(201);
+      } finally {
+        sendSpy.mockRestore();
+      }
     });
 
     it('EMPLOYEE cannot bulk-create (HR/Admin-only)', async () => {
@@ -661,7 +934,11 @@ describe('Employees + Departments (e2e)', () => {
         .set('Authorization', `Bearer ${engEmployeeToken}`)
         .send({
           rows: [
-            { name: 'Nope', email: 'employees-e2e-bulk-nope@example.test' },
+            validRow({
+              name: 'Nope',
+              email: 'employees-e2e-bulk-nope@example.test',
+              personalEmail: 'employees-e2e-bulk-nope-personal@example.test',
+            }),
           ],
         })
         .expect(403);

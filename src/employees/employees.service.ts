@@ -22,7 +22,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { generatePolicyPassword } from '../common/password-policy';
 import { isEmail, isDateString } from 'class-validator';
-import { Prisma, Role, User } from '@prisma/client';
+import { OrgListType, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
@@ -53,6 +53,7 @@ import { maskPersonalData } from './personal-data-mask';
 import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
+import { DEFAULT_EMPLOYEE_TYPES } from '../organizations/employee-types';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // Old system's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
@@ -84,7 +85,15 @@ export class EmployeesService {
     dto: CreateEmployeeDto,
     actor: Actor & { id: string; role: Role },
     organizationId: string,
+    // Internal-only — bulkCreate() sets this to false when HR chose "No
+    // email" for the whole batch, so every row still gets created and gets
+    // a generated password normally, just without the fire-and-forget send
+    // below. Never set by the controller directly: CreateEmployeeDto (the
+    // manual "Add Employee" form) has no such flag — its own Email/No-email
+    // choice is expressed by whether personalEmail is present at all.
+    options?: { sendWelcomeEmail?: boolean },
   ) {
+    const sendWelcomeEmail = options?.sendWelcomeEmail ?? true;
     const requestedRole = dto.role ?? Role.EMPLOYEE;
     if (
       actor.role === Role.HR &&
@@ -194,7 +203,7 @@ export class EmployeesService {
     // bad SMTP/Resend config can't roll back or fail employee creation —
     // the password is also still returned in the response either way, same
     // as the no-email fallback this replaces.
-    if (dto.personalEmail) {
+    if (dto.personalEmail && sendWelcomeEmail) {
       const org = await this.scopedPrisma.organization.findFirst({
         where: { id: organizationId },
         select: { companyName: true },
@@ -375,12 +384,62 @@ export class EmployeesService {
       designation?: unknown;
       contactNumber?: unknown;
       joiningDate?: unknown;
+      personalEmail?: unknown;
+      department?: unknown;
+      employeeCategory?: unknown;
+      role?: unknown;
+      employeeType?: unknown;
     }>,
     actor: Actor & { id: string; role: Role },
     organizationId: string,
+    // Batch-level choice (default true) — see BulkCreateEmployeesDto.
+    // Every row is still created and gets a generated password regardless;
+    // this only controls whether create() also fires the welcome email.
+    sendWelcomeEmail: boolean = true,
   ) {
-    const created: string[] = [];
+    const created: {
+      employeeId: string;
+      name: string;
+      email: string;
+      generatedPassword: string;
+    }[] = [];
     const failed: { row: unknown; error: string }[] = [];
+
+    // Excel is a human-editable file, so department/employeeCategory/
+    // employeeType are matched by NAME against the org's actual lists here
+    // (not the internal ids/values the manual form's Selects submit) —
+    // resolved once up front rather than per row, since every row in a
+    // batch is checked against the same org-wide lists.
+    const [departments, employeeCategoryItems, org] = await Promise.all([
+      this.scopedPrisma.department.findMany({
+        where: { organizationId },
+        select: { id: true, name: true },
+      }),
+      this.scopedPrisma.orgListItem.findMany({
+        where: { organizationId, type: OrgListType.EMPLOYEE_CATEGORY },
+        select: { name: true },
+      }),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: {
+          customEmployeeTypes: true,
+          inactiveBuiltinEmployeeTypes: true,
+        },
+      }),
+    ]);
+    const customEmployeeTypes =
+      (org?.customEmployeeTypes as
+        { value: string; label: string; isActive?: boolean }[] | null) ?? [];
+    const inactiveBuiltins = org?.inactiveBuiltinEmployeeTypes ?? [];
+    // Same "active" definition useEmployeeTypes()/EmployeeTypesService.findAll
+    // use — built-ins minus any this org deactivated, plus active custom ones.
+    const activeEmployeeTypes = [
+      ...DEFAULT_EMPLOYEE_TYPES.filter(
+        (t) => !inactiveBuiltins.includes(t.value),
+      ),
+      ...customEmployeeTypes.filter((t) => t.isActive ?? true),
+    ];
+    const validRoles = Object.values(Role);
 
     // Bounded concurrency — create()'s employeeId allocation is already
     // safe under concurrent callers (a row-locked counter, see
@@ -393,6 +452,11 @@ export class EmployeesService {
       const designation = asString(row.designation).trim();
       const contactNumber = asString(row.contactNumber).trim();
       const joiningDate = asString(row.joiningDate).trim();
+      const personalEmail = asString(row.personalEmail).trim();
+      const departmentName = asString(row.department).trim();
+      const employeeCategoryName = asString(row.employeeCategory).trim();
+      const roleInput = asString(row.role).trim();
+      const employeeTypeInput = asString(row.employeeType).trim();
 
       if (!name) {
         failed.push({ row, error: 'Name is required.' });
@@ -409,20 +473,97 @@ export class EmployeesService {
         });
         return;
       }
+      // Mirrors the manual "Add Employee" form, which requires these same
+      // five fields — personalEmail is also what makes the welcome email
+      // actually go out for bulk-imported rows (it was previously never
+      // collected, so bulk-imported employees never got one).
+      if (!personalEmail || !isEmail(personalEmail)) {
+        failed.push({ row, error: 'A valid personal email is required.' });
+        return;
+      }
+      if (!departmentName) {
+        failed.push({ row, error: 'Department is required.' });
+        return;
+      }
+      const department = departments.find(
+        (d) => d.name.toLowerCase() === departmentName.toLowerCase(),
+      );
+      if (!department) {
+        failed.push({
+          row,
+          error: `Department "${departmentName}" not found.`,
+        });
+        return;
+      }
+      if (!employeeCategoryName) {
+        failed.push({ row, error: 'Employee category is required.' });
+        return;
+      }
+      const employeeCategory = employeeCategoryItems.find(
+        (c) => c.name.toLowerCase() === employeeCategoryName.toLowerCase(),
+      );
+      if (!employeeCategory) {
+        failed.push({
+          row,
+          error: `Employee category "${employeeCategoryName}" not found.`,
+        });
+        return;
+      }
+      if (!roleInput) {
+        failed.push({ row, error: 'Role is required.' });
+        return;
+      }
+      const role = validRoles.find(
+        (r) => r.toLowerCase() === roleInput.toLowerCase(),
+      );
+      if (!role) {
+        failed.push({
+          row,
+          error: `Role "${roleInput}" is not valid. Use one of: ${validRoles.join(', ')}.`,
+        });
+        return;
+      }
+      if (!employeeTypeInput) {
+        failed.push({ row, error: 'Employee type is required.' });
+        return;
+      }
+      const employeeType = activeEmployeeTypes.find(
+        (t) =>
+          t.value.toLowerCase() === employeeTypeInput.toLowerCase() ||
+          t.label.toLowerCase() === employeeTypeInput.toLowerCase(),
+      );
+      if (!employeeType) {
+        failed.push({
+          row,
+          error: `Employee type "${employeeTypeInput}" not found.`,
+        });
+        return;
+      }
 
       try {
-        const { employee } = await this.create(
+        const { employee, generatedPassword } = await this.create(
           {
             name,
             email,
+            personalEmail,
+            departmentId: department.id,
             designation: designation || undefined,
+            employeeCategory: employeeCategory.name,
             contactNumber: contactNumber || undefined,
             joiningDate: joiningDate || undefined,
+            role,
+            employeeType: employeeType.value,
           },
           actor,
           organizationId,
+          { sendWelcomeEmail },
         );
-        created.push(employee.employeeId);
+        created.push({
+          employeeId: employee.employeeId,
+          name: employee.name,
+          email: employee.email,
+          generatedPassword,
+        });
       } catch (err) {
         failed.push({
           row,

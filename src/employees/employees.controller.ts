@@ -61,6 +61,7 @@ export class EmployeesController {
       dto.rows,
       caller,
       caller.organizationId,
+      dto.sendWelcomeEmail ?? true,
     );
   }
 
