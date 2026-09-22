@@ -45,6 +45,15 @@ export class EmailService {
           user: process.env.SMTP_USER,
           pass: process.env.SMTP_PASS,
         },
+        // Without pooling, every send() opens a brand-new TCP+TLS handshake and re-authenticates
+        // from scratch — slow on its own, and serializes back-to-back sends (e.g. a payroll run
+        // emailing many employees) into one connection at a time. Pooling keeps up to 5 authenticated
+        // connections warm and reuses them, and rate-limits to stay under Gmail's per-second cap.
+        pool: true,
+        maxConnections: 5,
+        maxMessages: 100,
+        rateDelta: 1000,
+        rateLimit: 5,
       });
     }
     return this.transporter;
