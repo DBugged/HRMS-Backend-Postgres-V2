@@ -22,6 +22,7 @@ import { CreateLetterTemplateDto } from './dto/create-letter-template.dto';
 import { LETTER_TEMPLATE_DEFAULTS } from './letter-template-defaults';
 import { renderTemplate } from '../email-templates/render-template';
 import { wrapAll } from '../common/pagination';
+import { sanitizeRichText } from './rich-text-sanitizer';
 
 interface DocumentNumberingEntry {
   label: string;
@@ -153,7 +154,10 @@ export class LetterTemplatesService {
         key,
         name,
         title: dto.title,
-        bodyText: dto.bodyText,
+        // Bold/italic/underline/lists only — everything else (script,
+        // style, on* handlers, arbitrary tags) is stripped before this
+        // ever reaches the database. See rich-text-sanitizer.ts.
+        bodyText: sanitizeRichText(dto.bodyText),
         addressedToEmployee: dto.addressedToEmployee ?? true,
         dataProfile: dto.dataProfile ?? LetterDataProfile.BASIC,
         isCustom: true,
@@ -212,7 +216,10 @@ export class LetterTemplatesService {
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.title !== undefined && { title: dto.title }),
-        ...(dto.bodyText !== undefined && { bodyText: dto.bodyText }),
+        // See create() — same sanitize-before-store rule.
+        ...(dto.bodyText !== undefined && {
+          bodyText: sanitizeRichText(dto.bodyText),
+        }),
         ...(dto.addressedToEmployee !== undefined && {
           addressedToEmployee: dto.addressedToEmployee,
         }),

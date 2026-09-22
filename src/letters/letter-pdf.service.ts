@@ -11,10 +11,67 @@ import { formatDateDisplay } from '../payroll/format-date';
 import { attachWatermark } from '../common/pdf-watermark';
 
 // A rendered LetterTemplate — title/paragraphs are already {{placeholder}}-
-// substituted plain text by the time they get here (see LettersService).
+// substituted by the time they get here (see LettersService). Each
+// paragraph is plain text for a legacy/LetterOverride body, or may carry
+// inline <b>/<strong>/<i>/<em>/<u> tags (see rich-text-blocks.ts /
+// rich-text-sanitizer.ts) for a template body written with the Letter
+// Templates rich-text editor — parseInlineRuns() below interprets those.
 export interface LetterContent {
   title: string;
   paragraphs: string[];
+}
+
+interface InlineRun {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+}
+
+const INLINE_TAG_RE = /<\/?(b|strong|i|em|u)>/gi;
+
+// Splits one paragraph string into runs of consistently-formatted text —
+// a plain paragraph (the common case, and the entire legacy behavior)
+// yields exactly one unformatted run, so its render path below is
+// byte-identical to before inline formatting existed.
+function parseInlineRuns(paragraph: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  let bold = 0;
+  let italic = 0;
+  let underline = 0;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  INLINE_TAG_RE.lastIndex = 0;
+  while ((match = INLINE_TAG_RE.exec(paragraph))) {
+    const text = paragraph.slice(lastIndex, match.index);
+    if (text) {
+      runs.push({
+        text,
+        bold: bold > 0,
+        italic: italic > 0,
+        underline: underline > 0,
+      });
+    }
+    lastIndex = INLINE_TAG_RE.lastIndex;
+    const closing = match[0].startsWith('</');
+    const delta = closing ? -1 : 1;
+    const tag = match[1].toLowerCase();
+    if (tag === 'b' || tag === 'strong') bold = Math.max(0, bold + delta);
+    else if (tag === 'i' || tag === 'em') italic = Math.max(0, italic + delta);
+    else if (tag === 'u') underline = Math.max(0, underline + delta);
+  }
+  const tail = paragraph.slice(lastIndex);
+  if (tail) {
+    runs.push({
+      text: tail,
+      bold: bold > 0,
+      italic: italic > 0,
+      underline: underline > 0,
+    });
+  }
+  return runs.length
+    ? runs
+    : [{ text: paragraph, bold: false, italic: false, underline: false }];
 }
 
 const PAGE_W = 595.28; // A4 portrait, points
@@ -49,6 +106,7 @@ function registerFonts(doc: PDFKit.PDFDocument): void {
     path.join(FONTS_DIR, 'Roboto-Regular.woff'),
   );
   doc.registerFont('Letter-Bold', path.join(FONTS_DIR, 'Roboto-Bold.woff'));
+  doc.registerFont('Letter-Italic', path.join(FONTS_DIR, 'Roboto-Italic.woff'));
 }
 
 const INK_900 = '#14161d';
@@ -165,14 +223,45 @@ export class LetterPdfService {
         doc.moveDown(1);
       }
 
-      // Body
+      // Body — each paragraph may carry inline bold/italic/underline runs
+      // (see parseInlineRuns above); a plain paragraph (every pre-existing
+      // template, and every LetterOverride) takes the single-run branch,
+      // which calls doc.text() with the exact same arguments as before.
       doc.font('Letter-Regular').fontSize(10.5).fillColor(INK_900);
       input.content.paragraphs.forEach((p) => {
-        doc.text(p, MARGIN, doc.y, {
-          width: CONTENT_W,
-          align: 'left',
-          lineGap: 3,
-        });
+        const runs = parseInlineRuns(p);
+        if (
+          runs.length === 1 &&
+          !runs[0].bold &&
+          !runs[0].italic &&
+          !runs[0].underline
+        ) {
+          doc.font('Letter-Regular');
+          doc.text(runs[0].text, MARGIN, doc.y, {
+            width: CONTENT_W,
+            align: 'left',
+            lineGap: 3,
+          });
+        } else {
+          runs.forEach((run, idx) => {
+            doc.font(
+              run.bold
+                ? 'Letter-Bold'
+                : run.italic
+                  ? 'Letter-Italic'
+                  : 'Letter-Regular',
+            );
+            const opts = {
+              width: CONTENT_W,
+              align: 'left' as const,
+              lineGap: 3,
+              underline: run.underline,
+              continued: idx < runs.length - 1,
+            };
+            if (idx === 0) doc.text(run.text, MARGIN, doc.y, opts);
+            else doc.text(run.text, opts);
+          });
+        }
         doc.moveDown(0.8);
       });
 

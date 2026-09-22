@@ -29,6 +29,7 @@ import { issueDocumentNumber } from '../organizations/document-numbering';
 import { formatDateDisplay } from '../payroll/format-date';
 import { amountInWords } from '../payroll/number-to-words';
 import { LetterPdfService } from './letter-pdf.service';
+import { splitRichTextIntoParagraphs } from './rich-text-blocks';
 import { LetterTemplatesService } from '../letter-templates/letter-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
@@ -330,10 +331,14 @@ export class LettersService {
       template.bodyText,
       variables,
     );
-    let paragraphs = renderedBody
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
+    // template.bodyText may now be plain text (legacy) or the sanitized
+    // rich-text HTML the Letter Templates editor produces (bold/italic/
+    // underline/lists) — splitRichTextIntoParagraphs handles both, falling
+    // back to the original '\n'-per-paragraph behavior when no block tags
+    // are present. A LetterOverride's own `body` (below) is still always
+    // plain text, typed in a separate plain-text screen, so it keeps the
+    // original split.
+    let paragraphs = splitRichTextIntoParagraphs(renderedBody);
 
     // A saved per-employee override (HR clicked Save in the Send modal,
     // not just a one-off edited send) replaces the template's own
