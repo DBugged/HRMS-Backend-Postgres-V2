@@ -63,7 +63,7 @@ const BRANDING_URL_FIELDS = [
 // ever written per section. `employeeTypes` and `workArrangement` are valid
 // sections but aren't part of the 9-step wizard flow — edited elsewhere
 // (Employees page / a settings toggle), same as before.
-// The 7 keys Organization.attendancePayrollPrefs and
+// The 8 keys Organization.attendancePayrollPrefs and
 // orgPayrollAttendancePrefs both carry identically-named — see
 // updateSection's 'policies' branch and attendance-shift-config.ts's
 // OrganizationAttendancePrefs.
@@ -75,6 +75,7 @@ const ATTENDANCE_PREFS_KEYS = [
   'defaultMinHoursForPresent',
   'defaultMinHoursForHalfDay',
   'weekendDays',
+  'defaultBreakMinutes',
 ] as const;
 
 const SECTION_FIELDS: Record<string, string[]> = {
