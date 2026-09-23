@@ -8,7 +8,6 @@ export const LETTER_TYPES = [
   'offerLetter',
   'appointmentLetter',
   'relievingLetter',
-  'experienceLetter',
   'experienceCertificate',
   'salaryCertificate',
   'fullFinalSettlement',

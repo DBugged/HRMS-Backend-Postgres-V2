@@ -77,18 +77,6 @@ export const LETTER_TEMPLATE_DEFAULTS: LetterTemplateDefault[] = [
     ].join('\n'),
   },
   {
-    key: 'experienceLetter',
-    name: 'Experience Letter',
-    title: 'Experience Letter',
-    addressedToEmployee: false,
-    dataProfile: LetterDataProfile.EXIT,
-    bodyText: [
-      'This is to certify that {{employeeName}} (Employee ID: {{employeeId}}) was employed with {{companyName}} as {{designation}} in the {{department}} department, from {{joiningDate}} to {{lastWorkingDay}}.',
-      'During this period, we found {{firstName}} to be sincere, hardworking, and professional in conduct. {{firstName}} was a valuable member of the team and contributed positively to the organization.',
-      'We wish {{firstName}} success in all future endeavors.',
-    ].join('\n'),
-  },
-  {
     key: 'experienceCertificate',
     name: 'Experience Certificate',
     title: 'Certificate of Experience',
