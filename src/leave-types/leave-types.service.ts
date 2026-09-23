@@ -69,6 +69,43 @@ export class LeaveTypesService {
     }
   }
 
+  // Opt-in org-level automation (Organization Settings > General Settings
+  // > "Automatic Year-End Carry Forward") for orgs that don't want to rely
+  // on someone remembering to click "Run Year-End Carry Forward" every
+  // January. Leave-balance years are plain calendar years (see the
+  // `new Date().getFullYear()` uses in leave-balance.service.ts) —
+  // independent of the org's financialYearStartMonth, which only affects
+  // payroll/tax — so this fires once, on January 1st, carrying the just-
+  // ended calendar year forward. runYearEndCarryForward recomputes
+  // deterministically from each row's current closing balance, so running
+  // it again the same day (or if the cron restarts) is a safe no-op, same
+  // as autoRunAccrualsDaily above.
+  @Cron('0 3 * * *')
+  async autoRunCarryForwardDailyCheck() {
+    const today = new Date();
+    if (today.getMonth() !== 0 || today.getDate() !== 1) return;
+    const previousYear = today.getFullYear() - 1;
+
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true, policies: true },
+    });
+    for (const org of organizations) {
+      const policies = org.policies as { autoCarryForwardEnabled?: boolean } | null;
+      if (!policies?.autoCarryForwardEnabled) continue;
+      try {
+        await this.leaveBalanceService.runYearEndCarryForward(
+          previousYear,
+          org.id,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Auto carry-forward failed for org ${org.id}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+  }
+
   // Every new org starts with the standard leave-type set (Casual, Sick,
   // Earned, Maternity, etc.) instead of an empty Leave Types page — admin
   // can edit/disable/add to these from Leave Types afterward. Same

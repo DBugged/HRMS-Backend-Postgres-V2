@@ -179,6 +179,12 @@ function validatePolicies(p: Record<string, unknown>) {
       bad(`policies.${key} must be a string.`);
     }
   }
+  if (
+    p.autoCarryForwardEnabled !== undefined &&
+    typeof p.autoCarryForwardEnabled !== 'boolean'
+  ) {
+    bad('policies.autoCarryForwardEnabled must be true or false.');
+  }
 }
 
 function validateAttendancePrefs(p: Record<string, unknown>) {
