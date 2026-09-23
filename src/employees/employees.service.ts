@@ -316,6 +316,7 @@ export class EmployeesService {
       // email still goes out moments later in the background.
       void this.emailService
         .send({
+          organizationId,
           to: dto.personalEmail,
           subject: rendered.subject,
           html: rendered.html,
@@ -424,6 +425,7 @@ export class EmployeesService {
       },
     );
     await this.emailService.send({
+      organizationId,
       to: employee.officialEmail,
       subject: rendered.subject,
       html: rendered.html,
@@ -987,6 +989,7 @@ export class EmployeesService {
         this.emailTemplatesService.defaultFor('ROLE_CHANGED', variables),
       );
       await this.emailService.send({
+        organizationId,
         to: before.email,
         subject: rendered.subject,
         html: rendered.html,

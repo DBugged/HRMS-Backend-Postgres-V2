@@ -281,6 +281,7 @@ export class OrganizationSettingsService {
       defaultNoticeDays?: number;
       dateFormat?: string;
       timeFormat?: string;
+      autoCarryForwardEnabled?: boolean;
     };
     const attendancePayrollPrefs = (org.orgPayrollAttendancePrefs ?? {}) as {
       enableTaxDeclaration?: boolean;
@@ -327,6 +328,12 @@ export class OrganizationSettingsService {
       // disabled state instead of the form).
       enableTaxDeclaration:
         attendancePayrollPrefs.enableTaxDeclaration !== false,
+      // Lets Leave Types disable its manual "Run Year-End Carry Forward"
+      // button when the automatic Jan 1st cron already covers it, without
+      // needing ADMIN-only access to the full /organizations/settings
+      // payload — same rationale as defaultNoticeDays/enableTaxDeclaration
+      // above.
+      autoCarryForwardEnabled: !!policies.autoCarryForwardEnabled,
     };
   }
 
@@ -561,6 +568,7 @@ export class OrganizationSettingsService {
         },
       );
       await this.emailService.send({
+        organizationId,
         to: actor.email,
         subject: rendered.subject,
         html: rendered.html,

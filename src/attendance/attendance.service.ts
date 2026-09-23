@@ -605,7 +605,12 @@ export class AttendanceService {
               { employeeName: employee.name, date: displayDate },
               { subject: title, html: fallbackHtml },
             );
-          await this.emailService.send({ to: employee.email, subject, html });
+          await this.emailService.send({
+            to: employee.email,
+            subject,
+            html,
+            organizationId,
+          });
         }
       }
       return;
@@ -1142,7 +1147,12 @@ export class AttendanceService {
       // Fire-and-forget: send() never throws, and the decision itself has
       // already committed — the actor shouldn't wait on an SMTP/API round
       // trip for the approve/reject click to feel instant.
-      void this.emailService.send({ to: row.employee.email, subject, html });
+      void this.emailService.send({
+        to: row.employee.email,
+        subject,
+        html,
+        organizationId,
+      });
     }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({
@@ -1698,7 +1708,12 @@ export class AttendanceService {
       );
       // Fire-and-forget, same reasoning as reviewWorkArrangement above — the
       // regularization decision has already committed by this point.
-      void this.emailService.send({ to: employee.email, subject, html });
+      void this.emailService.send({
+        to: employee.email,
+        subject,
+        html,
+        organizationId,
+      });
     }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({

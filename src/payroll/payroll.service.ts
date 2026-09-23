@@ -209,8 +209,7 @@ type StatutoryEnabledKey =
   | 'npsEnabled'
   | 'gratuityEnabled'
   | 'bonusEnabled'
-  | 'incomeTaxEnabled'
-  | 'employerInsuranceEnabled';
+  | 'incomeTaxEnabled';
 
 const STATUTORY_ENABLED_KEY: Partial<
   Record<StatutoryKey, StatutoryEnabledKey>
@@ -223,7 +222,12 @@ const STATUTORY_ENABLED_KEY: Partial<
   [StatutoryKey.GRATUITY]: 'gratuityEnabled',
   [StatutoryKey.BONUS]: 'bonusEnabled',
   [StatutoryKey.INCOME_TAX]: 'incomeTaxEnabled',
-  [StatutoryKey.EMPLOYER_INSURANCE]: 'employerInsuranceEnabled',
+  // EMPLOYER_INSURANCE removed (never seeded/used) — Statutory Key stays
+  // selectable in schema.prisma/SalaryComponents.tsx dropdowns for now (see
+  // that screen for the removal from the picker), but no longer maps to an
+  // org-level enable flag; re-add here (plus the org toggle in
+  // update-payroll-settings.dto.ts/PayrollSettingsPage.tsx/
+  // statutory-overlay.ts) if this is ever requested again.
 };
 
 @Injectable()
@@ -1369,6 +1373,7 @@ export class PayrollService {
           { subject: title, html: message },
         );
         await this.emailService.send({
+          organizationId,
           to: employee.email,
           subject: rendered.subject,
           html: rendered.html,

@@ -50,7 +50,6 @@ function settings(overrides: Partial<OverlaidSettings> = {}): OverlaidSettings {
     gratuityEnabled: false,
     bonusEnabled: false,
     incomeTaxEnabled: true,
-    employerInsuranceEnabled: false,
     pfEmployeeRate: 12,
     pfEmployerRate: 12,
     pfWageCeiling: 15000,

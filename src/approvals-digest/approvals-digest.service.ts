@@ -158,6 +158,7 @@ export class ApprovalsDigestService {
         this.emailTemplatesService.defaultFor(OCCASION_KEY, variables),
       );
       await this.emailService.send({
+        organizationId,
         to: approver.email,
         subject: rendered.subject,
         html: rendered.html,

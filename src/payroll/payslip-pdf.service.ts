@@ -202,7 +202,7 @@ function buildDummyRun(): PayslipRun {
       },
       {
         code: 'SPECIAL',
-        name: 'Special Allowance',
+        name: 'Fixed Allowance',
         amount: 8500,
         taxable: true,
       },

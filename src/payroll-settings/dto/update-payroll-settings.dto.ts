@@ -76,10 +76,6 @@ export class UpdatePayrollSettingsDto {
   @IsOptional()
   @IsBoolean()
   incomeTaxEnabled?: boolean;
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsBoolean()
-  employerInsuranceEnabled?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -338,6 +338,7 @@ export class LeaveEncashmentsService {
       );
       // Fire-and-forget — the review decision has already committed.
       void this.emailService.send({
+        organizationId,
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,

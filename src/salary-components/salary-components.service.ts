@@ -222,8 +222,15 @@ export class SalaryComponentsService {
     // so relabeling "Provident Fund" to something else would be confusing
     // even though it wouldn't break the calculation itself. Custom
     // components' names stay freely editable.
+    // SPECIAL_ALLOWANCE is the one exception: unlike PF/ESI/PT/etc. it's
+    // not a statutory or reserved-code label (confirmed not referenced by
+    // name anywhere in payroll/tax/reports — see reserved-codes.ts, which
+    // never lists it), so it's safe to let orgs rename its display label
+    // (e.g. to "Fixed Allowance") without the confusion this guard exists
+    // to prevent for the genuinely statutory built-ins.
     if (
       existing.isSystemDefault &&
+      existing.code !== 'SPECIAL_ALLOWANCE' &&
       dto.name !== undefined &&
       dto.name !== existing.name
     ) {

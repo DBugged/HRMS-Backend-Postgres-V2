@@ -626,6 +626,7 @@ export class LettersService {
     );
 
     await this.emailService.send({
+      organizationId,
       to: employee.email,
       subject: rendered.subject,
       html: rendered.html,

@@ -179,6 +179,7 @@ export class LoansService {
       // Fire-and-forget — see reviewWorkArrangement in attendance.service.ts
       // for the general reasoning; sanctioning has already committed.
       void this.emailService.send({
+        organizationId,
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,
@@ -352,6 +353,7 @@ export class LoansService {
       // Fire-and-forget — the approval has already committed, so the
       // approver's click shouldn't wait on an SMTP/API round trip.
       void this.emailService.send({
+        organizationId,
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,
@@ -431,6 +433,7 @@ export class LoansService {
       );
       // Fire-and-forget — the rejection has already committed.
       void this.emailService.send({
+        organizationId,
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,
@@ -578,6 +581,7 @@ export class LoansService {
         );
         // Fire-and-forget — the status change has already committed.
         void this.emailService.send({
+          organizationId,
           to: employee.email,
           subject: rendered.subject,
           html: rendered.html,

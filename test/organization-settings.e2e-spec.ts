@@ -164,6 +164,7 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       dateFormat: 'DD-MM-YYYY',
       timeFormat: '24',
       enableTaxDeclaration: true,
+      autoCarryForwardEnabled: false,
     });
   });
 

@@ -22,7 +22,7 @@ async function main() {
     );
     process.exit(1);
   }
-  const { dryRun } = await new EmailService().send({
+  const { dryRun } = await new EmailService({} as any).send({
     to,
     subject: 'HRMS test email',
     html: '<p>This is a test email from the HRMS backend. Delivery is working.</p>',

@@ -383,6 +383,7 @@ export class CompOffService {
       // committed — the HR/manager's approve/reject click shouldn't wait on
       // an SMTP/API round trip to feel instant.
       void this.emailService.send({
+        organizationId,
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,

@@ -282,6 +282,7 @@ export class TaxDeclarationsService {
         );
         // Fire-and-forget — the verification has already committed.
         void this.emailService.send({
+          organizationId,
           to: employee.email,
           subject: rendered.subject,
           html: rendered.html,

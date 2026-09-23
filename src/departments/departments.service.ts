@@ -65,7 +65,11 @@ export class DepartmentsService {
     let scheduleFields:
       | Pick<
           Prisma.DepartmentUncheckedCreateInput,
-          'workScheduleId' | 'shiftStartTime' | 'shiftEndTime' | 'weeklyOffs' | 'breakMinutes'
+          | 'workScheduleId'
+          | 'shiftStartTime'
+          | 'shiftEndTime'
+          | 'weeklyOffs'
+          | 'breakMinutes'
         >
       | undefined;
     if (dto.workScheduleId) {

@@ -28,7 +28,7 @@ describe('EmailService', () => {
     delete process.env.EMAIL_DRIVER;
     delete process.env.SMTP_USER;
     delete process.env.SMTP_PASS;
-    const result = await new EmailService().send(input);
+    const result = await new EmailService({} as any).send(input);
     expect(result).toEqual({ dryRun: true });
     expect(sendMailMock).not.toHaveBeenCalled();
     expect(sendMock).not.toHaveBeenCalled();
@@ -39,7 +39,7 @@ describe('EmailService', () => {
     process.env.SMTP_USER = 'user';
     process.env.SMTP_PASS = 'pass';
     sendMailMock.mockResolvedValueOnce(undefined);
-    const result = await new EmailService().send(input);
+    const result = await new EmailService({} as any).send(input);
     expect(result).toEqual({ dryRun: false });
     expect(sendMailMock).toHaveBeenCalledTimes(1);
     expect(sendMock).not.toHaveBeenCalled();
@@ -48,7 +48,7 @@ describe('EmailService', () => {
   it('dry-runs when EMAIL_DRIVER=resend but RESEND_API_KEY is unset', async () => {
     process.env.EMAIL_DRIVER = 'resend';
     delete process.env.RESEND_API_KEY;
-    const result = await new EmailService().send(input);
+    const result = await new EmailService({} as any).send(input);
     expect(result).toEqual({ dryRun: true });
     expect(sendMock).not.toHaveBeenCalled();
     expect(sendMailMock).not.toHaveBeenCalled();
@@ -58,7 +58,7 @@ describe('EmailService', () => {
     process.env.EMAIL_DRIVER = 'resend';
     process.env.RESEND_API_KEY = 'test_key';
     sendMock.mockResolvedValueOnce({ data: { id: 'abc' }, error: null });
-    const result = await new EmailService().send(input);
+    const result = await new EmailService({} as any).send(input);
     expect(result).toEqual({ dryRun: false });
     expect(sendMock).toHaveBeenCalledTimes(1);
     expect(sendMailMock).not.toHaveBeenCalled();
@@ -71,7 +71,7 @@ describe('EmailService', () => {
       data: null,
       error: { message: 'invalid_from_address' },
     });
-    const result = await new EmailService().send(input);
+    const result = await new EmailService({} as any).send(input);
     expect(result).toEqual({ dryRun: true });
   });
 });

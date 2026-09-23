@@ -322,6 +322,7 @@ export class EmailTemplatesService {
       employees.map(async (employee) => {
         const variables = { employeeName: employee.name, ...orgVariables };
         return this.emailService.send({
+          organizationId,
           to: employee.email,
           subject: renderTemplate(template.subject, variables),
           html: await this.applyShell(

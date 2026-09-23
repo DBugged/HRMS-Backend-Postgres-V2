@@ -583,6 +583,7 @@ export class LeavesService {
     // Fire-and-forget — the decision has already committed, so the
     // approver's click shouldn't wait on an SMTP/API round trip.
     void this.emailService.send({
+      organizationId,
       to: employee.email,
       subject: rendered.subject,
       html: rendered.html,

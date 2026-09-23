@@ -16,10 +16,12 @@ import { Role, User } from '@prisma/client';
 import { OrganizationsService } from './organizations.service';
 import { OrganizationSettingsService } from './organization-settings.service';
 import { EmployeeTypesService } from './employee-types.service';
+import { EmailDomainService } from './email-domain.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 import { CreateEmployeeTypeDto } from './dto/create-employee-type.dto';
 import { UpdateEmployeeTypeDto } from './dto/update-employee-type.dto';
 import { BulkImportEmployeeTypesDto } from './dto/bulk-import-employee-types.dto';
+import { StartEmailDomainVerificationDto } from './dto/start-email-domain-verification.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -39,6 +41,7 @@ export class OrganizationsController {
     private readonly organizationsService: OrganizationsService,
     private readonly organizationSettingsService: OrganizationSettingsService,
     private readonly employeeTypesService: EmployeeTypesService,
+    private readonly emailDomainService: EmailDomainService,
   ) {}
 
   @Get('me')
@@ -147,6 +150,45 @@ export class OrganizationsController {
       caller.organizationId,
       type,
     );
+  }
+
+  // -- Custom Email Sending Domain (self-service, ADMIN-only) --
+  // Lets an org verify their own domain (Resend) so notification emails
+  // send from their address instead of the shared platform one — see
+  // email-domain.service.ts / email.service.ts.
+
+  @Get('settings/email-domain')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  getEmailDomainStatus(@CurrentUser() caller: Caller) {
+    return this.emailDomainService.getStatus(caller.organizationId);
+  }
+
+  @Post('settings/email-domain')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  startEmailDomainVerification(
+    @CurrentUser() caller: Caller,
+    @Body() dto: StartEmailDomainVerificationDto,
+  ) {
+    return this.emailDomainService.startVerification(
+      caller.organizationId,
+      dto.email,
+    );
+  }
+
+  @Post('settings/email-domain/verify')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  recheckEmailDomainVerification(@CurrentUser() caller: Caller) {
+    return this.emailDomainService.recheckVerification(caller.organizationId);
+  }
+
+  @Delete('settings/email-domain')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  removeEmailDomain(@CurrentUser() caller: Caller) {
+    return this.emailDomainService.remove(caller.organizationId);
   }
 
   // -- Employee Types --

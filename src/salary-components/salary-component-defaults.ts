@@ -56,7 +56,7 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     isActive: false,
   },
   {
-    name: 'Special Allowance',
+    name: 'Fixed Allowance',
     code: 'SPECIAL_ALLOWANCE',
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FIXED,

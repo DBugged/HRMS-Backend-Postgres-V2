@@ -56,7 +56,6 @@ export interface OverlaidSettings {
   gratuityEnabled: boolean;
   bonusEnabled: boolean;
   incomeTaxEnabled: boolean;
-  employerInsuranceEnabled: boolean;
 
   pfEmployeeRate: number;
   pfEmployerRate: number;
@@ -123,7 +122,6 @@ export function applyStatutoryOverrides(
     gratuityEnabled: settings.gratuityEnabled,
     bonusEnabled: settings.bonusEnabled,
     incomeTaxEnabled: settings.incomeTaxEnabled,
-    employerInsuranceEnabled: settings.employerInsuranceEnabled,
     pfEmployeeRate: settings.pfEmployeeRate,
     pfEmployerRate: settings.pfEmployerRate,
     pfWageCeiling: settings.pfWageCeiling,

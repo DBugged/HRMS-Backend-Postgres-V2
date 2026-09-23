@@ -91,7 +91,9 @@ export class LeaveTypesService {
       select: { id: true, policies: true },
     });
     for (const org of organizations) {
-      const policies = org.policies as { autoCarryForwardEnabled?: boolean } | null;
+      const policies = org.policies as {
+        autoCarryForwardEnabled?: boolean;
+      } | null;
       if (!policies?.autoCarryForwardEnabled) continue;
       try {
         await this.leaveBalanceService.runYearEndCarryForward(

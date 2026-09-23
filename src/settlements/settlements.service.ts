@@ -590,6 +590,7 @@ export class SettlementsService {
       );
       // Fire-and-forget — the settlement has already been processed.
       void this.emailService.send({
+        organizationId,
         to: personalEmail,
         subject: rendered.subject,
         html: rendered.html,

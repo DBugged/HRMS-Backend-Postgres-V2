@@ -170,6 +170,7 @@ export class PerformanceRatingsService {
       // committed, so the actor's click shouldn't wait on an SMTP/API round
       // trip to feel instant.
       void this.emailService.send({
+        organizationId,
         to: employee.email,
         subject: rendered.subject,
         html: rendered.html,

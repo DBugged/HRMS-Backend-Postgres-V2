@@ -4,9 +4,11 @@
 // Important: send() never throws — any provider failure (or missing credentials) degrades to a console
 // dry-run log rather than propagating, so a bad SMTP/Resend config can never fail the caller's business
 // action. Only an explicit EMAIL_DRIVER=resend switches off the default SMTP path.
-import { Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { Resend } from 'resend';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 
 export interface EmailAttachment {
   filename: string;
@@ -19,6 +21,11 @@ export interface SendEmailInput {
   html: string;
   cc?: string[];
   attachments?: EmailAttachment[];
+  // Optional — when the caller has one in scope, pass it so a verified
+  // custom sending domain (Organization Settings > Email Sending) is used
+  // instead of the shared platform address. Omitted callers (or an org
+  // that never verified a domain) keep today's behavior unchanged.
+  organizationId?: string;
 }
 
 // Which provider actually sends the mail. Same opt-in-driver convention as
@@ -34,6 +41,31 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter | null = null;
   private resend: Resend | null = null;
+
+  constructor(
+    @Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient,
+  ) {}
+
+  // Resend-only — the SMTP driver has no per-org verified-domain concept
+  // (an arbitrary relay has no DNS-verification API), so this always
+  // falls through to the shared platform address there. Falls back to the
+  // shared address for any org that never verified a domain, or whose
+  // verification hasn't completed yet.
+  private async resolveFrom(organizationId?: string): Promise<string> {
+    const platformDefault =
+      process.env.EMAIL_FROM || 'no-reply@dbuggedprogrammers.com';
+    if (!organizationId || emailDriver() !== 'resend') return platformDefault;
+    const org = await this.prisma.organization
+      .findUnique({
+        where: { id: organizationId },
+        select: { emailSendingAddress: true, emailDomainStatus: true },
+      })
+      .catch(() => null);
+    if (org?.emailDomainStatus === 'verified' && org.emailSendingAddress) {
+      return org.emailSendingAddress;
+    }
+    return platformDefault;
+  }
 
   private getTransporter(): nodemailer.Transporter {
     if (!this.transporter) {
@@ -72,12 +104,13 @@ export class EmailService {
     html,
     cc,
     attachments,
+    organizationId,
   }: SendEmailInput): Promise<{ dryRun: boolean }> {
     const attachmentNote = attachments?.length
       ? ` | Attachments: ${attachments.map((a) => a.filename).join(', ')}`
       : '';
     const ccNote = cc?.length ? ` | Cc: ${cc.join(', ')}` : '';
-    const from = process.env.EMAIL_FROM || 'no-reply@dbuggedprogrammers.com';
+    const from = await this.resolveFrom(organizationId);
 
     if (emailDriver() === 'resend') {
       if (!process.env.RESEND_API_KEY) {

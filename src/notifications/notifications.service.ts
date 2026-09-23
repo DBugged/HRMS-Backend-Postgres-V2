@@ -279,6 +279,7 @@ export class NotificationsService {
           )
           .map((r) =>
             this.emailService.send({
+              organizationId,
               to: r.email,
               subject: dto.title,
               html: broadcastHtml,

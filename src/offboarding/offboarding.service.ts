@@ -235,6 +235,7 @@ export class OffboardingService {
       { subject: title, html: message },
     );
     await this.emailService.send({
+      organizationId,
       to: employee.email,
       subject: rendered.subject,
       html: rendered.html,
@@ -495,6 +496,7 @@ export class OffboardingService {
         this.emailTemplatesService.defaultFor('EXIT_COMPLETED', variables),
       );
       await this.emailService.send({
+        organizationId,
         to: personalEmail,
         subject: rendered.subject,
         html: rendered.html,

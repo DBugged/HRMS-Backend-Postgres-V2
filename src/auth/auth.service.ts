@@ -226,6 +226,7 @@ export class AuthService {
       },
     );
     await this.emailService.send({
+      organizationId: organization.id,
       to: user.email,
       subject: founderRendered.subject,
       html: founderRendered.html,
@@ -423,6 +424,7 @@ export class AuthService {
         { subject: `${companyName} HRMS - Password Reset`, html: fallbackHtml },
       );
       await this.emailService.send({
+        organizationId: user.organizationId,
         to: user.email,
         subject: rendered.subject,
         html: rendered.html,
@@ -533,6 +535,7 @@ export class AuthService {
           { subject: 'Welcome to your HRMS account', html: fallbackHtml },
         );
         await this.emailService.send({
+          organizationId: user.organizationId,
           to: user.email,
           subject: rendered.subject,
           html: rendered.html,
@@ -573,6 +576,7 @@ export class AuthService {
         this.emailTemplatesService.defaultFor('PASSWORD_CHANGED', variables),
       );
       await this.emailService.send({
+        organizationId: user.organizationId,
         to: user.email,
         subject: rendered.subject,
         html: rendered.html,

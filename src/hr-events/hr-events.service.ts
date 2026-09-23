@@ -276,6 +276,7 @@ export class HrEventsService {
       ? activeEmails.filter((email) => email !== employee.email)
       : undefined;
     await this.emailService.send({
+      organizationId,
       to: employee.email,
       subject,
       html,
@@ -320,6 +321,7 @@ export class HrEventsService {
       ? activeEmails.filter((email) => email !== employee.email)
       : undefined;
     await this.emailService.send({
+      organizationId,
       to: employee.email,
       subject,
       html,
@@ -366,6 +368,7 @@ export class HrEventsService {
       ? activeEmails.filter((email) => email !== employee.email)
       : undefined;
     await this.emailService.send({
+      organizationId,
       to: employee.email,
       subject,
       html,
