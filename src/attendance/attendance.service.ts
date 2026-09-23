@@ -7,6 +7,7 @@
 // workArrangement/regularization fields owned by other write paths — see the inline comments throughout
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
+import * as crypto from 'crypto';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -681,8 +682,12 @@ export class AttendanceService {
     if (!providedKey) {
       throw new UnauthorizedException('Invalid or missing Face API key.');
     }
+    const providedKeyHash = crypto
+      .createHash('sha256')
+      .update(providedKey)
+      .digest('hex');
     const org = await this.scopedPrisma.organization.findFirst({
-      where: { id: dto.organizationId, faceApiKey: providedKey },
+      where: { id: dto.organizationId, faceApiKeyHash: providedKeyHash },
       select: { id: true },
     });
     if (!org) {

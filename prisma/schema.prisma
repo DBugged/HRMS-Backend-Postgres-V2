@@ -80,7 +80,7 @@ model Organization {
   // that was a real cross-tenant write vector. Null until an admin
   // generates one (POST /organizations/settings/face-api-key/regenerate);
   // the webhook is fail-closed for orgs that haven't set one.
-  faceApiKey String? @unique
+  faceApiKeyHash String? @unique
 
   // Admin toggle for whether WFH is offered as a work-arrangement option on
   // Attendance — the column on Attendance always accepts WFH regardless, so

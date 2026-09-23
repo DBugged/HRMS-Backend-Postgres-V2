@@ -466,10 +466,10 @@ export class PrivacyService {
     if (claimed.count === 0) return;
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { faceApiKey: true },
+      select: { faceApiKeyHash: true },
     });
     const seeds = detectedProcessors(process.env, {
-      faceDeviceEnabled: !!org?.faceApiKey,
+      faceDeviceEnabled: !!org?.faceApiKeyHash,
     });
     await this.scopedPrisma.dataProcessor.createMany({
       data: seeds.map((s) => ({

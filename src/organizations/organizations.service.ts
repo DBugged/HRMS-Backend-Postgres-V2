@@ -1,6 +1,6 @@
 // Purpose: Read/update the caller's own Organization record (the tenant-boundary entity itself).
 // Responsibilities: Owns findOwn()/updateOwn(), both always scoped by the authenticated caller's own
-// organizationId rather than any client-supplied id; strips faceApiKey from every response.
+// organizationId rather than any client-supplied id; strips faceApiKeyHash from every response.
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,11 +21,11 @@ export class OrganizationsService {
       where: { id: organizationId },
     });
     if (!org) throw new NotFoundException('Organization not found.');
-    // faceApiKey is a webhook secret, shown once at generation time only
+    // faceApiKeyHash is a webhook secret's hash, shown once at generation time only
     // (OrganizationSettingsService.regenerateFaceApiKey) — never on a
     // read path, same as a generated employee password.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
-    const { faceApiKey, ...rest } = org;
+    const { faceApiKeyHash, ...rest } = org;
     return rest;
   }
 
@@ -51,7 +51,7 @@ export class OrganizationsService {
       data,
     });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
-    const { faceApiKey, ...rest } = updated;
+    const { faceApiKeyHash, ...rest } = updated;
     return rest;
   }
 }

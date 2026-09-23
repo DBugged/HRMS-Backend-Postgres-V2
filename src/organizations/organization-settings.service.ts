@@ -242,12 +242,12 @@ export class OrganizationSettingsService {
   // file-token.ts), so every response that surfaces one signs it fresh,
   // same pattern as PolicyDocument's withSignedUrl in the documents module.
   private withSignedUrls(org: Organization) {
-    // faceApiKey is a webhook secret, not settings data — shown once at
-    // generation time only (regenerateFaceApiKey's return value), never on
-    // a read path, same "not retrievable afterwards" handling as a
-    // generated employee password.
+    // faceApiKeyHash is a webhook secret's hash, not settings data — the
+    // plain key is shown once at generation time only (regenerateFaceApiKey's
+    // return value), never on a read path, same "not retrievable afterwards"
+    // handling as a generated employee password.
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
-    const { faceApiKey, ...rest } = org;
+    const { faceApiKeyHash, ...rest } = org;
     const signed: Record<string, unknown> = { ...rest };
     for (const field of BRANDING_URL_FIELDS) {
       const value = org[field];
@@ -606,14 +606,16 @@ export class OrganizationSettingsService {
   // forgery vector: anyone holding it could punch attendance for ANY org
   // by setting an arbitrary organizationId in the payload). Shown once in
   // the response, same "never shown again" pattern as a generated employee
-  // password — the hashed/plain value isn't retrievable afterwards, only
-  // regenerable.
+  // password — only its SHA-256 hash is stored (same convention as
+  // resetPasswordToken/refresh tokens), so the plain value isn't
+  // retrievable afterwards, only regenerable.
   async regenerateFaceApiKey(organizationId: string, actorId: string) {
     await this.findOrThrow(organizationId);
     const key = crypto.randomBytes(24).toString('base64url');
+    const keyHash = crypto.createHash('sha256').update(key).digest('hex');
     await this.prisma.organization.update({
       where: { id: organizationId },
-      data: { faceApiKey: key },
+      data: { faceApiKeyHash: keyHash },
     });
 
     await this.auditLogService.log({
