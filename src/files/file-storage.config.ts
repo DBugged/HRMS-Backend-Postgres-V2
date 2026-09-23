@@ -64,7 +64,22 @@ export const FILE_CATEGORIES: Record<string, FileCategoryConfig> = {
 };
 
 interface RequestWithUser extends Request {
-  user?: { organizationId: string };
+  user?: { organizationId: string; employeeId?: string | null };
+}
+
+// Readable-but-unguessable filename: {employeeId}-{category}-{8 hex chars}.ext
+// instead of a bare UUID — easy to identify on disk/S3/DB at a glance, while
+// the random suffix (32 bits, crypto-random) still makes it unguessable.
+// Access is gated by the signed token in file-token.ts regardless, so the
+// suffix only needs to resist accidental collision, not brute-forcing.
+export function buildReadableFilename(
+  employeeId: string | null | undefined,
+  category: string,
+  ext: string,
+): string {
+  const safeEmployeeId = (employeeId || 'user').replace(/[^A-Za-z0-9_-]/g, '');
+  const suffix = crypto.randomBytes(4).toString('hex');
+  return `${safeEmployeeId}-${category}-${suffix}${ext}`;
 }
 
 export function makeStorage(category: string) {
@@ -83,9 +98,9 @@ export function makeStorage(category: string) {
       fs.mkdirSync(dir, { recursive: true });
       cb(null, dir);
     },
-    filename: (_req, file, cb) => {
+    filename: (req: RequestWithUser, file, cb) => {
       const ext = path.extname(file.originalname) || config?.defaultExt || '';
-      cb(null, `${crypto.randomUUID()}${ext}`);
+      cb(null, buildReadableFilename(req.user?.employeeId, category, ext));
     },
   });
 }

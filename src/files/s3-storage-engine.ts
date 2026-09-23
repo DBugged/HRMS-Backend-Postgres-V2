@@ -1,13 +1,15 @@
-import * as crypto from 'crypto';
 import * as path from 'path';
 import type { Request } from 'express';
 import type { StorageEngine } from 'multer';
 import { Upload } from '@aws-sdk/lib-storage';
 import { getS3Bucket, getS3Client } from './s3-client';
-import type { FileCategoryConfig } from './file-storage.config';
+import {
+  buildReadableFilename,
+  type FileCategoryConfig,
+} from './file-storage.config';
 
 interface RequestWithUser extends Request {
-  user?: { organizationId: string };
+  user?: { organizationId: string; employeeId?: string | null };
 }
 
 // Mirrors multer's built-in diskStorage exactly in shape (destination +
@@ -32,7 +34,11 @@ export function makeS3StorageEngine(
         return;
       }
       const ext = path.extname(file.originalname) || config?.defaultExt || '';
-      const filename = `${crypto.randomUUID()}${ext}`;
+      const filename = buildReadableFilename(
+        req.user?.employeeId,
+        category,
+        ext,
+      );
       const key = `${organizationId}/${category}/${filename}`;
 
       const upload = new Upload({
