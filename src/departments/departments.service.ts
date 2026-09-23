@@ -58,15 +58,46 @@ export class DepartmentsService {
       );
     }
 
+    // A Work Schedule picked at creation time takes over shift/weekly-off/
+    // break — same copy WorkSchedulesService.assign() does for an existing
+    // department — and the raw shiftStartTime/shiftEndTime/weeklyOffs
+    // fields above are ignored in favor of it.
+    let scheduleFields:
+      | Pick<
+          Prisma.DepartmentUncheckedCreateInput,
+          'workScheduleId' | 'shiftStartTime' | 'shiftEndTime' | 'weeklyOffs' | 'breakMinutes'
+        >
+      | undefined;
+    if (dto.workScheduleId) {
+      const schedule = await this.scopedPrisma.workSchedule.findFirst({
+        where: { id: dto.workScheduleId, organizationId },
+      });
+      if (!schedule) {
+        throw new BadRequestException('Work schedule not found.');
+      }
+      scheduleFields = {
+        workScheduleId: schedule.id,
+        shiftStartTime: schedule.startTime,
+        shiftEndTime: schedule.endTime,
+        weeklyOffs: computeWeeklyOffs(
+          schedule.workingDays as number[],
+          schedule.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[],
+        ) as unknown as Prisma.InputJsonValue,
+        breakMinutes: schedule.breakMinutes,
+      };
+    }
+
     const department = await this.scopedPrisma.department.create({
       data: {
         organizationId,
         name: dto.name,
         code,
         description: dto.description ?? '',
-        ...(dto.shiftStartTime && { shiftStartTime: dto.shiftStartTime }),
-        ...(dto.shiftEndTime && { shiftEndTime: dto.shiftEndTime }),
-        ...(dto.weeklyOffs && { weeklyOffs: dto.weeklyOffs }),
+        ...(scheduleFields ?? {
+          ...(dto.shiftStartTime && { shiftStartTime: dto.shiftStartTime }),
+          ...(dto.shiftEndTime && { shiftEndTime: dto.shiftEndTime }),
+          ...(dto.weeklyOffs && { weeklyOffs: dto.weeklyOffs }),
+        }),
         ...(dto.crossesMidnight !== undefined && {
           crossesMidnight: dto.crossesMidnight,
         }),

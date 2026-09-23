@@ -61,4 +61,17 @@ export class CreateDepartmentDto {
   @IsOptional()
   @IsBoolean()
   crossesMidnight?: boolean;
+
+  // When set, the schedule's startTime/endTime/workingDays/breakMinutes
+  // are copied onto this department at creation — the same copy DepartmentsService
+  // does for an existing department when a Work Schedule is assigned to it — and
+  // shiftStartTime/shiftEndTime/weeklyOffs above are ignored. Optional because a
+  // department can still be created before any schedule exists.
+  @ApiPropertyOptional({
+    description:
+      "A Work Schedule to copy this department's shift hours/weekly offs/break time from.",
+  })
+  @IsOptional()
+  @IsString()
+  workScheduleId?: string;
 }
