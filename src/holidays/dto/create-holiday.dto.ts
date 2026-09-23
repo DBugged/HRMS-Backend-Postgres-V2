@@ -6,15 +6,12 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
 } from 'class-validator';
 import { HolidayType } from '@prisma/client';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 // date is validated as YYYY-MM-DD (not @IsDateString, which accepts full
-// ISO datetimes) — mirrors the old system's DATE_RE and the fact that
-// `date` is stored as a plain string, never a time-of-day.
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
+// ISO datetimes) — `date` is stored as a plain string, never a time-of-day.
 export class CreateHolidayDto {
   @ApiProperty({ example: 'Diwali' })
   @IsNotEmpty()
@@ -22,7 +19,7 @@ export class CreateHolidayDto {
   name!: string;
 
   @ApiProperty({ example: '2026-11-08' })
-  @Matches(DATE_RE, { message: 'date must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   date!: string;
 
   @ApiPropertyOptional({ description: 'null/omitted = company-wide' })

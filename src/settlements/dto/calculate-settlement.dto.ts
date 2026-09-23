@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsUUID, Matches, Min } from 'class-validator';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CalculateSettlementDto {
   @ApiProperty()
@@ -9,7 +8,7 @@ export class CalculateSettlementDto {
   employeeId!: string;
 
   @ApiProperty({ example: '2026-06-10' })
-  @Matches(DATE_RE, { message: 'lastWorkingDay must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   lastWorkingDay!: string;
 
   @ApiPropertyOptional()

@@ -8,12 +8,15 @@
 // exposed again on a read path, same as a generated employee password.
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
 import { AuditModule, Organization, Role, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { PRISMA_CLIENT } from '../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -220,6 +223,7 @@ function missingJsonRequirements(org: Organization): string[] {
 export class OrganizationSettingsService {
   constructor(
     private readonly prisma: PrismaService,
+    @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
     private readonly cache: RedisCacheService,
@@ -539,7 +543,7 @@ export class OrganizationSettingsService {
     // "notify everyone" convention as the HR-events birthday/anniversary
     // mail). EmailService.send() never throws, so this can't fail
     // completeSetup itself.
-    const activeUsers = await this.prisma.user.findMany({
+    const activeUsers = await this.scopedPrisma.user.findMany({
       where: { organizationId, isActive: true },
       select: { id: true, name: true, email: true },
     });

@@ -91,8 +91,10 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
         storage: redisEnabled() ? storage : undefined,
       }),
     }),
-    // Enables @Cron() handlers app-wide — currently only HrEventsModule's
-    // daily birthday/work-anniversary email job.
+    // Enables @Cron() handlers app-wide — currently 5 jobs: HrEventsService's
+    // daily birthday/work-anniversary email job, AttendanceService's daily
+    // job, LeaveTypesService's two daily jobs, and ApprovalsDigestService's
+    // weekday job.
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisCacheModule,

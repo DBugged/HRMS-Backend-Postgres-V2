@@ -27,11 +27,8 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { deleteStoredFile } from '../files/delete-stored-file';
-import {
-  isKeyAllowedForOrg,
-  signFileToken,
-  SESSION_ASSET_TTL_SECONDS,
-} from '../files/file-token';
+import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
+import { toSafe } from './to-safe';
 import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
@@ -49,36 +46,12 @@ import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
 import {
   areMandatoryDocumentsUploaded,
   mergePersonalData,
-  signPersonalDataFileUrls,
 } from './personal-data';
 import { assertNotSelfApproval } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
 const HR_ROLES: Role[] = [Role.ADMIN, Role.HR];
-
-// profileImage is stored as a durable relativeKey (never a signed URL —
-// see file-token.ts), so every response that surfaces one signs it fresh.
-// This toSafe (separate copy from employees.service.ts's) was missing
-// this — updatePersonalData's response carried the raw relativeKey
-// straight through, which 404s when used as an <img src>, making the
-// profile photo appear to vanish right after Save Profile.
-function toSafe(user: User) {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
-  const { password, resetPasswordToken, resetPasswordExpires, ...safe } = user;
-  if (safe.profileImage) {
-    // Held in AuthContext for the whole session — see
-    // SESSION_ASSET_TTL_SECONDS' comment.
-    safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage, SESSION_ASSET_TTL_SECONDS)}`;
-  }
-  if (safe.personalData && typeof safe.personalData === 'object') {
-    safe.personalData = signPersonalDataFileUrls(
-      safe.personalData as Record<string, unknown>,
-      safe.organizationId,
-    ) as unknown as User['personalData'];
-  }
-  return safe;
-}
 
 // Reduces a bank field to a change-detection/audit-safe form — the last 4
 // characters plus its length, never the value itself. Good enough to tell

@@ -6,13 +6,11 @@ import {
   IsInt,
   IsOptional,
   IsUUID,
-  Matches,
   Max,
   Min,
 } from 'class-validator';
 import { AttendanceStatus } from '@prisma/client';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class QueryAttendanceDto {
   // Real server-side pagination (skip/take + a DB count), same contract as
@@ -48,12 +46,12 @@ export class QueryAttendanceDto {
 
   @ApiPropertyOptional({ description: 'YYYY-MM-DD, inclusive' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   from?: string;
 
   @ApiPropertyOptional({ description: 'YYYY-MM-DD, inclusive' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   to?: string;
 
   @ApiPropertyOptional({ enum: AttendanceStatus })

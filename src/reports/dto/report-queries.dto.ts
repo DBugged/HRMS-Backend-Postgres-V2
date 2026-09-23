@@ -1,18 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  IsEnum,
-  IsIn,
-  IsInt,
-  IsOptional,
-  IsUUID,
-  Matches,
-  Min,
-} from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 import { LeaveStatus } from '@prisma/client';
 import type { ReportFormat } from '../report-export';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FORMATS: ReportFormat[] = ['xlsx', 'csv', 'pdf'];
 
 class FormatQueryDto {
@@ -25,12 +17,12 @@ class FormatQueryDto {
 export class AttendanceReportQueryDto extends FormatQueryDto {
   @ApiPropertyOptional({ example: '2026-06-01' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   from?: string;
 
   @ApiPropertyOptional({ example: '2026-06-30' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   to?: string;
 
   @ApiPropertyOptional({ description: 'Department id' })
@@ -63,12 +55,12 @@ export class EmployeeLeaveHistoryReportQueryDto extends FormatQueryDto {
 export class DepartmentLeaveSummaryReportQueryDto extends FormatQueryDto {
   @ApiPropertyOptional({ example: '2026-06-01' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   from?: string;
 
   @ApiPropertyOptional({ example: '2026-06-30' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   to?: string;
 }
 
@@ -90,12 +82,12 @@ export class PayrollReportQueryDto extends FormatQueryDto {
 export class PayrollAuditReportQueryDto extends FormatQueryDto {
   @ApiPropertyOptional({ example: '2026-06-01' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   from?: string;
 
   @ApiPropertyOptional({ example: '2026-06-30' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   to?: string;
 }
 

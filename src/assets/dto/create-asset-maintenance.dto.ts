@@ -7,14 +7,13 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  Matches,
   Min,
 } from 'class-validator';
-import { DATE_RE } from './create-asset.dto';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateAssetMaintenanceDto {
   @ApiProperty({ example: '2026-06-10' })
-  @Matches(DATE_RE, { message: 'serviceDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   serviceDate!: string;
 
   @ApiProperty()
@@ -40,21 +39,17 @@ export class CreateAssetMaintenanceDto {
 
   @ApiPropertyOptional({ example: '2026-06-10' })
   @IsOptional()
-  @Matches(DATE_RE, {
-    message: 'serviceStartDate must be in YYYY-MM-DD format',
-  })
+  @IsValidCalendarDateString()
   serviceStartDate?: string;
 
   @ApiPropertyOptional({ example: '2026-06-14' })
   @IsOptional()
-  @Matches(DATE_RE, {
-    message: 'serviceCompletionDate must be in YYYY-MM-DD format',
-  })
+  @IsValidCalendarDateString()
   serviceCompletionDate?: string;
 
   @ApiPropertyOptional({ example: '2026-12-10' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'nextServiceDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   nextServiceDate?: string;
 
   @ApiPropertyOptional()

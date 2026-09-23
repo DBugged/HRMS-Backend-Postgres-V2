@@ -1,17 +1,10 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsISO8601,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  Matches,
-} from 'class-validator';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsISO8601, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class RequestRegularizationDto {
   @ApiProperty({ description: 'YYYY-MM-DD, must not be in the future' })
-  @Matches(DATE_RE, { message: 'date must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   date!: string;
 
   @ApiPropertyOptional()

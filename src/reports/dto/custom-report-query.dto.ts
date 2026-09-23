@@ -1,8 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, IsUUID, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
 import type { ReportFormat } from '../report-export';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const FORMATS: (ReportFormat | 'json')[] = ['json', 'xlsx', 'csv', 'pdf'];
 
 export class CustomReportQueryDto {
@@ -26,12 +26,12 @@ export class CustomReportQueryDto {
 
   @ApiPropertyOptional({ example: '2026-06-01' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   from?: string;
 
   @ApiPropertyOptional({ example: '2026-06-30' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   to?: string;
 
   @ApiPropertyOptional({

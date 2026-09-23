@@ -6,7 +6,7 @@
 // Important: recalculateAttendanceForDay() read-merges rather than blind-upserts, so it never clobbers
 // workArrangement/regularization fields owned by other write paths — see the inline comments throughout
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
-// executeImportBatch since Attendance has no unique constraint on employeeId+date).
+// executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -460,6 +460,15 @@ export class AttendanceService {
       shiftConfig: ShiftConfig;
       inTime: Date | null;
       outTime: Date | null;
+      // Optional prefetched lookups — when the key is present (even with a
+      // null value, meaning "prefetched, none found"), the corresponding
+      // per-call DB query below is skipped in favor of this value. Only
+      // executeImportBatch's bulk Excel-import path supplies these (one
+      // holiday/leave prefetch for the whole file's date range instead of a
+      // query per row); every other caller (recalculateAttendanceForDay)
+      // omits them and gets the original per-call lookup, unchanged.
+      holiday?: Holiday | null;
+      approvedLeave?: Leave | null;
     },
   ): Promise<{
     status: AttendanceStatus;
@@ -471,19 +480,22 @@ export class AttendanceService {
     const inTime = params.inTime ?? params.outTime;
     const outTime = params.outTime ?? params.inTime;
 
-    const holiday = await db.holiday.findFirst({
-      where: {
-        organizationId,
-        isActive: true,
-        date: dateStr,
-        OR: params.employeeDepartmentId
-          ? [
-              { departmentId: null },
-              { departmentId: params.employeeDepartmentId },
-            ]
-          : [{ departmentId: null }],
-      },
-    });
+    const holiday =
+      'holiday' in params
+        ? params.holiday
+        : await db.holiday.findFirst({
+            where: {
+              organizationId,
+              isActive: true,
+              date: dateStr,
+              OR: params.employeeDepartmentId
+                ? [
+                    { departmentId: null },
+                    { departmentId: params.employeeDepartmentId },
+                  ]
+                : [{ departmentId: null }],
+            },
+          });
 
     let status: AttendanceStatus;
     let workDurationMinutes = 0;
@@ -528,15 +540,18 @@ export class AttendanceService {
         status = AttendanceStatus.ABSENT;
       }
     } else {
-      const approvedLeave = await db.leave.findFirst({
-        where: {
-          organizationId,
-          employeeId,
-          status: LeaveStatus.APPROVED,
-          startDate: { lte: dateStr },
-          endDate: { gte: dateStr },
-        },
-      });
+      const approvedLeave =
+        ('approvedLeave' in params
+          ? params.approvedLeave
+          : await db.leave.findFirst({
+              where: {
+                organizationId,
+                employeeId,
+                status: LeaveStatus.APPROVED,
+                startDate: { lte: dateStr },
+                endDate: { gte: dateStr },
+              },
+            })) ?? null;
       status = approvedLeave
         ? approvedLeave.isHalfDay
           ? AttendanceStatus.HALF_DAY
@@ -1977,12 +1992,13 @@ export class AttendanceService {
     let errors = 0;
     const rowErrors: { row: number; error: string }[] = [];
 
-    // Attendance has no unique constraint on (organizationId, employeeId,
-    // date), so two rows sharing a key can't safely run concurrently here
-    // (a naive parallel find-then-create could silently duplicate a row)
-    // — writes stay sequential, preserving exact per-row imported/
-    // skipped/errors counts even for a malformed file with repeated
-    // keys. Only the read side is batched: every touched (employeeId,
+    // Attendance has a unique constraint on (organizationId, employeeId,
+    // date), but two rows sharing a key still can't safely run concurrently
+    // here (a naive parallel find-then-create could still race and one
+    // side would hit the constraint instead of updating) — writes stay
+    // sequential, preserving exact per-row imported/skipped/errors counts
+    // even for a malformed file with repeated keys. Only the read side is
+    // batched: every touched (employeeId,
     // date)'s existing row fetched in one findMany instead of N
     // sequential findFirst calls, which was most of this loop's latency.
     const rowKeys = rows
@@ -2005,6 +2021,75 @@ export class AttendanceService {
     const existingByKey = new Map(
       existingRows.map((r) => [`${r.employeeId}:${r.date}`, r]),
     );
+
+    // Prefetched once for the whole file instead of once per row inside
+    // deriveDayOutcome (a holiday.findFirst + a leave.findFirst per row was
+    // most of this loop's remaining latency on a large sheet) — same
+    // matching rules as deriveDayOutcome's own per-call queries, just
+    // evaluated in memory below instead of re-querying per row.
+    const importDates = [...new Set(rowKeys.map((k) => k.date))];
+    const minDate = importDates.length
+      ? importDates.reduce((a, b) => (a < b ? a : b))
+      : null;
+    const maxDate = importDates.length
+      ? importDates.reduce((a, b) => (a > b ? a : b))
+      : null;
+    const importDepartmentIds = [
+      ...new Set(
+        employees
+          .map((e) => e.departmentId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    const prefetchedHolidays =
+      importDates.length > 0
+        ? await this.scopedPrisma.holiday.findMany({
+            where: {
+              organizationId,
+              isActive: true,
+              date: { in: importDates },
+              OR: [
+                { departmentId: null },
+                ...(importDepartmentIds.length
+                  ? [{ departmentId: { in: importDepartmentIds } }]
+                  : []),
+              ],
+            },
+          })
+        : [];
+    const holidaysByDate = new Map<string, Holiday[]>();
+    for (const h of prefetchedHolidays) {
+      const list = holidaysByDate.get(h.date);
+      if (list) list.push(h);
+      else holidaysByDate.set(h.date, [h]);
+    }
+    const holidayFor = (dateStr: string, departmentId: string | null) =>
+      (holidaysByDate.get(dateStr) ?? []).find(
+        (h) => h.departmentId === null || h.departmentId === departmentId,
+      ) ?? null;
+
+    const prefetchedLeaves =
+      minDate && maxDate
+        ? await this.scopedPrisma.leave.findMany({
+            where: {
+              organizationId,
+              employeeId: { in: [...new Set(rowKeys.map((k) => k.empId))] },
+              status: LeaveStatus.APPROVED,
+              startDate: { lte: maxDate },
+              endDate: { gte: minDate },
+            },
+          })
+        : [];
+    const leavesByEmployee = new Map<string, Leave[]>();
+    for (const l of prefetchedLeaves) {
+      const list = leavesByEmployee.get(l.employeeId);
+      if (list) list.push(l);
+      else leavesByEmployee.set(l.employeeId, [l]);
+    }
+    const approvedLeaveFor = (empId: string, dateStr: string) =>
+      (leavesByEmployee.get(empId) ?? []).find(
+        (l) => l.startDate <= dateStr && l.endDate >= dateStr,
+      ) ?? null;
 
     for (const [i, row] of rows.entries()) {
       const rowNum = i + 1;
@@ -2061,7 +2146,9 @@ export class AttendanceService {
           orgPrefs,
         );
         // Same status/duration rules as punch-derived attendance
-        // (shift thresholds, break, holiday, leave, weekly-off).
+        // (shift thresholds, break, holiday, leave, weekly-off) — holiday/
+        // approvedLeave come from the whole-file prefetch above instead of
+        // a per-row query.
         const outcome = await this.deriveDayOutcome(this.scopedPrisma, {
           organizationId,
           employeeId: empId,
@@ -2070,6 +2157,8 @@ export class AttendanceService {
           shiftConfig,
           inTime,
           outTime,
+          holiday: holidayFor(date, employee?.departmentId ?? null),
+          approvedLeave: approvedLeaveFor(empId, date),
         });
 
         const fields = {

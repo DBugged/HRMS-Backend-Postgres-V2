@@ -7,13 +7,14 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  Matches,
   Min,
 } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 // Dates arrive as plain YYYY-MM-DD strings (same convention as every other
 // date-carrying DTO in this app — see CreateEmployeeAssetDto.allocatedDate)
-// and are widened to a DateTime by the service.
+// and are widened to a DateTime by the service. Also used by assets.service.ts
+// for the bulk-import row validator, which isn't a class-validator DTO field.
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class CreateAssetDto {
@@ -66,7 +67,7 @@ export class CreateAssetDto {
   purchasedFrom!: string;
 
   @ApiProperty({ example: '2026-06-10' })
-  @Matches(DATE_RE, { message: 'purchaseDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   purchaseDate!: string;
 
   @ApiPropertyOptional()
@@ -128,14 +129,12 @@ export class CreateAssetDto {
 
   @ApiPropertyOptional({ example: '2026-06-10' })
   @IsOptional()
-  @Matches(DATE_RE, {
-    message: 'warrantyStartDate must be in YYYY-MM-DD format',
-  })
+  @IsValidCalendarDateString()
   warrantyStartDate?: string;
 
   @ApiPropertyOptional({ example: '2028-06-09' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'warrantyEndDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   warrantyEndDate?: string;
 
   @ApiPropertyOptional()

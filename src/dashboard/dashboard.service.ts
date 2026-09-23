@@ -126,8 +126,9 @@ export class DashboardService {
       absentToday,
       onLeaveToday,
       pendingLeaves,
-      pendingRegularizations,
-      leaveStatsRaw,
+      pendingRegularizationCount,
+      leaveStatsGrouped,
+      leaveTypesForStats,
       payrollThisMonth,
       currentMonthRuns,
       draftRuns,
@@ -163,13 +164,20 @@ export class DashboardService {
       this.scopedPrisma.leave.count({
         where: { organizationId, status: LeaveStatus.PENDING },
       }),
-      this.scopedPrisma.attendance.findMany({
-        where: { organizationId },
-        select: { regularization: true },
+      this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          regularization: { path: ['status'], equals: 'pending' },
+        },
       }),
-      this.scopedPrisma.leave.findMany({
+      this.scopedPrisma.leave.groupBy({
+        by: ['leaveTypeId'],
         where: { organizationId },
-        include: { leaveType: { select: { name: true, code: true } } },
+        _count: { _all: true },
+      }),
+      this.scopedPrisma.leaveType.findMany({
+        where: { organizationId },
+        select: { id: true, name: true, code: true },
       }),
       this.scopedPrisma.payrollRun.count({
         where: {
@@ -245,24 +253,22 @@ export class DashboardService {
       }),
     ]);
 
+    const leaveTypeById = new Map(leaveTypesForStats.map((lt) => [lt.id, lt]));
     const leaveStatsByType = new Map<
       string,
       { name: string; code?: string; count: number }
     >();
-    for (const l of leaveStatsRaw) {
-      const key = l.leaveType.name;
+    for (const g of leaveStatsGrouped) {
+      const leaveType = leaveTypeById.get(g.leaveTypeId);
+      const key = leaveType?.name ?? g.leaveTypeId;
       const entry = leaveStatsByType.get(key) ?? {
         name: key,
-        code: l.leaveType.code,
+        code: leaveType?.code,
         count: 0,
       };
-      entry.count += 1;
+      entry.count += g._count._all;
       leaveStatsByType.set(key, entry);
     }
-
-    const pendingRegularizationCount = pendingRegularizations.filter(
-      (r) => (r.regularization as { status?: string })?.status === 'pending',
-    ).length;
 
     // Total remaining leave per employee across every leave type they have a
     // balance row for this year, not any single type's own closing figure —
@@ -415,8 +421,9 @@ export class DashboardService {
     const [
       teamAttendanceToday,
       pendingLeaves,
-      pendingRegularizationRows,
-      leaveTrendsRaw,
+      pendingRegularizations,
+      leaveTrendsGrouped,
+      leaveTypesForTrends,
       teamLeaveBalancesRaw,
     ] = await Promise.all([
       this.scopedPrisma.attendance.findMany({
@@ -432,13 +439,21 @@ export class DashboardService {
           status: LeaveStatus.PENDING,
         },
       }),
-      this.scopedPrisma.attendance.findMany({
-        where: { organizationId, employeeId: { in: ids } },
-        select: { regularization: true },
+      this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          employeeId: { in: ids },
+          regularization: { path: ['status'], equals: 'pending' },
+        },
       }),
-      this.scopedPrisma.leave.findMany({
+      this.scopedPrisma.leave.groupBy({
+        by: ['leaveTypeId'],
         where: { organizationId, employeeId: { in: ids } },
-        include: { leaveType: { select: { name: true, code: true } } },
+        _count: { _all: true },
+      }),
+      this.scopedPrisma.leaveType.findMany({
+        where: { organizationId },
+        select: { id: true, name: true, code: true },
       }),
       this.scopedPrisma.leaveBalance.findMany({
         where: { organizationId, employeeId: { in: ids }, year: currentYear },
@@ -450,22 +465,22 @@ export class DashboardService {
       }),
     ]);
 
-    const pendingRegularizations = pendingRegularizationRows.filter(
-      (r) => (r.regularization as { status?: string })?.status === 'pending',
-    ).length;
-
+    const leaveTypeByIdForTrends = new Map(
+      leaveTypesForTrends.map((lt) => [lt.id, lt]),
+    );
     const leaveTrendsByType = new Map<
       string,
       { name: string; code?: string; count: number }
     >();
-    for (const l of leaveTrendsRaw) {
-      const key = l.leaveType.name;
+    for (const g of leaveTrendsGrouped) {
+      const leaveType = leaveTypeByIdForTrends.get(g.leaveTypeId);
+      const key = leaveType?.name ?? g.leaveTypeId;
       const entry = leaveTrendsByType.get(key) ?? {
         name: key,
-        code: l.leaveType.code,
+        code: leaveType?.code,
         count: 0,
       };
-      entry.count += 1;
+      entry.count += g._count._all;
       leaveTrendsByType.set(key, entry);
     }
 

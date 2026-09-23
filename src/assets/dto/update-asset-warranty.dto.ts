@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, Matches, Min } from 'class-validator';
-import { DATE_RE } from './create-asset.dto';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 // The warranty subset of CreateAssetDto, as its own endpoint — the Warranty
 // tab saves independently of the Overview form.
@@ -17,14 +17,12 @@ export class UpdateAssetWarrantyDto {
 
   @ApiPropertyOptional({ example: '2026-06-10' })
   @IsOptional()
-  @Matches(DATE_RE, {
-    message: 'warrantyStartDate must be in YYYY-MM-DD format',
-  })
+  @IsValidCalendarDateString()
   warrantyStartDate?: string;
 
   @ApiPropertyOptional({ example: '2028-06-09' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'warrantyEndDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   warrantyEndDate?: string;
 
   @ApiPropertyOptional()

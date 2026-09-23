@@ -32,7 +32,3 @@ export const LETTER_TYPES = [
 ] as const;
 
 export type LetterType = (typeof LETTER_TYPES)[number];
-
-export function isLetterType(value: string): value is LetterType {
-  return (LETTER_TYPES as readonly string[]).includes(value);
-}

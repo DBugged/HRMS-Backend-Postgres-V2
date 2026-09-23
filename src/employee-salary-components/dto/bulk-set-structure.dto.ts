@@ -4,12 +4,10 @@ import {
   ArrayMinSize,
   IsArray,
   IsOptional,
-  Matches,
   ValidateNested,
 } from 'class-validator';
 import { SetComponentValueDto } from './set-component-value.dto';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class BulkSetStructureDto {
   @ApiProperty({ type: [SetComponentValueDto] })
@@ -24,6 +22,6 @@ export class BulkSetStructureDto {
       'Shared effectiveFrom for every line — defaults to today if omitted',
   })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'effectiveFrom must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   effectiveFrom?: string;
 }

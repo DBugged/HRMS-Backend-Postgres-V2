@@ -308,6 +308,42 @@ export class CompOffService {
     return sumAvailable(rows);
   }
 
+  // Batched variant of available() for callers that need the figure for a
+  // whole scoped list of employees at once (e.g. LeaveTrackerService's
+  // balances grid) — sweeps once for the org instead of once per employee,
+  // and fetches every employee's rows in a single findMany instead of N,
+  // while returning exactly what N calls to available() would have.
+  async availableForEmployees(
+    employeeIds: string[],
+    organizationId: string,
+  ): Promise<Map<string, number>> {
+    await this.sweepExpired(organizationId);
+    const rows = await this.scopedPrisma.compOff.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: employeeIds },
+        status: { in: CONSUMABLE_STATUSES },
+      },
+    });
+    const rowsByEmployee = new Map<string, typeof rows>();
+    for (const row of rows) {
+      const existing = rowsByEmployee.get(row.employeeId);
+      if (existing) {
+        existing.push(row);
+      } else {
+        rowsByEmployee.set(row.employeeId, [row]);
+      }
+    }
+    const result = new Map<string, number>();
+    for (const employeeId of employeeIds) {
+      result.set(
+        employeeId,
+        sumAvailable(rowsByEmployee.get(employeeId) ?? []),
+      );
+    }
+    return result;
+  }
+
   async review(
     id: string,
     dto: ReviewCompOffDto,

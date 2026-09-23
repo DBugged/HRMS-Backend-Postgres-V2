@@ -1,14 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 import { ReimbursementPaymentMode } from '@prisma/client';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export const REIMBURSEMENT_REVIEW_STATUSES = [
   'APPROVED',
   'REJECTED',
   'PAID',
 ] as const;
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export class ReviewReimbursementDto {
   @ApiPropertyOptional({ enum: REIMBURSEMENT_REVIEW_STATUSES })
@@ -27,7 +26,7 @@ export class ReviewReimbursementDto {
     description: 'YYYY-MM-DD — only used when status is PAID',
   })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'paidDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   paidDate?: string;
 
   @ApiPropertyOptional({ enum: ReimbursementPaymentMode })

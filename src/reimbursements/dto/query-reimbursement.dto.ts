@@ -1,17 +1,8 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import {
-  IsEnum,
-  IsInt,
-  IsOptional,
-  IsUUID,
-  Matches,
-  Max,
-  Min,
-} from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { ReimbursementStatus } from '@prisma/client';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class QueryReimbursementDto {
   @ApiPropertyOptional()
@@ -29,12 +20,12 @@ export class QueryReimbursementDto {
   // organization's full reimbursement history.
   @ApiPropertyOptional({ description: 'YYYY-MM-DD, inclusive' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'from must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   from?: string;
 
   @ApiPropertyOptional({ description: 'YYYY-MM-DD, inclusive' })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'to must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   to?: string;
 
   @ApiPropertyOptional({ default: 1 })

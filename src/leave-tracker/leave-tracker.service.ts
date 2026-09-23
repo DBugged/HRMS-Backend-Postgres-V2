@@ -314,6 +314,35 @@ export class LeaveTrackerService {
     const yearStart = `${query.year}-01-01`;
     const yearEnd = `${query.year}-12-31`;
 
+    const balanceEmployeeIds = employees.map((e) => e.id);
+
+    // Both hoisted out of the per-employee loop below: compOffService.available()
+    // internally re-runs an org-wide sweepExpired() and a per-employee findMany
+    // on every call, and attendance.count() was one query per employee — for a
+    // large org this loop's cost dominates the whole grid()/balances() request.
+    // availableForEmployees() sweeps once and fetches every employee's comp-off
+    // rows in a single findMany; the attendance groupBy replaces N separate
+    // counts with one grouped query — same final per-employee numbers either way.
+    const [compOffAvailableByEmployee, wfhCounts] = await Promise.all([
+      this.compOffService.availableForEmployees(
+        balanceEmployeeIds,
+        organizationId,
+      ),
+      this.scopedPrisma.attendance.groupBy({
+        by: ['employeeId'],
+        where: {
+          organizationId,
+          employeeId: { in: balanceEmployeeIds },
+          date: { gte: yearStart, lte: yearEnd },
+          workArrangement: WorkArrangement.WFH,
+        },
+        _count: { _all: true },
+      }),
+    ]);
+    const wfhDaysUsedByEmployee = new Map(
+      wfhCounts.map((c) => [c.employeeId, c._count._all]),
+    );
+
     // A small `for` loop of internal service calls across the scoped list
     // (never N HTTP-style round trips) — this mirrors, per employee,
     // exactly what LeavesService.getBalance does for one.
@@ -381,22 +410,12 @@ export class LeaveTrackerService {
         };
       });
 
-      const compOffAvailable = await this.compOffService.available(
-        employee.id,
-        organizationId,
-      );
+      const compOffAvailable = compOffAvailableByEmployee.get(employee.id) ?? 0;
 
       // No WFH balance/ledger model exists anywhere — this is an
       // attendance-count derivation, not a real ledger, hence the
       // `wfhDaysUsed` naming rather than "balance".
-      const wfhDaysUsed = await this.scopedPrisma.attendance.count({
-        where: {
-          organizationId,
-          employeeId: employee.id,
-          date: { gte: yearStart, lte: yearEnd },
-          workArrangement: WorkArrangement.WFH,
-        },
-      });
+      const wfhDaysUsed = wfhDaysUsedByEmployee.get(employee.id) ?? 0;
 
       result.push({
         employeeId: employee.id,

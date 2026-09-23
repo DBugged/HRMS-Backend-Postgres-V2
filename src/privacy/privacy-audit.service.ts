@@ -139,20 +139,30 @@ export class PrivacyAuditService {
   }
 
   // Re-computes the org's entire chain in batches. Read-only.
+  // Cursor-based on `seq` (indexed on (organizationId, seq), see schema)
+  // instead of `skip: offset` — a skip-based page has to re-walk and
+  // discard everything before it, which gets slower as the log grows; a
+  // `seq > lastSeq` cursor is a direct index seek regardless of how far in
+  // we are. `processed` still tracks the plain row count (not seq, which
+  // can have gaps) so verifyChain()'s startIndex/brokenAtIndex stay exactly
+  // the same row-ordinal values a skip-based pass would have produced.
   async verifyChain(organizationId: string) {
     const BATCH = 1000;
-    let offset = 0;
+    let lastSeq: number | undefined;
+    let processed = 0;
     let prev = '';
     let total = 0;
     for (;;) {
       const rows = await this.scopedPrisma.privacyAuditLog.findMany({
-        where: { organizationId },
+        where: {
+          organizationId,
+          ...(lastSeq !== undefined ? { seq: { gt: lastSeq } } : {}),
+        },
         orderBy: { seq: 'asc' },
-        skip: offset,
         take: BATCH,
       });
       if (rows.length === 0) break;
-      const res = verifyChain(rows, prev, offset);
+      const res = verifyChain(rows, prev, processed);
       if (!res.intact) {
         return {
           intact: false,
@@ -165,7 +175,8 @@ export class PrivacyAuditService {
         };
       }
       prev = res.lastHash;
-      offset += rows.length;
+      lastSeq = rows[rows.length - 1].seq;
+      processed += rows.length;
       total += rows.length;
       if (rows.length < BATCH) break;
     }

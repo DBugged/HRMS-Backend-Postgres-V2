@@ -1,13 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsBoolean,
-  IsObject,
-  IsOptional,
-  IsString,
-  Matches,
-} from 'class-validator';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsBoolean, IsObject, IsOptional, IsString } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateStatutoryConfigVersionDto {
   @ApiProperty({
@@ -23,7 +16,7 @@ export class CreateStatutoryConfigVersionDto {
   isEnabled?: boolean;
 
   @ApiProperty({ example: '2026-04-01' })
-  @Matches(DATE_RE, { message: 'effectiveFrom must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   effectiveFrom!: string;
 
   @ApiPropertyOptional()

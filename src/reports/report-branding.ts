@@ -8,21 +8,6 @@ import { readStoredFile } from '../files/file-storage.config';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { sendReport, type SendReportInput } from './report-export';
 
-// Returns null (not throws) when the org has no Report Logo set, or the
-// stored file can't be read — every caller treats "no logo" as the normal,
-// non-fatal case, same convention readStoredFile itself already uses.
-export async function getReportLogoBuffer(
-  scopedPrisma: Pick<ExtendedPrismaClient, 'organization'>,
-  organizationId: string,
-): Promise<Buffer | null> {
-  const org = await scopedPrisma.organization.findFirst({
-    where: { id: organizationId },
-    select: { reportLogoUrl: true },
-  });
-  if (!org?.reportLogoUrl) return null;
-  return readStoredFile(org.reportLogoUrl).catch(() => null);
-}
-
 // Drop-in replacement for sendReport() — every report controller endpoint
 // should call this instead, so the org's Report Logo (and, if enabled,
 // the watermark drawn from it — see common/pdf-watermark.ts) show up on

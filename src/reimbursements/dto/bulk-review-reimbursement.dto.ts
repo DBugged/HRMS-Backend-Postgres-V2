@@ -6,12 +6,10 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
 } from 'class-validator';
 import { ReimbursementPaymentMode } from '@prisma/client';
 import { REIMBURSEMENT_REVIEW_STATUSES } from './review-reimbursement.dto';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class BulkReviewReimbursementDto {
   @ApiProperty({ type: [String] })
@@ -33,7 +31,7 @@ export class BulkReviewReimbursementDto {
     description: 'YYYY-MM-DD — only used when status is PAID',
   })
   @IsOptional()
-  @Matches(DATE_RE, { message: 'paidDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   paidDate?: string;
 
   @ApiPropertyOptional({ enum: ReimbursementPaymentMode })

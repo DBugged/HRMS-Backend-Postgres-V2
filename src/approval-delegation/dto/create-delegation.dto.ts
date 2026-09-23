@@ -1,7 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsUUID, Matches } from 'class-validator';
-
-const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsOptional, IsUUID } from 'class-validator';
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateDelegationDto {
   @ApiProperty()
@@ -9,11 +8,11 @@ export class CreateDelegationDto {
   delegate!: string;
 
   @ApiProperty({ example: '2026-06-10' })
-  @Matches(DATE_RE, { message: 'fromDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   fromDate!: string;
 
   @ApiProperty({ example: '2026-06-20' })
-  @Matches(DATE_RE, { message: 'toDate must be in YYYY-MM-DD format' })
+  @IsValidCalendarDateString()
   toDate!: string;
 
   // Only honored when the caller is ADMIN/HR — HR setting up a delegation
