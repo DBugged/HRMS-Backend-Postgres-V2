@@ -22,6 +22,7 @@ import { Cron } from '@nestjs/schedule';
 import {
   AttendanceSource,
   AttendanceStatus,
+  Holiday,
   ImportBatchStatus,
   Leave,
   LeaveStatus,
@@ -1002,19 +1003,25 @@ export class AttendanceService {
         r.status === AttendanceStatus.ON_LEAVE ||
         r.status === AttendanceStatus.HALF_DAY,
     );
-    const leaveEmployeeIds = [
-      ...new Set(leaveRows.map((r) => r.employeeId)),
-    ];
+    const leaveEmployeeIds = [...new Set(leaveRows.map((r) => r.employeeId))];
     const leaveDates = leaveRows.map((r) => r.date);
-    const minLeaveDate = leaveDates.length ? leaveDates.reduce((a, b) => (a < b ? a : b)) : undefined;
-    const maxLeaveDate = leaveDates.length ? leaveDates.reduce((a, b) => (a > b ? a : b)) : undefined;
+    const minLeaveDate = leaveDates.length
+      ? leaveDates.reduce((a, b) => (a < b ? a : b))
+      : undefined;
+    const maxLeaveDate = leaveDates.length
+      ? leaveDates.reduce((a, b) => (a > b ? a : b))
+      : undefined;
 
     const [holidays, leaves] = await Promise.all([
       holidayDates.length
         ? this.scopedPrisma.holiday.findMany({
-            where: { organizationId, isActive: true, date: { in: holidayDates } },
+            where: {
+              organizationId,
+              isActive: true,
+              date: { in: holidayDates },
+            },
           })
-        : Promise.resolve([]),
+        : Promise.resolve([] as Holiday[]),
       leaveEmployeeIds.length && minLeaveDate && maxLeaveDate
         ? this.scopedPrisma.leave.findMany({
             where: {

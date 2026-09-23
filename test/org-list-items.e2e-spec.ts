@@ -106,8 +106,15 @@ describe('Org List Items (e2e)', () => {
     const apprenticeIndex = data.findIndex((i) => i.name === 'Apprentice');
     expect(apprenticeIndex).toBeGreaterThan(lastBuiltInIndex);
     // Built-ins themselves stay alphabetical within their own group.
-    const builtInNames = data.filter((i) => i.isSystemDefault).map((i) => i.name);
-    expect(builtInNames).toEqual(['Contract', 'Full-Time', 'Intern', 'Part-Time']);
+    const builtInNames = data
+      .filter((i) => i.isSystemDefault)
+      .map((i) => i.name);
+    expect(builtInNames).toEqual([
+      'Contract',
+      'Full-Time',
+      'Intern',
+      'Part-Time',
+    ]);
   });
 
   it('a Designation created fresh is never built-in — no protection outside Employee Category', async () => {

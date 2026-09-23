@@ -64,6 +64,10 @@ export const TENANT_SCOPED_MODELS = new Set([
   'LetterOverride',
   'OrgListItem',
   'WorkSchedule',
+  // Asset Inventory module (all organization-owned).
+  'Asset',
+  'AssetMaintenance',
+  'AssetDocument',
   // Data Privacy & Protection module (all organization-owned).
   'PrivacySettings',
   'PrivacyNoticeVersion',

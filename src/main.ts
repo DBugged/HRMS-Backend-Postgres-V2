@@ -10,7 +10,10 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { initSentry } from './common/sentry';
 import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
-import { assertProductionConfig, swaggerEnabled } from './common/production-config';
+import {
+  assertProductionConfig,
+  swaggerEnabled,
+} from './common/production-config';
 
 // Called before NestFactory.create() so an error during module
 // bootstrapping itself (a bad Prisma connection string, a provider that

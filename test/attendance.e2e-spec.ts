@@ -926,7 +926,7 @@ describe('Attendance (e2e)', () => {
       expect(records[0].holidayName).toBe('List Endpoint Holiday');
     });
 
-    it('an ON_LEAVE row carries the approved leave\'s leave-type name', async () => {
+    it("an ON_LEAVE row carries the approved leave's leave-type name", async () => {
       const date = offsetDate(61);
       await scopedPrisma.leave.create({
         data: {
@@ -980,7 +980,11 @@ describe('Attendance (e2e)', () => {
         .expect(200);
       const data = (
         res.body as {
-          data: { status: string; holidayName?: string; leaveTypeName?: string }[];
+          data: {
+            status: string;
+            holidayName?: string;
+            leaveTypeName?: string;
+          }[];
         }
       ).data;
       expect(data.length).toBe(1);

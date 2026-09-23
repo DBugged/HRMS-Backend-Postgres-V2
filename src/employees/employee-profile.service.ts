@@ -704,18 +704,71 @@ export class EmployeeProfileService {
     // tag 409s (both rows have assetTag=''), not just an actual duplicate
     // tag. Normalize blank/whitespace-only to null so "no tag" means no
     // tag, not a shared empty-string value every asset collides on.
+    //
+    // dto.assetId is the (entirely optional) link to an Asset Inventory
+    // master record. Omitted — which is what the existing free-text form
+    // sends — nothing below changes and this method behaves exactly as it
+    // did before the inventory module existed. Provided, the inventory
+    // record is the source of truth for name/tag/category and is flipped
+    // to ASSIGNED once the allocation row lands.
+    const inventoryAsset = dto.assetId
+      ? await this.scopedPrisma.asset.findFirst({
+          where: { id: dto.assetId, organizationId, isActive: true },
+          include: { category: { select: { name: true } } },
+        })
+      : null;
+    if (dto.assetId && !inventoryAsset) {
+      throw new NotFoundException('Inventory asset not found.');
+    }
+    if (inventoryAsset && inventoryAsset.status !== 'AVAILABLE') {
+      throw new BadRequestException(
+        `This asset is not available for allocation (currently ${inventoryAsset.status}).`,
+      );
+    }
+
+    // employee_assets has its own @@unique([organizationId, assetTag]), so
+    // copying an inventory tag down would 409 the second time the SAME
+    // inventory asset is allocated (allocate -> return -> re-allocate is
+    // normal). The assetId link already identifies the asset exactly, so
+    // the tag is left null on the repeat rather than blocking the
+    // allocation over a duplicate that isn't really a conflict.
+    const inventoryTagTaken =
+      inventoryAsset?.assetTag != null &&
+      (await this.scopedPrisma.employeeAsset.findFirst({
+        where: { organizationId, assetTag: inventoryAsset.assetTag },
+        select: { id: true },
+      })) != null;
+
     const asset = await this.scopedPrisma.employeeAsset.create({
       data: {
         organizationId,
         employeeId: id,
-        assetType: dto.assetType,
-        assetName: dto.assetName,
-        assetTag: dto.assetTag?.trim() || null,
+        // assetType stays the same free-text column it has always been —
+        // the inventory's category name is copied into it rather than the
+        // column becoming an FK, so nothing about existing rows changes.
+        assetType:
+          inventoryAsset?.category?.name ??
+          inventoryAsset?.categorySpecify ??
+          dto.assetType,
+        assetName: inventoryAsset?.assetName ?? dto.assetName,
+        assetTag: inventoryAsset
+          ? inventoryTagTaken
+            ? null
+            : inventoryAsset.assetTag
+          : dto.assetTag?.trim() || null,
         allocatedDate: dto.allocatedDate,
         notes: dto.notes ?? '',
         allocatedById: actor.id,
+        assetId: inventoryAsset?.id ?? null,
       },
     });
+
+    if (inventoryAsset) {
+      await this.scopedPrisma.asset.updateMany({
+        where: { id: inventoryAsset.id, organizationId },
+        data: { status: 'ASSIGNED' },
+      });
+    }
 
     await this.auditLogService.log({
       actorId: actor.id,
@@ -770,6 +823,19 @@ export class EmployeeProfileService {
         returnedById: dto.status === 'RETURNED' ? actor.id : asset.returnedById,
       },
     });
+
+    // Status sync back to the Asset Inventory master, for allocations that
+    // were made against one (assetId non-null — every pre-inventory row is
+    // null here and skips this entirely). The inventory module never
+    // assigns; this side effect is the whole of the link in the other
+    // direction. ALLOCATED is deliberately not handled — an already-created
+    // allocation row can only move forward to RETURNED/LOST.
+    if (asset.assetId && dto.status !== 'ALLOCATED') {
+      await this.scopedPrisma.asset.updateMany({
+        where: { id: asset.assetId, organizationId },
+        data: { status: dto.status === 'RETURNED' ? 'AVAILABLE' : 'LOST' },
+      });
+    }
 
     const updated = await this.scopedPrisma.employeeAsset.findFirstOrThrow({
       where: { id: assetId, organizationId },

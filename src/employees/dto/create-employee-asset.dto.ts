@@ -27,4 +27,14 @@ export class CreateEmployeeAssetDto {
   @IsOptional()
   @IsString()
   notes?: string;
+
+  // Optional link to an Asset Inventory master record. When present, the
+  // asset's name/tag/category are copied from inventory (overriding
+  // whatever the free-text fields above carried) and the inventory record
+  // flips to ASSIGNED. When absent, this endpoint behaves exactly as it
+  // always has — the free-text allocation flow is unchanged.
+  @ApiPropertyOptional({ description: 'Asset Inventory record to allocate' })
+  @IsOptional()
+  @IsString()
+  assetId?: string;
 }

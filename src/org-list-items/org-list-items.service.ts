@@ -30,6 +30,30 @@ export const BUILTIN_EMPLOYEE_CATEGORIES = [
   'Intern',
 ];
 
+// Asset Inventory's category master — the second type with a built-in set.
+// "Other" is load-bearing, not filler: AssetsService requires the free-text
+// "Specify Asset" field whenever the selected category is named exactly
+// this, so it must exist (and, being isSystemDefault, can't be renamed out
+// from under that check).
+export const BUILTIN_ASSET_CATEGORIES = [
+  'Laptop',
+  'Desktop',
+  'Monitor',
+  'Mobile',
+  'Tablet',
+  'Printer',
+  'Network Equipment',
+  'Keyboard',
+  'Mouse',
+  'Headset',
+  'Software License',
+  'Vehicle',
+  'Furniture',
+  'ID Card',
+  'Access Card',
+  'Other',
+];
+
 @Injectable()
 export class OrgListItemsService {
   constructor(
@@ -51,6 +75,16 @@ export class OrgListItemsService {
         data: {
           organizationId,
           type: OrgListType.EMPLOYEE_CATEGORY,
+          name,
+          isSystemDefault: true,
+        },
+      });
+    }
+    for (const name of BUILTIN_ASSET_CATEGORIES) {
+      await tx.orgListItem.create({
+        data: {
+          organizationId,
+          type: OrgListType.ASSET_CATEGORY,
           name,
           isSystemDefault: true,
         },

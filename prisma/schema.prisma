@@ -152,7 +152,7 @@ model Organization {
   // Organization for branding fields; this toggle is a behavior switch,
   // not a branding value, so it's the one exception), and Report exports
   // (reportLogoUrl). See common/pdf-watermark.ts for the actual drawing.
-  watermarkLogo Boolean @default(false)
+  watermarkLogo  Boolean @default(false)
   // Original filename/size per uploaded image, keyed by upload field name
   // (logo/favicon/reportLogo/emailLogo/signature/seal) — the URL columns
   // point at a generated relativeKey, so this is the only place the real
@@ -169,7 +169,7 @@ model Organization {
   // [{ id, name, html, isDefault }]. Edited from the Email Templates
   // screen; appended below the rendered body when a template's email is
   // actually sent (see EmailTemplatesService.appendSignature).
-  emailSignatures Json @default("[]")
+  emailSignatures    Json   @default("[]")
 
   // Step 5 — Authorized Signatories: [{ id, name, designation,
   // signatureUrl, signatureMeta: {name,size}, isPrimary }]. Exactly one
@@ -252,6 +252,9 @@ model Organization {
   letterTemplates          LetterTemplate[]
   letterOverrides          LetterOverride[]
   orgListItems             OrgListItem[]
+  assets                   Asset[]
+  assetMaintenances        AssetMaintenance[]
+  assetDocuments           AssetDocument[]
   privacySettings          PrivacySettings?
   privacyNoticeVersions    PrivacyNoticeVersion[]
   consentRecords           ConsentRecord[]
@@ -299,14 +302,14 @@ model Department {
   // AttendanceService.recalculateAttendanceForDay. Falls back to
   // Organization.attendancePayrollPrefs's default* fields when unset at
   // the org level too (see attendance-shift-config.ts).
-  shiftStartTime           String @default("09:30")
-  shiftEndTime             String @default("18:30")
-  lateInThresholdMinutes   Int    @default(15)
-  earlyOutThresholdMinutes Int    @default(15)
-  minHoursForPresent       Float  @default(8)
-  minHoursForHalfDay       Float  @default(4)
+  shiftStartTime           String  @default("09:30")
+  shiftEndTime             String  @default("18:30")
+  lateInThresholdMinutes   Int     @default(15)
+  earlyOutThresholdMinutes Int     @default(15)
+  minHoursForPresent       Float   @default(8)
+  minHoursForHalfDay       Float   @default(4)
   // [0]=Sunday ... 6=Saturday.
-  weeklyOffs               Json   @default("[0]")
+  weeklyOffs               Json    @default("[0]")
   // A shift that starts on one calendar day and ends on the next (e.g.
   // 22:00-06:00) — false (the default) preserves today's exact behavior.
   // When true, AttendanceService attributes a punch made after midnight
@@ -322,7 +325,7 @@ model Department {
   // AttendanceService.recalculateAttendanceForDay, which subtracts this
   // from punch-in-to-punch-out duration before comparing against
   // minHoursForPresent/minHoursForHalfDay.
-  breakMinutes             Int    @default(0)
+  breakMinutes             Int     @default(0)
 
   employees User[]    @relation("EmployeeDepartment")
   holidays  Holiday[]
@@ -508,6 +511,9 @@ model User {
   roleHistoryChangedBy             EmployeeRoleHistory[]     @relation("RoleHistoryChangedBy")
   employmentStatusHistoryEntries   EmploymentStatusHistory[] @relation("StatusHistoryEmployee")
   employmentStatusHistoryChangedBy EmploymentStatusHistory[] @relation("StatusHistoryChangedBy")
+  inventoryAssetsCreated           Asset[]                   @relation("AssetCreatedBy")
+  assetMaintenancesCreated         AssetMaintenance[]        @relation("AssetMaintenanceCreatedBy")
+  assetDocumentsUploaded           AssetDocument[]           @relation("AssetDocumentUploadedBy")
 
   @@unique([organizationId, employeeId])
   @@index([organizationId])
@@ -581,7 +587,7 @@ model Holiday {
   // while excluding it from attendance/leave-tracker/dashboard/leave-
   // eligibility calculations that read the calendar going forward — see
   // every `isActive: true` filter alongside a holiday.findMany/findFirst.
-  isActive Boolean @default(true)
+  isActive    Boolean     @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -819,9 +825,9 @@ model WorkSchedule {
   // days it covers, not what it excludes.
   workingDays Json @default("[1,2,3,4,5]")
 
-  startTime String
-  endTime   String
-  breakMinutes Int @default(60)
+  startTime    String
+  endTime      String
+  breakMinutes Int    @default(60)
 
   // Days in this list are excluded from workingDays' plain "off every
   // week" treatment and instead off only on the given occurrence(s) of the
@@ -966,7 +972,7 @@ model LeaveBalance {
   // it already credited for the current cycle instead of unconditionally
   // re-adding accrualAmountPerCycle on every call (a double-click used to
   // double-credit silently).
-  lastAccrualPeriod String?
+  lastAccrualPeriod  String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1908,13 +1914,13 @@ model Reimbursement {
   receiptUrl  String                @default("")
   status      ReimbursementStatus   @default(PENDING)
 
-  approvedById String?
-  approvedBy   User?   @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
+  approvedById   String?
+  approvedBy     User?                     @relation("ReimbursementApprovedBy", fields: [approvedById], references: [id])
   // Set alongside approvedById — kept as its own field (not read off
   // updatedAt) because a later PAID transition updates the row again and
   // would otherwise clobber the moment it was actually approved. YYYY-MM-DD.
-  approvedDate String?
-  reviewComments String  @default("")
+  approvedDate   String?
+  reviewComments String                    @default("")
   // Set together when HR marks an APPROVED claim PAID — a manual step,
   // independent of the PayrollRun-driven payout integration below (which
   // still isn't built). Deliberately separate from approvedDate: approval
@@ -1923,10 +1929,10 @@ model Reimbursement {
   // paidDate defaults to today if the reviewer doesn't pick one, but is a
   // free-form date so a backdated payout can be recorded accurately.
   // YYYY-MM-DD, same plain-string convention as claimDate.
-  paidDate    String?
-  paidById    String?
-  paidBy      User?                     @relation("ReimbursementPaidBy", fields: [paidById], references: [id])
-  paymentMode ReimbursementPaymentMode?
+  paidDate       String?
+  paidById       String?
+  paidBy         User?                     @relation("ReimbursementPaidBy", fields: [paidById], references: [id])
+  paymentMode    ReimbursementPaymentMode?
   // Stamped once a PayrollRun pays this out — payroll deduction/payout
   // integration for reimbursements isn't built yet, same deferral as
   // LeaveEncashment.payrollRunId.
@@ -2153,6 +2159,7 @@ enum AuditModule {
   HOLIDAY
   NOTIFICATION
   ORGANIZATION
+  ASSET
 }
 
 // Records attendance changes, payroll changes, leave approvals, login
@@ -2334,7 +2341,7 @@ model DocumentRequirement {
 
   name String
 
-  isMandatory  Boolean @default(false)
+  isMandatory     Boolean @default(false)
   // Seeded baseline requirement (PAN Card, Aadhaar Card, Passport Photo, Educational Certificate):
   // name is locked and it can't be deleted — only deactivated or marked mandatory. Same convention as
   // LeaveType/OrgListItem.isSystemDefault.
@@ -2342,8 +2349,8 @@ model DocumentRequirement {
   // Soft-disable, not a delete — matches the old system: a disabled
   // requirement stops appearing as expected/missing but any already-
   // uploaded documents against it are untouched.
-  isActive     Boolean @default(true)
-  displayOrder Int     @default(0)
+  isActive        Boolean @default(true)
+  displayOrder    Int     @default(0)
 
   createdById String?
   createdBy   User?   @relation("DocumentRequirementCreatedBy", fields: [createdById], references: [id])
@@ -2359,6 +2366,11 @@ enum OrgListType {
   DESIGNATION
   GRADE
   EMPLOYEE_CATEGORY
+  // Asset Inventory's category master (Laptop/Desktop/Monitor/...) — reuses
+  // this same configurable-list mechanism rather than getting a table of its
+  // own. The one difference: Asset.categoryId is a real FK here, where the
+  // other three types are copied onto the Employee row as plain strings.
+  ASSET_CATEGORY
 }
 
 // Simple org-scoped named lists (Designations, Grades/Levels, Employee
@@ -2384,6 +2396,11 @@ model OrgListItem {
   // that depends on a specific one of those existing. A built-in
   // category's name is locked and it can't be deleted; isActive still is.
   isSystemDefault Boolean @default(false)
+
+  // Only ever populated for type=ASSET_CATEGORY — the Asset Inventory
+  // master is the one OrgListType consumer holding a real FK back here
+  // instead of copying `name` onto the consuming row as a plain string.
+  assets Asset[] @relation("AssetCategory")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2526,6 +2543,18 @@ model EmployeeAsset {
   returnedById String?
   returnedBy   User?   @relation("EmployeeAssetReturnedBy", fields: [returnedById], references: [id])
 
+  // Optional link to the Asset Inventory master record this allocation is
+  // for. Nullable by design: the free-text allocation flow (assetType/
+  // assetName/assetTag typed by hand) predates the inventory module and
+  // stays fully supported — every pre-existing row keeps assetId = null,
+  // and omitting it on a new allocation behaves exactly as before. When
+  // set, allocating/returning this row also flips the linked Asset's
+  // status (ASSIGNED / back to AVAILABLE), which is the entire integration
+  // between the two modules — assignment itself stays owned by the
+  // Employees module's endpoints; the Assets module never assigns.
+  assetId String?
+  asset   Asset?  @relation(fields: [assetId], references: [id])
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -2536,6 +2565,7 @@ model EmployeeAsset {
   // enforces uniqueness when assetTag is actually provided.
   @@unique([organizationId, assetTag])
   @@index([organizationId, employeeId])
+  @@index([assetId])
   @@map("employee_assets")
 }
 
@@ -2586,7 +2616,6 @@ model EmploymentStatusHistory {
   @@index([organizationId, employeeId])
   @@map("employment_status_history")
 }
-
 
 // ---------------------------------------------------------------------------
 // Data Privacy & Protection (DPDP-aligned privacy controls). All tables are
@@ -2858,6 +2887,7 @@ model PrivacyAuditLog {
   @@index([organizationId, targetUserId])
   @@map("privacy_audit_logs")
 }
+
 enum ResignationStatus {
   PENDING
   APPROVED
@@ -2937,4 +2967,184 @@ model EmployeeMovement {
 
   @@index([organizationId, employeeId])
   @@map("employee_movements")
+}
+
+// --- Asset Inventory ---------------------------------------------------
+//
+// The org's master list of physical assets it owns, distinct from
+// EmployeeAsset (which is one *allocation event* — who had what, when).
+// The two are linked only by EmployeeAsset.assetId (nullable), so the
+// pre-existing free-text allocation flow keeps working untouched, and
+// assignment stays owned entirely by the Employees module.
+
+enum AssetInventoryStatus {
+  AVAILABLE
+  ASSIGNED
+  UNDER_MAINTENANCE
+  LOST
+  RETIRED
+  DISPOSED
+}
+
+enum AssetCondition {
+  NEW
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+}
+
+enum AssetDocType {
+  INVOICE
+  WARRANTY_CERTIFICATE
+  AMC
+  SERVICE_REPORT
+  OTHER
+}
+
+enum AssetMaintenanceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Asset {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // Human-readable inventory code (e.g. AST-0001) — auto-generated from the
+  // org's current asset count when the caller leaves it blank.
+  assetCode String
+  assetName String
+
+  // Real FK (unlike DESIGNATION/GRADE/EMPLOYEE_CATEGORY, which store the
+  // OrgListItem's name as a plain string on the consuming row) — an asset's
+  // category is a genuine reference, not a snapshot label. Nullable so an
+  // asset survives its category being deleted.
+  categoryId String?
+  category   OrgListItem? @relation("AssetCategory", fields: [categoryId], references: [id])
+
+  // Required by the service only when the chosen category is named "Other" —
+  // same convention as the Assets tab's existing "Specify Asset *" relabel
+  // on EmployeeFullProfile (assetType === 'Other').
+  categorySpecify String?
+
+  brand String?
+  model String?
+
+  assetTag     String?
+  serialNumber String?
+
+  purchasedFrom String?
+  purchaseDate  DateTime?
+  // Float, matching every other money field in this schema (Loan.principal,
+  // LoanRepayment.amount, ...) rather than introducing a second convention.
+  purchaseCost  Float?
+  vendorContact String?
+  invoiceNumber String?
+  poNumber      String?
+
+  location  String?
+  condition AssetCondition       @default(GOOD)
+  status    AssetInventoryStatus @default(AVAILABLE)
+
+  usefulLifeMonths Int?
+  remarks          String?
+
+  warrantyProvider     String?
+  warrantyNumber       String?
+  warrantyStartDate    DateTime?
+  warrantyEndDate      DateTime?
+  warrantyPeriodMonths Int?
+  supportContact       String?
+  supportEmail         String?
+  supportPhone         String?
+  warrantyTerms        String?
+
+  // Soft delete — same isActive convention used throughout this schema.
+  isActive Boolean @default(true)
+
+  createdById String
+  createdBy   User   @relation("AssetCreatedBy", fields: [createdById], references: [id])
+
+  maintenances AssetMaintenance[]
+  documents    AssetDocument[]
+  allocations  EmployeeAsset[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Per-org, not global — NULLs are exempt from Postgres unique indexes
+  // (same as EmployeeAsset.assetTag / User.officialEmail), so these only
+  // bite when the field is actually provided.
+  @@unique([organizationId, assetCode])
+  @@unique([organizationId, assetTag])
+  @@unique([organizationId, serialNumber])
+  @@index([organizationId, status])
+  @@index([organizationId, categoryId])
+  @@map("assets")
+}
+
+model AssetMaintenance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
+
+  serviceDate     DateTime
+  issue           String
+  serviceProvider String?
+  serviceCost     Float?
+
+  serviceStatus         AssetMaintenanceStatus @default(SCHEDULED)
+  serviceStartDate      DateTime?
+  serviceCompletionDate DateTime?
+  nextServiceDate       DateTime?
+
+  warrantyClaim Boolean @default(false)
+  remarks       String?
+
+  documents AssetDocument[]
+
+  createdById String
+  createdBy   User   @relation("AssetMaintenanceCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, assetId])
+  @@map("asset_maintenances")
+}
+
+model AssetDocument {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
+
+  // Set when the document belongs to a specific service visit (a service
+  // report), so it can be shown on that maintenance record while still
+  // counting as one of the asset's documents.
+  maintenanceId String?
+  maintenance   AssetMaintenance? @relation(fields: [maintenanceId], references: [id])
+
+  docType  AssetDocType
+  fileName String
+  // A durable relativeKey from POST /files/upload/documents — never a
+  // signed URL, same convention as EmployeeDocument.fileUrl.
+  fileUrl  String
+
+  uploadedById String
+  uploadedBy   User   @relation("AssetDocumentUploadedBy", fields: [uploadedById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@index([organizationId, assetId])
+  @@map("asset_documents")
 }
