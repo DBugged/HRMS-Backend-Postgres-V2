@@ -24,6 +24,7 @@ import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
+import { todayInOrgTz } from '../common/org-date';
 import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
 import { QueryLeaveTrackerBalancesDto } from './dto/query-leave-tracker-balances.dto';
 import { ExportLeaveTrackerGridDto } from './dto/export-leave-tracker-grid.dto';
@@ -53,13 +54,6 @@ function monthBounds(
 
 function isCompOffType(leaveType: Pick<LeaveType, 'code'>): boolean {
   return leaveType.code === LEAVE_TYPE_CODES.COMPOFF;
-}
-
-// Same todayStr() convention as attendance.service.ts/leaves.service.ts —
-// plain-string comparison against the YYYY-MM-DD date fields, no timezone
-// math needed since both sides are already UTC-normalized this way.
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 export type LeaveTrackerCellCode =
@@ -138,43 +132,53 @@ export class LeaveTrackerService {
     // `in: []` is a no-op filter (Prisma/Postgres correctly return zero
     // rows for it) — no need to branch on employeeIds.length here, unlike
     // balances() below where the loop body itself must be skipped.
-    const [employees, attendanceRows, leaves, holidays] = await Promise.all([
-      this.scopedPrisma.user.findMany({
-        where: { id: { in: employeeIds }, organizationId },
-        select: { id: true, name: true, employeeId: true, joiningDate: true },
-        orderBy: EMPLOYEE_ORDER_BY,
-      }),
-      this.scopedPrisma.attendance.findMany({
-        where: {
-          organizationId,
-          employeeId: { in: employeeIds },
-          date: { gte: start, lte: end },
-        },
-      }),
-      this.scopedPrisma.leave.findMany({
-        where: {
-          organizationId,
-          employeeId: { in: employeeIds },
-          status: LeaveStatus.APPROVED,
-          startDate: { lte: end },
-          endDate: { gte: start },
-        },
-        include: { leaveType: true },
-      }),
-      this.scopedPrisma.holiday.findMany({
-        where: {
-          organizationId,
-          isActive: true,
-          year: query.year,
-          ...(effectiveDepartmentId && {
-            OR: [
-              { departmentId: effectiveDepartmentId },
-              { departmentId: null },
-            ],
-          }),
-        },
-      }),
-    ]);
+    const [org, employees, attendanceRows, leaves, holidays] =
+      await Promise.all([
+        this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        }),
+        this.scopedPrisma.user.findMany({
+          where: { id: { in: employeeIds }, organizationId },
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            joiningDate: true,
+          },
+          orderBy: EMPLOYEE_ORDER_BY,
+        }),
+        this.scopedPrisma.attendance.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: employeeIds },
+            date: { gte: start, lte: end },
+          },
+        }),
+        this.scopedPrisma.leave.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: employeeIds },
+            status: LeaveStatus.APPROVED,
+            startDate: { lte: end },
+            endDate: { gte: start },
+          },
+          include: { leaveType: true },
+        }),
+        this.scopedPrisma.holiday.findMany({
+          where: {
+            organizationId,
+            isActive: true,
+            year: query.year,
+            ...(effectiveDepartmentId && {
+              OR: [
+                { departmentId: effectiveDepartmentId },
+                { departmentId: null },
+              ],
+            }),
+          },
+        }),
+      ]);
     employees.sort(compareEmployees);
 
     const leavesByEmployee = new Map<string, typeof leaves>();
@@ -241,7 +245,7 @@ export class LeaveTrackerService {
     // alone (the day isn't over — someone can still check in), future days
     // are never touched, and days before someone joined are never touched
     // either (they weren't an employee yet — blank, not Absent).
-    const today = todayStr();
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     for (const employee of employees) {
       const joiningDateStr = employee.joiningDate.toISOString().slice(0, 10);
       for (const day of days) {

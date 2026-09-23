@@ -73,19 +73,17 @@ import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
+import {
+  todayInOrgTz,
+  yesterdayInOrgTz,
+  dayRangeInOrgTz,
+} from '../common/org-date';
 
 type Actor = Omit<User, 'password'>;
 // Either the plain scoped client or a $transaction callback's tx client —
 // recalculateAttendanceForDay/the Leave-integration hooks run inside
 // whichever one the caller is already using.
 type Db = ExtendedPrismaClient | Prisma.TransactionClient;
-
-// Old system's UTC-based day-boundary/`todayStr()` convention — matches
-// leaves.service.ts's own todayStr() exactly, since revertAttendanceForLeave
-// compares directly against Leave's plain-string startDate/endDate fields.
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function utcDateStrOf(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -96,12 +94,6 @@ function buildShiftDateTime(dateStr: string, hhmm: string): Date {
   return new Date(
     `${dateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`,
   );
-}
-
-function dayRangeUtc(dateStr: string): { gte: Date; lt: Date } {
-  const start = new Date(`${dateStr}T00:00:00.000Z`);
-  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-  return { gte: start, lt: end };
 }
 
 // Shift-day partitioning of the punch timeline.
@@ -185,7 +177,7 @@ const DUPLICATE_PUNCH_WINDOW_MS = 10 * 1000;
 
 // Parses an import-sheet timestamp as UTC. A bare "YYYY-MM-DD HH:mm[:ss]" (or
 // with a "T" separator) carries no zone and is interpreted as UTC, matching
-// buildShiftDateTime/dayRangeUtc — never server-local time. A string with an
+// buildShiftDateTime — never server-local time. A string with an
 // explicit "Z" or ±HH:mm offset is honored as-is. Returns null if unparseable.
 const IMPORT_LOCAL_TS_RE =
   /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(\.\d{1,3})?)?$/;
@@ -652,6 +644,22 @@ export class AttendanceService {
   // Shared by every punch-ingestion path (Face API, manual, self) so a
   // punch is always attributed to the right shift-day up front, before the
   // Punch row's own recalculation call — see resolveAttendanceDateForPunch.
+  // Resolves the org's configured IANA timezone for "today"/"yesterday"
+  // calendar-day computations (see src/common/org-date.ts). Accepts an
+  // explicit db client so callers already inside a transaction (e.g.
+  // revertAttendanceForLeave) can read through the same tx rather than a
+  // separate connection.
+  private async getOrgTimezone(
+    organizationId: string,
+    db: Db = this.scopedPrisma,
+  ): Promise<string> {
+    const org = await db.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
+
   private async resolveEmployeeShiftConfig(
     employeeId: string,
     organizationId: string,
@@ -853,6 +861,7 @@ export class AttendanceService {
         department: { include: { workLocation: true } },
       },
     });
+    const orgTimezone = await this.getOrgTimezone(organizationId);
     const fence = employee ? effectiveWorkLocation(employee) : null;
     if (fence && fence.isActive) {
       // WFH-only, and only once approved (see WfhApprovalStatus's comment
@@ -861,7 +870,11 @@ export class AttendanceService {
       // the fence exactly as before. Checked fresh on every punch (not
       // just punch-in) so switching arrangement mid-day is respected.
       const today = await this.scopedPrisma.attendance.findFirst({
-        where: { organizationId, employeeId: actor.id, date: todayStr() },
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          date: todayInOrgTz(orgTimezone),
+        },
         select: { workArrangement: true, workArrangementStatus: true },
       });
       const wfhExempt =
@@ -934,7 +947,14 @@ export class AttendanceService {
       where: {
         organizationId,
         employeeId: actor.id,
-        punchTime: dayRangeUtc(utcDateStrOf(punchTime)),
+        // The org-local calendar day the punch itself falls in (not a
+        // literal UTC day range) — see dayRangeInOrgTz's doc comment for
+        // why the naive UTC range silently drops punches near the org's
+        // own day boundary.
+        punchTime: dayRangeInOrgTz(
+          todayInOrgTz(orgTimezone, punchTime),
+          orgTimezone,
+        ),
       },
     });
 
@@ -942,11 +962,12 @@ export class AttendanceService {
   }
 
   async getTodayPunchCount(actor: Actor, organizationId: string) {
+    const orgTimezone = await this.getOrgTimezone(organizationId);
     const punchCount = await this.scopedPrisma.punch.count({
       where: {
         organizationId,
         employeeId: actor.id,
-        punchTime: dayRangeUtc(todayStr()),
+        punchTime: dayRangeInOrgTz(todayInOrgTz(orgTimezone), orgTimezone),
       },
     });
     return { punchCount };
@@ -985,7 +1006,8 @@ export class AttendanceService {
       workArrangementReviewComments: null,
     };
 
-    const dateStr = dto.date ?? todayStr();
+    const dateStr =
+      dto.date ?? todayInOrgTz(await this.getOrgTimezone(organizationId));
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
     });
@@ -1427,7 +1449,8 @@ export class AttendanceService {
     leave: Leave,
     organizationId: string,
   ) {
-    const today = todayStr();
+    const orgTimezone = await this.getOrgTimezone(organizationId, tx);
+    const today = todayInOrgTz(orgTimezone);
     const dates = enumerateDateStrings(leave.startDate, leave.endDate).filter(
       (d) => d >= today,
     );
@@ -1458,14 +1481,16 @@ export class AttendanceService {
     actor: Actor,
     organizationId: string,
   ) {
-    if (dto.date > todayStr()) {
+    const orgTimezone = await this.getOrgTimezone(organizationId);
+    const today = todayInOrgTz(orgTimezone);
+    if (dto.date > today) {
       throw new BadRequestException(
         'Cannot request regularization for a future date.',
       );
     }
     // 7-day lookback window — an employee can only regularize something
     // recent, not reach arbitrarily far back into attendance history.
-    const earliestAllowedDate = addDaysStr(todayStr(), -7);
+    const earliestAllowedDate = addDaysStr(today, -7);
     if (dto.date < earliestAllowedDate) {
       throw new BadRequestException(
         'Regularization can only be requested for a date within the last 7 days.',
@@ -2255,7 +2280,8 @@ export class AttendanceService {
   // is Batch 9 — this endpoint's shape is preserved so that batch can wire
   // in real delivery without a contract change.
   async notifyAbsentees(dto: NotifyAbsenteesDto, organizationId: string) {
-    const date = dto.date ?? todayStr();
+    const date =
+      dto.date ?? todayInOrgTz(await this.getOrgTimezone(organizationId));
 
     const employees = await this.scopedPrisma.user.findMany({
       where: {
@@ -2298,13 +2324,18 @@ export class AttendanceService {
   // own bounded-concurrency per-employee isolation.
   @Cron('0 1 * * *')
   async markYesterdayAbsences() {
-    const yesterday = utcDateStrOf(new Date(Date.now() - 24 * 60 * 60 * 1000));
+    const now = new Date();
     const organizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
-      select: { id: true },
+      select: { id: true, timezone: true },
     });
     for (const org of organizations) {
       try {
+        // Each org's own "yesterday", not one UTC-derived date shared
+        // across every org — otherwise an org whose local day is already
+        // ahead/behind UTC at 01:00 UTC would get the wrong calendar day
+        // marked.
+        const yesterday = yesterdayInOrgTz(org.timezone, now);
         await this.notifyAbsentees({ date: yesterday }, org.id);
       } catch (err) {
         this.logger.error(

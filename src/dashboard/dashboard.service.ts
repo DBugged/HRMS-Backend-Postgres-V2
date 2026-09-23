@@ -31,12 +31,9 @@ import {
   daysUntilNextOccurrence,
   monthsForRange,
 } from './dashboard-date-math';
+import { todayInOrgTz } from '../common/org-date';
 
 type Actor = Omit<User, 'password'>;
-
-function localDateStr(d = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
 
 interface PayrollLine {
   code: string;
@@ -55,6 +52,14 @@ export class DashboardService {
     private readonly payrollSettingsService: PayrollSettingsService,
     private readonly compOffService: CompOffService,
   ) {}
+
+  private async getOrgTimezone(organizationId: string): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
 
   // 11.4 Payroll Cost Summary chart: Net Pay / Taxes / Benefits / Deductions
   // per month for the requested range.
@@ -114,8 +119,8 @@ export class DashboardService {
   // 11.1 HR Dashboard: total employees, attendance summary, pending
   // approvals, payroll status, leave stats.
   async hrDashboard(organizationId: string) {
-    const today = localDateStr();
     const now = new Date();
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId), now);
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
     const monthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
@@ -404,7 +409,7 @@ export class DashboardService {
   // elsewhere), but worth knowing before wiring a frontend "my team" widget
   // to this endpoint for a non-manager caller.
   async departmentHeadDashboard(actor: Actor, organizationId: string) {
-    const today = localDateStr();
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
     const currentYear = new Date().getFullYear();
 
     // A department-less MANAGER has no team: scope to nobody rather than to every unassigned user.
@@ -510,7 +515,7 @@ export class DashboardService {
     const now = new Date();
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const currentYear = now.getFullYear();
-    const today = localDateStr(now);
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId), now);
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
     const currentFinancialYear = getFinancialYear(

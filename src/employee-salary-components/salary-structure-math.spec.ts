@@ -8,14 +8,22 @@ import {
 } from './salary-structure-math';
 
 describe('localDateStr', () => {
-  it('formats a given date as local YYYY-MM-DD', () => {
-    const date = new Date(2026, 0, 5); // local Jan 5 2026 (month is 0-indexed)
-    expect(localDateStr(date)).toBe('2026-01-05');
+  it('formats a given instant as YYYY-MM-DD in the given org timezone', () => {
+    const instant = new Date('2026-01-05T12:00:00.000Z');
+    expect(localDateStr('UTC', instant)).toBe('2026-01-05');
   });
 
   it('pads single-digit months and days', () => {
-    const date = new Date(2026, 8, 3); // local Sep 3 2026
-    expect(localDateStr(date)).toBe('2026-09-03');
+    const instant = new Date('2026-09-03T12:00:00.000Z');
+    expect(localDateStr('UTC', instant)).toBe('2026-09-03');
+  });
+
+  it('resolves against the org timezone, not the server-local clock — an', () => {
+    // 2026-01-05T02:00:00Z is still 2026-01-04 in America/New_York (UTC-5
+    // in Jan), the exact one-day skew this helper exists to avoid.
+    const instant = new Date('2026-01-05T02:00:00.000Z');
+    expect(localDateStr('UTC', instant)).toBe('2026-01-05');
+    expect(localDateStr('America/New_York', instant)).toBe('2026-01-04');
   });
 });
 

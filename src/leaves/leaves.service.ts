@@ -61,6 +61,7 @@ import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
+import { todayInOrgTz } from '../common/org-date';
 
 type Actor = Omit<User, 'password'>;
 
@@ -73,10 +74,6 @@ const CREDIT_HISTORY_ACTIONS = ['LEAVE_ACCRUAL_RUN', 'LEAVE_CARRYFORWARD_RUN'];
 const APPROVE_ROLES: Role[] = [Role.ADMIN, Role.HR, Role.MANAGER];
 // Old system's LEAVE_CONFIG_ROLES — HR override for cancellation.
 const CANCEL_OVERRIDE_ROLES: Role[] = [Role.ADMIN, Role.HR];
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 function deriveLeaveYear(startDate: string): number {
   return Number(startDate.slice(0, 4));
@@ -819,6 +816,7 @@ export class LeavesService {
       employeeDept,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
     );
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
 
     const rules = leaveType.rules as unknown as LeaveRules;
     const ruleResult = checkLeaveRules(
@@ -830,7 +828,7 @@ export class LeavesService {
         hasAttachment: !!dto.attachmentUrl,
       },
       {
-        today: todayStr(),
+        today,
         holidayDates: new Set(holidays.map((h) => h.date)),
         weeklyOffs,
         priorLeaveEndDate: priorLeaveOfType?.endDate ?? null,
@@ -879,7 +877,7 @@ export class LeavesService {
           row,
           negativeBalance,
           totalDays,
-          todayStr(),
+          today,
         );
         if (!preflight.ok) {
           throw new ForbiddenException('Insufficient leave balance.');
@@ -916,7 +914,7 @@ export class LeavesService {
           rowAfterHold,
           negativeBalance,
           0,
-          todayStr(),
+          today,
         );
         if (!affordability.ok) {
           throw new ForbiddenException('Insufficient leave balance.');

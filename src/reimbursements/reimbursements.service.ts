@@ -35,14 +35,11 @@ import {
 } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { todayInOrgTz } from '../common/org-date';
 
 type Actor = Omit<User, 'password'>;
 
 const EXTERNAL_URL_RE = /^https?:\/\//i;
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 @Injectable()
 export class ReimbursementsService {
@@ -54,6 +51,14 @@ export class ReimbursementsService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
+
+  private async getOrgTimezone(organizationId: string): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
 
   // receiptUrl is stored as the relativeKey from POST /files/upload/documents
   // — never servable as-is, so every read signs it fresh, same pattern as
@@ -233,6 +238,7 @@ export class ReimbursementsService {
     // re-asserted in the write's own `where`, not just the checks above —
     // two concurrent review() calls on the same claim (double-click, or a
     // retried request) can't both win.
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
     const { count } = await this.scopedPrisma.reimbursement.updateMany({
       where: { id, organizationId, status: claim.status },
       data:
@@ -243,7 +249,7 @@ export class ReimbursementsService {
               // A free-form date, not always "today" — approval can land on
               // the last day of a month while the actual payout is recorded
               // a day (or more) later, or backdated to match a real payout.
-              paidDate: dto.paidDate ?? todayStr(),
+              paidDate: dto.paidDate ?? today,
               paidById: actor.id,
               paymentMode: dto.paymentMode,
             }
@@ -251,7 +257,7 @@ export class ReimbursementsService {
               status: dto.status,
               reviewComments: dto.reviewComments ?? '',
               approvedById: actor.id,
-              ...(dto.status === 'APPROVED' && { approvedDate: todayStr() }),
+              ...(dto.status === 'APPROVED' && { approvedDate: today }),
             },
     });
     if (count === 0) {

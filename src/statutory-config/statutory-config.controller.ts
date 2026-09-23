@@ -19,7 +19,6 @@ import { CreateStatutoryConfigVersionDto } from './dto/create-statutory-config-v
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { localDateStr } from '../employee-salary-components/salary-structure-math';
 
 type Caller = Omit<User, 'password'>;
 
@@ -55,7 +54,7 @@ export class StatutoryConfigController {
     const parsed = this.assertKnownModule(module);
     return this.statutoryConfigService.getEffective(
       parsed,
-      date ?? localDateStr(),
+      date,
       caller.organizationId,
     );
   }

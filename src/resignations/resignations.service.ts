@@ -34,17 +34,11 @@ import {
   RejectResignationDto,
 } from './dto/decide-resignation.dto';
 import { ListResignationsQueryDto } from './dto/list-resignations-query.dto';
+import { todayInOrgTz } from '../common/org-date';
 
 type Actor = Omit<User, 'password'>;
 
 const HR_ROLES: Role[] = [Role.HR, Role.ADMIN];
-
-function todayStr(): string {
-  const d = new Date();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${d.getFullYear()}-${mm}-${dd}`;
-}
 
 function addDays(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00Z`);
@@ -62,6 +56,14 @@ export class ResignationsService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  private async getOrgTimezone(organizationId: string): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
+
   async submit(dto: SubmitResignationDto, actor: Actor) {
     const organizationId = actor.organizationId;
     const employee = await this.scopedPrisma.user.findFirst({
@@ -72,7 +74,7 @@ export class ResignationsService {
         'Only an active employee can submit a resignation.',
       );
     }
-    const submittedOn = todayStr();
+    const submittedOn = todayInOrgTz(await this.getOrgTimezone(organizationId));
     if (dto.requestedLwd < submittedOn) {
       throw new BadRequestException('requestedLwd cannot be before today.');
     }

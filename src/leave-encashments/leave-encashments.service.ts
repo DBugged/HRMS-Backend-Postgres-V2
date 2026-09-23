@@ -165,11 +165,15 @@ export class LeaveEncashmentsService {
           );
         }
 
+        const org = await tx.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        });
         const currentBasic =
           await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
             actor.id,
             SALARY_COMPONENT_CODES.BASIC,
-            localDateStr(now),
+            localDateStr(org?.timezone ?? 'Asia/Kolkata', now),
             organizationId,
           );
         const ratePerDay = dailyRateFromMonthly(currentBasic);

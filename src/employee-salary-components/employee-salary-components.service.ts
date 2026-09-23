@@ -40,13 +40,22 @@ export class EmployeeSalaryComponentsService {
     private readonly timelineService: EmployeeTimelineService,
   ) {}
 
+  private async getOrgTimezone(organizationId: string): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
+
   async getStructure(
     employeeId: string,
     asOfParam: string | undefined,
     organizationId: string,
   ) {
     await this.assertEmployeeExists(employeeId, organizationId);
-    const asOf = asOfParam ?? localDateStr();
+    const asOf =
+      asOfParam ?? localDateStr(await this.getOrgTimezone(organizationId));
 
     const [rawRows, activeComponents] = await Promise.all([
       this.scopedPrisma.employeeSalaryComponent.findMany({
@@ -226,7 +235,9 @@ export class EmployeeSalaryComponentsService {
     actorId: string,
     organizationId: string,
   ): Promise<EmployeeSalaryComponent> {
-    const from = dto.effectiveFrom ?? localDateStr();
+    const from =
+      dto.effectiveFrom ??
+      localDateStr(await this.getOrgTimezone(organizationId));
 
     const current = await this.scopedPrisma.employeeSalaryComponent.findFirst({
       where: {

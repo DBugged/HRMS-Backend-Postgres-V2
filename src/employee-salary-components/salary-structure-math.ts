@@ -1,4 +1,5 @@
 import { CalcType } from '@prisma/client';
+import { todayInOrgTz } from '../common/org-date';
 
 /**
  * Pure helpers for the employee salary-structure revision system, ported
@@ -6,17 +7,22 @@ import { CalcType } from '@prisma/client';
  * the service does the queries and passes plain data in.
  */
 
-// Server-LOCAL date, deliberately not `toISOString()` — the old system's
-// `todayStr()` has a comment documenting a real bug: toISOString() shifts
+// Org-timezone date, deliberately not `toISOString()` — the old system's
+// `todayStr()` had a comment documenting a real bug: toISOString() shifts
 // to UTC, which during IST early-morning hours (00:00-05:29) rolls the
 // date back by one, causing effectiveFrom/asOf comparisons to miss
-// same-day rows. Always use this instead of new Date().toISOString() for
-// any effectiveFrom/asOf value in this module.
-export function localDateStr(date: Date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+// same-day rows. That bug generalizes beyond IST specifically: any org
+// whose configured timezone disagrees with the server's own local clock
+// can hit the same one-day skew in either direction, so this now takes
+// the org's timezone explicitly rather than assuming server-local time is
+// the org's time. Always use this instead of new Date().toISOString() (or
+// server-local Date getters) for any effectiveFrom/asOf value in this
+// module.
+export function localDateStr(
+  timezone: string,
+  date: Date = new Date(),
+): string {
+  return todayInOrgTz(timezone, date);
 }
 
 // One day before a YYYY-MM-DD string, using UTC internally (pure date

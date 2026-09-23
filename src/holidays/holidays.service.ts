@@ -22,13 +22,10 @@ import { ListHolidaysQueryDto } from './dto/list-holidays-query.dto';
 import { BulkImportHolidaysDto } from './dto/bulk-import-holidays.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { todayInOrgTz } from '../common/org-date';
 
 const VALID_TYPES = new Set(Object.values(HolidayType));
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 // Bulk-import rows are untyped, client-parsed spreadsheet cells — this
 // coerces only actual strings/numbers/booleans (the values a spreadsheet
@@ -48,6 +45,14 @@ export class HolidaysService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
   ) {}
+
+  private async getOrgTimezone(organizationId: string): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
 
   // India's 3 fixed National Holidays (Republic Day, Independence Day,
   // Gandhi Jayanti) — same date every year, mandated for every
@@ -172,7 +177,10 @@ export class HolidaysService {
       (dto.description !== undefined &&
         dto.description !== existing.description) ||
       (dto.isActive !== undefined && dto.isActive !== existing.isActive);
-    if (anyFieldChanges && existing.date < todayStr()) {
+    if (
+      anyFieldChanges &&
+      existing.date < todayInOrgTz(await this.getOrgTimezone(organizationId))
+    ) {
       throw new BadRequestException(
         "This holiday's date has already passed and can't be edited.",
       );
@@ -221,7 +229,9 @@ export class HolidaysService {
     // effect on future lookups) — same past-date protection as update()'s
     // date/department/isActive guard, applied unconditionally here since
     // there's no "which field changed" to check.
-    if (existing.date < todayStr()) {
+    if (
+      existing.date < todayInOrgTz(await this.getOrgTimezone(organizationId))
+    ) {
       throw new BadRequestException(
         "This holiday's date has already passed and can't be deleted, to preserve the attendance/leave history calculated against it.",
       );

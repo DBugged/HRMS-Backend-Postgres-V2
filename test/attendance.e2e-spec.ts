@@ -13,6 +13,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { PRISMA_CLIENT } from '../src/prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../src/prisma/prisma.module';
 import { AttendanceService } from '../src/attendance/attendance.service';
+import { todayInOrgTz } from '../src/common/org-date';
 
 interface AuthBody {
   accessToken: string;
@@ -28,8 +29,17 @@ interface EmployeeCreateBody {
 
 const PASSWORD = 'TestPass123!';
 
+// Offset relative to the org's own "today" (default org timezone is
+// Asia/Kolkata — see src/common/org-date.ts), not a literal UTC calendar
+// day — matching how the service itself resolves "today" for every
+// org-timezone-aware date check (regularization's future/lookback-window
+// guards included). A plain UTC offset can disagree with the org-local day
+// near the org's own day boundary.
 function offsetDate(days: number): string {
-  const d = new Date();
+  const [year, month, day] = todayInOrgTz('Asia/Kolkata')
+    .split('-')
+    .map(Number);
+  const d = new Date(Date.UTC(year, month - 1, day));
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
@@ -1358,10 +1368,37 @@ describe('Attendance (e2e)', () => {
     });
 
     it('rejecting leaves inTime/outTime/status/source untouched, only the regularization sub-fields change', async () => {
+      // Every offset in [-7, 0] against the shared `employeeToken`/
+      // `noDeptEmployeeToken` fixtures is already spoken for elsewhere in
+      // this file (by other regularization tests, the manual-punch tests
+      // this same describe block's own siblings reuse by offset, and the
+      // "Self-punch geofence enforcement" tests, which punch at the real
+      // current instant — whose own UTC calendar date can equal an
+      // org-timezone "yesterday" depending on exactly when the suite runs
+      // relative to the org's own day boundary). Rather than picking
+      // another offset and risking the same collision, use a brand-new
+      // employee with zero attendance history so any pre-existing row is
+      // structurally impossible.
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Regularization Reject Employee',
+          email: 'att-e2e-reg-reject@example.test',
+        });
+      const createdBody = created.body as EmployeeCreateBody;
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-reg-reject@example.test',
+          password: createdBody.generatedPassword,
+        });
+      const freshEmployeeToken = (login.body as AuthBody).accessToken;
+
       const date = offsetDate(-1);
       const req = await request(app.getHttpServer())
         .post('/attendance/regularization')
-        .set('Authorization', `Bearer ${employeeToken}`)
+        .set('Authorization', `Bearer ${freshEmployeeToken}`)
         .send({
           date,
           requestedInTime: `${date}T09:00:00.000Z`,

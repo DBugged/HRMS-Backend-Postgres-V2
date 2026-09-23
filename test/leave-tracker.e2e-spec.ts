@@ -1,5 +1,6 @@
 import * as path from 'path';
 import { compareEmployeeId } from '../src/common/employee-order';
+import { todayInOrgTz } from '../src/common/org-date';
 import * as dotenv from 'dotenv';
 
 dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
@@ -438,20 +439,25 @@ describe('Leave Tracker (e2e)', () => {
     });
 
     it('never backfills ABSENT onto today or a future day', async () => {
-      const now = new Date();
+      // The grid resolves "today" via the org's configured timezone
+      // (default Asia/Kolkata for a newly-registered org — see
+      // src/common/org-date.ts), which can disagree with the UTC calendar
+      // day near the org's own day boundary — so this must match the
+      // service's own definition of "today" rather than `now.getUTCDate()`.
+      const [todayYear, todayMonth, todayDay] = todayInOrgTz('Asia/Kolkata')
+        .split('-')
+        .map(Number);
       const res = await request(app.getHttpServer())
         .get('/leave-tracker/grid')
-        .query({ month: now.getUTCMonth() + 1, year: now.getUTCFullYear() })
+        .query({ month: todayMonth, year: todayYear })
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       const cells = (res.body as GridResponse).cells[empAId] ?? {};
       // No Attendance rows exist for empA in the current month at all — if
       // today/future backfilling ever leaked in, this would start failing.
-      expect(cells[now.getUTCDate()]).toBeUndefined();
-      const lastDay = new Date(
-        Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
-      ).getUTCDate();
-      if (lastDay > now.getUTCDate()) {
+      expect(cells[todayDay]).toBeUndefined();
+      const lastDay = new Date(Date.UTC(todayYear, todayMonth, 0)).getUTCDate();
+      if (lastDay > todayDay) {
         expect(cells[lastDay]).toBeUndefined();
       }
     });

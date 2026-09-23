@@ -8,6 +8,17 @@ import { Prisma, StatutoryKey, StatutoryModule } from '@prisma/client';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { localDateStr } from '../employee-salary-components/salary-structure-math';
 
+async function resolveOrgTimezone(
+  db: ExtendedPrismaClient | Prisma.TransactionClient,
+  organizationId: string,
+): Promise<string> {
+  const org = await db.organization.findFirst({
+    where: { id: organizationId },
+    select: { timezone: true },
+  });
+  return org?.timezone ?? 'Asia/Kolkata';
+}
+
 // StatutoryKey values that have a matching StatutoryModule switch.
 export const STATUTORY_GATED_KEYS: StatutoryKey[] = [
   StatutoryKey.PF,
@@ -23,8 +34,10 @@ export const STATUTORY_GATED_KEYS: StatutoryKey[] = [
 export async function statutoryEnabledToday(
   db: ExtendedPrismaClient | Prisma.TransactionClient,
   organizationId: string,
-  today: string = localDateStr(),
+  todayParam?: string,
 ): Promise<Map<StatutoryKey, boolean>> {
+  const today =
+    todayParam ?? localDateStr(await resolveOrgTimezone(db, organizationId));
   const versions = await db.statutoryConfigVersion.findMany({
     where: {
       organizationId,

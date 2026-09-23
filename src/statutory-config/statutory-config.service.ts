@@ -50,6 +50,19 @@ export class StatutoryConfigService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
+  private async getOrgTimezone(
+    organizationId: string,
+    db:
+      | Pick<ExtendedPrismaClient, 'organization'>
+      | Prisma.TransactionClient = this.scopedPrisma,
+  ): Promise<string> {
+    const org = await db.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    return org?.timezone ?? 'Asia/Kolkata';
+  }
+
   private effectiveCacheKeyPrefix(
     organizationId: string,
     module: StatutoryModule,
@@ -65,7 +78,7 @@ export class StatutoryConfigService {
     tx: Prisma.TransactionClient,
     organizationId: string,
   ): Promise<void> {
-    const today = localDateStr();
+    const today = localDateStr(await this.getOrgTimezone(organizationId, tx));
     for (const module of Object.values(StatutoryModule)) {
       const { config, isEnabled } = SEED_DEFAULTS[module];
       await tx.statutoryConfigVersion.create({
@@ -89,9 +102,11 @@ export class StatutoryConfigService {
 
   async getEffective(
     module: StatutoryModule,
-    date: string,
+    dateParam: string | undefined,
     organizationId: string,
   ) {
+    const date =
+      dateParam ?? localDateStr(await this.getOrgTimezone(organizationId));
     const key = `${this.effectiveCacheKeyPrefix(organizationId, module)}${date}`;
     return this.cache.getOrSet(key, EFFECTIVE_CACHE_TTL_SECONDS, async () => {
       const version = await this.scopedPrisma.statutoryConfigVersion.findFirst({
@@ -197,7 +212,7 @@ export class StatutoryConfigService {
     if (!row)
       throw new NotFoundException('Statutory config version not found.');
 
-    const today = localDateStr();
+    const today = localDateStr(await this.getOrgTimezone(organizationId));
     if (row.effectiveFrom <= today) {
       throw new BadRequestException(
         'Only a future-dated version can be deleted — past and current versions are permanent history.',

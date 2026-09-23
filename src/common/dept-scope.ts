@@ -2,15 +2,12 @@ import { ForbiddenException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import type { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
+import { todayInOrgTz } from './org-date';
 
 interface DeptScopeActor {
   id: string;
   role: Role;
   departmentId: string | null;
-}
-
-function todayStr(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 // Employee ids a MANAGER's list/query endpoints must be constrained to —
@@ -120,16 +117,21 @@ export async function assertManagerScopeOrDelegate(
     return;
   }
 
-  if (
-    target.reportingManagerId &&
-    (await delegationService.isActiveDelegate(
-      target.reportingManagerId,
-      actor.id,
-      organizationId,
-      todayStr(),
-    ))
-  ) {
-    return;
+  if (target.reportingManagerId) {
+    const org = await prisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    if (
+      await delegationService.isActiveDelegate(
+        target.reportingManagerId,
+        actor.id,
+        organizationId,
+        todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
+      )
+    ) {
+      return;
+    }
   }
 
   throw new ForbiddenException(
