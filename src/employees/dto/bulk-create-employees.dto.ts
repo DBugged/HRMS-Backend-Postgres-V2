@@ -38,6 +38,10 @@ class BulkEmployeeRowDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  gender?: unknown;
+
+  @ApiPropertyOptional()
+  @IsOptional()
   joiningDate?: unknown;
 
   // Matches the manual "Add Employee" form's own required fields — see

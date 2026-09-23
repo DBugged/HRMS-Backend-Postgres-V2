@@ -818,6 +818,7 @@ describe('Employees + Departments (e2e)', () => {
       employeeCategory: 'Full-Time',
       role: 'EMPLOYEE',
       employeeType: 'permanent',
+      gender: 'Female',
       ...overrides,
     });
 
@@ -980,6 +981,45 @@ describe('Employees + Departments (e2e)', () => {
       expect(body.failed[0].error).toMatch(/not valid/);
     });
 
+    it('an invalid gender value fails that row; a valid label is case-insensitively resolved to the enum', async () => {
+      const bad = await request(app.getHttpServer())
+        .post('/employees/bulk')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            validRow({
+              name: 'Bulk Bad Gender',
+              email: 'employees-e2e-bulk-bad-gender@example.test',
+              personalEmail:
+                'employees-e2e-bulk-bad-gender-personal@example.test',
+              gender: 'Unknown',
+            }),
+          ],
+        })
+        .expect(201);
+      const badBody = bad.body as { failed: { error: string }[] };
+      expect(badBody.failed.length).toBe(1);
+      expect(badBody.failed[0].error).toMatch(/not valid/);
+
+      const ok = await request(app.getHttpServer())
+        .post('/employees/bulk')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            validRow({
+              name: 'Bulk Good Gender',
+              email: 'employees-e2e-bulk-good-gender@example.test',
+              personalEmail:
+                'employees-e2e-bulk-good-gender-personal@example.test',
+              gender: 'male', // lowercase, no underscore — same as the display label
+            }),
+          ],
+        })
+        .expect(201);
+      const okBody = ok.body as { created: { employeeId: string }[] };
+      expect(okBody.created.length).toBe(1);
+    });
+
     it('rejects a row missing personalEmail/department/employeeCategory/role/employeeType, same required fields as the manual form', async () => {
       const res = await request(app.getHttpServer())
         .post('/employees/bulk')
@@ -1003,7 +1043,9 @@ describe('Employees + Departments (e2e)', () => {
       };
       expect(body.created.length).toBe(0);
       expect(body.failed.length).toBe(1);
-      expect(body.failed[0].error).toMatch(/personal email is required/);
+      // Gender is checked first among the shared-required fields — see
+      // bulkCreate()'s validation order in employees.service.ts.
+      expect(body.failed[0].error).toMatch(/Gender is required/);
     });
 
     it('sendWelcomeEmail: true (or omitted) still attempts the welcome email for every created row, unchanged', async () => {

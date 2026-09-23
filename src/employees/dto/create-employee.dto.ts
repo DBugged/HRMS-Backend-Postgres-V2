@@ -9,7 +9,7 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-import { Role } from '@prisma/client';
+import { Gender, Role } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateEmployeeDto {
@@ -73,6 +73,16 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsString()
   contactNumber?: string;
+
+  // Optional at this DTO/type level for the same reason as personalEmail —
+  // the manual "Add Employee" form and bulkCreate's row validation both
+  // enforce it as required client/row-side. Feeds
+  // LeaveType.applicableGenders eligibility (leave-eligibility.ts), which
+  // has no other way to be set at creation time.
+  @ApiPropertyOptional({ enum: Gender })
+  @IsOptional()
+  @IsEnum(Gender)
+  gender?: Gender;
 
   @ApiPropertyOptional()
   @IsOptional()

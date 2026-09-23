@@ -24,6 +24,7 @@ import { generatePolicyPassword } from '../common/password-policy';
 import { isEmail, isDateString } from 'class-validator';
 import {
   EmploymentStatus,
+  Gender,
   OrgListType,
   Prisma,
   Role,
@@ -68,6 +69,17 @@ const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 const ROLES_HR_CAN_ASSIGN: Role[] = [Role.EMPLOYEE, Role.MANAGER, Role.HR];
 
 const MAX_MANAGER_CHAIN_HOPS = 100;
+
+// bulkCreate()'s Excel rows carry Gender as a human-typed label (or the
+// raw enum value), same reasoning as role/employeeType's name-matching
+// below — this resolves either form case-insensitively.
+const GENDER_LABELS = new Map<string, Gender>([
+  ['male', Gender.MALE],
+  ['female', Gender.FEMALE],
+  ['other', Gender.OTHER],
+  ['prefer not to say', Gender.PREFER_NOT_TO_SAY],
+  ['prefer_not_to_say', Gender.PREFER_NOT_TO_SAY],
+]);
 
 // Exit statuses: final, and they revoke login (same set offboarding applies).
 export const EXIT_STATUSES: EmploymentStatus[] = [
@@ -201,6 +213,7 @@ export class EmployeesService {
             gradeLevel: dto.gradeLevel ?? '',
             employeeCategory: dto.employeeCategory ?? '',
             contactNumber: dto.contactNumber ?? '',
+            gender: dto.gender,
             joiningDate: dto.joiningDate
               ? new Date(dto.joiningDate)
               : undefined,
@@ -451,6 +464,7 @@ export class EmployeesService {
       email?: unknown;
       designation?: unknown;
       contactNumber?: unknown;
+      gender?: unknown;
       joiningDate?: unknown;
       personalEmail?: unknown;
       department?: unknown;
@@ -519,6 +533,7 @@ export class EmployeesService {
       const email = asString(row.email).trim();
       const designation = asString(row.designation).trim();
       const contactNumber = asString(row.contactNumber).trim();
+      const genderInput = asString(row.gender).trim();
       const joiningDate = asString(row.joiningDate).trim();
       const personalEmail = asString(row.personalEmail).trim();
       const departmentName = asString(row.department).trim();
@@ -538,6 +553,22 @@ export class EmployeesService {
         failed.push({
           row,
           error: 'Joining date must be a valid date (YYYY-MM-DD).',
+        });
+        return;
+      }
+      // Matches the manual "Add Employee" form's own required Gender field
+      // — feeds LeaveType.applicableGenders eligibility, which has no other
+      // way to be set at creation time. Accepts either the raw enum value
+      // (MALE/FEMALE/OTHER/PREFER_NOT_TO_SAY) or its display label.
+      if (!genderInput) {
+        failed.push({ row, error: 'Gender is required.' });
+        return;
+      }
+      const gender = GENDER_LABELS.get(genderInput.toLowerCase());
+      if (!gender) {
+        failed.push({
+          row,
+          error: `Gender "${genderInput}" is not valid. Use one of: Male, Female, Other, Prefer not to say.`,
         });
         return;
       }
@@ -618,6 +649,7 @@ export class EmployeesService {
             designation: designation || undefined,
             employeeCategory: employeeCategory.name,
             contactNumber: contactNumber || undefined,
+            gender,
             joiningDate: joiningDate || undefined,
             role,
             employeeType: employeeType.value,
