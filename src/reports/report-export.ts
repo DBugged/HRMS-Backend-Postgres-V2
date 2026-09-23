@@ -47,6 +47,37 @@ function detectRasterExtension(buffer: Buffer): 'png' | 'jpeg' | 'gif' | null {
   return null;
 }
 
+// Spreadsheet apps evaluate a cell that starts with = + - @ (or a leading
+// tab/CR) as a formula. Prefixing such strings with an apostrophe forces
+// them to be read as literal text (CSV/formula injection). Idempotent.
+const FORMULA_TRIGGER_RE = /^[=+\-@\t\r]/;
+export function sanitizeSpreadsheetValue<T>(value: T): T {
+  if (typeof value === 'string' && FORMULA_TRIGGER_RE.test(value)) {
+    return `'${value}` as T;
+  }
+  return value;
+}
+
+function sanitizeRow(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    out[key] = sanitizeSpreadsheetValue(value);
+  }
+  return out;
+}
+
+function sanitizeWorkbookCells(workbook: ExcelJS.Workbook): void {
+  workbook.eachSheet((ws) =>
+    ws.eachRow((r) =>
+      r.eachCell((cell) => {
+        if (typeof cell.value === 'string') {
+          cell.value = sanitizeSpreadsheetValue(cell.value);
+        }
+      }),
+    ),
+  );
+}
+
 export function buildWorkbook(
   title: string,
   columns: ReportColumn[],
@@ -57,7 +88,7 @@ export function buildWorkbook(
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(title);
   sheet.columns = columns;
-  rows.forEach((row) => sheet.addRow(row));
+  rows.forEach((row) => sheet.addRow(sanitizeRow(row)));
   sheet.getRow(1).font = { bold: true };
   if (subtitle) {
     // Inserted above the (already-written) header row — insertRow shifts
@@ -68,7 +99,7 @@ export function buildWorkbook(
     // writer repeats a merged cell's value into every column instead of
     // leaving them blank. A single-cell first column reads fine in Excel
     // too, just without the visual merge.
-    sheet.insertRow(1, [subtitle]);
+    sheet.insertRow(1, [sanitizeSpreadsheetValue(subtitle)]);
     sheet.getRow(1).font = { italic: true, bold: false };
     sheet.getRow(2).font = { bold: true };
   }
@@ -80,7 +111,7 @@ export function buildWorkbook(
       // has no concept of an embedded image; the same worksheet just
       // renders without one).
       const imageId = workbook.addImage({
-        buffer: logoBuffer as any,
+        buffer: logoBuffer as unknown as ExcelJS.Buffer,
         extension,
       });
       sheet.addImage(imageId, {
@@ -226,12 +257,18 @@ export async function sendReport(
   }
   const workbook = buildWorkbook(title, columns, rows, subtitle, logoBuffer);
   if (format === 'csv') {
-    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename=${filename}.csv`,
     );
-    const buffer = await workbook.csv.writeBuffer();
+    sanitizeWorkbookCells(workbook);
+    const csv = await workbook.csv.writeBuffer();
+    // UTF-8 BOM so Excel detects the encoding (non-ASCII names etc.).
+    const buffer = Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(csv),
+    ]);
     res.send(buffer);
   } else {
     res.setHeader(

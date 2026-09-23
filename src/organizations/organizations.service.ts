@@ -2,6 +2,7 @@
 // Responsibilities: Owns findOwn()/updateOwn(), both always scoped by the authenticated caller's own
 // organizationId rather than any client-supplied id; strips faceApiKey from every response.
 import { Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { UpdateOrganizationDto } from './dto/update-organization.dto';
 
@@ -29,10 +30,25 @@ export class OrganizationsService {
   }
 
   async updateOwn(organizationId: string, dto: UpdateOrganizationDto) {
-    await this.findOwn(organizationId); // 404s before attempting the update if somehow missing
+    const existing = await this.findOwn(organizationId); // 404s before attempting the update if somehow missing
+    // Organization.timezone and policies.timezone are the same setting
+    // stored twice — keep policies.timezone (what the Setup Wizard /
+    // Organization Settings UI shows) in sync, mirroring
+    // OrganizationSettingsService.updateSection. Informational only for
+    // now: no date-boundary logic consumes either copy yet.
+    const data: Prisma.OrganizationUpdateInput = { ...dto };
+    if (dto.timezone !== undefined) {
+      const policies = existing.policies;
+      data.policies = {
+        ...(policies && typeof policies === 'object' && !Array.isArray(policies)
+          ? policies
+          : {}),
+        timezone: dto.timezone,
+      };
+    }
     const updated = await this.prisma.organization.update({
       where: { id: organizationId },
-      data: dto,
+      data,
     });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the secret deliberately
     const { faceApiKey, ...rest } = updated;

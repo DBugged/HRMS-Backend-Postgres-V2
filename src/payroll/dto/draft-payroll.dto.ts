@@ -8,8 +8,10 @@ export class DraftPayrollDto {
   @Max(12)
   month!: number;
 
-  @ApiProperty()
+  @ApiProperty({ minimum: 2000, maximum: 2100 })
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year!: number;
 
   @ApiPropertyOptional()

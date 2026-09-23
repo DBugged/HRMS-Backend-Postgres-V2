@@ -32,6 +32,8 @@ export function productionConfigProblems(
     .map((s) => s.trim())
     .filter(Boolean);
   const fe = env.FRONTEND_URL || origins[0];
+  if (!(env.CORS_ORIGIN ?? '').split(',').some((o) => o.trim()))
+    p.push('CORS_ORIGIN must be set to a comma-separated origin allowlist');
   if (!env.FRONTEND_URL)
     p.push('FRONTEND_URL must be set (used in emailed links)');
   else if (LOCAL_RE.test(fe))

@@ -380,12 +380,12 @@ describe('Notifications (e2e)', () => {
     });
     readTargetId = created.id;
 
-    // Another user cannot mark someone else's notification read (silently
-    // scoped by userId — the updateMany simply matches nothing).
+    // Another user cannot mark someone else's notification read — scoped by
+    // userId, and a non-owned id is reported as not found.
     await request(app.getHttpServer())
       .patch(`/notifications/${readTargetId}/read`)
       .set('Authorization', `Bearer ${managerToken}`)
-      .expect(200);
+      .expect(404);
     const stillUnread = await prisma.notification.findUniqueOrThrow({
       where: { id: readTargetId },
     });

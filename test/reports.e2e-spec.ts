@@ -39,6 +39,16 @@ function offsetDate(days: number) {
   return d.toISOString().slice(0, 10);
 }
 
+// Leave day-counts exclude weekly-offs/holidays (sandwichLeaveApplies is
+// false by default), so a leave range landing entirely on a weekend is now
+// rejected. Leave ranges below start on a Monday >= minDays out instead of
+// a raw "today + N" that could fall on Sat/Sun depending on the run date.
+function mondayOffset(minDays: number) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + minDays);
+  return minDays + ((1 - d.getUTCDay() + 7) % 7);
+}
+
 describe('Reports (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -167,8 +177,8 @@ describe('Reports (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveTypeId,
-        startDate: offsetDate(10),
-        endDate: offsetDate(11),
+        startDate: offsetDate(mondayOffset(10) + 0),
+        endDate: offsetDate(mondayOffset(10) + 1),
       })
       .expect(201);
     const leaveId = (leave.body as { id: string }).id;

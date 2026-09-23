@@ -35,6 +35,18 @@ function offsetDate(days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+// Smallest offset >= minDays that lands on the given UTC weekday (0=Sun).
+// Leave day-counts exclude weekly-offs (Sunday by default) when
+// sandwichLeaveApplies is false, so tests asserting a day count must anchor
+// their ranges to known weekdays instead of "today + N".
+function offsetToWeekday(minDays: number, weekday: number): number {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + minDays);
+  return minDays + ((weekday - d.getUTCDay() + 7) % 7);
+}
+// Mon..Wed working-day block used by the apply/approve/cancel flow below.
+const MON = offsetToWeekday(10, 1);
+
 describe('Leaves (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -191,8 +203,8 @@ describe('Leaves (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: elLeaveTypeId,
-        startDate: offsetDate(10),
-        endDate: offsetDate(12),
+        startDate: offsetDate(MON),
+        endDate: offsetDate(MON + 2),
       })
       .expect(201);
     const body = res.body as LeaveBody;
@@ -214,8 +226,8 @@ describe('Leaves (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: elLeaveTypeId,
-        startDate: offsetDate(11),
-        endDate: offsetDate(15),
+        startDate: offsetDate(MON + 1),
+        endDate: offsetDate(MON + 5),
       })
       .expect(400);
   });
@@ -266,7 +278,10 @@ describe('Leaves (e2e)', () => {
     // Leave-approval -> Attendance integration: every day in the leave's
     // range gets an ON_LEAVE row with source SYSTEM.
     const attendanceRows = await prisma.attendance.findMany({
-      where: { employeeId, date: { gte: offsetDate(10), lte: offsetDate(12) } },
+      where: {
+        employeeId,
+        date: { gte: offsetDate(MON), lte: offsetDate(MON + 2) },
+      },
       orderBy: { date: 'asc' },
     });
     expect(attendanceRows).toHaveLength(3);
@@ -299,7 +314,10 @@ describe('Leaves (e2e)', () => {
     // back to ABSENT/FACE_API — these dates are all in the future relative
     // to "today", so all three should be reverted.
     const attendanceRows = await prisma.attendance.findMany({
-      where: { employeeId, date: { gte: offsetDate(10), lte: offsetDate(12) } },
+      where: {
+        employeeId,
+        date: { gte: offsetDate(MON), lte: offsetDate(MON + 2) },
+      },
     });
     expect(attendanceRows).toHaveLength(3);
     expect(attendanceRows.every((r) => r.status === 'ABSENT')).toBe(true);
@@ -502,5 +520,113 @@ describe('Leaves (e2e)', () => {
     // Net zero: the hold was taken on apply and released exactly once.
     expect(after?.pending).toBe(pendingBefore);
     expect(after?.pending).toBeGreaterThanOrEqual(0);
+  });
+  describe('intra-range weekends vs sandwichLeaveApplies (L8)', () => {
+    // Fri -> Mon, with the department on a Sat+Sun weekend for these tests.
+    let departmentId: string;
+    let originalWeeklyOffs: unknown;
+
+    async function createTypeWithSandwich(code: string, sandwich: boolean) {
+      const res = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: `Sandwich ${code}`,
+          code,
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 12,
+          prorateOnJoining: false,
+        })
+        .expect(201);
+      const id = (res.body as LeaveTypeBody).id;
+      const lt = await prisma.leaveType.findFirstOrThrow({ where: { id } });
+      await prisma.leaveType.updateMany({
+        where: { id },
+        data: {
+          rules: {
+            ...(lt.rules as Record<string, unknown>),
+            sandwichLeaveApplies: sandwich,
+          },
+        },
+      });
+      return id;
+    }
+
+    beforeAll(async () => {
+      const emp = await prisma.user.findFirstOrThrow({
+        where: { id: employeeId },
+      });
+      departmentId = emp.departmentId!;
+      const dept = await prisma.department.findFirstOrThrow({
+        where: { id: departmentId },
+      });
+      originalWeeklyOffs = dept.weeklyOffs;
+      await prisma.department.updateMany({
+        where: { id: departmentId },
+        data: { weeklyOffs: [0, 6] },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.department.updateMany({
+        where: { id: departmentId },
+        data: { weeklyOffs: originalWeeklyOffs as number[] },
+      });
+    });
+
+    it('sandwichLeaveApplies:false charges only the working days inside a Fri->Mon range', async () => {
+      const typeId = await createTypeWithSandwich('SWF', false);
+      const fri = offsetToWeekday(35, 5);
+      const res = await request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          leaveType: typeId,
+          startDate: offsetDate(fri),
+          endDate: offsetDate(fri + 3),
+        })
+        .expect(201);
+      expect((res.body as LeaveBody).totalDays).toBe(2);
+
+      const row = await prisma.leaveBalance.findFirst({
+        where: {
+          employeeId,
+          leaveTypeId: typeId,
+          year: new Date(offsetDate(fri)).getUTCFullYear(),
+        },
+      });
+      expect(row?.pending).toBe(2);
+    });
+
+    it('sandwichLeaveApplies:true still charges every calendar day in a Fri->Mon range', async () => {
+      const typeId = await createTypeWithSandwich('SWT', true);
+      const fri = offsetToWeekday(43, 5);
+      const res = await request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          leaveType: typeId,
+          startDate: offsetDate(fri),
+          endDate: offsetDate(fri + 3),
+        })
+        .expect(201);
+      expect((res.body as LeaveBody).totalDays).toBe(4);
+    });
+
+    it('rejects a range that is entirely weekly-offs when sandwichLeaveApplies is false', async () => {
+      const typeId = await prisma.leaveType.findFirstOrThrow({
+        where: { code: 'SWF' },
+      });
+      const sat = offsetToWeekday(50, 6);
+      await request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          leaveType: typeId.id,
+          startDate: offsetDate(sat),
+          endDate: offsetDate(sat + 1),
+        })
+        .expect(400);
+    });
   });
 });

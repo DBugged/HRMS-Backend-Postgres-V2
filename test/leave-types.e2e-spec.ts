@@ -342,6 +342,9 @@ describe('Leave Types (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(201);
     expect((accrualRes.body as { matched: number }).matched).toBeGreaterThan(0);
+    expect(
+      (accrualRes.body as { totalDaysCredited: number }).totalDaysCredited,
+    ).toBeGreaterThanOrEqual(1.5);
 
     const year = new Date().getFullYear();
     const row = await prisma.leaveBalance.findFirst({
@@ -409,6 +412,73 @@ describe('Leave Types (e2e)', () => {
       where: { employeeId, leaveTypeId: monthlyId, year },
     });
     expect(rowAfterSecondRun?.credited).toBe(2);
+  });
+
+  it('run-accrual reports real days credited (0 for a FIXED_ANNUAL type with no accrualAmountPerCycle)', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Quota Edit Leave',
+        code: 'QED',
+        allocationType: 'FIXED_ANNUAL',
+        annualQuota: 10,
+        prorateOnJoining: false,
+      })
+      .expect(201);
+    const qedId = (created.body as LeaveTypeBody).id;
+
+    const res = await request(app.getHttpServer())
+      .post(`/leave-types/${qedId}/run-accrual`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+    const body = res.body as {
+      message: string;
+      employeesProcessed: number;
+      totalDaysCredited: number;
+    };
+    expect(body.employeesProcessed).toBeGreaterThan(0);
+    expect(body.totalDaysCredited).toBe(0);
+    expect(body.message).toMatch(/No accrual configured/);
+    expect(body.message).not.toMatch(/^Accrual credited/);
+  });
+
+  it('raising annualQuota reconciles existing current-year balance rows, idempotently', async () => {
+    const qed = await prisma.leaveType.findFirstOrThrow({
+      where: { code: 'QED', organization: { name: 'Leave Types E2E Org' } },
+    });
+    const year = new Date().getFullYear();
+    const readRow = () =>
+      prisma.leaveBalance.findFirst({
+        where: { employeeId, leaveTypeId: qed.id, year },
+      });
+
+    // Row already exists from the run-accrual above, credited at quota 10.
+    expect((await readRow())?.credited).toBe(10);
+
+    const put = (annualQuota: number) =>
+      request(app.getHttpServer())
+        .put(`/leave-types/${qed.id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ annualQuota })
+        .expect(200);
+
+    await put(18);
+    let row = await readRow();
+    expect(row?.credited).toBe(18);
+    expect(row?.closing).toBe(18);
+
+    // Same quota again — no double credit.
+    await put(18);
+    row = await readRow();
+    expect(row?.credited).toBe(18);
+    expect(row?.closing).toBe(18);
+
+    // Lowering it adjusts down too (set, not increment).
+    await put(12);
+    row = await readRow();
+    expect(row?.credited).toBe(12);
+    expect(row?.closing).toBe(12);
   });
 
   it('run-accrual-all is HR/ADMIN only', async () => {

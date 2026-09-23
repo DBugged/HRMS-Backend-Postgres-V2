@@ -72,7 +72,13 @@ export class HrEventsService {
       select: { id: true },
     });
     for (const org of organizations) {
-      await this.sendWishesForOrg(org.id);
+      try {
+        await this.sendWishesForOrg(org.id);
+      } catch (err) {
+        this.logger.error(
+          `Daily wishes failed for org ${org.id}: ${(err as Error).message}`,
+        );
+      }
     }
   }
 

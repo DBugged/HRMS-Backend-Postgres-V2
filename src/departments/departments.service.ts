@@ -154,8 +154,22 @@ export class DepartmentsService {
     organizationId: string,
     actorId?: string,
   ) {
-    await this.findOrThrow(id, organizationId);
+    const existing = await this.findOrThrow(id, organizationId);
     const { workScheduleId, ...rest } = dto;
+
+    // Deactivating (isActive: false) hides the department from every picker
+    // and list, so it gets the same guard as remove(): no employees may
+    // still be mapped to it.
+    if (rest.isActive === false && existing.isActive) {
+      const employeeCount = await this.scopedPrisma.user.count({
+        where: { departmentId: id, organizationId },
+      });
+      if (employeeCount > 0) {
+        throw new BadRequestException(
+          'Cannot deactivate a department with employees mapped to it.',
+        );
+      }
+    }
 
     // workScheduleId rides separately from the raw spread below because
     // assigning one (unlike every other field here) also copies that

@@ -20,7 +20,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { Role } from '@prisma/client';
+import { EmploymentStatus, Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
@@ -59,6 +59,13 @@ const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 // reveals account existence, ported from the old system's forgotPassword.
 const FORGOT_PASSWORD_GENERIC_MESSAGE =
   'If that email exists, a reset link has been sent.';
+// Exit statuses — never allowed to log in or refresh, independent of isActive.
+const LOGIN_BLOCKED_STATUSES: EmploymentStatus[] = [
+  EmploymentStatus.RESIGNED,
+  EmploymentStatus.RELEASED,
+  EmploymentStatus.TERMINATED,
+  EmploymentStatus.ABSCONDED,
+];
 
 export interface IssuedTokens {
   accessToken: string;
@@ -236,7 +243,12 @@ export class AuthService {
     meta: { ip?: string; userAgent?: string },
   ): Promise<IssuedTokens & { user: AuthUserDto }> {
     const user = await this.usersService.findByEmail(dto.email);
-    if (!user || !user.isActive) {
+    // Exited employees are refused even if isActive was somehow left true.
+    if (
+      !user ||
+      !user.isActive ||
+      LOGIN_BLOCKED_STATUSES.includes(user.employmentStatus)
+    ) {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
@@ -320,7 +332,11 @@ export class AuthService {
       existing.userId,
       existing.organizationId,
     );
-    if (!user || !user.isActive) {
+    if (
+      !user ||
+      !user.isActive ||
+      LOGIN_BLOCKED_STATUSES.includes(user.employmentStatus)
+    ) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
     }
 

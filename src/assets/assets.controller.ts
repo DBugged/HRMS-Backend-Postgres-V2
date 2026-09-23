@@ -19,8 +19,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { AssetInventoryStatus, Role, User } from '@prisma/client';
-import { AssetsService } from './assets.service';
+import { Role, User } from '@prisma/client';
+// Retiring or disposing of an asset writes off company property — Admin
+// only (shared with the service so create() applies the same gate).
+import { ADMIN_ONLY_STATUSES, AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
@@ -34,13 +36,6 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
-
-// Retiring or disposing of an asset writes off company property — Admin
-// only, where the rest of the status transitions are ordinary HR work.
-const ADMIN_ONLY_STATUSES: AssetInventoryStatus[] = [
-  AssetInventoryStatus.RETIRED,
-  AssetInventoryStatus.DISPOSED,
-];
 
 @ApiTags('assets')
 @ApiBearerAuth('access-token')

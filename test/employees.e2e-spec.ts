@@ -523,6 +523,159 @@ describe('Employees + Departments (e2e)', () => {
     );
   });
 
+  describe('list sorting (server-side sortBy/sortOrder)', () => {
+    it('sorts by name asc/desc and rejects a non-whitelisted sortBy', async () => {
+      const asc = await request(app.getHttpServer())
+        .get('/employees')
+        .query({ sortBy: 'name', sortOrder: 'asc', limit: 2000 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const desc = await request(app.getHttpServer())
+        .get('/employees')
+        .query({ sortBy: 'name', sortOrder: 'desc', limit: 2000 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const ascNames = (asc.body as ListEmployeesBody).data.map(
+        (e) => (e as unknown as { name: string }).name,
+      );
+      const descNames = (desc.body as ListEmployeesBody).data.map(
+        (e) => (e as unknown as { name: string }).name,
+      );
+      expect(ascNames.length).toBeGreaterThan(1);
+      expect(descNames[0]).toBe(ascNames[ascNames.length - 1]);
+      expect(descNames[descNames.length - 1]).toBe(ascNames[0]);
+
+      await request(app.getHttpServer())
+        .get('/employees')
+        .query({ sortBy: 'password' })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
+    });
+  });
+
+  describe('reporting-manager chain + employment-status lifecycle', () => {
+    let aId: string;
+    let bId: string;
+    let cId: string;
+    let cEmail: string;
+    let cPassword: string;
+
+    async function createEmp(label: string) {
+      const email = `employees-e2e-lifecycle-${label}@example.test`;
+      const res = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: `Lifecycle ${label}`,
+          email,
+          departmentId: engDepartmentId,
+        })
+        .expect(201);
+      const body = res.body as EmployeeBody;
+      return { id: body.employee.id, email, password: body.generatedPassword };
+    }
+
+    beforeAll(async () => {
+      aId = (await createEmp('a')).id;
+      bId = (await createEmp('b')).id;
+      const c = await createEmp('c');
+      cId = c.id;
+      cEmail = c.email;
+      cPassword = c.password;
+    });
+
+    it('rejects an employee as their own reporting manager', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${aId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reportingManagerId: aId })
+        .expect(400);
+    });
+
+    it('rejects a reporting manager that would close a cycle', async () => {
+      // B reports to A — fine.
+      await request(app.getHttpServer())
+        .patch(`/employees/${bId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reportingManagerId: aId })
+        .expect(200);
+      // A reporting to B would make A → B → A.
+      await request(app.getHttpServer())
+        .patch(`/employees/${aId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reportingManagerId: bId })
+        .expect(400);
+      const a = await prisma.user.findUniqueOrThrow({ where: { id: aId } });
+      expect(a.reportingManagerId).toBeNull();
+    });
+
+    it('rejects an employment-status transition outside the lifecycle', async () => {
+      // ONBOARDING → NOTICE_PERIOD is not allowed.
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'NOTICE_PERIOD' })
+        .expect(400);
+      // ONBOARDING → CONFIRMED is.
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'CONFIRMED' })
+        .expect(200);
+    });
+
+    it('moving to TERMINATED deactivates, revokes sessions and blocks login; the status is then final', async () => {
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cEmail, password: cPassword })
+        .expect(201);
+      const refreshToken = (login.body as { refreshToken: string })
+        .refreshToken;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'TERMINATED' })
+        .expect(200);
+      expect((res.body as { isActive: boolean }).isActive).toBe(false);
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cEmail, password: cPassword })
+        .expect(401);
+      const live = await prisma.refreshToken.count({
+        where: { userId: cId, revokedAt: null },
+      });
+      expect(live).toBe(0);
+      await request(app.getHttpServer())
+        .post('/auth/refresh')
+        .send({ refreshToken })
+        .expect(401);
+
+      // Can't be resurrected by reactivation either.
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ isActive: true })
+        .expect(400);
+    });
+
+    it('login is refused for an exit status even if isActive was left true', async () => {
+      await prisma.user.update({
+        where: { id: cId },
+        data: { isActive: true },
+      });
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cEmail, password: cPassword })
+        .expect(401);
+      await prisma.user.update({
+        where: { id: cId },
+        data: { isActive: false },
+      });
+    });
+  });
+
   it('HR deactivates an employee', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/employees/${salesEmployeeId}/deactivate`)
@@ -551,6 +704,26 @@ describe('Employees + Departments (e2e)', () => {
       };
       expect(body.shiftStartTime).toBe('10:00');
       expect(body.lateInThresholdMinutes).toBe(20);
+    });
+
+    it('refuses to deactivate a department that still has employees mapped, allows it once empty', async () => {
+      await request(app.getHttpServer())
+        .patch(`/departments/${engDepartmentId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ isActive: false })
+        .expect(400);
+
+      const empty = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ name: 'Empty Dept E2E', code: 'EMPTYE2E' })
+        .expect(201);
+      const res = await request(app.getHttpServer())
+        .patch(`/departments/${(empty.body as { id: string }).id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ isActive: false })
+        .expect(200);
+      expect((res.body as DepartmentDetail).isActive).toBe(false);
     });
 
     it('EMPLOYEE cannot update a department (HR/Admin-only)', async () => {

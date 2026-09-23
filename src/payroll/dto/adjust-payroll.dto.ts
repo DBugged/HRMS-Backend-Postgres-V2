@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Min,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -20,6 +21,7 @@ export class PayrollLineDto {
 
   @ApiPropertyOptional()
   @IsNumber()
+  @Min(0)
   amount!: number;
 
   @ApiPropertyOptional()

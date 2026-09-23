@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsOptional,
   IsString,
@@ -10,6 +11,14 @@ import {
   Min,
 } from 'class-validator';
 import { Role } from '@prisma/client';
+
+export const EMPLOYEE_SORT_FIELDS = [
+  'name',
+  'employeeId',
+  'joiningDate',
+  'email',
+] as const;
+export type EmployeeSortField = (typeof EMPLOYEE_SORT_FIELDS)[number];
 
 export class ListEmployeesQueryDto {
   @ApiPropertyOptional({ default: 1 })
@@ -50,4 +59,16 @@ export class ListEmployeesQueryDto {
   @IsOptional()
   @IsEnum(Role)
   role?: Role;
+
+  // Server-side sort so ordering holds across pages. Whitelisted columns
+  // only; absent → default EMPLOYEE_ORDER_BY.
+  @ApiPropertyOptional({ enum: EMPLOYEE_SORT_FIELDS })
+  @IsOptional()
+  @IsIn(EMPLOYEE_SORT_FIELDS)
+  sortBy?: EmployeeSortField;
+
+  @ApiPropertyOptional({ enum: ['asc', 'desc'], default: 'asc' })
+  @IsOptional()
+  @IsIn(['asc', 'desc'])
+  sortOrder?: 'asc' | 'desc';
 }

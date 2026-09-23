@@ -10,7 +10,13 @@
 // first-ever credit to the employee's joining cycle (cyclesSinceJoining) rather than only the current one.
 import { randomUUID } from 'crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
+import {
+  AllocationType,
+  LeaveBalance,
+  LeaveType,
+  Prisma,
+  Role,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isEligible } from './leave-eligibility';
@@ -133,6 +139,74 @@ export class LeaveBalanceService {
     });
   }
 
+  // Reconciles the current year's EXISTING balance rows for a leave type
+  // after an upfront-relevant field (annualQuota / allocationType /
+  // prorateOnJoining) is edited — ensureBalanceRow only computes the upfront
+  // credit when a row is first created, so without this a quota change never
+  // reached anyone who already had a row. Must run inside the same
+  // transaction as the leave-type update.
+  //
+  // Idempotent: `credited` is SET to computeUpfrontCredit(newType) (plus any
+  // accrual already credited on top of the old upfront amount, when the type
+  // accrues), never incremented by the new quota — re-running with the same
+  // quota writes the same value.
+  async reconcileUpfrontCredit(
+    tx: Prisma.TransactionClient,
+    previous: LeaveType,
+    updated: LeaveType,
+    organizationId: string,
+  ): Promise<{ rowsUpdated: number }> {
+    if (
+      updated.allocationType !== AllocationType.FIXED_ANNUAL &&
+      updated.allocationType !== AllocationType.PRORATED_ON_JOINING
+    ) {
+      // EARNED_MONTHLY rows are driven purely by creditAccrual; UNLIMITED /
+      // NONE carry no upfront credit. Nothing to reconcile.
+      return { rowsUpdated: 0 };
+    }
+
+    const year = new Date().getFullYear();
+    const rows = await tx.leaveBalance.findMany({
+      where: { organizationId, leaveTypeId: updated.id, year },
+    });
+    if (rows.length === 0) return { rowsUpdated: 0 };
+
+    const employees = await tx.user.findMany({
+      where: { organizationId, id: { in: rows.map((r) => r.employeeId) } },
+      select: { id: true, joiningDate: true },
+    });
+    const joiningById = new Map(employees.map((e) => [e.id, e.joiningDate]));
+
+    let rowsUpdated = 0;
+    for (const row of rows) {
+      const joiningDate = joiningById.get(row.employeeId);
+      if (!joiningDate) continue;
+      const newUpfront = computeUpfrontCredit(updated, joiningDate, year);
+      // Preserve days credited by accrual runs on top of the upfront grant
+      // (only possible when the type actually accrues); otherwise the row's
+      // credited is purely the upfront amount and is set outright, which
+      // also repairs rows left stale by earlier quota edits.
+      const accruedOnTop =
+        updated.accrualAmountPerCycle > 0 || previous.accrualAmountPerCycle > 0
+          ? Math.max(
+              0,
+              row.credited - computeUpfrontCredit(previous, joiningDate, year),
+            )
+          : 0;
+      const credited = Math.round((newUpfront + accruedOnTop) * 100) / 100;
+      if (credited === row.credited) continue;
+      await tx.leaveBalance.updateMany({
+        where: { id: row.id, organizationId },
+        data: {
+          credited,
+          closing: recalcClosing({ ...row, credited }),
+        },
+      });
+      rowsUpdated += 1;
+    }
+    return { rowsUpdated };
+  }
+
   // Recomputes and persists `closing` for a balance row — the single
   // source-of-truth writer, mirroring recalculateLeaveBalance. Called after
   // every mutation to opening/credited/availed/encashed/adjusted.
@@ -190,7 +264,12 @@ export class LeaveBalanceService {
   async creditAccrual(
     leaveTypeId: string,
     organizationId: string,
-  ): Promise<{ matched: number; credited: number; alreadyAccrued: number }> {
+  ): Promise<{
+    matched: number;
+    credited: number;
+    alreadyAccrued: number;
+    totalDaysCredited: number;
+  }> {
     const leaveType = await this.scopedPrisma.leaveType.findFirst({
       where: { id: leaveTypeId, organizationId },
     });
@@ -239,6 +318,7 @@ export class LeaveBalanceService {
     const yearStart = new Date(Date.UTC(year, 0, 1));
     let credited = 0;
     let alreadyAccrued = 0;
+    let totalDaysCredited = 0;
 
     await this.scopedPrisma.$transaction(async (tx) => {
       for (const employee of eligible) {
@@ -288,21 +368,31 @@ export class LeaveBalanceService {
         // run's credit. The lastAccrualPeriod check above already makes a
         // *second* call for the same period a no-op; this closes the
         // remaining gap for two genuinely concurrent first-time credits.
+        const daysCredited = leaveType.accrualAmountPerCycle * cycles;
         await tx.leaveBalance.updateMany({
           where: { id: row.id, organizationId },
           data: {
             credited: {
-              increment: leaveType.accrualAmountPerCycle * cycles,
+              increment: daysCredited,
             },
             lastAccrualPeriod: periodKey,
           },
         });
         await this.recalculate(tx, row.id, organizationId);
         credited += 1;
+        totalDaysCredited += daysCredited;
       }
     });
 
-    return { matched: eligible.length, credited, alreadyAccrued };
+    // `credited` counts employees processed (row stamped for this period),
+    // NOT days — totalDaysCredited is the real amount, and is 0 whenever
+    // accrualAmountPerCycle is 0 (the default for every FIXED_ANNUAL type).
+    return {
+      matched: eligible.length,
+      credited,
+      alreadyAccrued,
+      totalDaysCredited: Math.round(totalDaysCredited * 100) / 100,
+    };
   }
 
   // HR-triggered year-end rollover across every leave type with

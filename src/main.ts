@@ -12,6 +12,7 @@ import { initSentry } from './common/sentry';
 import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
 import {
   assertProductionConfig,
+  corsOrigins,
   swaggerEnabled,
 } from './common/production-config';
 
@@ -47,10 +48,10 @@ async function bootstrap() {
   const trustProxyHops = process.env.TRUST_PROXY;
   if (trustProxyHops) {
     const hops = Number(trustProxyHops);
-    app
-      .getHttpAdapter()
-      .getInstance()
-      .set('trust proxy', Number.isFinite(hops) ? hops : trustProxyHops);
+    (app.getHttpAdapter().getInstance() as import('express').Express).set(
+      'trust proxy',
+      Number.isFinite(hops) ? hops : trustProxyHops,
+    );
   }
 
   app.use(
@@ -85,14 +86,10 @@ async function bootstrap() {
     }),
   );
 
-  // Allow every origin, in every environment. Browsers reject a literal
-  // Access-Control-Allow-Origin: * when credentials are involved, so with
-  // credentials: true this reflects back whatever Origin header the
-  // browser sends — which means any site can make authenticated requests
-  // using a logged-in user's cookies. Opted into explicitly; see PR
-  // discussion for the tradeoff.
+  // Only allowlisted origins (CORS_ORIGIN, else FRONTEND_URL) may make
+  // credentialed cross-origin requests.
   app.enableCors({
-    origin: (origin, callback) => callback(null, true),
+    origin: corsOrigins(),
     credentials: true, // required for the httpOnly refresh cookie to be sent/received cross-origin
   });
 

@@ -815,6 +815,12 @@ export class PayrollService {
       code: string;
       message: string;
     }[] = [];
+    const skipped: {
+      employeeId: string;
+      name: string;
+      code: string;
+      reason: string;
+    }[] = [];
 
     // One batched existence check instead of one findFirst per employee —
     // the per-employee calculatePayroll()/create/update below still has to
@@ -859,10 +865,20 @@ export class PayrollService {
       let run = existingRunByEmployeeId.get(employee.id) ?? null;
       if (
         run &&
-        (run.status === PayrollRunStatus.LOCKED ||
+        (run.status === PayrollRunStatus.APPROVED ||
+          run.status === PayrollRunStatus.LOCKED ||
           run.status === PayrollRunStatus.PAID)
       ) {
+        // Not recalculated — reported in skipped[] so callers can tell a
+        // no-op from a real recalculation. Still included in payrolls/count
+        // for backward compatibility.
         results.push(run);
+        skipped.push({
+          employeeId: employee.id,
+          name: employee.name,
+          code: employee.employeeId,
+          reason: `Payroll run is ${run.status} — not recalculated.`,
+        });
         return;
       }
 
@@ -991,9 +1007,10 @@ export class PayrollService {
         year: dto.year,
         count: results.length,
         failed: failures.length,
+        skipped: skipped.length,
       },
     });
-    return { count: results.length, payrolls: results, failures };
+    return { count: results.length, payrolls: results, failures, skipped };
   }
 
   async findAll(query: QueryPayrollDto, actor: Actor, organizationId: string) {
@@ -1142,10 +1159,10 @@ export class PayrollService {
   }
 
   // Manual correction of a run's computed earnings/deductions before it's
-  // finalized. Not allowed once locked/paid (unlock first). Editing an
-  // already-verified/approved run invalidates that sign-off, so it drops
-  // back to CALCULATED for re-review rather than silently keeping a stale
-  // approval on changed numbers.
+  // finalized. Not allowed once approved/locked/paid (unlock a locked/paid
+  // run first). Editing an already-verified run invalidates that sign-off,
+  // so it drops back to CALCULATED for re-review rather than silently
+  // keeping a stale verification on changed numbers.
   async adjust(
     id: string,
     dto: AdjustPayrollDto,
@@ -1157,11 +1174,12 @@ export class PayrollService {
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
     if (
+      run.status === PayrollRunStatus.APPROVED ||
       run.status === PayrollRunStatus.LOCKED ||
       run.status === PayrollRunStatus.PAID
     ) {
       throw new BadRequestException(
-        'This payroll is locked/paid — unlock it before editing.',
+        'This payroll is approved/locked/paid — it can no longer be edited (unlock a locked/paid run first).',
       );
     }
 
@@ -1196,10 +1214,7 @@ export class PayrollService {
       ctcMonthly,
       netPayInWords: amountInWords(netPay),
     };
-    if (
-      run.status === PayrollRunStatus.VERIFIED ||
-      run.status === PayrollRunStatus.APPROVED
-    ) {
+    if (run.status === PayrollRunStatus.VERIFIED) {
       data.status = PayrollRunStatus.CALCULATED;
     }
 

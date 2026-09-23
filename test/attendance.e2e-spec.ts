@@ -431,6 +431,245 @@ describe('Attendance (e2e)', () => {
       });
       expect(nextDayRow).toBeNull();
     });
+
+    const manualPunchAt = (punchTime: string) =>
+      request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: nightEmployeeId, punchTime })
+        .expect(201);
+
+    it('a checkout running past noon (in the quiet gap, nearer the shift end) still counts toward the previous night', async () => {
+      const shiftDate = offsetDateAvoidingHolidays(-12);
+      const nextDate = nextDateStr(shiftDate);
+      await manualPunchAt(`${shiftDate}T22:00:00.000Z`);
+      // 12:30 is past the old hardcoded noon cutoff but still nearer the
+      // 06:00 shift end than the 22:00 start (gap midpoint = 14:00).
+      await manualPunchAt(`${nextDate}T12:30:00.000Z`);
+
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: nightEmployeeId, date: shiftDate },
+      });
+      expect(row.outTime?.toISOString()).toBe(`${nextDate}T12:30:00.000Z`);
+      expect(row.workDurationMinutes).toBe(14 * 60 + 30);
+      expect(row.status).toBe('PRESENT');
+      // Nothing orphaned onto the calendar date the checkout landed on.
+      const orphan = await prisma.attendance.findFirst({
+        where: { employeeId: nightEmployeeId, date: nextDate },
+      });
+      expect(orphan).toBeNull();
+    });
+
+    it('an early check-in in the quiet gap (nearer the shift start) belongs to that evening’s shift and pairs with its checkout', async () => {
+      const shiftDate = offsetDateAvoidingHolidays(-16);
+      const nextDate = nextDateStr(shiftDate);
+      // 15:00 is past the 14:00 gap midpoint -> this evening's shift.
+      await manualPunchAt(`${shiftDate}T15:00:00.000Z`);
+      await manualPunchAt(`${nextDate}T02:00:00.000Z`);
+
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: nightEmployeeId, date: shiftDate },
+      });
+      expect(row.inTime?.toISOString()).toBe(`${shiftDate}T15:00:00.000Z`);
+      expect(row.outTime?.toISOString()).toBe(`${nextDate}T02:00:00.000Z`);
+      expect(row.workDurationMinutes).toBe(11 * 60);
+      const prevRow = await prisma.attendance.findFirst({
+        where: {
+          employeeId: nightEmployeeId,
+          date: (() => {
+            const d = new Date(`${shiftDate}T00:00:00.000Z`);
+            d.setUTCDate(d.getUTCDate() - 1);
+            return d.toISOString().slice(0, 10);
+          })(),
+        },
+      });
+      expect(prevRow).toBeNull();
+    });
+
+    it('punches exactly at and just before the gap midpoint split between adjacent shift-days with no gap', async () => {
+      const shiftDate = offsetDateAvoidingHolidays(-20);
+      const nextDate = nextDateStr(shiftDate);
+      await manualPunchAt(`${nextDate}T13:59:59.000Z`);
+      await manualPunchAt(`${nextDate}T14:00:00.000Z`);
+
+      const prevDay = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: nightEmployeeId, date: shiftDate },
+      });
+      expect(prevDay.inTime?.toISOString()).toBe(`${nextDate}T13:59:59.000Z`);
+      const thisDay = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: nightEmployeeId, date: nextDate },
+      });
+      expect(thisDay.inTime?.toISOString()).toBe(`${nextDate}T14:00:00.000Z`);
+    });
+  });
+
+  describe('Punch input validation and dedupe', () => {
+    it('400s (not 500) for a malformed manual punchTime', async () => {
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId, punchTime: 'not-a-date' })
+        .expect(400);
+    });
+
+    it('400s for an empty-string manual punchTime rather than defaulting to now', async () => {
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId, punchTime: '' })
+        .expect(400);
+    });
+
+    it('Face API ingest: 400 for garbage punchTime, and a repeat punch within 10s is deduped', async () => {
+      const keyRes = await request(app.getHttpServer())
+        .post('/organizations/settings/face-api-key/regenerate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      const key = (keyRes.body as { faceApiKey: string }).faceApiKey;
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/ingest')
+        .set('x-face-api-key', key)
+        .send({ employeeId: employeeHumanId, organizationId, punchTime: 'x' })
+        .expect(400);
+
+      const date = offsetDateAvoidingHolidays(-9);
+      const first = await request(app.getHttpServer())
+        .post('/attendance/punch/ingest')
+        .set('x-face-api-key', key)
+        .send({
+          employeeId: employeeHumanId,
+          organizationId,
+          punchTime: `${date}T09:00:00.000Z`,
+        })
+        .expect(201);
+      const second = await request(app.getHttpServer())
+        .post('/attendance/punch/ingest')
+        .set('x-face-api-key', key)
+        .send({
+          employeeId: employeeHumanId,
+          organizationId,
+          punchTime: `${date}T09:00:05.000Z`,
+        })
+        .expect(201);
+      expect((second.body as PunchIngestBody).punch.id).toBe(
+        (first.body as PunchIngestBody).punch.id,
+      );
+      const count = await prisma.punch.count({
+        where: {
+          employeeId,
+          punchTime: {
+            gte: new Date(`${date}T08:59:00.000Z`),
+            lte: new Date(`${date}T09:01:00.000Z`),
+          },
+        },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('self-punch twice in quick succession creates only one Punch row', async () => {
+      const first = await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
+        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .expect(201);
+      const second = await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
+        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .expect(201);
+      expect((second.body as PunchIngestBody).punch.id).toBe(
+        (first.body as PunchIngestBody).punch.id,
+      );
+    });
+  });
+
+  describe('Locked/paid payroll periods block attendance writes', () => {
+    let lockedDate: string;
+
+    beforeAll(async () => {
+      // Current month for the employee — regularization is limited to the
+      // last 7 days, so the lock must cover that window.
+      lockedDate = offsetDate(-1);
+      await prisma.payrollRun.create({
+        data: {
+          organizationId,
+          employeeId: noDeptEmployeeId,
+          month: Number(lockedDate.slice(5, 7)),
+          year: Number(lockedDate.slice(0, 4)),
+          status: 'PAID',
+        },
+      });
+    });
+
+    afterAll(async () => {
+      await prisma.payrollRun.deleteMany({
+        where: { organizationId, employeeId: noDeptEmployeeId },
+      });
+    });
+
+    it('manual punch into a PAID period is rejected with 400', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          employeeId: noDeptEmployeeId,
+          punchTime: `${lockedDate}T09:00:00.000Z`,
+        })
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/unlock/);
+    });
+
+    it('regularization request for a PAID period is rejected with 400', async () => {
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
+        .send({ date: lockedDate, reason: 'Forgot to punch' })
+        .expect(400);
+    });
+
+    it('reviewing a regularization in a period locked after the request is rejected with 400', async () => {
+      const date = offsetDate(-2);
+      const other = await prisma.user.findFirstOrThrow({
+        where: { email: 'att-e2e-emp@example.test' },
+      });
+      const att = await prisma.attendance.create({
+        data: {
+          organizationId,
+          employeeId: other.id,
+          date: `${date.slice(0, 4)}-01-15`,
+          status: 'ABSENT',
+          source: 'SYSTEM',
+          regularization: {
+            requested: true,
+            reason: 'x',
+            requestedInTime: null,
+            requestedOutTime: null,
+            status: 'pending',
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewComments: '',
+          },
+        },
+      });
+      await prisma.payrollRun.create({
+        data: {
+          organizationId,
+          employeeId: other.id,
+          month: 1,
+          year: Number(date.slice(0, 4)),
+          status: 'LOCKED',
+        },
+      });
+      await request(app.getHttpServer())
+        .patch(`/attendance/regularization/${att.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(400);
+      await prisma.payrollRun.deleteMany({
+        where: { organizationId, employeeId: other.id },
+      });
+    });
   });
 
   describe('recalculateAttendanceForDay direct engine behavior (no-punch branches)', () => {
@@ -1199,6 +1438,178 @@ describe('Attendance (e2e)', () => {
         });
       importEmployeeHumanId = (importEmpCreate.body as EmployeeCreateBody)
         .employee.employeeId;
+
+      // Employees are created with joiningDate = now; the import rows below
+      // are back-dated, so move every joining date well into the past (the
+      // joining-date check itself is covered separately).
+      await prisma.user.updateMany({
+        where: { organizationId },
+        data: { joiningDate: new Date(`${offsetDate(-400)}T00:00:00.000Z`) },
+      });
+    });
+
+    const uploadValidate = async (rows: Record<string, unknown>[]) => {
+      const upload = await request(app.getHttpServer())
+        .post('/attendance/import')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ rows })
+        .expect(201);
+      const batchId = (upload.body as { id: string }).id;
+      const validated = await request(app.getHttpServer())
+        .post(`/attendance/import/${batchId}/validate`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(201);
+      return {
+        batchId,
+        body: validated.body as {
+          status: string;
+          validationErrors: { row: number; error: string }[];
+        },
+      };
+    };
+
+    it('rejects a row dated before the employee joining date', async () => {
+      const lateJoiner = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Late Joiner',
+          email: 'att-e2e-late-joiner@example.test',
+          departmentId,
+        });
+      const lateJoinerCode = (lateJoiner.body as EmployeeCreateBody).employee
+        .employeeId;
+      await prisma.user.updateMany({
+        where: { organizationId, employeeId: lateJoinerCode },
+        data: { joiningDate: new Date(`${offsetDate(-10)}T00:00:00.000Z`) },
+      });
+
+      const before = offsetDate(-20);
+      const after = offsetDate(-5);
+      const { body } = await uploadValidate([
+        {
+          employeeId: lateJoinerCode,
+          date: before,
+          inTime: `${before} 09:00:00`,
+          outTime: `${before} 18:00:00`,
+        },
+        {
+          employeeId: lateJoinerCode,
+          date: after,
+          inTime: `${after} 09:00:00`,
+          outTime: `${after} 18:00:00`,
+        },
+      ]);
+      expect(body.status).toBe('PENDING_VALIDATION');
+      expect(body.validationErrors).toHaveLength(1);
+      expect(body.validationErrors[0].row).toBe(1);
+      expect(body.validationErrors[0].error).toMatch(/joining date/);
+    });
+
+    it('rejects a row with neither inTime nor outTime', async () => {
+      const date = offsetDate(-35);
+      const { body } = await uploadValidate([
+        { employeeId: importEmployeeHumanId, date },
+      ]);
+      expect(body.status).toBe('PENDING_VALIDATION');
+      expect(body.validationErrors).toHaveLength(1);
+      expect(body.validationErrors[0].error).toMatch(/inTime or outTime/);
+    });
+
+    it('rejects an unparseable time with a message stating UTC', async () => {
+      const date = offsetDate(-36);
+      const { body } = await uploadValidate([
+        { employeeId: importEmployeeHumanId, date, inTime: '09:00' },
+      ]);
+      expect(body.validationErrors).toHaveLength(1);
+      expect(body.validationErrors[0].error).toMatch(/UTC/);
+    });
+
+    it('parses bare times as UTC and computes status/duration from shift rules', async () => {
+      // A Wednesday (not a weekly-off) well in the past.
+      const date = nextWeekday(3, -60);
+      const { batchId, body } = await uploadValidate([
+        {
+          employeeId: importEmployeeHumanId,
+          date,
+          inTime: `${date} 09:00:00`,
+          outTime: `${date} 11:00:00`,
+        },
+      ]);
+      expect(body.status).toBe('VALIDATED');
+      await request(app.getHttpServer())
+        .post(`/attendance/import/${batchId}/execute`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(201);
+
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: {
+          organizationId,
+          date,
+          employee: { employeeId: importEmployeeHumanId },
+        },
+      });
+      expect(row.inTime?.toISOString()).toBe(`${date}T09:00:00.000Z`);
+      expect(row.outTime?.toISOString()).toBe(`${date}T11:00:00.000Z`);
+      expect(row.workDurationMinutes).toBe(120);
+      // 2h is below the half-day threshold — not blindly PRESENT.
+      expect(row.status).toBe('ABSENT');
+      expect(row.source).toBe('EXCEL_IMPORT');
+    });
+
+    it('a row in a LOCKED payroll period becomes a row error; the rest of the batch imports', async () => {
+      const lockedDate = nextWeekday(3, -120);
+      const openDate = nextWeekday(3, -60 + 7);
+      const target = await prisma.user.findFirstOrThrow({
+        where: { organizationId, employeeId: importEmployeeHumanId },
+      });
+      await prisma.payrollRun.create({
+        data: {
+          organizationId,
+          employeeId: target.id,
+          month: Number(lockedDate.slice(5, 7)),
+          year: Number(lockedDate.slice(0, 4)),
+          status: 'LOCKED',
+        },
+      });
+
+      const { batchId, body } = await uploadValidate([
+        {
+          employeeId: importEmployeeHumanId,
+          date: lockedDate,
+          inTime: `${lockedDate} 09:00:00`,
+          outTime: `${lockedDate} 18:00:00`,
+        },
+        {
+          employeeId: importEmployeeHumanId,
+          date: openDate,
+          inTime: `${openDate} 09:00:00`,
+          outTime: `${openDate} 18:00:00`,
+        },
+      ]);
+      expect(body.status).toBe('VALIDATED');
+      const executed = await request(app.getHttpServer())
+        .post(`/attendance/import/${batchId}/execute`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(201);
+      const result = (
+        executed.body as {
+          executionResult: {
+            imported: number;
+            errors: number;
+            rowErrors: { row: number; error: string }[];
+          };
+        }
+      ).executionResult;
+      expect(result.imported).toBe(1);
+      expect(result.errors).toBe(1);
+      expect(result.rowErrors[0].row).toBe(1);
+      expect(result.rowErrors[0].error).toMatch(/locked/);
+
+      const lockedRow = await prisma.attendance.findFirst({
+        where: { organizationId, employeeId: target.id, date: lockedDate },
+      });
+      expect(lockedRow).toBeNull();
     });
 
     it('EMPLOYEE gets 403 uploading a batch', async () => {
@@ -1276,7 +1687,7 @@ describe('Attendance (e2e)', () => {
     it('a clean batch validates to VALIDATED and executes with the biometric-skip rule honored', async () => {
       // A separate, all-valid batch: one fresh row (imports) and one row
       // that collides with an existing FACE_API-sourced punch (skipped).
-      const freshDate = offsetDate(-32);
+      const freshDate = offsetDateAvoidingHolidays(-32);
       const biometricDate = offsetDate(-33);
 
       await scopedPrisma.attendance.create({
@@ -1327,7 +1738,7 @@ describe('Attendance (e2e)', () => {
         executionResult: { imported: number; skipped: number; errors: number };
       };
       expect(execBody.status).toBe('EXECUTED');
-      expect(execBody.executionResult).toEqual({
+      expect(execBody.executionResult).toMatchObject({
         imported: 1,
         skipped: 1,
         errors: 0,
@@ -1342,6 +1753,7 @@ describe('Attendance (e2e)', () => {
       });
       expect(freshRow?.status).toBe('PRESENT');
       expect(freshRow?.source).toBe('EXCEL_IMPORT');
+      expect(freshRow?.workDurationMinutes).toBe(9 * 60);
 
       const biometricRow = await prisma.attendance.findFirst({
         where: { organizationId, employeeId, date: biometricDate },

@@ -204,6 +204,16 @@ export class ReimbursementsService {
         `This claim is already ${claim.status.toLowerCase()} and cannot be changed further.`,
       );
     }
+    // APPROVED can only move forward to PAID — rejecting it would leave a
+    // REJECTED row with stale approvedById/approvedDate.
+    if (
+      claim.status === ReimbursementStatus.APPROVED &&
+      dto.status === 'REJECTED'
+    ) {
+      throw new BadRequestException(
+        'An approved reimbursement cannot be rejected.',
+      );
+    }
     // PAID is a separate step from the initial Approve/Reject decision — a
     // claim must already be APPROVED before it can be marked PAID (mirrors
     // Leave Encashment's PENDING -> APPROVED -> PROCESSED chain, which has

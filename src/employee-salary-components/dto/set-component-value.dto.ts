@@ -39,6 +39,7 @@ export class SetComponentValueDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
   fixedAmount?: number;
 
   @ApiPropertyOptional()

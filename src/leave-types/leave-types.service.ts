@@ -186,84 +186,113 @@ export class LeaveTypesService {
       id,
     );
 
-    await this.scopedPrisma.leaveType.updateMany({
-      where: { id, organizationId },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.code !== undefined && { code: dto.code }),
-        ...(dto.description !== undefined && { description: dto.description }),
-        ...(dto.color !== undefined && { color: dto.color }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.isPaid !== undefined && { isPaid: dto.isPaid }),
-        ...(dto.displayOrder !== undefined && {
-          displayOrder: dto.displayOrder,
-        }),
-        ...(dto.allocationType !== undefined && {
-          allocationType: dto.allocationType,
-        }),
-        ...(dto.annualQuota !== undefined && { annualQuota: dto.annualQuota }),
-        ...(dto.accrualFrequency !== undefined && {
-          accrualFrequency: dto.accrualFrequency,
-        }),
-        ...(dto.accrualAmountPerCycle !== undefined && {
-          accrualAmountPerCycle: dto.accrualAmountPerCycle,
-        }),
-        ...(dto.prorateOnJoining !== undefined && {
-          prorateOnJoining: dto.prorateOnJoining,
-        }),
-        ...(dto.applicableDepartments !== undefined && {
-          applicableDepartments: dto.applicableDepartments,
-        }),
-        ...(dto.applicableEmployeeTypes !== undefined && {
-          applicableEmployeeTypes: dto.applicableEmployeeTypes,
-        }),
-        ...(dto.applicableGenders !== undefined && {
-          applicableGenders: dto.applicableGenders,
-        }),
-        ...(dto.minServiceMonths !== undefined && {
-          minServiceMonths: dto.minServiceMonths,
-        }),
-        ...(dto.maxServiceMonths !== undefined && {
-          maxServiceMonths: dto.maxServiceMonths,
-        }),
-        ...(dto.salaryImpactPercent !== undefined && {
-          salaryImpactPercent: dto.salaryImpactPercent,
-        }),
-        ...(dto.affectsLopCalculation !== undefined && {
-          affectsLopCalculation: dto.affectsLopCalculation,
-        }),
-        ...(dto.requiresApproval !== undefined && {
-          requiresApproval: dto.requiresApproval,
-        }),
-        ...(dto.approvalLevels !== undefined && {
-          approvalLevels: dto.approvalLevels,
-        }),
-        ...(dto.autoApproveIfNoAction !== undefined && {
-          autoApproveIfNoAction: dto.autoApproveIfNoAction,
-        }),
-        ...(dto.autoApproveDays !== undefined && {
-          autoApproveDays: dto.autoApproveDays,
-        }),
-        ...(dto.rules !== undefined && {
-          rules: dto.rules as unknown as Prisma.InputJsonValue,
-        }),
-        ...(dto.documentsRequired !== undefined && {
-          documentsRequired: dto.documentsRequired,
-        }),
-        ...(dto.documentRequiredAfterDays !== undefined && {
-          documentRequiredAfterDays: dto.documentRequiredAfterDays,
-        }),
-        ...(dto.carryForward !== undefined && {
-          carryForward: dto.carryForward as unknown as Prisma.InputJsonValue,
-        }),
-        ...(dto.negativeBalance !== undefined && {
-          negativeBalance:
-            dto.negativeBalance as unknown as Prisma.InputJsonValue,
-        }),
-        ...(dto.encashment !== undefined && {
-          encashment: dto.encashment as unknown as Prisma.InputJsonValue,
-        }),
-      },
+    // Quota-affecting edits must reach existing balance rows too (they're
+    // only computed at row-creation time) — done in the same transaction so
+    // the quota change and the balance reconciliation are atomic.
+    const upfrontFieldsChanged =
+      (dto.annualQuota !== undefined &&
+        dto.annualQuota !== existing.annualQuota) ||
+      (dto.allocationType !== undefined &&
+        dto.allocationType !== existing.allocationType) ||
+      (dto.prorateOnJoining !== undefined &&
+        dto.prorateOnJoining !== existing.prorateOnJoining);
+
+    await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.leaveType.updateMany({
+        where: { id, organizationId },
+        data: {
+          ...(dto.name !== undefined && { name: dto.name }),
+          ...(dto.code !== undefined && { code: dto.code }),
+          ...(dto.description !== undefined && {
+            description: dto.description,
+          }),
+          ...(dto.color !== undefined && { color: dto.color }),
+          ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+          ...(dto.isPaid !== undefined && { isPaid: dto.isPaid }),
+          ...(dto.displayOrder !== undefined && {
+            displayOrder: dto.displayOrder,
+          }),
+          ...(dto.allocationType !== undefined && {
+            allocationType: dto.allocationType,
+          }),
+          ...(dto.annualQuota !== undefined && {
+            annualQuota: dto.annualQuota,
+          }),
+          ...(dto.accrualFrequency !== undefined && {
+            accrualFrequency: dto.accrualFrequency,
+          }),
+          ...(dto.accrualAmountPerCycle !== undefined && {
+            accrualAmountPerCycle: dto.accrualAmountPerCycle,
+          }),
+          ...(dto.prorateOnJoining !== undefined && {
+            prorateOnJoining: dto.prorateOnJoining,
+          }),
+          ...(dto.applicableDepartments !== undefined && {
+            applicableDepartments: dto.applicableDepartments,
+          }),
+          ...(dto.applicableEmployeeTypes !== undefined && {
+            applicableEmployeeTypes: dto.applicableEmployeeTypes,
+          }),
+          ...(dto.applicableGenders !== undefined && {
+            applicableGenders: dto.applicableGenders,
+          }),
+          ...(dto.minServiceMonths !== undefined && {
+            minServiceMonths: dto.minServiceMonths,
+          }),
+          ...(dto.maxServiceMonths !== undefined && {
+            maxServiceMonths: dto.maxServiceMonths,
+          }),
+          ...(dto.salaryImpactPercent !== undefined && {
+            salaryImpactPercent: dto.salaryImpactPercent,
+          }),
+          ...(dto.affectsLopCalculation !== undefined && {
+            affectsLopCalculation: dto.affectsLopCalculation,
+          }),
+          ...(dto.requiresApproval !== undefined && {
+            requiresApproval: dto.requiresApproval,
+          }),
+          ...(dto.approvalLevels !== undefined && {
+            approvalLevels: dto.approvalLevels,
+          }),
+          ...(dto.autoApproveIfNoAction !== undefined && {
+            autoApproveIfNoAction: dto.autoApproveIfNoAction,
+          }),
+          ...(dto.autoApproveDays !== undefined && {
+            autoApproveDays: dto.autoApproveDays,
+          }),
+          ...(dto.rules !== undefined && {
+            rules: dto.rules as unknown as Prisma.InputJsonValue,
+          }),
+          ...(dto.documentsRequired !== undefined && {
+            documentsRequired: dto.documentsRequired,
+          }),
+          ...(dto.documentRequiredAfterDays !== undefined && {
+            documentRequiredAfterDays: dto.documentRequiredAfterDays,
+          }),
+          ...(dto.carryForward !== undefined && {
+            carryForward: dto.carryForward as unknown as Prisma.InputJsonValue,
+          }),
+          ...(dto.negativeBalance !== undefined && {
+            negativeBalance:
+              dto.negativeBalance as unknown as Prisma.InputJsonValue,
+          }),
+          ...(dto.encashment !== undefined && {
+            encashment: dto.encashment as unknown as Prisma.InputJsonValue,
+          }),
+        },
+      });
+
+      if (upfrontFieldsChanged) {
+        const updated = await tx.leaveType.findFirstOrThrow({
+          where: { id, organizationId },
+        });
+        await this.leaveBalanceService.reconcileUpfrontCredit(
+          tx,
+          existing,
+          updated,
+          organizationId,
+        );
+      }
     });
 
     return this.findByIdOrThrow(id, organizationId);
@@ -310,7 +339,7 @@ export class LeaveTypesService {
 
   async runAccrual(id: string, actorId: string, organizationId: string) {
     const leaveType = await this.findByIdOrThrow(id, organizationId);
-    const { matched, credited, alreadyAccrued } =
+    const { matched, credited, alreadyAccrued, totalDaysCredited } =
       await this.leaveBalanceService.creditAccrual(id, organizationId);
     await this.auditLogService.log({
       actorId,
@@ -324,15 +353,28 @@ export class LeaveTypesService {
         matched,
         credited,
         alreadyAccrued,
+        totalDaysCredited,
       },
     });
+    // `credited` = employees processed; totalDaysCredited = actual days.
     const message =
       credited === 0 && alreadyAccrued > 0
         ? `Already accrued for this period — nothing to credit (${alreadyAccrued} employee(s) already up to date).`
-        : alreadyAccrued > 0
-          ? `Credited ${credited} employee(s); ${alreadyAccrued} already up to date for this period.`
-          : `Accrual credited to ${credited} employee(s).`;
-    return { message, matched, credited, alreadyAccrued };
+        : credited > 0 && totalDaysCredited === 0
+          ? leaveType.accrualAmountPerCycle === 0
+            ? `No accrual configured for this leave type (accrualAmountPerCycle is 0) — 0 days credited to ${credited} employee(s).`
+            : `0 days credited to ${credited} employee(s).`
+          : alreadyAccrued > 0
+            ? `Credited ${totalDaysCredited} day(s) across ${credited} employee(s); ${alreadyAccrued} already up to date for this period.`
+            : `Accrual credited: ${totalDaysCredited} day(s) across ${credited} employee(s).`;
+    return {
+      message,
+      matched,
+      employeesProcessed: credited,
+      credited,
+      alreadyAccrued,
+      totalDaysCredited,
+    };
   }
 
   // Same per-leave-type logic/idempotency/audit-log as runAccrual above,

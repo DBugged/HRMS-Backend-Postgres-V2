@@ -76,6 +76,24 @@ function countDaysInclusive(startStr: string, endStr: string): number {
   return daysBetween(startStr, endStr) + 1;
 }
 
+// Working (non-weekly-off, non-holiday) days in [startStr, endStr],
+// inclusive. Used when sandwichLeaveApplies is false so weekends/holidays
+// falling inside a leave range aren't charged against the balance.
+function countWorkingDaysInclusive(
+  startStr: string,
+  endStr: string,
+  holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
+): number {
+  const span = countDaysInclusive(startStr, endStr);
+  let working = 0;
+  for (let i = 0; i < span; i++) {
+    const d = addDaysStr(startStr, i);
+    if (!isHolidayOrWeeklyOff(d, holidayDates, weeklyOffs)) working += 1;
+  }
+  return working;
+}
+
 function addDaysStr(dateStr: string, days: number): string {
   const date = toUTCDate(dateStr);
   date.setUTCDate(date.getUTCDate() + days);
@@ -143,9 +161,32 @@ export function checkLeaveRules(
     );
   }
 
-  let totalDays = request.isHalfDay
-    ? 0.5
-    : countDaysInclusive(request.startDate, request.endDate);
+  const rangeIsValid = request.endDate >= request.startDate;
+  // Day-count basis depends on sandwichLeaveApplies:
+  //   - true  (traditional sandwich rule): every calendar day in the range
+  //     is charged, weekends/holidays inside it included.
+  //   - false (the seeded default): only working, non-holiday days inside
+  //     the range are charged — a Fri->Mon request costs 2 days, not 4.
+  // The half-day short-circuit and the gap-based sandwich adjustment
+  // between separate requests (below) are independent of this.
+  let totalDays: number;
+  if (request.isHalfDay) {
+    totalDays = 0.5;
+  } else if (rules.sandwichLeaveApplies || !rangeIsValid) {
+    totalDays = countDaysInclusive(request.startDate, request.endDate);
+  } else {
+    totalDays = countWorkingDaysInclusive(
+      request.startDate,
+      request.endDate,
+      context.holidayDates,
+      context.weeklyOffs,
+    );
+    if (totalDays === 0) {
+      errors.push(
+        'The selected dates fall entirely on weekly-offs/holidays — there are no working days to apply leave for.',
+      );
+    }
+  }
   if (!request.isHalfDay && rules.sandwichLeaveApplies) {
     totalDays = computeSandwichAdjustedDays(
       totalDays,

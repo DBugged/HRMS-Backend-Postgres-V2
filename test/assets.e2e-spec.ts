@@ -747,4 +747,290 @@ describe('Asset Inventory (e2e)', () => {
       ).toEqual((before.body as ListBody<AssetBody>).data.map((a) => a.status));
     });
   });
+
+  describe('create-time status rules', () => {
+    it('ASSIGNED cannot be set on create', async () => {
+      await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ ...validAsset(), status: 'ASSIGNED' })
+        .expect(400);
+    });
+
+    it('HR cannot create an asset directly as RETIRED or DISPOSED', async () => {
+      for (const status of ['RETIRED', 'DISPOSED']) {
+        await request(app.getHttpServer())
+          .post('/assets')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ ...validAsset(), status })
+          .expect(403);
+      }
+    });
+
+    it('ADMIN can create an asset as RETIRED', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ ...validAsset(), status: 'RETIRED' })
+        .expect(201);
+      expect((res.body as AssetBody).status).toBe('RETIRED');
+    });
+  });
+
+  describe('soft-deleted assets are read-only', () => {
+    let assetId: string;
+
+    beforeAll(async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send(validAsset())
+        .expect(201);
+      assetId = (res.body as AssetBody).id;
+      await request(app.getHttpServer())
+        .delete(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    });
+
+    it('every mutation 404s against a soft-deleted asset', async () => {
+      const server = app.getHttpServer();
+      const auth = `Bearer ${adminToken}`;
+      await request(server)
+        .patch(`/assets/${assetId}`)
+        .set('Authorization', auth)
+        .send({ location: 'x' })
+        .expect(404);
+      await request(server)
+        .patch(`/assets/${assetId}/status`)
+        .set('Authorization', auth)
+        .send({ status: 'UNDER_MAINTENANCE' })
+        .expect(404);
+      await request(server)
+        .patch(`/assets/${assetId}/warranty`)
+        .set('Authorization', auth)
+        .send({ warrantyProvider: 'x' })
+        .expect(404);
+      await request(server)
+        .post(`/assets/${assetId}/maintenance`)
+        .set('Authorization', auth)
+        .send({ serviceDate: '2026-03-01', issue: 'x' })
+        .expect(404);
+      await request(server)
+        .post(`/assets/${assetId}/documents`)
+        .set('Authorization', auth)
+        .send({
+          docType: 'INVOICE',
+          fileName: 'a.pdf',
+          relativeKey: 'documents/assets-e2e/a.pdf',
+        })
+        .expect(404);
+    });
+
+    it('a repeat delete is still a 400, and detail/history stay readable', async () => {
+      const server = app.getHttpServer();
+      await request(server)
+        .delete(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+      await request(server)
+        .get(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      await request(server)
+        .get(`/assets/${assetId}/history`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    });
+  });
+
+  describe('list pagination + search', () => {
+    it('honours page/limit and reports the real total', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/assets')
+        .query({ page: 1, limit: 2 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const body = res.body as ListBody<AssetBody> & {
+        page: number;
+        limit: number;
+      };
+      expect(body.data).toHaveLength(2);
+      expect(body.total).toBeGreaterThan(2);
+      expect(body.page).toBe(1);
+      expect(body.limit).toBe(2);
+
+      const page2 = await request(app.getHttpServer())
+        .get('/assets')
+        .query({ page: 2, limit: 2 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const ids1 = body.data.map((a) => a.id);
+      for (const a of (page2.body as ListBody<AssetBody>).data) {
+        expect(ids1).not.toContain(a.id);
+      }
+    });
+
+    it('rejects out-of-range page/limit', async () => {
+      for (const query of [{ limit: 0 }, { limit: 5000 }, { page: 0 }]) {
+        await request(app.getHttpServer())
+          .get('/assets')
+          .query(query)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .expect(400);
+      }
+    });
+
+    it('% and _ in search are literals, not LIKE wildcards', async () => {
+      await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ ...validAsset(), assetName: 'Wild_Card 100% Monitor' })
+        .expect(201);
+
+      const pct = await request(app.getHttpServer())
+        .get('/assets')
+        .query({ search: '%', limit: 2000 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const pctNames = (pct.body as ListBody<AssetBody>).data.map(
+        (a) => a.assetName,
+      );
+      expect(pctNames).toEqual(['Wild_Card 100% Monitor']);
+
+      const underscore = await request(app.getHttpServer())
+        .get('/assets')
+        .query({ search: 'd_c', limit: 2000 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect(
+        (underscore.body as ListBody<AssetBody>).data.map((a) => a.assetName),
+      ).toEqual(['Wild_Card 100% Monitor']);
+
+      // "M_cBook" would match "MacBook" if _ were a wildcard.
+      const noWild = await request(app.getHttpServer())
+        .get('/assets')
+        .query({ search: 'M_cBook' })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect((noWild.body as ListBody<AssetBody>).total).toBe(0);
+    });
+  });
+
+  describe('stale ASSIGNED recovery + allocation history', () => {
+    let assetId: string;
+
+    beforeAll(async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send(validAsset())
+        .expect(201);
+      assetId = (res.body as AssetBody).id;
+    });
+
+    const allocate = (date: string) =>
+      request(app.getHttpServer())
+        .post(`/employees/${employeeId}/assets`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          assetId,
+          assetType: 'Laptop',
+          assetName: 'MacBook Air M2',
+          allocatedDate: date,
+        });
+
+    it('removing the allocation row leaves a recoverable ASSIGNED, and history shows allocation events', async () => {
+      const alloc = await allocate('2026-08-01').expect(201);
+      await request(app.getHttpServer())
+        .delete(
+          `/employees/${employeeId}/assets/${(alloc.body as { id: string }).id}`,
+        )
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+
+      const history = await request(app.getHttpServer())
+        .get(`/assets/${assetId}/history`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const actions = (history.body as ListBody<{ action: string }>).data.map(
+        (e) => e.action,
+      );
+      expect(actions).toContain('ASSET_ALLOCATED');
+      expect(actions).toContain('ASSET_CREATED');
+
+      // Stale ASSIGNED with no live allocation behind it — HR can now
+      // move it back to AVAILABLE instead of it being stuck forever.
+      await request(app.getHttpServer())
+        .patch(`/assets/${assetId}/status`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'AVAILABLE' })
+        .expect(200);
+
+      // ...and it can be allocated again.
+      const again = await allocate('2026-08-02').expect(201);
+      // A LIVE allocation still blocks status changes and deletes.
+      await request(app.getHttpServer())
+        .patch(`/assets/${assetId}/status`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'UNDER_MAINTENANCE' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .delete(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .delete(
+          `/employees/${employeeId}/assets/${(again.body as { id: string }).id}`,
+        )
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+
+      // Stale ASSIGNED no longer blocks a delete, and the status is corrected.
+      await request(app.getHttpServer())
+        .delete(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const after = await request(app.getHttpServer())
+        .get(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect((after.body as AssetBody).isActive).toBe(false);
+      expect((after.body as AssetBody).status).toBe('AVAILABLE');
+    });
+  });
+
+  describe('concurrent allocation', () => {
+    it('only one of several simultaneous allocations of the same asset succeeds', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send(validAsset())
+        .expect(201);
+      const assetId = (res.body as AssetBody).id;
+
+      const results = await Promise.all(
+        Array.from({ length: 6 }, (_, i) =>
+          request(app.getHttpServer())
+            .post(`/employees/${employeeId}/assets`)
+            .set('Authorization', `Bearer ${hrToken}`)
+            .send({
+              assetId,
+              assetType: 'Laptop',
+              assetName: 'MacBook Air M2',
+              allocatedDate: `2026-09-0${i + 1}`,
+            }),
+        ),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+      for (const s of statuses) expect([201, 400, 409]).toContain(s);
+
+      const liveRows = await prisma.employeeAsset.count({
+        where: { assetId, isActive: true, status: 'ALLOCATED' },
+      });
+      expect(liveRows).toBe(1);
+    });
+  });
 });

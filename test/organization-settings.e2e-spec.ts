@@ -307,6 +307,127 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     });
   });
 
+  it('a partial policies write keeps orgPayrollAttendancePrefs itself merged (not just the derived copy)', async () => {
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    const prefs = org.orgPayrollAttendancePrefs as Record<string, unknown>;
+    expect(prefs.payrollCycle).toBe('weekly');
+    expect(prefs.defaultShiftStartTime).toBe('10:00');
+    expect(prefs.weekendDays).toEqual([0]);
+    // Keys never sent in any request survive from the column default.
+    expect(prefs.enableCompOff).toBe(true);
+  });
+
+  it('a partial policies PATCH preserves sibling keys in the policies JSON', async () => {
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ policies: { financialYearStartMonth: 1 } })
+      .expect(200);
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    const policies = org.policies as Record<string, unknown>;
+    expect(policies.financialYearStartMonth).toBe(1);
+    expect(policies.currencySymbol).toBe('₹');
+    expect(policies.dateFormat).toBe('DD-MM-YYYY');
+    expect(policies.timezone).toBe('Asia/Kolkata');
+  });
+
+  it('a partial documentNumbering PATCH deep-merges, keeping other types and the counter', async () => {
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/documentNumbering')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ documentNumbering: { employeeId: { format: 'AC-{00000}' } } })
+      .expect(200);
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    const numbering = org.documentNumbering as Record<
+      string,
+      Record<string, unknown>
+    >;
+    expect(numbering.employeeId.format).toBe('AC-{00000}');
+    expect(numbering.employeeId.resetRule).toBe('never');
+    expect(typeof numbering.employeeId.counter).toBe('number');
+    expect(numbering.payslip.format).toBe('PS-{DD_MM_YYYY}-{00001}');
+  });
+
+  it.each([0, 13, 99, 4.5, 'abc'])(
+    'rejects financialYearStartMonth=%p with 400',
+    async (month) => {
+      await request(app.getHttpServer())
+        .patch('/organizations/settings/policies')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ policies: { financialYearStartMonth: month } })
+        .expect(400);
+    },
+  );
+
+  it('writing policies.timezone keeps Organization.timezone in sync', async () => {
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ policies: { timezone: 'Asia/Dubai' } })
+      .expect(200);
+    let org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    expect(org.timezone).toBe('Asia/Dubai');
+    expect((org.policies as Record<string, unknown>).timezone).toBe(
+      'Asia/Dubai',
+    );
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ policies: { timezone: 'Asia/Kolkata' } })
+      .expect(200);
+    org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    expect(org.timezone).toBe('Asia/Kolkata');
+  });
+
+  it.each([
+    ['profile', { companyName: 12345 }],
+    ['profile', { companyLogoUrl: { a: 1 } }],
+    ['documentNumbering', { documentNumbering: 'DP-{0000}' }],
+    ['documentNumbering', { documentNumbering: { employeeId: 'x' } }],
+    ['policies', { policies: 'nope' }],
+    ['policies', { policies: [1, 2] }],
+    ['policies', { policies: { defaultNoticeDays: -1 } }],
+    [
+      'policies',
+      { orgPayrollAttendancePrefs: { defaultMinHoursForPresent: 25 } },
+    ],
+    [
+      'policies',
+      { orgPayrollAttendancePrefs: { defaultMinHoursForPresent: -1 } },
+    ],
+    [
+      'policies',
+      { orgPayrollAttendancePrefs: { defaultShiftStartTime: '99:99' } },
+    ],
+    ['policies', { orgPayrollAttendancePrefs: { weekendDays: [7] } }],
+    ['branding', { primaryColor: 'red' }],
+    ['branding', { secondaryColor: null }],
+    ['branding', { watermarkLogo: 'yes' }],
+    ['contact', { country: null }],
+    ['signatory', { signatories: 'Jane' }],
+    ['profile', { setupStep: -1 }],
+    ['profile', { setupStep: 99 }],
+  ])(
+    'rejects a wrong-type/out-of-range %s write with 400 (not 500): %j',
+    async (section, body) => {
+      await request(app.getHttpServer())
+        .patch(`/organizations/settings/${section}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(body)
+        .expect(400);
+    },
+  );
+
   it('rejects a malformed IFSC in the banking section', async () => {
     await request(app.getHttpServer())
       .patch('/organizations/settings/banking')
@@ -407,6 +528,31 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
     expect((res.body as ErrorBody).message).toMatch(/phone/);
+  });
+
+  it('complete-setup also requires the policies / document-numbering keys the wizard requires', async () => {
+    const before = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    const policies = before.policies as Record<string, unknown>;
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        phone: '+91 98765 43210',
+        policies: { ...policies, financialYearStartMonth: null },
+      },
+    });
+    const res = await request(app.getHttpServer())
+      .post('/organizations/settings/complete-setup')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    expect((res.body as ErrorBody).message).toMatch(
+      /policies\.financialYearStartMonth/,
+    );
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { phone: null, policies: before.policies as object },
+    });
   });
 
   it('complete-setup succeeds once all required fields are present, and sets isInitialized', async () => {

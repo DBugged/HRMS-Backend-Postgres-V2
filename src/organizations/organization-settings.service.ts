@@ -31,7 +31,13 @@ import {
   SESSION_ASSET_TTL_SECONDS,
 } from '../files/file-token';
 import { validateOrgFields } from './org-validators';
-import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
+import {
+  FIELD_KINDS,
+  deepMerge,
+  isPlainObject,
+  validateSectionData,
+  validateSetupStep,
+} from './org-settings-validation';
 import { RedisCacheService } from '../common/redis-cache';
 import {
   previewDocumentNumber,
@@ -150,6 +156,65 @@ const REQUIRED_FOR_COMPLETION = [
   'country',
   'pincode',
 ];
+
+// JSON-blob sub-keys also required before setup can complete — mirrors
+// exactly what the wizard's own per-step gating already requires
+// (frontend/src/utils/orgValidation.js validateStep: REQUIRED_POLICY_KEYS,
+// REQUIRED_ATTENDANCE_PAYROLL_KEYS, and documentNumbering's employeeId/
+// payslip formats), so the server can't be finished via direct API calls
+// with those steps skipped. Registration Details and Authorized Signatory
+// deliberately add nothing: the wizard treats every field on those two
+// steps as optional (format-checked only), so requiring them here would
+// invent a requirement the UI never collects.
+const REQUIRED_POLICY_KEYS = [
+  'financialYearStartMonth',
+  'timezone',
+  'currency',
+  'dateFormat',
+  'timeFormat',
+  'defaultNoticeDays',
+  'language',
+];
+const REQUIRED_ATTENDANCE_PREFS_KEYS = [
+  'defaultShiftStartTime',
+  'defaultShiftEndTime',
+  'defaultLateInThresholdMinutes',
+  'defaultEarlyOutThresholdMinutes',
+  'defaultMinHoursForPresent',
+  'defaultMinHoursForHalfDay',
+  'defaultWorkWeek',
+  'defaultWorkingHoursPerDay',
+];
+const REQUIRED_DOCUMENT_NUMBERING_TYPES = ['employeeId', 'payslip'];
+
+function isBlank(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  return typeof value === 'string' && value.trim() === '';
+}
+
+function missingJsonRequirements(org: Organization): string[] {
+  const missing: string[] = [];
+  const policies = isPlainObject(org.policies) ? org.policies : {};
+  for (const key of REQUIRED_POLICY_KEYS) {
+    if (isBlank(policies[key])) missing.push(`policies.${key}`);
+  }
+  const prefs = isPlainObject(org.orgPayrollAttendancePrefs)
+    ? org.orgPayrollAttendancePrefs
+    : {};
+  for (const key of REQUIRED_ATTENDANCE_PREFS_KEYS) {
+    if (isBlank(prefs[key])) missing.push(`orgPayrollAttendancePrefs.${key}`);
+  }
+  const numbering = isPlainObject(org.documentNumbering)
+    ? org.documentNumbering
+    : {};
+  for (const type of REQUIRED_DOCUMENT_NUMBERING_TYPES) {
+    const entry = numbering[type];
+    if (!isPlainObject(entry) || isBlank(entry.format)) {
+      missing.push(`documentNumbering.${type}.format`);
+    }
+  }
+  return missing;
+}
 
 @Injectable()
 export class OrganizationSettingsService {
@@ -281,6 +346,35 @@ export class OrganizationSettingsService {
       if (field in body) data[field] = body[field];
     }
 
+    // Type/shape/range guard — a wrong-typed value (e.g. companyName:
+    // 12345, documentNumbering: "x") is a 400 here, never a Prisma 500 or
+    // a silently-corrupted JSON column.
+    validateSectionData(data);
+    // Optional wizard-progress advancement, allowed alongside any section's
+    // payload.
+    const setupStep =
+      body.setupStep === undefined
+        ? undefined
+        : validateSetupStep(body.setupStep);
+
+    // Partial PATCH semantics for JSON-object columns: deep-merge the
+    // incoming object into the stored one so e.g. {policies:
+    // {financialYearStartMonth: 4}} can't wipe currencySymbol/dateFormat/
+    // etc. Arrays (signatories, customEmployeeTypes, weekendDays) are
+    // still replaced wholesale — that IS their edit model.
+    const jsonObjectFields = Object.keys(data).filter(
+      (f) => FIELD_KINDS[f] === 'object',
+    );
+    if (jsonObjectFields.length > 0) {
+      const existingOrg = await this.findOrThrow(organizationId);
+      for (const field of jsonObjectFields) {
+        data[field] = deepMerge(
+          (existingOrg as unknown as Record<string, unknown>)[field],
+          data[field] as Record<string, unknown>,
+        );
+      }
+    }
+
     // Same trap resolveIncomingFileValue's comment describes for Payroll
     // Templates — the client's own state for a logo/signature field is
     // whatever the last GET response signed it into, and most saves never
@@ -318,17 +412,19 @@ export class OrganizationSettingsService {
       const error = validateOrgFields(data);
       if (error) throw new BadRequestException(error);
     }
-    // Keep the wizard consistent with PATCH /organizations/me.
+    // Timezone is stored twice — Organization.timezone (PATCH
+    // /organizations/me) and policies.timezone (this wizard, the one the UI
+    // actually edits and displays). Mirror policies.timezone into the
+    // column on every write (and vice versa in OrganizationsService.
+    // updateOwn) so the two can never disagree. NOTE: the timezone is
+    // currently INFORMATIONAL ONLY — no date-boundary logic (attendance,
+    // HR events, leave tracker, payroll) consumes either copy yet; they
+    // all use UTC/plain calendar dates. Wiring it in is a separate change.
+    // (IANA validity is checked in validateSectionData.)
     const policiesTz = (data.policies as { timezone?: unknown } | undefined)
       ?.timezone;
-    if (
-      section === 'policies' &&
-      policiesTz !== undefined &&
-      !isIanaTimeZone(policiesTz)
-    ) {
-      throw new BadRequestException(
-        'timezone must be a valid IANA timezone (e.g. Asia/Kolkata).',
-      );
+    if (typeof policiesTz === 'string') {
+      data.timezone = policiesTz;
     }
     if (section === 'profile' && typeof data.companyName === 'string') {
       const name = data.companyName.trim();
@@ -346,29 +442,30 @@ export class OrganizationSettingsService {
       // Wizard silently never reached actual attendance calculation,
       // which kept using the schema's hardcoded defaults forever. Derive
       // the narrower field from the 7 overlapping keys on every write.
-      // Merged against the org's *existing* orgPayrollAttendancePrefs
-      // first (not just this request's body) so a partial update that
-      // only touches an unrelated key (e.g. enableOvertime) can't
-      // overwrite attendancePayrollPrefs with an incomplete object.
+      // data.orgPayrollAttendancePrefs has already been deep-merged
+      // against the stored value above, so both columns are derived from
+      // the exact same merged object and can't diverge. The existing
+      // attendancePayrollPrefs is merged underneath too, so a key only
+      // ever present there (legacy rows) isn't dropped.
       const existingOrg = await this.findOrThrow(organizationId);
-      const effectivePrefs = {
-        ...(existingOrg.orgPayrollAttendancePrefs as Record<string, unknown>),
-        ...(data.orgPayrollAttendancePrefs as Record<string, unknown>),
-      };
-      data.attendancePayrollPrefs = ATTENDANCE_PREFS_KEYS.reduce(
+      const effectivePrefs = data.orgPayrollAttendancePrefs as Record<
+        string,
+        unknown
+      >;
+      const derived = ATTENDANCE_PREFS_KEYS.reduce(
         (acc, key) => {
           if (key in effectivePrefs) acc[key] = effectivePrefs[key];
           return acc;
         },
         {} as Record<string, unknown>,
       );
+      data.attendancePayrollPrefs = deepMerge(
+        existingOrg.attendancePayrollPrefs,
+        derived,
+      );
     }
 
-    // Optional wizard-progress advancement, allowed alongside any section's
-    // payload.
-    if (typeof body.setupStep === 'number') {
-      data.setupStep = body.setupStep;
-    }
+    if (setupStep !== undefined) data.setupStep = setupStep;
 
     await this.prisma.organization.update({
       where: { id: organizationId },
@@ -404,6 +501,7 @@ export class OrganizationSettingsService {
       const value = (org as unknown as Record<string, unknown>)[field];
       return typeof value !== 'string' || !value.trim();
     });
+    missing.push(...missingJsonRequirements(org));
     if (missing.length > 0) {
       throw new BadRequestException(
         `Complete these required fields before finishing setup: ${missing.join(', ')}`,

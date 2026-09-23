@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsISO8601,
   IsLatitude,
   IsLongitude,
   IsNotEmpty,
@@ -22,9 +23,12 @@ export class IngestPunchDto {
   @IsString()
   organizationId!: string;
 
-  @ApiPropertyOptional({ description: 'Defaults to now if omitted' })
+  @ApiPropertyOptional({
+    description: 'ISO 8601 timestamp; defaults to now if omitted',
+  })
   @IsOptional()
-  @IsString()
+  @IsNotEmpty()
+  @IsISO8601()
   punchTime?: string;
 
   @ApiPropertyOptional()

@@ -22,7 +22,13 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { generatePolicyPassword } from '../common/password-policy';
 import { isEmail, isDateString } from 'class-validator';
-import { OrgListType, Prisma, Role, User } from '@prisma/client';
+import {
+  EmploymentStatus,
+  OrgListType,
+  Prisma,
+  Role,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
@@ -60,6 +66,66 @@ const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // department_head/hr_admin accounts but never an administrator; only an
 // ADMIN can create another ADMIN.
 const ROLES_HR_CAN_ASSIGN: Role[] = [Role.EMPLOYEE, Role.MANAGER, Role.HR];
+
+const MAX_MANAGER_CHAIN_HOPS = 100;
+
+// Exit statuses: final, and they revoke login (same set offboarding applies).
+export const EXIT_STATUSES: EmploymentStatus[] = [
+  EmploymentStatus.RESIGNED,
+  EmploymentStatus.RELEASED,
+  EmploymentStatus.TERMINATED,
+  EmploymentStatus.ABSCONDED,
+];
+const EXITS = EXIT_STATUSES;
+
+// Allowed employmentStatus transitions via PATCH /employees/:id.
+const EMPLOYMENT_STATUS_TRANSITIONS: Record<
+  EmploymentStatus,
+  EmploymentStatus[]
+> = {
+  ONBOARDING: [
+    EmploymentStatus.PROBATION,
+    EmploymentStatus.CONFIRMED,
+    EmploymentStatus.ON_HOLD,
+    ...EXITS,
+  ],
+  PROBATION: [
+    EmploymentStatus.EXTENDED_PROBATION,
+    EmploymentStatus.CONFIRMED,
+    EmploymentStatus.NOTICE_PERIOD,
+    EmploymentStatus.ON_HOLD,
+    ...EXITS,
+  ],
+  EXTENDED_PROBATION: [
+    EmploymentStatus.CONFIRMED,
+    EmploymentStatus.NOTICE_PERIOD,
+    EmploymentStatus.ON_HOLD,
+    ...EXITS,
+  ],
+  CONFIRMED: [
+    EmploymentStatus.NOTICE_PERIOD,
+    EmploymentStatus.ON_HOLD,
+    ...EXITS,
+  ],
+  // Back to an active status covers a withdrawn resignation.
+  NOTICE_PERIOD: [
+    EmploymentStatus.CONFIRMED,
+    EmploymentStatus.PROBATION,
+    EmploymentStatus.EXTENDED_PROBATION,
+    ...EXITS,
+  ],
+  ON_HOLD: [
+    EmploymentStatus.PROBATION,
+    EmploymentStatus.EXTENDED_PROBATION,
+    EmploymentStatus.CONFIRMED,
+    EmploymentStatus.NOTICE_PERIOD,
+    ...EXITS,
+  ],
+  RESIGNED: [],
+  RELEASED: [],
+  TERMINATED: [],
+  ABSCONDED: [],
+};
 
 @Injectable()
 export class EmployeesService {
@@ -607,7 +673,13 @@ export class EmployeesService {
         include: { workLocation: WORK_LOCATION_SELECT },
         skip: skip(query.page, query.limit),
         take: query.limit,
-        orderBy: EMPLOYEE_ORDER_BY,
+        orderBy: query.sortBy
+          ? [
+              { [query.sortBy]: query.sortOrder ?? 'asc' },
+              // Unique tiebreak keeps pagination stable on duplicate values.
+              { id: 'asc' as const },
+            ]
+          : EMPLOYEE_ORDER_BY,
       }),
       this.scopedPrisma.user.count({ where }),
     ]);
@@ -719,6 +791,52 @@ export class EmployeesService {
           'This employee is deactivated — reactivate them first before making any other changes.',
         );
       }
+      // An exited employee (terminated/resigned/released/absconded) can't be
+      // brought back by flipping isActive — that would resurrect a closed
+      // record; rehire as a new employee instead.
+      if (EXIT_STATUSES.includes(before.employmentStatus)) {
+        throw new BadRequestException(
+          `This employee has exited (${before.employmentStatus}) and cannot be reactivated.`,
+        );
+      }
+    }
+
+    // Employment-status lifecycle: only transitions in the allowed map are
+    // accepted, and exit statuses are final.
+    const statusChanging =
+      clean.employmentStatus !== undefined &&
+      clean.employmentStatus !== before.employmentStatus;
+    if (statusChanging) {
+      const allowed = EMPLOYMENT_STATUS_TRANSITIONS[before.employmentStatus];
+      if (!allowed.includes(clean.employmentStatus as EmploymentStatus)) {
+        throw new BadRequestException(
+          allowed.length === 0
+            ? `Employment status ${before.employmentStatus} is final and cannot be changed.`
+            : `Invalid employment status transition: ${before.employmentStatus} → ${clean.employmentStatus}. Allowed: ${allowed.join(', ')}.`,
+        );
+      }
+    }
+    const exiting =
+      statusChanging &&
+      EXIT_STATUSES.includes(clean.employmentStatus as EmploymentStatus);
+    if (exiting) {
+      if (clean.isActive === true) {
+        throw new BadRequestException(
+          'An employee moved to an exit status cannot remain active.',
+        );
+      }
+      // Exit statuses revoke login in the same write (sessions are revoked
+      // after the write below).
+      clean.isActive = false;
+    }
+
+    // Reporting manager: no self-reporting and no cycles in the chain.
+    if (clean.reportingManagerId) {
+      await this.assertNoReportingCycle(
+        id,
+        clean.reportingManagerId,
+        organizationId,
+      );
     }
 
     // Deactivating (not reactivating) someone who's still another active
@@ -776,6 +894,15 @@ export class EmployeesService {
         );
       }
       throw err;
+    }
+
+    // Losing login (exit status or plain deactivation) also kills every
+    // live session — same revocation offboarding/password-reset use.
+    if (clean.isActive === false && before.isActive) {
+      await this.scopedPrisma.refreshToken.updateMany({
+        where: { userId: id, organizationId, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
     }
 
     await this.logChangesIfAny(before, clean, actor.id, organizationId);
@@ -1091,6 +1218,10 @@ export class EmployeesService {
       where: { id, organizationId },
       data: { isActive: false },
     });
+    await this.scopedPrisma.refreshToken.updateMany({
+      where: { userId: id, organizationId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'EMPLOYEE_DEACTIVATED',
@@ -1118,6 +1249,38 @@ export class EmployeesService {
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     return employee;
+  }
+
+  // Rejects a reporting manager that is the employee themself, or whose own
+  // manager chain already leads back to the employee (which would close a
+  // cycle). Bounded walk so pre-existing corrupt chains can't loop forever.
+  private async assertNoReportingCycle(
+    employeeId: string,
+    managerId: string,
+    organizationId: string,
+  ) {
+    if (managerId === employeeId) {
+      throw new BadRequestException(
+        'An employee cannot be their own reporting manager.',
+      );
+    }
+    const seen = new Set<string>();
+    let current: string | null = managerId;
+    for (let hops = 0; current && hops < MAX_MANAGER_CHAIN_HOPS; hops++) {
+      if (current === employeeId) {
+        throw new BadRequestException(
+          'This reporting manager would create a circular reporting chain.',
+        );
+      }
+      if (seen.has(current)) break; // existing cycle not involving this employee
+      seen.add(current);
+      const row: { reportingManagerId: string | null } | null =
+        await this.scopedPrisma.user.findFirst({
+          where: { id: current, organizationId },
+          select: { reportingManagerId: true },
+        });
+      current = row?.reportingManagerId ?? null;
+    }
   }
 
   // workLocationId (nullable override) must reference a location of the same organization.

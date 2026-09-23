@@ -6,7 +6,12 @@
 // Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the old system exactly);
 // the optional accompanying email is gated per-recipient by their own emailEnabled preference — the only
 // place that flag is actually consulted.
-import { BadRequestException, Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   AuditModule,
   NotificationCategory,
@@ -172,10 +177,11 @@ export class NotificationsService {
   }
 
   async markAsRead(id: string, actor: Actor, organizationId: string) {
-    await this.scopedPrisma.notification.updateMany({
+    const { count } = await this.scopedPrisma.notification.updateMany({
       where: { id, userId: actor.id, organizationId },
       data: { isRead: true },
     });
+    if (count === 0) throw new NotFoundException('Notification not found.');
   }
 
   async markAllAsRead(actor: Actor, organizationId: string) {

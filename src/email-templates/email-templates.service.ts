@@ -28,6 +28,7 @@ import {
 } from './email-template-defaults';
 import { escapeHtml, finalizeEmailHtml, wrapEmailShell } from './email-layout';
 import { renderTemplate } from './render-template';
+import { sanitizeEmailHtml } from './email-html-sanitizer';
 import { wrapAll } from '../common/pagination';
 import { companyLogoImgTag } from './company-logo';
 
@@ -111,7 +112,9 @@ export class EmailTemplatesService {
       data: {
         ...(dto.name !== undefined && { name: dto.name }),
         ...(dto.subject !== undefined && { subject: dto.subject }),
-        ...(dto.bodyHtml !== undefined && { bodyHtml: dto.bodyHtml }),
+        ...(dto.bodyHtml !== undefined && {
+          bodyHtml: sanitizeEmailHtml(dto.bodyHtml),
+        }),
         ...(dto.ccAllActive !== undefined && {
           ccAllActive: dto.ccAllActive,
         }),
@@ -192,7 +195,7 @@ export class EmailTemplatesService {
         occasionKey,
         name,
         subject: dto.subject,
-        bodyHtml: dto.bodyHtml,
+        bodyHtml: sanitizeEmailHtml(dto.bodyHtml),
         ccAllActive: dto.ccAllActive ?? false,
         isCustom: true,
         // Defaults to 'General' when the admin doesn't pick one — same
@@ -584,7 +587,7 @@ export class EmailTemplatesService {
     const signature: EmailSignature = {
       id: crypto.randomUUID(),
       name: dto.name.trim() || 'Untitled Signature',
-      html: dto.html,
+      html: sanitizeEmailHtml(dto.html),
       // The very first signature an org creates becomes the default
       // automatically — otherwise every template would silently get no
       // signature at all until an admin remembers to flip one on.
@@ -632,7 +635,7 @@ export class EmailTemplatesService {
         return {
           ...s,
           ...(dto.name !== undefined && { name: dto.name.trim() || s.name }),
-          ...(dto.html !== undefined && { html: dto.html }),
+          ...(dto.html !== undefined && { html: sanitizeEmailHtml(dto.html) }),
           ...(dto.isDefault !== undefined && { isDefault: dto.isDefault }),
         };
       }

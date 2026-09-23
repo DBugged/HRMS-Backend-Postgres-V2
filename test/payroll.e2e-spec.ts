@@ -1084,6 +1084,12 @@ describe('Payroll (e2e)', () => {
         employeeId,
         EMI_GAP_MONTH,
       );
+      // The PDF suite above forces this period's run to APPROVED, and
+      // calculate() now skips APPROVED runs — reset it so it recalculates.
+      await prisma.payrollRun.updateMany({
+        where: { employeeId, month: EMI_GAP_MONTH, year: YEAR },
+        data: { status: PayrollRunStatus.CALCULATED },
+      });
       const res = await request(app.getHttpServer())
         .post('/payroll/calculate')
         .set('Authorization', `Bearer ${adminToken}`)

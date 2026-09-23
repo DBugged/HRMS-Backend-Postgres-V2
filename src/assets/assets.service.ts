@@ -10,6 +10,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -21,12 +22,13 @@ import {
   AuditModule,
   OrgListType,
   Prisma,
+  Role,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { signFileToken } from '../files/file-token';
-import { wrapAll } from '../common/pagination';
+import { paginate, skip, wrapAll } from '../common/pagination';
 import { CreateAssetDto } from './dto/create-asset.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
@@ -36,7 +38,26 @@ import { UpdateAssetMaintenanceDto } from './dto/update-asset-maintenance.dto';
 import { CreateAssetDocumentDto } from './dto/create-asset-document.dto';
 import { ListAssetsQueryDto } from './dto/list-assets-query.dto';
 
-type Actor = { id: string };
+type Actor = { id: string; role?: Role };
+
+// Retiring or disposing of an asset writes off company property — Admin
+// only. Mirrors the controller's updateStatus() gate so create() can't be
+// used to land an asset directly in one of these states.
+export const ADMIN_ONLY_STATUSES: AssetInventoryStatus[] = [
+  AssetInventoryStatus.RETIRED,
+  AssetInventoryStatus.DISPOSED,
+];
+
+const ASSIGNED_BY_HAND_MESSAGE =
+  'An asset becomes Assigned by allocating it to an employee, not from the inventory screen.';
+
+// Prisma's `contains` becomes a parameterized ILIKE '%value%' but does not
+// escape LIKE metacharacters inside the value, so a search for "50%" or
+// "a_b" would act as a wildcard. Postgres LIKE's default escape char is
+// backslash, so prefixing each metachar makes it literal.
+function escapeLike(value: string): string {
+  return value.replace(/[\\%_]/g, '\\$&');
+}
 
 // The category name that turns on the "Specify Asset" free-text field —
 // same convention the Assets tab on EmployeeFullProfile already uses
@@ -83,12 +104,32 @@ export class AssetsService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  private async findAssetOrThrow(id: string, organizationId: string) {
+  // activeOnly (default) 404s a soft-deleted asset, so no mutation can
+  // touch one; read-only views (findOne/history) pass false.
+  private async findAssetOrThrow(
+    id: string,
+    organizationId: string,
+    activeOnly = true,
+  ) {
     const asset = await this.scopedPrisma.asset.findFirst({
-      where: { id, organizationId },
+      where: { id, organizationId, ...(activeOnly && { isActive: true }) },
     });
     if (!asset) throw new NotFoundException('Asset not found.');
     return asset;
+  }
+
+  // Whether a live EmployeeAsset allocation actually backs this asset — the
+  // source of truth for "is it assigned". Asset.status can drift to a stale
+  // ASSIGNED when an allocation row is removed without a return.
+  private async hasLiveAllocation(
+    assetId: string,
+    organizationId: string,
+  ): Promise<boolean> {
+    const row = await this.scopedPrisma.employeeAsset.findFirst({
+      where: { organizationId, assetId, status: 'ALLOCATED', isActive: true },
+      select: { id: true },
+    });
+    return row != null;
   }
 
   // Resolves the category FK and enforces the "Other" -> categorySpecify
@@ -198,6 +239,7 @@ export class AssetsService {
   }
 
   async findAll(query: ListAssetsQueryDto, organizationId: string) {
+    const search = query.search ? escapeLike(query.search) : undefined;
     const where: Prisma.AssetWhereInput = {
       organizationId,
       ...(query.includeInactive ? {} : { isActive: true }),
@@ -207,24 +249,33 @@ export class AssetsService {
       ...(query.location && {
         location: { contains: query.location, mode: 'insensitive' },
       }),
-      ...(query.search && {
+      ...(search && {
         OR: [
-          { assetCode: { contains: query.search, mode: 'insensitive' } },
-          { assetName: { contains: query.search, mode: 'insensitive' } },
-          { assetTag: { contains: query.search, mode: 'insensitive' } },
-          { serialNumber: { contains: query.search, mode: 'insensitive' } },
-          { brand: { contains: query.search, mode: 'insensitive' } },
-          { model: { contains: query.search, mode: 'insensitive' } },
+          { assetCode: { contains: search, mode: 'insensitive' } },
+          { assetName: { contains: search, mode: 'insensitive' } },
+          { assetTag: { contains: search, mode: 'insensitive' } },
+          { serialNumber: { contains: search, mode: 'insensitive' } },
+          { brand: { contains: search, mode: 'insensitive' } },
+          { model: { contains: search, mode: 'insensitive' } },
         ],
       }),
     };
 
-    const assets = await this.scopedPrisma.asset.findMany({
-      where,
-      include: { category: { select: { id: true, name: true } } },
-      orderBy: { createdAt: 'desc' },
-    });
-    return wrapAll(assets);
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    return paginate(
+      () =>
+        this.scopedPrisma.asset.findMany({
+          where,
+          include: { category: { select: { id: true, name: true } } },
+          orderBy: { createdAt: 'desc' },
+          skip: skip(page, limit),
+          take: limit,
+        }),
+      () => this.scopedPrisma.asset.count({ where }),
+      page,
+      limit,
+    );
   }
 
   async findOne(id: string, organizationId: string) {
@@ -263,6 +314,17 @@ export class AssetsService {
   }
 
   async create(dto: CreateAssetDto, organizationId: string, actor: Actor) {
+    // Same rules updateStatus() enforces: ASSIGNED only ever comes from an
+    // allocation, and RETIRED/DISPOSED are Admin-only write-offs.
+    if (dto.status === AssetInventoryStatus.ASSIGNED) {
+      throw new BadRequestException(ASSIGNED_BY_HAND_MESSAGE);
+    }
+    if (ADMIN_ONLY_STATUSES.includes(dto.status) && actor.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Only an administrator can retire or dispose of an asset.',
+      );
+    }
+
     const category = await this.resolveCategory(
       dto.categoryId,
       dto.categorySpecify,
@@ -457,11 +519,13 @@ export class AssetsService {
     // inventory would claim an asset is held by someone with no matching
     // EmployeeAsset row behind it.
     if (dto.status === AssetInventoryStatus.ASSIGNED) {
-      throw new BadRequestException(
-        'An asset becomes Assigned by allocating it to an employee, not from the inventory screen.',
-      );
+      throw new BadRequestException(ASSIGNED_BY_HAND_MESSAGE);
     }
-    if (existing.status === AssetInventoryStatus.ASSIGNED) {
+    // Keyed off a live EmployeeAsset row, not Asset.status: a stale
+    // ASSIGNED with nothing behind it (allocation row removed without a
+    // return) must not lock the asset forever. The update below overwrites
+    // the stale status with the requested one.
+    if (await this.hasLiveAllocation(id, organizationId)) {
       throw new BadRequestException(
         'This asset is currently assigned — return it from the employee’s profile first.',
       );
@@ -567,19 +631,27 @@ export class AssetsService {
   // Soft delete — the row stays for audit-trail integrity and drops out of
   // findAll(), same isActive convention as EmployeeAsset.removeAsset.
   async remove(id: string, organizationId: string, actor: Actor) {
-    const asset = await this.findAssetOrThrow(id, organizationId);
+    // activeOnly=false so a repeat delete gets the specific 400 below
+    // rather than a generic 404.
+    const asset = await this.findAssetOrThrow(id, organizationId, false);
     if (!asset.isActive) {
       throw new BadRequestException('This asset has already been removed.');
     }
-    if (asset.status === AssetInventoryStatus.ASSIGNED) {
+    // A live allocation row is the real signal — Asset.status alone can be
+    // a stale ASSIGNED left behind when the allocation row was removed.
+    if (await this.hasLiveAllocation(id, organizationId)) {
       throw new BadRequestException(
         'This asset is currently assigned to an employee — it must be returned before it can be removed.',
       );
     }
+    const staleAssigned = asset.status === AssetInventoryStatus.ASSIGNED;
 
     await this.scopedPrisma.asset.updateMany({
       where: { id, organizationId },
-      data: { isActive: false },
+      data: {
+        isActive: false,
+        ...(staleAssigned && { status: AssetInventoryStatus.AVAILABLE }),
+      },
     });
 
     await this.auditLogService.log({
@@ -592,6 +664,9 @@ export class AssetsService {
         assetCode: asset.assetCode,
         assetName: asset.assetName,
         statusAtRemoval: asset.status,
+        ...(staleAssigned && {
+          statusCorrectedTo: AssetInventoryStatus.AVAILABLE,
+        }),
       },
     });
 
@@ -793,9 +868,31 @@ export class AssetsService {
   // Just this asset's slice of the org-wide AuditLog — there is deliberately
   // no separate asset-history table to drift out of sync with it.
   async history(id: string, organizationId: string) {
-    await this.findAssetOrThrow(id, organizationId);
+    await this.findAssetOrThrow(id, organizationId, false);
+    // Allocation/return events are logged by the Employees module under
+    // module=EMPLOYEE with targetId = the EmployeeAsset row's id, so pull
+    // those in alongside this asset's own ASSET-module entries.
+    const allocationIds = (
+      await this.scopedPrisma.employeeAsset.findMany({
+        where: { assetId: id, organizationId },
+        select: { id: true },
+      })
+    ).map((row) => row.id);
     const entries = await this.scopedPrisma.auditLog.findMany({
-      where: { organizationId, module: AuditModule.ASSET, targetId: id },
+      where: {
+        organizationId,
+        OR: [
+          { module: AuditModule.ASSET, targetId: id },
+          ...(allocationIds.length
+            ? [
+                {
+                  module: AuditModule.EMPLOYEE,
+                  targetId: { in: allocationIds },
+                },
+              ]
+            : []),
+        ],
+      },
       include: {
         actor: { select: { id: true, name: true, employeeId: true } },
       },

@@ -39,6 +39,16 @@ function offsetDate(days: number) {
   return d.toISOString().slice(0, 10);
 }
 
+// Leave day-counts exclude weekly-offs/holidays (sandwichLeaveApplies is
+// false by default), so a leave range landing entirely on a weekend is now
+// rejected. Leave ranges below start on a Monday >= minDays out instead of
+// a raw "today + N" that could fall on Sat/Sun depending on the run date.
+function mondayOffset(minDays: number) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() + minDays);
+  return minDays + ((1 - d.getUTCDay() + 7) % 7);
+}
+
 describe('Approval Delegation (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -213,8 +223,8 @@ describe('Approval Delegation (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveType.id,
-        startDate: offsetDate(10),
-        endDate: offsetDate(11),
+        startDate: offsetDate(mondayOffset(10) + 0),
+        endDate: offsetDate(mondayOffset(10) + 1),
       })
       .expect(201);
     const noDelegationLeaveId = (leave.body as { id: string }).id;
@@ -235,8 +245,8 @@ describe('Approval Delegation (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveType.id,
-        startDate: offsetDate(15),
-        endDate: offsetDate(16),
+        startDate: offsetDate(mondayOffset(10) + 7),
+        endDate: offsetDate(mondayOffset(10) + 8),
       })
       .expect(201);
     const directLeaveId = (leave.body as { id: string }).id;
@@ -268,8 +278,8 @@ describe('Approval Delegation (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveType.id,
-        startDate: offsetDate(17),
-        endDate: offsetDate(18),
+        startDate: offsetDate(mondayOffset(10) + 14),
+        endDate: offsetDate(mondayOffset(10) + 15),
       })
       .expect(201);
     const outOfRangeLeaveId = (leave.body as { id: string }).id;
@@ -349,8 +359,8 @@ describe('Approval Delegation (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveType.id,
-        startDate: offsetDate(20),
-        endDate: offsetDate(21),
+        startDate: offsetDate(mondayOffset(10) + 21),
+        endDate: offsetDate(mondayOffset(10) + 22),
       })
       .expect(201);
     const delegatedLeaveId = (leave.body as { id: string }).id;
@@ -376,8 +386,8 @@ describe('Approval Delegation (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: leaveType.id,
-        startDate: offsetDate(25),
-        endDate: offsetDate(26),
+        startDate: offsetDate(mondayOffset(10) + 28),
+        endDate: offsetDate(mondayOffset(10) + 29),
       })
       .expect(201);
     const newLeaveId = (leave.body as { id: string }).id;

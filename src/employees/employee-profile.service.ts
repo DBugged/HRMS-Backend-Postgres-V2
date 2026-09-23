@@ -8,6 +8,7 @@
 // the password-stripped-only view elsewhere.
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -25,6 +26,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { deleteStoredFile } from '../files/delete-stored-file';
 import {
   isKeyAllowedForOrg,
   signFileToken,
@@ -37,6 +39,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EXIT_STATUSES } from './employees.service';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
@@ -390,18 +393,25 @@ export class EmployeeProfileService {
         'This employee is deactivated — reactivate them first before changing their probation status.',
       );
     }
+    if (EXIT_STATUSES.includes(employee.employmentStatus)) {
+      throw new BadRequestException(
+        'This employee has exited the organization — probation cannot be changed.',
+      );
+    }
+    if (
+      employee.employmentStatus !== 'ONBOARDING' &&
+      employee.employmentStatus !== 'PROBATION' &&
+      employee.employmentStatus !== 'EXTENDED_PROBATION'
+    ) {
+      throw new BadRequestException(
+        'This employee is not on probation — there is nothing to decide.',
+      );
+    }
     if (dto.decision === 'extended' && !dto.newProbationEndDate) {
       throw new BadRequestException(
         'newProbationEndDate is required when extending probation.',
       );
     }
-    if (
-      dto.decision === 'confirmed' &&
-      employee.employmentStatus === 'CONFIRMED'
-    ) {
-      throw new BadRequestException('This employee is already confirmed.');
-    }
-
     const newStatus: EmploymentStatus =
       dto.decision === 'confirmed' ? 'CONFIRMED' : 'EXTENDED_PROBATION';
 
@@ -551,6 +561,11 @@ export class EmployeeProfileService {
     await this.scopedPrisma.employeeDocument.deleteMany({
       where: { id: docId, organizationId },
     });
+    // Only remove the file if it's one we actually stored (a relative
+    // storage key), never an external URL.
+    if (doc.fileUrl && !/^https?:\/\//i.test(doc.fileUrl)) {
+      deleteStoredFile(doc.fileUrl);
+    }
     await this.refreshProfileCompletion(id, organizationId);
     auditSensitive(
       this.privacyAudit,
@@ -739,36 +754,52 @@ export class EmployeeProfileService {
         select: { id: true },
       })) != null;
 
-    const asset = await this.scopedPrisma.employeeAsset.create({
-      data: {
-        organizationId,
-        employeeId: id,
-        // assetType stays the same free-text column it has always been —
-        // the inventory's category name is copied into it rather than the
-        // column becoming an FK, so nothing about existing rows changes.
-        assetType:
-          inventoryAsset?.category?.name ??
-          inventoryAsset?.categorySpecify ??
-          dto.assetType,
-        assetName: inventoryAsset?.assetName ?? dto.assetName,
-        assetTag: inventoryAsset
-          ? inventoryTagTaken
-            ? null
-            : inventoryAsset.assetTag
-          : dto.assetTag?.trim() || null,
-        allocatedDate: dto.allocatedDate,
-        notes: dto.notes ?? '',
-        allocatedById: actor.id,
-        assetId: inventoryAsset?.id ?? null,
-      },
-    });
+    // The AVAILABLE check above is only a fast-path for a friendly error —
+    // two concurrent requests can both pass it. The real guard is the
+    // compare-and-swap below: the status flip runs FIRST, inside the same
+    // transaction as the EmployeeAsset insert, and only succeeds if the
+    // asset is still AVAILABLE at write time. The loser sees count === 0
+    // and 409s before any allocation row is created.
+    const asset = await this.scopedPrisma.$transaction(async (tx) => {
+      if (inventoryAsset) {
+        const { count } = await tx.asset.updateMany({
+          where: {
+            id: inventoryAsset.id,
+            organizationId,
+            isActive: true,
+            status: 'AVAILABLE',
+          },
+          data: { status: 'ASSIGNED' },
+        });
+        if (count === 0) {
+          throw new ConflictException('This asset is no longer available.');
+        }
+      }
 
-    if (inventoryAsset) {
-      await this.scopedPrisma.asset.updateMany({
-        where: { id: inventoryAsset.id, organizationId },
-        data: { status: 'ASSIGNED' },
+      return tx.employeeAsset.create({
+        data: {
+          organizationId,
+          employeeId: id,
+          // assetType stays the same free-text column it has always been —
+          // the inventory's category name is copied into it rather than the
+          // column becoming an FK, so nothing about existing rows changes.
+          assetType:
+            inventoryAsset?.category?.name ??
+            inventoryAsset?.categorySpecify ??
+            dto.assetType,
+          assetName: inventoryAsset?.assetName ?? dto.assetName,
+          assetTag: inventoryAsset
+            ? inventoryTagTaken
+              ? null
+              : inventoryAsset.assetTag
+            : dto.assetTag?.trim() || null,
+          allocatedDate: dto.allocatedDate,
+          notes: dto.notes ?? '',
+          allocatedById: actor.id,
+          assetId: inventoryAsset?.id ?? null,
+        },
       });
-    }
+    });
 
     await this.auditLogService.log({
       actorId: actor.id,

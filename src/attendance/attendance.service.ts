@@ -20,6 +20,7 @@ import {
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
+  Attendance,
   AttendanceSource,
   AttendanceStatus,
   Holiday,
@@ -27,7 +28,9 @@ import {
   Leave,
   LeaveStatus,
   NotificationCategory,
+  PayrollRunStatus,
   Prisma,
+  Punch,
   PunchSource,
   Role,
   User,
@@ -100,50 +103,136 @@ function dayRangeUtc(dateStr: string): { gte: Date; lt: Date } {
   return { gte: start, lt: end };
 }
 
-// The punch window "day D" owns — a plain calendar day for a normal shift,
-// or [shiftStart(D), shiftEnd(D+1)) for a shift that crosses midnight (e.g.
-// 22:00-06:00), so a check-in late on D and a check-out just after
-// midnight on D+1 both land in the same day's record instead of each
-// being aggregated alone (which previously made both days compute a
-// self-paired, zero-duration, ABSENT punch set for a genuinely worked
-// overnight shift).
-// Noon, not the configured shiftEndTime, is the cutoff both functions
-// below use to decide "is this early-morning punch still last night's
-// overnight shift" — a real check-out routinely runs a bit past the
-// nominal shiftEndTime (overtime, a slow queue at the door, etc.), so
-// pinning the cutoff exactly at shiftEndTime would misattribute a merely-
-// late-but-still-overnight checkout to a shift that hasn't started yet. A
-// same-day EVENING shift's own check-in never happens before noon, so
-// this generous a cutoff can't misattribute a fresh check-in either.
-const OVERNIGHT_CUTOFF_TIME = '12:00';
+// Shift-day partitioning of the punch timeline.
+//
+// INVARIANT: for any timestamp t and shift config cfg,
+//   resolveAttendanceDateForPunch(t, cfg) returns a date D such that t falls
+//   inside shiftPunchWindow(D, cfg).
+// Both functions are derived from ONE boundary (shiftDayBoundaryOffsetMs), so
+// the windows of consecutive days tile the timeline with no gaps and no
+// overlaps — every punch belongs to exactly one shift-day.
+//
+// For a normal shift the boundary is plain UTC midnight (window = calendar
+// day). For a crossesMidnight shift (e.g. 22:00-06:00) the "quiet" gap between
+// the shift's own end time and its own start time (06:00-22:00 on the same
+// calendar day) is split at its midpoint (14:00): a punch in the first half is
+// nearer the end of the previous night's shift (a late checkout), a punch in
+// the second half is nearer the start of the coming night's shift (an early
+// check-in). So day D's window is [D + boundary, D+1 + boundary), which always
+// contains shiftStart(D) and shiftEnd(D+1). The boundary is derived from the
+// shift's own shiftEndTime/shiftStartTime — never a hardcoded cutoff — so no
+// punch is ever orphaned or silently dropped.
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DAY_MINUTES = 24 * 60;
+
+function hhmmToMinutes(hhmm: string): number {
+  const [h, m] = hhmm.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+// Offset (ms, relative to UTC midnight of day D, may be negative) at which
+// shift-day D's punch window begins.
+function shiftDayBoundaryOffsetMs(
+  shiftConfig: Pick<
+    ShiftConfig,
+    'crossesMidnight' | 'shiftStartTime' | 'shiftEndTime'
+  >,
+): number {
+  if (!shiftConfig.crossesMidnight) return 0;
+  const start = hhmmToMinutes(shiftConfig.shiftStartTime);
+  const end = hhmmToMinutes(shiftConfig.shiftEndTime);
+  // Length of the off-shift gap from shiftEnd to the next shiftStart.
+  const gap = (((start - end) % DAY_MINUTES) + DAY_MINUTES) % DAY_MINUTES;
+  // Midpoint of that gap, expressed relative to day D's midnight such that it
+  // never lies after shiftStart(D).
+  return (start - gap / 2) * 60 * 1000;
+}
 
 function shiftPunchWindow(
   dateStr: string,
-  shiftConfig: Pick<ShiftConfig, 'crossesMidnight' | 'shiftStartTime'>,
+  shiftConfig: Pick<
+    ShiftConfig,
+    'crossesMidnight' | 'shiftStartTime' | 'shiftEndTime'
+  >,
 ): { gte: Date; lt: Date } {
-  if (!shiftConfig.crossesMidnight) return dayRangeUtc(dateStr);
+  const offset = shiftDayBoundaryOffsetMs(shiftConfig);
+  const dayStart = new Date(`${dateStr}T00:00:00.000Z`).getTime();
   return {
-    gte: buildShiftDateTime(dateStr, shiftConfig.shiftStartTime),
-    lt: buildShiftDateTime(addDaysStr(dateStr, 1), OVERNIGHT_CUTOFF_TIME),
+    gte: new Date(dayStart + offset),
+    lt: new Date(dayStart + DAY_MS + offset),
   };
 }
 
-// Which day's shift a punch made at `punchTime` belongs to. For a normal
-// shift this is just the punch's own calendar date. For a crossesMidnight
-// shift, a punch made before noon belongs to the *previous* calendar
-// day's shift instance (e.g. a 01:30 check-out, or a 06:45 check-out
-// running a bit past a 06:00 shiftEndTime, from a 22:00-06:00 shift that
-// started the evening before).
+// Which shift-day a punch made at `punchTime` belongs to — see the invariant
+// above. For a normal shift this is the punch's own UTC calendar date; for a
+// crossesMidnight 22:00-06:00 shift, anything before 14:00 belongs to the
+// previous calendar day's shift instance.
 function resolveAttendanceDateForPunch(
   punchTime: Date,
-  shiftConfig: Pick<ShiftConfig, 'crossesMidnight'>,
+  shiftConfig: Pick<
+    ShiftConfig,
+    'crossesMidnight' | 'shiftStartTime' | 'shiftEndTime'
+  >,
 ): string {
-  const dateStr = utcDateStrOf(punchTime);
-  if (!shiftConfig.crossesMidnight) return dateStr;
-  const cutoff = buildShiftDateTime(dateStr, OVERNIGHT_CUTOFF_TIME);
-  return punchTime.getTime() < cutoff.getTime()
-    ? addDaysStr(dateStr, -1)
-    : dateStr;
+  const offset = shiftDayBoundaryOffsetMs(shiftConfig);
+  return utcDateStrOf(new Date(punchTime.getTime() - offset));
+}
+
+// Window within which a repeat punch from the same employee is treated as a
+// duplicate tap (double-submit, device retry) rather than a new punch.
+const DUPLICATE_PUNCH_WINDOW_MS = 10 * 1000;
+
+// Parses an import-sheet timestamp as UTC. A bare "YYYY-MM-DD HH:mm[:ss]" (or
+// with a "T" separator) carries no zone and is interpreted as UTC, matching
+// buildShiftDateTime/dayRangeUtc — never server-local time. A string with an
+// explicit "Z" or ±HH:mm offset is honored as-is. Returns null if unparseable.
+const IMPORT_LOCAL_TS_RE =
+  /^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})(?::(\d{2})(\.\d{1,3})?)?$/;
+const IMPORT_ZONED_TS_RE =
+  /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i;
+
+function parseImportTimestampUtc(value: string): Date | null {
+  const v = value.trim();
+  if (!v) return null;
+  let parsed: Date;
+  const local = IMPORT_LOCAL_TS_RE.exec(v);
+  if (local) {
+    const [, date, hh, mm, ss, frac] = local;
+    parsed = new Date(`${date}T${hh}:${mm}:${ss ?? '00'}${frac ?? ''}Z`);
+  } else if (IMPORT_ZONED_TS_RE.test(v)) {
+    parsed = new Date(v.replace(' ', 'T'));
+  } else {
+    return null;
+  }
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Attendance feeding a LOCKED/PAID payroll run must not be rewritten out from
+// under it — same rule (and same message shape) as LeavesService.cancel(): an
+// Admin must unlock that payroll run first. Shared by every attendance write
+// path so they all enforce it identically.
+async function assertPayrollPeriodUnlocked(
+  db: Db,
+  organizationId: string,
+  employeeId: string,
+  dateStr: string,
+): Promise<void> {
+  const year = Number(dateStr.slice(0, 4));
+  const month = Number(dateStr.slice(5, 7));
+  const lockedRun = await db.payrollRun.findFirst({
+    where: {
+      organizationId,
+      employeeId,
+      month,
+      year,
+      status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+    },
+  });
+  if (lockedRun) {
+    throw new BadRequestException(
+      `This attendance date (${dateStr}) falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before changing this attendance.`,
+    );
+  }
 }
 
 function addDaysStr(dateStr: string, days: number): string {
@@ -264,18 +353,6 @@ export class AttendanceService {
       orderBy: { punchTime: 'asc' },
     });
 
-    const holiday = await db.holiday.findFirst({
-      where: {
-        organizationId,
-        isActive: true,
-        date: dateStr,
-        OR: employee.departmentId
-          ? [{ departmentId: null }, { departmentId: employee.departmentId }]
-          : [{ departmentId: null }],
-      },
-    });
-
-    let status: AttendanceStatus;
     let inTime: Date | null = null;
     let outTime: Date | null = null;
     let checkinLocation: string | null = null;
@@ -286,9 +363,6 @@ export class AttendanceService {
     let checkoutLatitude: number | null = null;
     let checkoutLongitude: number | null = null;
     let checkoutSelfieUrl: string | null = null;
-    let workDurationMinutes = 0;
-    let isLate = false;
-    let isEarlyOut = false;
 
     if (punches.length > 0) {
       const first = punches[0];
@@ -303,70 +377,18 @@ export class AttendanceService {
       checkoutLatitude = last.latitude;
       checkoutLongitude = last.longitude;
       checkoutSelfieUrl = last.selfieUrl;
-      workDurationMinutes = Math.max(
-        0,
-        Math.round((outTime.getTime() - inTime.getTime()) / 60000),
-      );
+    }
 
-      const shiftStart = buildShiftDateTime(
+    const { status, workDurationMinutes, isLate, isEarlyOut } =
+      await this.deriveDayOutcome(db, {
+        organizationId,
+        employeeId,
+        employeeDepartmentId: employee.departmentId,
         dateStr,
-        shiftConfig.shiftStartTime,
-      );
-      // shiftEndTime is on the *next* calendar day for a crossesMidnight
-      // shift (e.g. 22:00-06:00 — shiftEnd is 06:00 the morning after
-      // dateStr), matching shiftPunchWindow's own upper bound above.
-      const shiftEnd = buildShiftDateTime(
-        shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
-        shiftConfig.shiftEndTime,
-      );
-      isLate =
-        inTime.getTime() - shiftStart.getTime() >
-        shiftConfig.lateInThresholdMinutes * 60000;
-      isEarlyOut =
-        shiftEnd.getTime() - outTime.getTime() >
-        shiftConfig.earlyOutThresholdMinutes * 60000;
-
-      // Break time is unpaid — doesn't count toward Present/Half-Day
-      // thresholds, only the raw punch-in-to-punch-out span still does
-      // (workDurationMinutes itself stays the full span, unadjusted, since
-      // that's what's actually displayed/exported elsewhere).
-      const hours =
-        Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
-      if (hours >= shiftConfig.minHoursForPresent) {
-        status = AttendanceStatus.PRESENT;
-      } else if (hours >= shiftConfig.minHoursForHalfDay) {
-        status = AttendanceStatus.HALF_DAY;
-      } else {
-        status = AttendanceStatus.ABSENT;
-      }
-    } else {
-      const approvedLeave = await db.leave.findFirst({
-        where: {
-          organizationId,
-          employeeId,
-          status: LeaveStatus.APPROVED,
-          startDate: { lte: dateStr },
-          endDate: { gte: dateStr },
-        },
+        shiftConfig,
+        inTime,
+        outTime,
       });
-      status = approvedLeave
-        ? approvedLeave.isHalfDay
-          ? AttendanceStatus.HALF_DAY
-          : AttendanceStatus.ON_LEAVE
-        : AttendanceStatus.ABSENT;
-    }
-
-    // Overrides, in priority order — a holiday wins even over an
-    // approved-leave-derived status; weekly-off only overrides a bare
-    // ABSENT (never on_leave/half_day), matching the old system exactly.
-    if (holiday) {
-      status = AttendanceStatus.HOLIDAY;
-    } else if (
-      isWeeklyOff(dateStr, shiftConfig.weeklyOffs) &&
-      status === AttendanceStatus.ABSENT
-    ) {
-      status = AttendanceStatus.WEEKLY_OFF;
-    }
 
     const fields = {
       status,
@@ -421,6 +443,120 @@ export class AttendanceService {
     return db.attendance.findFirstOrThrow({
       where: { organizationId, employeeId, date: dateStr },
     });
+  }
+
+  // The status/duration rules shared by recalculateAttendanceForDay (punch-
+  // derived in/out) and executeImportBatch (sheet-supplied in/out), so both
+  // apply identical shift-config/holiday/leave/weekly-off logic. A day with
+  // only one of inTime/outTime is treated exactly like a single punch
+  // (zero-length span).
+  private async deriveDayOutcome(
+    db: Db,
+    params: {
+      organizationId: string;
+      employeeId: string;
+      employeeDepartmentId: string | null;
+      dateStr: string;
+      shiftConfig: ShiftConfig;
+      inTime: Date | null;
+      outTime: Date | null;
+    },
+  ): Promise<{
+    status: AttendanceStatus;
+    workDurationMinutes: number;
+    isLate: boolean;
+    isEarlyOut: boolean;
+  }> {
+    const { organizationId, employeeId, dateStr, shiftConfig } = params;
+    const inTime = params.inTime ?? params.outTime;
+    const outTime = params.outTime ?? params.inTime;
+
+    const holiday = await db.holiday.findFirst({
+      where: {
+        organizationId,
+        isActive: true,
+        date: dateStr,
+        OR: params.employeeDepartmentId
+          ? [
+              { departmentId: null },
+              { departmentId: params.employeeDepartmentId },
+            ]
+          : [{ departmentId: null }],
+      },
+    });
+
+    let status: AttendanceStatus;
+    let workDurationMinutes = 0;
+    let isLate = false;
+    let isEarlyOut = false;
+
+    if (inTime && outTime) {
+      workDurationMinutes = Math.max(
+        0,
+        Math.round((outTime.getTime() - inTime.getTime()) / 60000),
+      );
+
+      const shiftStart = buildShiftDateTime(
+        dateStr,
+        shiftConfig.shiftStartTime,
+      );
+      // shiftEndTime is on the *next* calendar day for a crossesMidnight
+      // shift (e.g. 22:00-06:00 — shiftEnd is 06:00 the morning after
+      // dateStr), which always lies inside shiftPunchWindow(dateStr).
+      const shiftEnd = buildShiftDateTime(
+        shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
+        shiftConfig.shiftEndTime,
+      );
+      isLate =
+        inTime.getTime() - shiftStart.getTime() >
+        shiftConfig.lateInThresholdMinutes * 60000;
+      isEarlyOut =
+        shiftEnd.getTime() - outTime.getTime() >
+        shiftConfig.earlyOutThresholdMinutes * 60000;
+
+      // Break time is unpaid — doesn't count toward Present/Half-Day
+      // thresholds, only the raw punch-in-to-punch-out span still does
+      // (workDurationMinutes itself stays the full span, unadjusted, since
+      // that's what's actually displayed/exported elsewhere).
+      const hours =
+        Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
+      if (hours >= shiftConfig.minHoursForPresent) {
+        status = AttendanceStatus.PRESENT;
+      } else if (hours >= shiftConfig.minHoursForHalfDay) {
+        status = AttendanceStatus.HALF_DAY;
+      } else {
+        status = AttendanceStatus.ABSENT;
+      }
+    } else {
+      const approvedLeave = await db.leave.findFirst({
+        where: {
+          organizationId,
+          employeeId,
+          status: LeaveStatus.APPROVED,
+          startDate: { lte: dateStr },
+          endDate: { gte: dateStr },
+        },
+      });
+      status = approvedLeave
+        ? approvedLeave.isHalfDay
+          ? AttendanceStatus.HALF_DAY
+          : AttendanceStatus.ON_LEAVE
+        : AttendanceStatus.ABSENT;
+    }
+
+    // Overrides, in priority order — a holiday wins even over an
+    // approved-leave-derived status; weekly-off only overrides a bare
+    // ABSENT (never on_leave/half_day), matching the old system exactly.
+    if (holiday) {
+      status = AttendanceStatus.HOLIDAY;
+    } else if (
+      isWeeklyOff(dateStr, shiftConfig.weeklyOffs) &&
+      status === AttendanceStatus.ABSENT
+    ) {
+      status = AttendanceStatus.WEEKLY_OFF;
+    }
+
+    return { status, workDurationMinutes, isLate, isEarlyOut };
   }
 
   // Notifies the employee when this recalculation marks them late (no
@@ -542,6 +678,37 @@ export class AttendanceService {
       { location?: string; latitude?: number; longitude?: number } | undefined;
     const punchTime = dto.punchTime ? new Date(dto.punchTime) : new Date();
 
+    const shiftConfig = await this.resolveEmployeeShiftConfig(
+      user.id,
+      dto.organizationId,
+    );
+    const attendanceDate = resolveAttendanceDateForPunch(
+      punchTime,
+      shiftConfig,
+    );
+    await assertPayrollPeriodUnlocked(
+      this.scopedPrisma,
+      dto.organizationId,
+      user.id,
+      attendanceDate,
+    );
+
+    // A device retry / double-scan within a few seconds is the same punch —
+    // return the existing state rather than writing a duplicate Punch row.
+    const duplicate = await this.findDuplicatePunch(
+      dto.organizationId,
+      user.id,
+      punchTime,
+    );
+    if (duplicate) {
+      const attendance = await this.currentAttendanceForDay(
+        user.id,
+        attendanceDate,
+        dto.organizationId,
+      );
+      return { punch: duplicate, attendance };
+    }
+
     const punch = await this.scopedPrisma.punch.create({
       data: {
         organizationId: dto.organizationId,
@@ -557,18 +724,56 @@ export class AttendanceService {
       },
     });
 
-    const shiftConfig = await this.resolveEmployeeShiftConfig(
-      user.id,
-      dto.organizationId,
-    );
     const attendance = await this.recalculateAttendanceForDay(
       this.scopedPrisma,
       user.id,
-      resolveAttendanceDateForPunch(punchTime, shiftConfig),
+      attendanceDate,
       dto.organizationId,
     );
 
     return { punch, attendance };
+  }
+
+  // Any existing punch from this employee within ±DUPLICATE_PUNCH_WINDOW_MS
+  // of `punchTime` — used by the self-punch and Face-API paths only (HR's
+  // manualPunch back-entry stays deliberately permissive).
+  private findDuplicatePunch(
+    organizationId: string,
+    employeeId: string,
+    punchTime: Date,
+  ) {
+    return this.scopedPrisma.punch.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        punchTime: {
+          gte: new Date(punchTime.getTime() - DUPLICATE_PUNCH_WINDOW_MS),
+          lte: new Date(punchTime.getTime() + DUPLICATE_PUNCH_WINDOW_MS),
+        },
+      },
+      orderBy: { punchTime: 'desc' },
+    });
+  }
+
+  // The existing Attendance row for a shift-day, recalculating only if (for
+  // whatever reason) none exists yet.
+  private async currentAttendanceForDay(
+    employeeId: string,
+    dateStr: string,
+    organizationId: string,
+  ) {
+    const existing = await this.scopedPrisma.attendance.findFirst({
+      where: { organizationId, employeeId, date: dateStr },
+    });
+    return (
+      existing ??
+      this.recalculateAttendanceForDay(
+        this.scopedPrisma,
+        employeeId,
+        dateStr,
+        organizationId,
+      )
+    );
   }
 
   async manualPunch(dto: ManualPunchDto, organizationId: string) {
@@ -578,6 +783,21 @@ export class AttendanceService {
     if (!user) throw new NotFoundException('Employee not found.');
 
     const punchTime = dto.punchTime ? new Date(dto.punchTime) : new Date();
+    const manualShiftConfig = await this.resolveEmployeeShiftConfig(
+      user.id,
+      organizationId,
+    );
+    const attendanceDate = resolveAttendanceDateForPunch(
+      punchTime,
+      manualShiftConfig,
+    );
+    await assertPayrollPeriodUnlocked(
+      this.scopedPrisma,
+      organizationId,
+      user.id,
+      attendanceDate,
+    );
+
     const punch = await this.scopedPrisma.punch.create({
       data: {
         organizationId,
@@ -590,14 +810,10 @@ export class AttendanceService {
       },
     });
 
-    const manualShiftConfig = await this.resolveEmployeeShiftConfig(
-      user.id,
-      organizationId,
-    );
     const attendance = await this.recalculateAttendanceForDay(
       this.scopedPrisma,
       user.id,
-      resolveAttendanceDateForPunch(punchTime, manualShiftConfig),
+      attendanceDate,
       organizationId,
     );
 
@@ -638,28 +854,56 @@ export class AttendanceService {
     }
 
     const punchTime = new Date();
-    const punch = await this.scopedPrisma.punch.create({
-      data: {
-        organizationId,
-        employeeId: actor.id,
-        punchTime,
-        source: PunchSource.MANUAL,
-        latitude: dto.latitude,
-        longitude: dto.longitude,
-        selfieUrl: dto.selfieUrl ?? null,
-      },
-    });
-
     const selfShiftConfig = await this.resolveEmployeeShiftConfig(
       actor.id,
       organizationId,
     );
-    const attendance = await this.recalculateAttendanceForDay(
-      this.scopedPrisma,
-      actor.id,
-      resolveAttendanceDateForPunch(punchTime, selfShiftConfig),
-      organizationId,
+    const attendanceDate = resolveAttendanceDateForPunch(
+      punchTime,
+      selfShiftConfig,
     );
+    await assertPayrollPeriodUnlocked(
+      this.scopedPrisma,
+      organizationId,
+      actor.id,
+      attendanceDate,
+    );
+
+    // A double-tap / resubmitted request within a few seconds is the same
+    // punch — return the existing state instead of a duplicate Punch row.
+    const duplicate = await this.findDuplicatePunch(
+      organizationId,
+      actor.id,
+      punchTime,
+    );
+    let punch: Punch;
+    let attendance: Attendance;
+    if (duplicate) {
+      punch = duplicate;
+      attendance = await this.currentAttendanceForDay(
+        actor.id,
+        attendanceDate,
+        organizationId,
+      );
+    } else {
+      punch = await this.scopedPrisma.punch.create({
+        data: {
+          organizationId,
+          employeeId: actor.id,
+          punchTime,
+          source: PunchSource.MANUAL,
+          latitude: dto.latitude,
+          longitude: dto.longitude,
+          selfieUrl: dto.selfieUrl ?? null,
+        },
+      });
+      attendance = await this.recalculateAttendanceForDay(
+        this.scopedPrisma,
+        actor.id,
+        attendanceDate,
+        organizationId,
+      );
+    }
 
     const punchCount = await this.scopedPrisma.punch.count({
       where: {
@@ -1197,6 +1441,12 @@ export class AttendanceService {
         'Regularization can only be requested for a date within the last 7 days.',
       );
     }
+    await assertPayrollPeriodUnlocked(
+      this.scopedPrisma,
+      organizationId,
+      actor.id,
+      dto.date,
+    );
 
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dto.date },
@@ -1350,6 +1600,12 @@ export class AttendanceService {
       actor,
       organizationId,
       row.employeeId,
+    );
+    await assertPayrollPeriodUnlocked(
+      this.scopedPrisma,
+      organizationId,
+      row.employeeId,
+      row.date,
     );
 
     const existingReg = row.regularization as unknown as RegularizationState;
@@ -1517,7 +1773,7 @@ export class AttendanceService {
     const employees = employeeCodes.length
       ? await this.scopedPrisma.user.findMany({
           where: { organizationId, employeeId: { in: employeeCodes } },
-          select: { employeeId: true, isActive: true },
+          select: { employeeId: true, isActive: true, joiningDate: true },
         })
       : [];
     const knownCodes = new Map(employees.map((e) => [e.employeeId, e]));
@@ -1582,16 +1838,35 @@ export class AttendanceService {
         });
         return;
       }
-      // executeImportBatch does new Date(inTime/outTime) and silently counts a throw as a row error, so an
-      // unparseable time (e.g. bare "09:00") must be caught here or the batch "executes" with 0 rows imported.
+      // No attendance can predate the employee's joining date.
+      const joiningDateStr = utcDateStrOf(employee.joiningDate);
+      if (date < joiningDateStr) {
+        failed.push({
+          row: rowNum,
+          error: `Date ${date} is before the employee's joining date (${joiningDateStr})`,
+        });
+        return;
+      }
+      const inRaw = asString(row.inTime).trim();
+      const outRaw = asString(row.outTime).trim();
+      if (!inRaw && !outRaw) {
+        failed.push({
+          row: rowNum,
+          error: 'At least one of inTime or outTime is required',
+        });
+        return;
+      }
+      // executeImportBatch parses inTime/outTime with the same UTC parser, so
+      // an unparseable time (e.g. bare "09:00") must be caught here or the
+      // batch "executes" with 0 rows imported.
       const badTime = (['inTime', 'outTime'] as const).find((f) => {
         const v = asString(row[f]).trim();
-        return v !== '' && Number.isNaN(new Date(v).getTime());
+        return v !== '' && parseImportTimestampUtc(v) === null;
       });
       if (badTime) {
         failed.push({
           row: rowNum,
-          error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss)`,
+          error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss, interpreted as UTC)`,
         });
         return;
       }
@@ -1645,14 +1920,47 @@ export class AttendanceService {
     const employees = employeeCodes.length
       ? await this.scopedPrisma.user.findMany({
           where: { organizationId, employeeId: { in: employeeCodes } },
-          select: { id: true, employeeId: true },
+          select: {
+            id: true,
+            employeeId: true,
+            departmentId: true,
+            department: true,
+          },
         })
       : [];
     const byCode = new Map(employees.map((e) => [e.employeeId, e.id]));
+    const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+    // Shift config per imported row is resolved exactly as
+    // recalculateAttendanceForDay does — the existing row's snapshotted
+    // department wins over the employee's current one. Departments are
+    // cached so a large sheet doesn't re-fetch the same row repeatedly.
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+    const orgPrefs =
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
+    type DepartmentRow = (typeof employees)[number]['department'];
+    const departmentCache = new Map<string, DepartmentRow>();
+    for (const e of employees) {
+      if (e.department) departmentCache.set(e.department.id, e.department);
+    }
+    const departmentFor = async (id: string) => {
+      if (!departmentCache.has(id)) {
+        departmentCache.set(
+          id,
+          await this.scopedPrisma.department.findFirst({
+            where: { id, organizationId },
+          }),
+        );
+      }
+      return departmentCache.get(id) ?? null;
+    };
 
     let imported = 0;
     let skipped = 0;
     let errors = 0;
+    const rowErrors: { row: number; error: string }[] = [];
 
     // Attendance has no unique constraint on (organizationId, employeeId,
     // date), so two rows sharing a key can't safely run concurrently here
@@ -1683,12 +1991,14 @@ export class AttendanceService {
       existingRows.map((r) => [`${r.employeeId}:${r.date}`, r]),
     );
 
-    for (const row of rows) {
+    for (const [i, row] of rows.entries()) {
+      const rowNum = i + 1;
       const empCode = asString(row.employeeId).trim();
       const empId = byCode.get(empCode);
       const date = asString(row.date).trim();
       if (!empId || !date) {
         errors += 1;
+        rowErrors.push({ row: rowNum, error: 'Unknown employee or date' });
         continue;
       }
 
@@ -1703,11 +2013,55 @@ export class AttendanceService {
           continue;
         }
 
+        // Per-row: a row in a LOCKED/PAID payroll period becomes a row
+        // error, the rest of the batch still executes.
+        await assertPayrollPeriodUnlocked(
+          this.scopedPrisma,
+          organizationId,
+          empId,
+          date,
+        );
+
+        const inRaw = asString(row.inTime).trim();
+        const outRaw = asString(row.outTime).trim();
+        const inTime = inRaw ? parseImportTimestampUtc(inRaw) : null;
+        const outTime = outRaw ? parseImportTimestampUtc(outRaw) : null;
+        if ((inRaw && !inTime) || (outRaw && !outTime)) {
+          throw new BadRequestException('Invalid inTime/outTime');
+        }
+        if (!inTime && !outTime) {
+          throw new BadRequestException(
+            'At least one of inTime or outTime is required',
+          );
+        }
+
+        const employee = employeeById.get(empId);
+        const departmentForShiftConfig =
+          existing?.departmentId &&
+          existing.departmentId !== employee?.departmentId
+            ? await departmentFor(existing.departmentId)
+            : (employee?.department ?? null);
+        const shiftConfig = resolveShiftConfig(
+          departmentForShiftConfig,
+          orgPrefs,
+        );
+        // Same status/duration rules as punch-derived attendance
+        // (shift thresholds, break, holiday, leave, weekly-off).
+        const outcome = await this.deriveDayOutcome(this.scopedPrisma, {
+          organizationId,
+          employeeId: empId,
+          employeeDepartmentId: employee?.departmentId ?? null,
+          dateStr: date,
+          shiftConfig,
+          inTime,
+          outTime,
+        });
+
         const fields = {
-          status: AttendanceStatus.PRESENT,
+          ...outcome,
           source: AttendanceSource.EXCEL_IMPORT,
-          inTime: row.inTime ? new Date(asString(row.inTime)) : null,
-          outTime: row.outTime ? new Date(asString(row.outTime)) : null,
+          inTime,
+          outTime,
           checkinLocation: row.inLocation ? asString(row.inLocation) : null,
           checkoutLocation: row.outLocation ? asString(row.outLocation) : null,
         };
@@ -1720,7 +2074,13 @@ export class AttendanceService {
           existingByKey.set(`${empId}:${date}`, { ...existing, ...fields });
         } else {
           const createdRow = await this.scopedPrisma.attendance.create({
-            data: { organizationId, employeeId: empId, date, ...fields },
+            data: {
+              organizationId,
+              employeeId: empId,
+              date,
+              departmentId: employee?.departmentId ?? null,
+              ...fields,
+            },
           });
           // Keeps a same-key later row in this same file (if any) seeing
           // this write, exactly as the old per-row findFirst-in-loop
@@ -1729,8 +2089,15 @@ export class AttendanceService {
           existingByKey.set(`${empId}:${date}`, createdRow);
         }
         imported += 1;
-      } catch {
+      } catch (err) {
         errors += 1;
+        rowErrors.push({
+          row: rowNum,
+          error:
+            err instanceof BadRequestException
+              ? err.message
+              : 'Failed to import row',
+        });
       }
     }
 
@@ -1744,6 +2111,7 @@ export class AttendanceService {
           imported,
           skipped,
           errors,
+          rowErrors,
         },
       },
     });
