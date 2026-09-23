@@ -511,6 +511,40 @@ describe('Documents (e2e)', () => {
       .expect(200);
   });
 
+  it('bulk-import updates isMandatory on an existing (seeded) requirement instead of skipping it', async () => {
+    const before = await request(app.getHttpServer())
+      .get('/documents/requirements')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const aadhaar = (before.body as PaginatedBody<RequirementBody>).data.find(
+      (r) => r.name === 'Aadhaar Card',
+    )!;
+    expect(aadhaar.isMandatory).toBe(false);
+
+    const res = await request(app.getHttpServer())
+      .post('/documents/requirements/bulk-import')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({
+        rows: [
+          { name: 'Aadhaar Card', isMandatory: true },
+          { name: 'Employee Handbook Ack', isMandatory: true },
+        ],
+      })
+      .expect(201);
+    expect(res.body.created).toEqual(['Employee Handbook Ack']);
+    expect(res.body.updated).toEqual(['Aadhaar Card']);
+    expect(res.body.skipped).toEqual([]);
+
+    const after = await request(app.getHttpServer())
+      .get('/documents/requirements')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const aadhaarAfter = (after.body as PaginatedBody<RequirementBody>).data.find(
+      (r) => r.name === 'Aadhaar Card',
+    )!;
+    expect(aadhaarAfter.isMandatory).toBe(true);
+  });
+
   it('any authenticated employee can list requirements', async () => {
     const res = await request(app.getHttpServer())
       .get('/documents/requirements')

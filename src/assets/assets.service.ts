@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import {
   Asset,
+  AssetCondition,
   AssetDocument,
   AssetInventoryStatus,
   AuditModule,
@@ -29,7 +30,8 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { signFileToken } from '../files/file-token';
 import { paginate, skip, wrapAll } from '../common/pagination';
-import { CreateAssetDto } from './dto/create-asset.dto';
+import { CreateAssetDto, DATE_RE } from './dto/create-asset.dto';
+import { BulkImportAssetsDto } from './dto/bulk-import-assets.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { UpdateAssetWarrantyDto } from './dto/update-asset-warranty.dto';
@@ -396,6 +398,133 @@ export class AssetsService {
     });
 
     return asset;
+  }
+
+  // Client-parsed Excel/CSV import — same Promise.allSettled per-row
+  // isolation as DepartmentsService/OrgListItemsService's bulk imports.
+  // `category` arrives as a plain name (a spreadsheet can't carry an
+  // OrgListItem id) and is resolved case-insensitively here, then reuses
+  // create() itself for the rest so validation/audit/uniqueness checks
+  // never diverge between the manual and bulk paths.
+  async bulkImport(
+    dto: BulkImportAssetsDto,
+    organizationId: string,
+    actor: Actor,
+  ) {
+    const categories = await this.scopedPrisma.orgListItem.findMany({
+      where: { organizationId, type: OrgListType.ASSET_CATEGORY },
+    });
+    const categoryByName = new Map(
+      categories.map((c) => [c.name.trim().toLowerCase(), c.id]),
+    );
+
+    const results = await Promise.allSettled(
+      dto.rows.map((row) => {
+        const assetName = row.assetName?.trim();
+        const purchasedFrom = row.purchasedFrom?.trim();
+        const purchaseDate = row.purchaseDate?.trim();
+        if (!assetName) {
+          return Promise.reject(new Error('Asset Name is required.'));
+        }
+        if (!purchasedFrom) {
+          return Promise.reject(new Error('Purchased From is required.'));
+        }
+        if (!purchaseDate || !DATE_RE.test(purchaseDate)) {
+          return Promise.reject(
+            new Error('Purchase Date is required and must be YYYY-MM-DD.'),
+          );
+        }
+        const categoryName = row.category?.trim();
+        const categoryId = categoryName
+          ? categoryByName.get(categoryName.toLowerCase())
+          : undefined;
+        if (!categoryId) {
+          return Promise.reject(
+            new Error(
+              categoryName
+                ? `Category "${categoryName}" not found.`
+                : 'Category is required.',
+            ),
+          );
+        }
+        const purchaseCost =
+          row.purchaseCost !== undefined && row.purchaseCost !== ''
+            ? Number(row.purchaseCost)
+            : undefined;
+        if (purchaseCost !== undefined && !Number.isFinite(purchaseCost)) {
+          return Promise.reject(new Error('Purchase Cost must be a number.'));
+        }
+        const usefulLifeMonths =
+          row.usefulLifeMonths !== undefined && row.usefulLifeMonths !== ''
+            ? Number(row.usefulLifeMonths)
+            : undefined;
+        if (
+          usefulLifeMonths !== undefined &&
+          !Number.isInteger(usefulLifeMonths)
+        ) {
+          return Promise.reject(
+            new Error('Useful Life (months) must be a whole number.'),
+          );
+        }
+        const condition = (row.condition?.trim().toUpperCase() ||
+          'GOOD') as AssetCondition;
+        if (!Object.values(AssetCondition).includes(condition)) {
+          return Promise.reject(
+            new Error(`Unknown Condition "${row.condition}".`),
+          );
+        }
+        const status = (row.status?.trim().toUpperCase() ||
+          'AVAILABLE') as AssetInventoryStatus;
+        if (!Object.values(AssetInventoryStatus).includes(status)) {
+          return Promise.reject(new Error(`Unknown Status "${row.status}".`));
+        }
+
+        return this.create(
+          {
+            assetCode: row.assetCode?.trim(),
+            assetName,
+            categoryId,
+            categorySpecify: row.categorySpecify?.trim(),
+            brand: row.brand?.trim(),
+            model: row.model?.trim(),
+            assetTag: row.assetTag?.trim(),
+            serialNumber: row.serialNumber?.trim(),
+            purchasedFrom,
+            purchaseDate,
+            purchaseCost,
+            vendorContact: row.vendorContact?.trim(),
+            invoiceNumber: row.invoiceNumber?.trim(),
+            poNumber: row.poNumber?.trim(),
+            location: row.location?.trim(),
+            condition,
+            status,
+            usefulLifeMonths,
+            remarks: row.remarks?.trim(),
+          },
+          organizationId,
+          actor,
+        );
+      }),
+    );
+
+    const created: string[] = [];
+    const skipped: { name: string; reason: string }[] = [];
+    results.forEach((result, idx) => {
+      if (result.status === 'fulfilled') {
+        created.push(result.value.assetName);
+      } else {
+        const reason =
+          result.reason instanceof Error
+            ? result.reason.message
+            : 'Failed to import row.';
+        skipped.push({
+          name: dto.rows[idx]?.assetName ?? '(unknown)',
+          reason,
+        });
+      }
+    });
+
+    return { created, skipped };
   }
 
   async update(

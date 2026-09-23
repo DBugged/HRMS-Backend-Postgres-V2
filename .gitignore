@@ -36,3 +36,4 @@ prisma/generated
 
 ## DB backups
 /backups
+.env.production

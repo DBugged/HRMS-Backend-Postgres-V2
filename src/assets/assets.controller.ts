@@ -24,6 +24,7 @@ import { Role, User } from '@prisma/client';
 // only (shared with the service so create() applies the same gate).
 import { ADMIN_ONLY_STATUSES, AssetsService } from './assets.service';
 import { CreateAssetDto } from './dto/create-asset.dto';
+import { BulkImportAssetsDto } from './dto/bulk-import-assets.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
 import { UpdateAssetWarrantyDto } from './dto/update-asset-warranty.dto';
@@ -55,6 +56,13 @@ export class AssetsController {
   @UseGuards(RolesGuard)
   create(@Body() dto: CreateAssetDto, @CurrentUser() caller: Caller) {
     return this.assetsService.create(dto, caller.organizationId, caller);
+  }
+
+  @Post('bulk-import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkImport(@Body() dto: BulkImportAssetsDto, @CurrentUser() caller: Caller) {
+    return this.assetsService.bulkImport(dto, caller.organizationId, caller);
   }
 
   @Get(':id')

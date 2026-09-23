@@ -1033,4 +1033,59 @@ describe('Asset Inventory (e2e)', () => {
       expect(liveRows).toBe(1);
     });
   });
+
+  describe('bulk import', () => {
+    it('creates rows by resolving Category by name, and reports per-row errors', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assets/bulk-import')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: [
+            {
+              assetName: 'Bulk Laptop 1',
+              category: 'laptop',
+              purchasedFrom: 'Croma',
+              purchaseDate: '2026-02-01',
+              condition: 'good',
+              status: 'available',
+            },
+            {
+              assetName: 'Bulk Laptop 2',
+              category: 'Nonexistent Category',
+              purchasedFrom: 'Croma',
+              purchaseDate: '2026-02-01',
+            },
+            {
+              assetName: '',
+              category: 'Laptop',
+              purchasedFrom: 'Croma',
+              purchaseDate: '2026-02-01',
+            },
+          ],
+        })
+        .expect(201);
+      const body = res.body as {
+        created: string[];
+        skipped: { name: string; reason: string }[];
+      };
+      expect(body.created).toEqual(['Bulk Laptop 1']);
+      expect(body.skipped).toHaveLength(2);
+      expect(body.skipped[0].reason).toContain('Nonexistent Category');
+
+      const created = await prisma.asset.findFirst({
+        where: { assetName: 'Bulk Laptop 1' },
+      });
+      expect(created?.condition).toBe('GOOD');
+      expect(created?.status).toBe('AVAILABLE');
+      expect(created?.categoryId).toBe(laptopCategoryId);
+    });
+
+    it('403s for EMPLOYEE', async () => {
+      await request(app.getHttpServer())
+        .post('/assets/bulk-import')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ rows: [] })
+        .expect(403);
+    });
+  });
 });

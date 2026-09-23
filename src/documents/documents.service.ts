@@ -479,26 +479,47 @@ export class DocumentsService {
 
   // Rows are parsed client-side from the uploaded Excel/CSV (same xlsx
   // library the export path already uses) — this only ever receives plain
-  // {name, isMandatory} JSON. Each row is created independently
+  // {name, isMandatory} JSON. Each row is upserted independently
   // (Promise.allSettled, same per-item isolation idiom used by
   // PayrollService.calculate() and ReimbursementsService.bulkReview()) so
-  // one bad/duplicate row doesn't abort the whole import; a name that
-  // collides with an existing requirement (the @@unique constraint) is
-  // reported back as skipped rather than as a hard failure.
+  // one bad row doesn't abort the whole import. A name that matches an
+  // existing requirement (e.g. a pre-seeded default) updates isMandatory
+  // in place instead of being skipped — re-importing the template is the
+  // expected way to bulk-toggle mandatory/optional on the seeded docs.
   async bulkImportRequirements(
     dto: BulkImportDocumentRequirementsDto,
     actor: Actor,
     organizationId: string,
   ) {
-    const count = await this.scopedPrisma.documentRequirement.count({
+    const existing = await this.scopedPrisma.documentRequirement.findMany({
       where: { organizationId },
+      select: { id: true, name: true },
     });
+    const existingByName = new Map(existing.map((r) => [r.name, r.id]));
+    const existingNames = new Set(existing.map((r) => r.name));
+    const count = existing.length;
 
+    // Prisma's tenant-scoped extension refuses a plain upsert() (it can't
+    // combine the unique-id lookup with the organizationId filter), so an
+    // existing row is updated by id instead.
     const results = await Promise.allSettled(
       dto.rows.map((row, idx) => {
         const name = row.name?.trim();
         if (!name) {
           return Promise.reject(new Error('Row has no document name.'));
+        }
+        const existingId = existingByName.get(name);
+        if (existingId) {
+          return this.scopedPrisma.documentRequirement
+            .updateMany({
+              where: { id: existingId, organizationId },
+              data: { isMandatory: row.isMandatory ?? false },
+            })
+            .then(() =>
+              this.scopedPrisma.documentRequirement.findFirstOrThrow({
+                where: { id: existingId, organizationId },
+              }),
+            );
         }
         return this.scopedPrisma.documentRequirement.create({
           data: {
@@ -513,32 +534,34 @@ export class DocumentsService {
     );
 
     const created: string[] = [];
+    const updated: string[] = [];
     const skipped: { name: string; reason: string }[] = [];
     results.forEach((result, idx) => {
       if (result.status === 'fulfilled') {
-        created.push(result.value.name);
+        if (existingNames.has(result.value.name)) {
+          updated.push(result.value.name);
+        } else {
+          created.push(result.value.name);
+        }
       } else {
         const reason =
-          result.reason instanceof Error &&
-          result.reason.message.includes('Unique constraint')
-            ? 'A requirement with this name already exists.'
-            : result.reason instanceof Error
-              ? result.reason.message
-              : 'Failed to create.';
+          result.reason instanceof Error
+            ? result.reason.message
+            : 'Failed to import.';
         skipped.push({ name: dto.rows[idx].name || '(blank)', reason });
       }
     });
 
-    if (created.length > 0) {
+    if (created.length > 0 || updated.length > 0) {
       await this.auditLogService.log({
         actorId: actor.id,
         action: 'DOCUMENT_REQUIREMENT_BULK_IMPORTED',
         module: 'DOCUMENT',
         organizationId,
-        details: { names: created },
+        details: { created, updated },
       });
     }
 
-    return { created, skipped };
+    return { created, updated, skipped };
   }
 }
