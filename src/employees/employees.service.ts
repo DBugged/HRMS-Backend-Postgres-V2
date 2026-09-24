@@ -386,17 +386,21 @@ export class EmployeesService {
     return `${frontendUrl()}/reset-password/${rawToken}`;
   }
 
-  // ADMIN/HR only (enforced in the controller) — used once an employee's
-  // officialEmail has been set on their profile (it's normally unknown at
-  // creation time) to also get them their login details there. The
+  // ADMIN/HR only (enforced in the controller) — sends to personalEmail,
+  // the same address the original welcome email went to (see create()),
+  // not officialEmail: personalEmail is the one address that's guaranteed
+  // to exist and stays reachable even after the employee has resigned. The
   // original password can't literally be "resent" since it's hashed
   // immediately and never stored in plaintext, so this issues a fresh one
   // and invalidates the old one, same generation path as create().
   async resendCredentials(id: string, organizationId: string) {
     const employee = await this.findByIdOrThrow(id, organizationId);
-    if (!employee.officialEmail) {
+    const personalEmail = (
+      employee.personalData as Record<string, unknown> | null
+    )?.personalEmail;
+    if (typeof personalEmail !== 'string' || !personalEmail) {
       throw new ConflictException(
-        'This employee has no official email on file yet.',
+        'This employee has no personal email on file yet.',
       );
     }
 
@@ -439,12 +443,12 @@ export class EmployeesService {
     );
     await this.emailService.send({
       organizationId,
-      to: employee.officialEmail,
+      to: personalEmail,
       subject: rendered.subject,
       html: rendered.html,
     });
 
-    return { success: true, sentTo: employee.officialEmail };
+    return { success: true, sentTo: personalEmail };
   }
 
   // Row-level isolation, same as the old system's bulkCreateEmployees —

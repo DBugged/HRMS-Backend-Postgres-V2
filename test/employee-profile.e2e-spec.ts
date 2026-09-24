@@ -157,6 +157,28 @@ describe('Employee Rich Profile (e2e)', () => {
       );
     });
 
+    it('EMPLOYEE cannot change their own personalEmail (silently dropped, no error)', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({ personalData: { personalEmail: 'hijacked@example.test' } })
+        .expect(200);
+      expect(
+        (res.body as PersonalDataBody).personalData.personalEmail,
+      ).not.toBe('hijacked@example.test');
+    });
+
+    it('HR can change personalEmail', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ personalData: { personalEmail: 'corrected@example.test' } })
+        .expect(200);
+      expect((res.body as PersonalDataBody).personalData.personalEmail).toBe(
+        'corrected@example.test',
+      );
+    });
+
     it('EMPLOYEE cannot update another employee personal data (403)', async () => {
       await request(app.getHttpServer())
         .patch(`/employees/${otherEmpId}/personal-data`)

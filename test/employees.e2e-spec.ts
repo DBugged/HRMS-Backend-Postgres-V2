@@ -235,6 +235,7 @@ describe('Employees + Departments (e2e)', () => {
 
   describe('welcome email + officialEmail + resend credentials', () => {
     let welcomeEmployeeId: string;
+    let noPersonalEmailId: string;
 
     it('creating an employee with personalEmail stores it in personalData and still returns generatedPassword (email delivery is best-effort/dry-run, not a precondition of success)', async () => {
       const res = await request(app.getHttpServer())
@@ -258,7 +259,7 @@ describe('Employees + Departments (e2e)', () => {
     });
 
     it('creating an employee without personalEmail still succeeds (bulk-import path has no per-row personalEmail column)', async () => {
-      await request(app.getHttpServer())
+      const res = await request(app.getHttpServer())
         .post('/employees')
         .set('Authorization', `Bearer ${hrToken}`)
         .send({
@@ -267,28 +268,23 @@ describe('Employees + Departments (e2e)', () => {
           departmentId: engDepartmentId,
         })
         .expect(201);
+      noPersonalEmailId = (res.body as EmployeeBody).employee.id;
     });
 
-    it('resend-credentials fails with no officialEmail on file yet', async () => {
+    it('resend-credentials fails with no personalEmail on file yet', async () => {
       await request(app.getHttpServer())
-        .post(`/employees/${welcomeEmployeeId}/resend-credentials`)
+        .post(`/employees/${noPersonalEmailId}/resend-credentials`)
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(409);
     });
 
-    it('HR sets officialEmail via PATCH /employees/:id, then resend-credentials succeeds and forces a password change', async () => {
-      await request(app.getHttpServer())
-        .patch(`/employees/${welcomeEmployeeId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ officialEmail: 'employees-e2e-welcome-official@example.test' })
-        .expect(200);
-
+    it('resend-credentials sends to personalEmail (set at creation) and forces a password change', async () => {
       const resendRes = await request(app.getHttpServer())
         .post(`/employees/${welcomeEmployeeId}/resend-credentials`)
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(201);
       expect((resendRes.body as { sentTo: string }).sentTo).toBe(
-        'employees-e2e-welcome-official@example.test',
+        'employees-e2e-welcome-personal@example.test',
       );
 
       const employee = await prisma.user.findUniqueOrThrow({
@@ -305,6 +301,12 @@ describe('Employees + Departments (e2e)', () => {
     });
 
     it('two employees cannot share the same officialEmail', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${welcomeEmployeeId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ officialEmail: 'employees-e2e-welcome-official@example.test' })
+        .expect(200);
+
       await request(app.getHttpServer())
         .patch(`/employees/${engEmployeeId}`)
         .set('Authorization', `Bearer ${hrToken}`)

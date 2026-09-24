@@ -188,9 +188,18 @@ export class EmployeeProfileService {
     const mandatoryDocumentsUploaded =
       await this.computeMandatoryDocumentsUploaded(id, organizationId);
     const before = employee.personalData as Record<string, unknown>;
+    // personalEmail is the address exit documents and credential resends
+    // go to — HR/Admin only, even when the caller is editing their own
+    // profile (assertSelfOrHr/assertMaySetPersonalDataFor above only gate
+    // whose record can be touched, not which fields on it). Frontend
+    // disables the input for everyone else; this is the actual boundary.
+    const patch = { ...dto.personalData };
+    if (!HR_ROLES.includes(actor.role)) {
+      delete patch.personalEmail;
+    }
     const merged = mergePersonalData(
       before,
-      dto.personalData,
+      patch,
       mandatoryDocumentsUploaded,
     );
 
