@@ -2047,6 +2047,9 @@ export class AttendanceService {
         ...(actor.role === Role.MANAGER && { uploadedById: actor.id }),
       },
       orderBy: { createdAt: 'desc' },
+      include: {
+        uploadedBy: { select: { name: true, employeeId: true } },
+      },
     });
   }
 
