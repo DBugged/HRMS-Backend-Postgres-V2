@@ -256,6 +256,18 @@ export class EmployeeProfileService {
   // documents/assets, unlike findOne() which strips the password only.
   async getFullProfile(id: string, actor: Actor, organizationId: string) {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
+    // MANAGER may view a full profile too (controller's @Roles), but only
+    // for someone in their own department — same "own team only" scope
+    // MANAGER already gets everywhere else (attendance, leave review, etc).
+    if (
+      actor.role === Role.MANAGER &&
+      actor.id !== id &&
+      (actor.departmentId === null || employee.departmentId !== actor.departmentId)
+    ) {
+      throw new ForbiddenException(
+        'You can only view profiles of employees in your own department.',
+      );
+    }
     // The full profile itself stays viewable by any ADMIN/HR (the
     // controller's @Roles already gates that) — only the Documents section
     // within it follows the stricter tier (see assertMayAccessDocumentsFor):

@@ -55,3 +55,39 @@ export function noDepartmentManagerScope(
   const id = actor.id ?? '';
   return { OR: [{ id }, { reportingManagerId: id }] };
 }
+
+/**
+ * "My Team" scope — everyone in a MANAGER's reporting chain (direct
+ * reports, and their reports, transitively), as opposed to the default
+ * department-wide scope resolveDepartmentFilter applies everywhere else.
+ * Walked in-memory over one pair-only fetch rather than a recursive SQL
+ * query — org sizes here don't warrant the extra complexity, and every
+ * other in-memory graph walk in this codebase (e.g. department-tree
+ * lookups) follows the same pattern.
+ */
+export function collectReportingChain(
+  managerId: string,
+  allPairs: Array<{ id: string; reportingManagerId: string | null }>,
+): string[] {
+  const reportsOf = new Map<string, string[]>();
+  for (const { id, reportingManagerId } of allPairs) {
+    if (!reportingManagerId) continue;
+    const list = reportsOf.get(reportingManagerId);
+    if (list) list.push(id);
+    else reportsOf.set(reportingManagerId, [id]);
+  }
+  const chain: string[] = [];
+  const queue = [...(reportsOf.get(managerId) ?? [])];
+  const seen = new Set<string>(queue);
+  while (queue.length > 0) {
+    const next = queue.shift()!;
+    chain.push(next);
+    for (const child of reportsOf.get(next) ?? []) {
+      if (!seen.has(child)) {
+        seen.add(child);
+        queue.push(child);
+      }
+    }
+  }
+  return chain;
+}

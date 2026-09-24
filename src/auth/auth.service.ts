@@ -456,7 +456,20 @@ export class AuthService {
   }
 
   async me(userId: string, organizationId: string) {
-    const user = await this.usersService.findByIdInOrg(userId, organizationId);
+    // Includes department/reportingManager/workLocation names — the
+    // self-service "My Profile" page shows these org-context facts about
+    // the caller's own record (mirrors EmployeeFullProfile's own include
+    // for the HR/Admin view of another employee), which plain scalar
+    // fields alone (departmentId etc.) can't render without a second
+    // lookup.
+    const user = await this.scopedPrisma.user.findFirst({
+      where: { id: userId, organizationId },
+      include: {
+        department: { select: { id: true, name: true } },
+        reportingManager: { select: { id: true, name: true, employeeId: true } },
+        workLocation: { select: { id: true, name: true } },
+      },
+    });
     if (!user) throw new UnauthorizedException();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
     const { password, resetPasswordToken, resetPasswordExpires, ...safe } =

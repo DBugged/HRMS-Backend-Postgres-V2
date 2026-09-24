@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEnum,
   IsIn,
   IsInt,
@@ -71,4 +72,17 @@ export class ListEmployeesQueryDto {
   @IsOptional()
   @IsIn(['asc', 'desc'])
   sortOrder?: 'asc' | 'desc';
+
+  // "My Team" (frontend /team): for a MANAGER, swaps the default department
+  // scope for the reporting-chain scope (everyone who reports to them,
+  // directly or via someone who reports to them) — see resolveTeamIds().
+  // No effect for ADMIN/HR, who already see the whole org unfiltered.
+  @ApiPropertyOptional({
+    description:
+      "MANAGER only — scope to the caller's reporting chain instead of their department.",
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === 'true' || value === true)
+  @IsBoolean()
+  myTeam?: boolean;
 }

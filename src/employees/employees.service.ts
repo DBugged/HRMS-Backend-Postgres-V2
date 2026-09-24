@@ -52,6 +52,7 @@ import { mergePersonalData } from './personal-data';
 import {
   Actor,
   canManagerAccessEmployee,
+  collectReportingChain,
   noDepartmentManagerScope,
   resolveDepartmentFilter,
 } from './employee-query-scope';
@@ -685,10 +686,25 @@ export class EmployeesService {
     actor: Actor,
     organizationId: string,
   ) {
-    const departmentId = resolveDepartmentFilter(actor, query.department);
-    const noDeptScope = noDepartmentManagerScope(actor);
+    // "My Team" (?myTeam=true): a MANAGER's reporting chain instead of
+    // their department — ADMIN/HR are unaffected (already unfiltered).
+    const teamIds =
+      query.myTeam && actor.role === Role.MANAGER && actor.id
+        ? collectReportingChain(
+            actor.id,
+            await this.scopedPrisma.user.findMany({
+              where: { organizationId },
+              select: { id: true, reportingManagerId: true },
+            }),
+          )
+        : null;
+    const departmentId = teamIds
+      ? undefined
+      : resolveDepartmentFilter(actor, query.department);
+    const noDeptScope = teamIds ? undefined : noDepartmentManagerScope(actor);
     const where = {
       organizationId,
+      ...(teamIds && { id: { in: teamIds } }),
       ...(departmentId && { departmentId }),
       ...(noDeptScope && { AND: [noDeptScope] }),
       ...(query.role && { role: query.role }),
@@ -1403,7 +1419,15 @@ const WORK_LOCATION_SELECT = {
 // A MANAGER sees other employees' sensitive identifiers (PAN/Aadhaar/UAN/bank/passport) masked to the last 4
 // characters; HR/ADMIN and the employee themself see everything.
 function maskFor(actor: Actor, targetId: string): boolean {
-  return actor.role === Role.MANAGER && actor.id !== targetId;
+  // EMPLOYEE now reaches findAll too (Reporting Structure's org-chart view
+  // is open to everyone) — mask personalData for anyone below HR/Admin
+  // looking at someone else's row, not just MANAGER, or an employee
+  // browsing that list would see every colleague's bank/PAN/Aadhar/address.
+  return (
+    actor.role !== Role.ADMIN &&
+    actor.role !== Role.HR &&
+    actor.id !== targetId
+  );
 }
 
 // Shared by both the initial welcome email (create()) and

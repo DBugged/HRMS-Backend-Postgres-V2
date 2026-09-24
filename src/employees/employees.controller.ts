@@ -66,7 +66,12 @@ export class EmployeesController {
   }
 
   @Get()
-  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  // EMPLOYEE included so Reporting Structure's org-chart view works for
+  // everyone, not just ADMIN/HR/MANAGER — see maskFor() in
+  // employees.service.ts for the personalData redaction that keeps this
+  // safe (an EMPLOYEE caller never sees another employee's bank/PAN/
+  // Aadhar/address, same as MANAGER already didn't).
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER, Role.EMPLOYEE)
   @UseGuards(RolesGuard)
   findAll(
     @Query() query: ListEmployeesQueryDto,
@@ -149,7 +154,7 @@ export class EmployeesController {
   }
 
   @Get(':id/full-profile')
-  @Roles(Role.ADMIN, Role.HR)
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   getFullProfile(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.employeeProfileService.getFullProfile(
