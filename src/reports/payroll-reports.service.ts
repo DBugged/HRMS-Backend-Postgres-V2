@@ -5,7 +5,7 @@
 // Important: reports filter by each run's own snapshot data (e.g. "has an INCOME_TAX deduction line") rather
 // than re-deriving current settings/statutory-overlay for the period, since a run's own snapshot is
 // authoritative for what applied at that time even if settings changed since. bankTransferReport's account
-// fields always render '-' since no bank-details fields exist on User yet (same gap as the payslip PDF).
+// fields read from personalData.bank* (see that method).
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import {
@@ -155,24 +155,39 @@ export class PayrollReportsService {
   }
 
   // No bank fields exist on backend-v2's User model yet (same gap as the
-  // payslip PDF's PAN/UAN/bank rows) — every account field renders '-',
-  // preserving the report's shape so it lights up automatically once a
-  // future "Employee Statutory & Bank Details" batch adds them.
+  // Bank account fields read from personalData.bank* — fetched separately
+  // here (not via fetchRuns' shared employee select, which every other
+  // report method also uses and shouldn't carry this JSON blob for no
+  // reason) rather than joined onto the run itself.
   async bankTransferReport(
     query: PayrollReportQueryDto,
     organizationId: string,
   ): Promise<ReportPayload> {
     const runs = await this.fetchRuns(query, organizationId);
-    const rows = runs
-      .filter((r) => PAID_OUT_STATUSES.includes(r.status))
-      .map((r) => ({
-        employeeId: r.employee.employeeId,
-        name: r.employee.name,
-        bankAccountNo: '-',
-        bankIFSC: '-',
-        bankName: '-',
-        netPay: r.netPay,
-      }));
+    const paidRuns = runs.filter((r) => PAID_OUT_STATUSES.includes(r.status));
+    const employeeIds = [...new Set(paidRuns.map((r) => r.employeeId))];
+    const personalDataById = new Map(
+      employeeIds.length
+        ? (
+            await this.scopedPrisma.user.findMany({
+              where: { organizationId, id: { in: employeeIds } },
+              select: { id: true, personalData: true },
+            })
+          ).map((e) => [e.id, e.personalData as Record<string, unknown> | null])
+        : [],
+    );
+    const bankField = (employeeId: string, key: string): string => {
+      const v = personalDataById.get(employeeId)?.[key];
+      return typeof v === 'string' && v.trim() ? v.trim() : '-';
+    };
+    const rows = paidRuns.map((r) => ({
+      employeeId: r.employee.employeeId,
+      name: r.employee.name,
+      bankAccountNo: bankField(r.employeeId, 'bankAccountNo'),
+      bankIFSC: bankField(r.employeeId, 'bankIFSC'),
+      bankName: bankField(r.employeeId, 'bankName'),
+      netPay: r.netPay,
+    }));
 
     const columns: ReportColumn[] = [
       { header: 'Employee ID', key: 'employeeId', width: 14 },

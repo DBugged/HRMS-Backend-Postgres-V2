@@ -19,14 +19,9 @@ import { attachWatermark } from '../common/pdf-watermark';
  * simply never appears, since the payroll engine never generated a line
  * for it) and the *branding/toggles* come from the active PayrollTemplate.
  *
- * One remaining deliberate scope reduction vs. the old system, because the
- * underlying data source doesn't exist anywhere in backend-v2 yet:
- * - UAN/PF Number/ESIC/Bank Details rows always render '-' — PAN now
- *   reads personalData.panNumber (see the showPAN branch below), but no
- *   equivalent field exists yet for UAN/PF/ESIC/bank details as a
- *   *payroll-facing* value (personalData.uanNumber/bank* exist but aren't
- *   wired here yet). The template's own showUAN/etc. toggles are
- *   preserved so a future pass can light these up the same way.
+ * PAN/UAN/Bank Details rows read from personalData (see the showPAN/
+ * showUAN/showBankDetails branches below). PF Number/ESIC Number still
+ * always render '-' — no such field is collected anywhere in the app yet.
  * PayrollTemplate itself needs no "Organization fallback" (unlike the old
  * system) — its company* fields already carry real DB-level defaults
  * (Batch 5b), so the old applyOrganizationFallback() has no equivalent
@@ -554,20 +549,22 @@ export class PayslipPdfService {
             : '-',
         ],
       ];
-      // No employee statutory/bank-details fields exist yet — these rows
-      // always show '-' until that data source is built (see class doc).
-      if (template.showPAN) {
-        const pd = run.employee.personalData as Record<string, unknown> | null;
-        const pan = typeof pd?.panNumber === 'string' ? pd.panNumber.trim() : '';
-        empFields.push(['PAN', pan || '-']);
-      }
-      if (template.showUAN) empFields.push(['UAN', '-']);
+      // PF Number/ESIC Number still have no data source anywhere in the
+      // app (no such field is collected) — those two rows stay '-' until
+      // one exists. PAN/UAN/Bank read from personalData below.
+      const pd = run.employee.personalData as Record<string, unknown> | null;
+      const pdStr = (key: string) => {
+        const v = pd?.[key];
+        return typeof v === 'string' ? v.trim() : '';
+      };
+      if (template.showPAN) empFields.push(['PAN', pdStr('panNumber') || '-']);
+      if (template.showUAN) empFields.push(['UAN', pdStr('uanNumber') || '-']);
       if (template.showPFNumber) empFields.push(['PF Number', '-']);
       if (template.showESIC) empFields.push(['ESIC Number', '-']);
       if (template.showBankDetails) {
-        empFields.push(['Bank Name', '-']);
-        empFields.push(['Bank Account', '-']);
-        empFields.push(['IFSC Code', '-']);
+        empFields.push(['Bank Name', pdStr('bankName') || '-']);
+        empFields.push(['Bank Account', pdStr('bankAccountNo') || '-']);
+        empFields.push(['IFSC Code', pdStr('bankIFSC') || '-']);
       }
       this.drawTwoColKV(
         doc,

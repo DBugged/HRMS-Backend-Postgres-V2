@@ -293,6 +293,11 @@ export class LettersService {
       `${currencySymbol}${currencySymbol === 'Rs.' ? ' ' : ''}${Math.round(n).toLocaleString('en-IN')}`;
 
     const firstName = employee.name.split(' ')[0] || employee.name;
+    const pd = (employee.personalData ?? {}) as Record<string, unknown>;
+    const pdStr = (key: string): string => {
+      const v = pd[key];
+      return typeof v === 'string' && v.trim() ? v.trim() : '—';
+    };
     const variables: Record<string, string> = {
       employeeName: employee.name,
       firstName,
@@ -310,6 +315,19 @@ export class LettersService {
       probationEndDate: employee.probationEndDate
         ? formatDateDisplay(employee.probationEndDate)
         : '—',
+      // personalData-backed placeholders — a letter that needs to state an
+      // employee's PAN/address/bank details (e.g. a bank-confirmation or
+      // address-proof letter) previously had nothing to reference at all.
+      employeeAddress: pdStr('currentAddress'),
+      panNumber: pdStr('panNumber'),
+      uanNumber: pdStr('uanNumber'),
+      aadharNumber: pdStr('aadharNumber'),
+      bankName: pdStr('bankName'),
+      bankAccountNo: pdStr('bankAccountNo'),
+      bankIFSC: pdStr('bankIFSC'),
+      bankAccountHolderName: pdStr('bankAccountHolderName'),
+      emergencyContactName: pdStr('emergencyContact1Name'),
+      emergencyContactNumber: pdStr('emergencyContact1Number'),
     };
 
     switch (template.dataProfile) {

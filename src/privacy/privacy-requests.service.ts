@@ -95,7 +95,6 @@ const MASKED_KEYS = [
   'uanNumber',
   'esicNumber',
   'bankAccountNo',
-  'bankMobile',
   'passportNumber',
 ];
 const OMITTED_KEYS = ['cancelledChequeUrl'];
