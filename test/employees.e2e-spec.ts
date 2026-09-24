@@ -402,11 +402,18 @@ describe('Employees + Departments (e2e)', () => {
     expect(idA).not.toBe(idB);
   });
 
-  it('EMPLOYEE gets 403 on the list endpoint (only ADMIN/HR/MANAGER may list)', async () => {
-    await request(app.getHttpServer())
+  // EMPLOYEE was 403'd here until the Reporting Structure org-chart view
+  // was opened to every role — now allowed, org-wide and unfiltered same
+  // as ADMIN/HR. personalData masking for non-self rows (maskFor() in
+  // employees.service.ts) reuses maskPersonalData(), already covered by
+  // personal-data-mask.spec.ts — not re-asserted here.
+  it('EMPLOYEE can list employees (Reporting Structure)', async () => {
+    const res = await request(app.getHttpServer())
       .get('/employees')
       .set('Authorization', `Bearer ${engEmployeeToken}`)
-      .expect(403);
+      .expect(200);
+    const body = res.body as ListEmployeesBody;
+    expect(body.data.length).toBeGreaterThan(1);
   });
 
   it('lists employees by employee ID ascending by default', async () => {
