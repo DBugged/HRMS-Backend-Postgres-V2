@@ -232,6 +232,51 @@ describe('Leaves (e2e)', () => {
       .expect(400);
   });
 
+  it('two concurrent identical submissions: only one is accepted, not two duplicate rows', async () => {
+    // Reproduces the exact race this guards against: two identical
+    // apply() calls both reading the same pre-transaction "no conflict"
+    // snapshot used to both succeed, creating two live PENDING rows for
+    // the identical date range. The per-employee row lock in
+    // createLeaveInternal's transaction now serializes these, and the
+    // second re-checks overlap after acquiring the lock.
+    const dto = {
+      leaveType: elLeaveTypeId,
+      startDate: offsetDate(100),
+      endDate: offsetDate(100),
+    };
+    const [a, b] = await Promise.all([
+      request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send(dto),
+      request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send(dto),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([201, 400]);
+
+    const rows = await prisma.leave.findMany({
+      where: {
+        employeeId,
+        startDate: dto.startDate,
+        endDate: dto.endDate,
+        status: { in: ['PENDING', 'APPROVED'] },
+      },
+    });
+    expect(rows.length).toBe(1);
+
+    // Clean up: reject the one that succeeded so it doesn't leave a
+    // dangling pending hold that skews the balance assertions later in
+    // this file.
+    await request(app.getHttpServer())
+      .patch(`/leaves/${rows[0].id}/review`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ decision: 'REJECTED' })
+      .expect(200);
+  });
+
   it('EMPLOYEE gets 403 reviewing any leave request', async () => {
     await request(app.getHttpServer())
       .patch(`/leaves/${elLeaveId}/review`)
@@ -376,6 +421,89 @@ describe('Leaves (e2e)', () => {
       where: { employeeId, leaveTypeId: compOffLeaveTypeId },
     });
     expect(balanceRow).toBeNull();
+  });
+
+  it('concurrent approval of two COMPOFF leaves never loses a balance debit to a race', async () => {
+    // A second, independent comp-off credit (a different past Sunday) so
+    // there's enough balance for two 0.5-day leaves.
+    const earnedForDate2 = (() => {
+      const d = new Date();
+      const day = d.getUTCDay();
+      d.setUTCDate(d.getUTCDate() - (day || 7) - 7);
+      return d.toISOString().slice(0, 10);
+    })();
+    const compOff2 = await request(app.getHttpServer())
+      .post('/comp-offs')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ earnedForDate: earnedForDate2 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .patch(`/comp-offs/${(compOff2.body as { id: string }).id}/review`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ decision: 'APPROVED' })
+      .expect(200);
+
+    const before = await prisma.compOff.findMany({ where: { employeeId } });
+    const availableBefore = before.reduce(
+      (sum, r) => sum + (r.daysEarned - r.daysAvailed),
+      0,
+    );
+    expect(availableBefore).toBeGreaterThanOrEqual(1);
+
+    const [leaveA, leaveB] = await Promise.all(
+      [30, 31].map((offset) =>
+        request(app.getHttpServer())
+          .post('/leaves')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({
+            leaveType: compOffLeaveTypeId,
+            startDate: offsetDate(offset),
+            endDate: offsetDate(offset),
+            isHalfDay: true,
+          })
+          .expect(201),
+      ),
+    );
+
+    // Approving both at once is exactly the race that used to silently
+    // corrupt the ledger (comp-off.service.ts's consumeForLeave read the
+    // balance, computed a new absolute value, and overwrote it with no
+    // guard — a second concurrent approval reading the same starting
+    // balance would clobber the first's already-committed write). Now
+    // guarded: at most one of the two can win the compare-and-swap: the
+    // other must be rejected (409), never both silently "succeeding" with
+    // only one debit actually persisted.
+    const [resA, resB] = await Promise.all([
+      request(app.getHttpServer())
+        .patch(`/leaves/${(leaveA.body as LeaveBody).id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' }),
+      request(app.getHttpServer())
+        .patch(`/leaves/${(leaveB.body as LeaveBody).id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' }),
+    ]);
+    const statuses = [resA.status, resB.status].sort();
+    // Either both cleanly succeed (if Postgres happened to fully serialize
+    // them) or exactly one wins and the other is rejected as a conflict —
+    // what must never happen is both returning 200 while the ledger only
+    // reflects one debit (the corruption this test guards against).
+    expect([
+      [200, 200],
+      [200, 409],
+    ]).toContainEqual(statuses);
+
+    const succeededCount = [resA.status, resB.status].filter(
+      (s) => s === 200,
+    ).length;
+    const after = await prisma.compOff.findMany({ where: { employeeId } });
+    const availableAfter = after.reduce(
+      (sum, r) => sum + (r.daysEarned - r.daysAvailed),
+      0,
+    );
+    // Every leave that actually got to APPROVED must have its 0.5 days
+    // reflected in the ledger — not silently dropped.
+    expect(availableBefore - availableAfter).toBe(succeededCount * 0.5);
   });
 
   it('rejects applying for a COMPOFF leave beyond available comp-off balance', async () => {

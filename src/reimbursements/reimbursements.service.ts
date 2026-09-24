@@ -140,6 +140,32 @@ export class ReimbursementsService {
     actor: Actor,
     organizationId: string,
   ) {
+    // Application-level duplicate-submission guard — this had none at all
+    // (reproduced live: firing the identical claim twice at once created 2
+    // fully independent, each individually approvable/payable rows — a
+    // double-click could mean a real expense gets reimbursed twice). Same
+    // pattern CompOffService.earn() already uses: a claim matching on the
+    // fields that make two submissions "the same claim" (not create time,
+    // which a race can't be trusted to differ on), excluding REJECTED so a
+    // legitimate resubmission after rejection still goes through. This has
+    // a small remaining race window under truly concurrent double-submits,
+    // same accepted trade-off comp-off's own guard documents.
+    const duplicate = await this.scopedPrisma.reimbursement.findFirst({
+      where: {
+        organizationId,
+        employeeId: actor.id,
+        category: dto.category,
+        amount: dto.amount,
+        claimDate: dto.claimDate,
+        status: { not: ReimbursementStatus.REJECTED },
+      },
+    });
+    if (duplicate) {
+      throw new ConflictException(
+        'A reimbursement claim for this amount, category, and date already exists. If your previous claim was rejected, you may resubmit it.',
+      );
+    }
+
     const claim = await this.scopedPrisma.reimbursement.create({
       data: {
         organizationId,

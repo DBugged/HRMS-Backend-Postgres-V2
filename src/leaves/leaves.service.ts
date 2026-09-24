@@ -40,7 +40,7 @@ import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
-import { checkLeaveRules, LeaveRules } from './leave-rules';
+import { checkLeaveRules, rangesOverlap, LeaveRules } from './leave-rules';
 import {
   resolveShiftConfig,
   OrganizationAttendancePrefs,
@@ -856,6 +856,36 @@ export class LeavesService {
     }
 
     const created = await this.scopedPrisma.$transaction(async (tx) => {
+      // Row-lock the applicant's own User row so two concurrent apply()
+      // calls for the same employee serialize instead of both reading the
+      // same pre-transaction `otherLeaves` snapshot and both passing the
+      // overlap check above — reproduced live: firing the identical leave
+      // request twice at once created two separate PENDING rows for the
+      // same date range. Re-checking overlap here, after the lock, against
+      // a freshly re-fetched range list closes that window; the second
+      // concurrent caller waits for the first to commit, then sees its
+      // just-inserted row and is correctly rejected.
+      await tx.$queryRaw`SELECT id FROM "users" WHERE id = ${actor.id} FOR UPDATE`;
+      const freshOtherLeaves = await tx.leave.findMany({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+        },
+        select: { startDate: true, endDate: true },
+      });
+      const stillOverlaps = freshOtherLeaves.some((range) =>
+        rangesOverlap(
+          { start: range.startDate, end: range.endDate },
+          { start: dto.startDate, end: dto.endDate },
+        ),
+      );
+      if (stillOverlaps) {
+        throw new BadRequestException(
+          'This leave request overlaps with an existing pending or approved leave.',
+        );
+      }
+
       if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
         const year = deriveLeaveYear(dto.startDate);
         const negativeBalance =

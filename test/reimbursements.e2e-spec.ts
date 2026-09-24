@@ -254,6 +254,25 @@ describe('Reimbursements (e2e)', () => {
     expect(same?.receiptUrl).toMatch(/^\/files\//);
   });
 
+  it('rejects a duplicate claim (same employee/category/amount/date)', async () => {
+    await request(app.getHttpServer())
+      .post('/reimbursements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ amount: 800, claimDate: '2026-06-15', category: 'MEDICAL' })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/reimbursements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ amount: 800, claimDate: '2026-06-15', category: 'MEDICAL' })
+      .expect(409);
+    // A different date is a different claim, not a duplicate.
+    await request(app.getHttpServer())
+      .post('/reimbursements')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ amount: 800, claimDate: '2026-06-16', category: 'MEDICAL' })
+      .expect(201);
+  });
+
   it("another EMPLOYEE's list never includes claims that aren't theirs", async () => {
     const res = await request(app.getHttpServer())
       .get('/reimbursements')

@@ -476,11 +476,31 @@ export class CompOffService {
     if (result.shortfall > 0) {
       throw new ForbiddenException('Insufficient comp-off balance.');
     }
+    // Guarded compare-and-swap, not a blind overwrite: each update's WHERE
+    // re-asserts the exact daysAvailed this calculation was based on. Two
+    // concurrent approvals reading the same starting balance would
+    // otherwise both compute a "correct" absolute newAvailed and the
+    // second write would silently clobber the first's — a real lost-update
+    // reproduced under concurrent comp-off-leave approval. If the guard
+    // misses (another transaction already changed this row), surface it as
+    // a conflict rather than corrupt the ledger; the caller (LeavesService,
+    // inside its own transaction) rolls back and the reviewer retries.
+    const byId = new Map(rows.map((row) => [row.id, row.daysAvailed]));
     for (const update of result.updated) {
-      await tx.compOff.updateMany({
-        where: { id: update.id, organizationId },
+      const previousDaysAvailed = byId.get(update.id)!;
+      const { count } = await tx.compOff.updateMany({
+        where: {
+          id: update.id,
+          organizationId,
+          daysAvailed: previousDaysAvailed,
+        },
         data: { daysAvailed: update.daysAvailed, status: update.status },
       });
+      if (count === 0) {
+        throw new ConflictException(
+          'This comp-off balance was just updated elsewhere — please retry.',
+        );
+      }
     }
   }
 
@@ -500,11 +520,24 @@ export class CompOffService {
       },
     });
     const updates = releaseCompOff(rows, days);
+    // Same guarded compare-and-swap as consumeForLeave above — see its
+    // comment for why a blind updateMany is unsafe here.
+    const byId = new Map(rows.map((row) => [row.id, row.daysAvailed]));
     for (const update of updates) {
-      await tx.compOff.updateMany({
-        where: { id: update.id, organizationId },
+      const previousDaysAvailed = byId.get(update.id)!;
+      const { count } = await tx.compOff.updateMany({
+        where: {
+          id: update.id,
+          organizationId,
+          daysAvailed: previousDaysAvailed,
+        },
         data: { daysAvailed: update.daysAvailed, status: update.status },
       });
+      if (count === 0) {
+        throw new ConflictException(
+          'This comp-off balance was just updated elsewhere — please retry.',
+        );
+      }
     }
   }
 

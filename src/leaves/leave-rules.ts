@@ -134,7 +134,12 @@ function computeSandwichAdjustedDays(
   return allNonWorking ? totalDays + gapDays : totalDays;
 }
 
-function rangesOverlap(a: DateRange, b: DateRange): boolean {
+// Exported so LeavesService can re-run the same check inside its create
+// transaction, after acquiring a per-employee lock, against a freshly
+// re-fetched range list — the check() call below only has a pre-transaction
+// snapshot, which two concurrent apply() calls for the same employee can
+// both pass (see LeavesService.createLeaveInternal for the full guard).
+export function rangesOverlap(a: DateRange, b: DateRange): boolean {
   return a.start <= b.end && b.start <= a.end;
 }
 
