@@ -8,7 +8,10 @@
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
 import * as crypto from 'crypto';
-import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
+import {
+  EMPLOYEE_RELATION_ORDER_BY,
+  compareEmployees,
+} from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
@@ -89,6 +92,26 @@ type Actor = Omit<User, 'password'>;
 // recalculateAttendanceForDay/the Leave-integration hooks run inside
 // whichever one the caller is already using.
 type Db = ExtendedPrismaClient | Prisma.TransactionClient;
+
+// Shared between list()'s two row sources (a real DB findMany, and
+// listWithSyntheticAbsences()'s synthetic rows) so both produce exactly the
+// same TS shape for `record.employee` — split apart, Prisma's inferred
+// return type for the findMany() branch and the hand-built synthetic rows
+// silently diverged (a bare object literal isn't narrowed the same way a
+// `select` is), which surfaced as type errors in the shared enrichment code
+// below that reads `record.employee` regardless of which source it came
+// from.
+const ATTENDANCE_LIST_EMPLOYEE_SELECT = {
+  id: true,
+  name: true,
+  employeeId: true,
+  workLocation: true,
+  department: { include: { workLocation: true } },
+} satisfies Prisma.UserSelect;
+type AttendanceListEmployee = Prisma.UserGetPayload<{
+  select: typeof ATTENDANCE_LIST_EMPLOYEE_SELECT;
+}>;
+type AttendanceListRow = Attendance & { employee: AttendanceListEmployee };
 
 function utcDateStrOf(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -1294,29 +1317,44 @@ export class AttendanceService {
       };
     }
 
-    const result = await paginate(
-      () =>
-        this.scopedPrisma.attendance.findMany({
-          where,
-          include: {
-            employee: {
-              select: {
-                id: true,
-                name: true,
-                employeeId: true,
-                workLocation: true,
-                department: { include: { workLocation: true } },
-              },
-            },
-          },
-          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
-          skip: skip(query.page, query.limit),
-          take: query.limit,
-        }),
-      () => this.scopedPrisma.attendance.count({ where }),
-      query.page,
-      query.limit,
-    );
+    // A bounded date range (≤31 days — the Attendance Records page's own
+    // Month filter sends exactly this) gets the same "no row = Absent (or
+    // Holiday/Weekly Off/On Leave)" backfill the Attendance & Leave Tracker
+    // dashboard grid already applies, so the two pages agree — a range with
+    // no punches ever recorded used to show real zero-count summary cards
+    // here while the dashboard showed a grid full of Absent, which read as
+    // the two pages disagreeing about the same data. An unbounded query
+    // (no from/to) skips this — synthesizing across an employee's entire
+    // history on every request isn't bounded work.
+    const rangeDays =
+      query.from && query.to
+        ? enumerateDateStrings(query.from, query.to)
+        : null;
+    const result =
+      rangeDays && rangeDays.length <= 31
+        ? await this.listWithSyntheticAbsences(
+            where,
+            rangeDays,
+            query,
+            organizationId,
+          )
+        : await paginate(
+            () =>
+              this.scopedPrisma.attendance.findMany({
+                where,
+                include: {
+                  employee: {
+                    select: ATTENDANCE_LIST_EMPLOYEE_SELECT,
+                  },
+                },
+                orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
+                skip: skip(query.page, query.limit),
+                take: query.limit,
+              }),
+            () => this.scopedPrisma.attendance.count({ where }),
+            query.page,
+            query.limit,
+          );
 
     // Additive lookups for the calendar/table day-detail tooltip: a leave
     // type name for ON_LEAVE/HALF_DAY rows and a holiday name for HOLIDAY
@@ -1430,6 +1468,149 @@ export class AttendanceService {
           ...(leaveTypeName !== undefined && { leaveTypeName }),
         };
       }),
+    };
+  }
+
+  // list()'s bounded-range path: fetches whatever real Attendance rows
+  // exist, then fills in a synthetic row (via the same deriveDayOutcome()
+  // recalculateAttendanceForDay itself uses — read-only here, nothing is
+  // persisted) for every employee × day in range that has none, so the
+  // rows and the client-computed summary counts on the Attendance Records
+  // page agree with the dashboard grid's own Absent/Holiday/Weekly Off/On
+  // Leave backfill instead of silently showing fewer rows than it.
+  private async listWithSyntheticAbsences(
+    where: Prisma.AttendanceWhereInput,
+    rangeDays: string[],
+    query: QueryAttendanceDto,
+    organizationId: string,
+  ): Promise<{
+    data: AttendanceListRow[];
+    total: number;
+    page: number;
+    limit: number;
+  }> {
+    // where.employeeId was built against Prisma.AttendanceWhereInput's own
+    // `id` filter type, which is structurally identical to User's but
+    // nominally distinct — Prisma brands them per model, so this needs an
+    // explicit cast even though the runtime shape (string | {in: string[]})
+    // is exactly what user.findMany's own `id` filter accepts.
+    const employeeIdFilter = where.employeeId as
+      Prisma.UserWhereInput['id'] | undefined;
+
+    const [org, employees, realRows] = await Promise.all([
+      this.prisma.organization.findUnique({ where: { id: organizationId } }),
+      this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          ...(employeeIdFilter ? { id: employeeIdFilter } : {}),
+        },
+        select: {
+          ...ATTENDANCE_LIST_EMPLOYEE_SELECT,
+          joiningDate: true,
+          departmentId: true,
+        },
+      }),
+      this.scopedPrisma.attendance.findMany({
+        where,
+        include: { employee: { select: ATTENDANCE_LIST_EMPLOYEE_SELECT } },
+      }),
+    ]);
+
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const orgPrefs = (org?.attendancePayrollPrefs ??
+      null) as OrganizationAttendancePrefs | null;
+    const existingKeys = new Set(
+      realRows.map((r) => `${r.employeeId}|${r.date}`),
+    );
+
+    const synthetic: AttendanceListRow[] = [];
+    for (const employee of employees) {
+      const joiningDateStr = employee.joiningDate.toISOString().slice(0, 10);
+      const shiftConfig = resolveShiftConfig(employee.department, orgPrefs);
+      // The public row shape carries only the fields ATTENDANCE_LIST_EMPLOYEE_SELECT
+      // picks — joiningDate/departmentId above are for this loop's own use only.
+      const {
+        joiningDate: _joiningDate,
+        departmentId: _departmentId,
+        ...publicEmployee
+      } = employee;
+      void _joiningDate;
+      void _departmentId;
+
+      for (const dateStr of rangeDays) {
+        if (existingKeys.has(`${employee.id}|${dateStr}`)) continue;
+        if (dateStr >= today) continue; // today isn't over; future never touched
+        if (dateStr < joiningDateStr) continue; // not yet an employee
+
+        const { status, workDurationMinutes, isLate, isEarlyOut } =
+          await this.deriveDayOutcome(this.scopedPrisma, {
+            organizationId,
+            employeeId: employee.id,
+            employeeDepartmentId: employee.departmentId,
+            dateStr,
+            shiftConfig,
+            inTime: null,
+            outTime: null,
+          });
+        if (query.status && status !== query.status) continue;
+
+        synthetic.push({
+          id: `synthetic:${employee.id}:${dateStr}`,
+          organizationId,
+          employeeId: employee.id,
+          date: dateStr,
+          departmentId: employee.departmentId,
+          status,
+          inTime: null,
+          outTime: null,
+          checkinLocation: null,
+          checkinLatitude: null,
+          checkinLongitude: null,
+          checkinSelfieUrl: null,
+          checkoutLocation: null,
+          checkoutLatitude: null,
+          checkoutLongitude: null,
+          checkoutSelfieUrl: null,
+          workDurationMinutes,
+          isLate,
+          isEarlyOut,
+          source: null,
+          workArrangement: WorkArrangement.OFFICE,
+          workArrangementStatus: WfhApprovalStatus.NONE,
+          workArrangementReviewedById: null,
+          workArrangementReviewedAt: null,
+          workArrangementReviewComments: null,
+          // Same shape as the column's own schema default — never persisted,
+          // just matching what a real never-touched row would carry.
+          regularization: {
+            requested: false,
+            reason: '',
+            requestedInTime: null,
+            requestedOutTime: null,
+            status: 'none',
+            reviewedBy: null,
+            reviewedAt: null,
+            reviewComments: '',
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          employee: publicEmployee,
+        } as unknown as AttendanceListRow);
+      }
+    }
+
+    const merged: AttendanceListRow[] = [...realRows, ...synthetic].sort(
+      (a, b) =>
+        compareEmployees(a.employee, b.employee) ||
+        (a.date < b.date ? 1 : a.date > b.date ? -1 : 0),
+    );
+    const total = merged.length;
+    const start = skip(query.page, query.limit);
+    return {
+      data: merged.slice(start, start + query.limit),
+      total,
+      page: query.page,
+      limit: query.limit,
     };
   }
 

@@ -1140,6 +1140,60 @@ describe('Attendance (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(400);
     });
+
+    // Regression: a bounded ?from/&to= range used to only return real
+    // Attendance rows, so an employee with zero punches in the range showed
+    // zero records here while the Attendance & Leave Tracker dashboard grid
+    // (which already backfills ABSENT/WEEKLY_OFF onto days with no row)
+    // showed a grid full of Absent — the two pages silently disagreed about
+    // the same underlying data.
+    it('backfills ABSENT/WEEKLY_OFF for a past working day with no Attendance row, within a bounded date range', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Never Punched Employee',
+          email: 'never-punched@example.test',
+        })
+        .expect(201);
+      const newEmployeeId = (created.body as EmployeeCreateBody).employee.id;
+      // Employees are created with joiningDate = now; backdate so the whole
+      // window below counts as "already an employee".
+      await prisma.user.update({
+        where: { id: newEmployeeId },
+        data: { joiningDate: new Date(`${offsetDate(-30)}T00:00:00.000Z`) },
+      });
+
+      const from = offsetDate(-9);
+      const to = offsetDate(-1);
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId: newEmployeeId, from, to })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const records = (res.body as { data: { date: string; status: string }[] })
+        .data;
+
+      // No real row was ever created for this employee — every one of
+      // these is synthetic, and every status is one deriveDayOutcome can
+      // actually return for a punch-less day (never PRESENT/HALF_DAY, which
+      // require a punch or approved leave that doesn't exist here).
+      expect(records.length).toBeGreaterThan(0);
+      expect(
+        records.every((r) =>
+          ['ABSENT', 'WEEKLY_OFF', 'HOLIDAY'].includes(r.status),
+        ),
+      ).toBe(true);
+
+      // The unbounded (no from/to) listing must NOT synthesize — only real
+      // rows, of which this employee still has none.
+      const unbounded = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId: newEmployeeId })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect((unbounded.body as { data: unknown[] }).data).toHaveLength(0);
+    });
   });
 
   // Regression: a MANAGER with no department used to be scoped by
