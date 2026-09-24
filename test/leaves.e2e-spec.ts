@@ -596,6 +596,28 @@ describe('Leaves (e2e)', () => {
       .expect(200);
   });
 
+  // Regression: getBalance() used to narrow each row's leaveType down to
+  // {id,name,code}, dropping `encashment` — web's Request Encashment button
+  // reads balances[].leaveType.encashment.allowed off this exact response,
+  // so it was permanently disabled for every employee regardless of the
+  // leave type's actual encashment config.
+  it("GET /leaves/balance includes each leaveType's encashment config (web reads this to enable Request Encashment)", async () => {
+    const res = await request(app.getHttpServer())
+      .get('/leaves/balance')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const balances = (
+      res.body as {
+        balances: { leaveType: { code: string; encashment: any } }[];
+      }
+    ).balances;
+    const el = balances.find((b) => b.leaveType.code === 'EL');
+    expect(el?.leaveType.encashment).toMatchObject({
+      allowed: true,
+      maxDaysPerYear: 10,
+    });
+  });
+
   it('GET /leaves/history/:employeeId is self-accessible, but 403 for another EMPLOYEE', async () => {
     await request(app.getHttpServer())
       .get(`/leaves/history/${employeeId}`)

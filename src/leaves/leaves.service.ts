@@ -238,7 +238,18 @@ export class LeavesService {
 
     const balances = await this.scopedPrisma.$transaction(async (tx) => {
       const rows: (Prisma.LeaveBalanceGetPayload<object> & {
-        leaveType: { id: string; name: string; code: string };
+        leaveType: {
+          id: string;
+          name: string;
+          code: string;
+          // Web's Leave Encashment "Request" button reads
+          // b.leaveType.encashment.allowed off this exact response — it was
+          // dropped when this projection was narrowed to {id,name,code},
+          // which silently left the button permanently disabled for every
+          // employee (leaveType.encashment is on the Prisma row already in
+          // scope below, just wasn't carried through).
+          encashment: Prisma.JsonValue;
+        };
       })[] = [];
       for (const leaveType of balanceEligible) {
         const row = await this.leaveBalanceService.ensureBalanceRow(
@@ -254,6 +265,7 @@ export class LeavesService {
             id: leaveType.id,
             name: leaveType.name,
             code: leaveType.code,
+            encashment: leaveType.encashment,
           },
         });
       }

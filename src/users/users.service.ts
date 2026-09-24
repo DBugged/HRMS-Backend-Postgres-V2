@@ -28,6 +28,16 @@ export class UsersService {
    */
   // Login emails are stored lowercased (see normalizeEmail in the DTOs and
   // the users_email_lower_key unique index), so the lookup is too.
+  //
+  // Matches officialEmail as well as email: the intended onboarding flow is
+  // credentials go out to the employee's personal email first, then once
+  // IT provisions their official/corporate inbox (a self-editable field set
+  // well after creation — see officialEmail's comment on the User model)
+  // they log in with that instead. officialEmail is @unique and normalized
+  // the same way (NormalizeEmail on the update DTO), so this can never
+  // match a different account than the one the caller intends, and the
+  // login identity itself (the `email` column) is never touched — only the
+  // lookup is widened, so sessions/audit history/JWTs are unaffected.
   findByEmail(email: string): Promise<User | null> {
     // Prisma's generated findFirst arg type has a `[key: string]: never`
     // excess-property guard, so `__tenantScopeBypass` (read and stripped
@@ -35,9 +45,10 @@ export class UsersService {
     // a real Prisma option) can't be added via a plain intersection; the
     // through-unknown cast is the deliberate, narrow escape hatch for
     // exactly this one extension-only field, not a general `any` typing.
+    const normalized = email.trim().toLowerCase();
     type FindFirstArgs = Parameters<typeof this.prisma.user.findFirst>[0];
     const args = {
-      where: { email: email.trim().toLowerCase() },
+      where: { OR: [{ email: normalized }, { officialEmail: normalized }] },
       __tenantScopeBypass: true,
     } as unknown as FindFirstArgs;
     return this.prisma.user.findFirst(args);

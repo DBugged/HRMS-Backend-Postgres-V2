@@ -122,4 +122,49 @@ describe('mergePersonalData', () => {
     expect(second.profileCompleted).toBe(false);
     expect(second.profileCompletedAt).toBeNull();
   });
+
+  // The client (Profile.tsx) resubmits its whole loaded personalData object
+  // on every save, which was already signed for display — a patch carrying
+  // a signed /files/<token> link for a file field must not overwrite the
+  // durable relativeKey stored for it, or that reference breaks once the
+  // token expires.
+  it('keeps the stored cancelledChequeUrl relativeKey when the patch carries a signed link instead', () => {
+    const current = { cancelledChequeUrl: 'documents/org1/cheque.pdf' };
+    const merged = mergePersonalData(
+      current,
+      { cancelledChequeUrl: '/files/abc123signedtoken' },
+      true,
+    );
+    expect(merged.cancelledChequeUrl).toBe('documents/org1/cheque.pdf');
+  });
+
+  it('still applies a real relativeKey for cancelledChequeUrl (a genuine new upload)', () => {
+    const current = { cancelledChequeUrl: 'documents/org1/old.pdf' };
+    const merged = mergePersonalData(
+      current,
+      { cancelledChequeUrl: 'documents/org1/new.pdf' },
+      true,
+    );
+    expect(merged.cancelledChequeUrl).toBe('documents/org1/new.pdf');
+  });
+
+  it('keeps the stored previousEmployment documentUrl relativeKey when the patch carries a signed link', () => {
+    const current = {
+      previousEmployment: [
+        { companyName: 'Acme', documentUrl: 'documents/org1/acme.pdf' },
+      ],
+    };
+    const merged = mergePersonalData(
+      current,
+      {
+        previousEmployment: [
+          { companyName: 'Acme', documentUrl: '/files/xyz789signedtoken' },
+        ],
+      },
+      true,
+    );
+    expect((merged.previousEmployment as any[])[0].documentUrl).toBe(
+      'documents/org1/acme.pdf',
+    );
+  });
 });

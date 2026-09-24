@@ -97,12 +97,56 @@ export function areMandatoryDocumentsUploaded(
 // areMandatoryDocumentsUploaded() result — kept as a plain boolean argument
 // (rather than fetched in here) since this function stays DB-free/pure,
 // same as before.
+// Guards against a signed file link (from signPersonalDataFileUrls, always
+// `/files/<token>`) being written back into storage in place of the durable
+// relativeKey — e.g. Profile.tsx's save button resubmits its whole loaded
+// personalData object (already signed for display) on every save, not just
+// the fields the user actually changed, and the client has no way to tell
+// these two shapes apart itself. A relativeKey never starts with /files/,
+// so a patch value that does is treated as "this field wasn't really
+// changed" and the current stored value is kept — otherwise the real
+// relativeKey is silently replaced by a token that expires
+// (SESSION_ASSET_TTL_SECONDS, see file-token.ts), permanently breaking the
+// stored cancelled-cheque / previous-employment document reference.
+function dropReSignedFileUrls(
+  current: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = { ...patch };
+  if (
+    typeof sanitized.cancelledChequeUrl === 'string' &&
+    sanitized.cancelledChequeUrl.startsWith('/files/')
+  ) {
+    sanitized.cancelledChequeUrl = current.cancelledChequeUrl;
+  }
+  if (Array.isArray(sanitized.previousEmployment)) {
+    sanitized.previousEmployment = sanitized.previousEmployment.map(
+      (entry: unknown, i: number) => {
+        if (
+          !entry ||
+          typeof entry !== 'object' ||
+          typeof (entry as { documentUrl?: unknown }).documentUrl !==
+            'string' ||
+          !(entry as { documentUrl: string }).documentUrl.startsWith('/files/')
+        ) {
+          return entry;
+        }
+        const currentEntry = (
+          current.previousEmployment as { documentUrl?: unknown }[] | undefined
+        )?.[i];
+        return { ...entry, documentUrl: currentEntry?.documentUrl };
+      },
+    );
+  }
+  return sanitized;
+}
+
 export function mergePersonalData(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
   mandatoryDocumentsUploaded: boolean,
 ): Record<string, unknown> {
-  const merged = { ...current, ...patch };
+  const merged = { ...current, ...dropReSignedFileUrls(current, patch) };
   const completed = isProfileComplete(merged) && mandatoryDocumentsUploaded;
   return {
     ...merged,

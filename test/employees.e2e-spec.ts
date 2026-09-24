@@ -311,6 +311,59 @@ describe('Employees + Departments (e2e)', () => {
         .send({ officialEmail: 'employees-e2e-welcome-official@example.test' })
         .expect(409); // AllExceptionsFilter now maps Prisma P2002 to a proper Conflict instead of an unmapped 500
     });
+
+    // Onboarding flow: welcome credentials go to the employee's personal
+    // email first (login email = whatever HR entered at creation); once
+    // IT provisions officialEmail, login should also accept that address —
+    // login identity itself (the `email` column, password, sessions)
+    // stays completely untouched, only the login LOOKUP widens.
+    it('once officialEmail is set, login accepts either the original login email or officialEmail with the same password', async () => {
+      const create = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Official Email Login Employee',
+          email: 'employees-e2e-official-login@example.test',
+          departmentId: engDepartmentId,
+        })
+        .expect(201);
+      const { generatedPassword, employee } = create.body as EmployeeBody;
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'employees-e2e-official-login@example.test',
+          password: generatedPassword,
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${employee.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          officialEmail: 'employees-e2e-official-login-official@example.test',
+        })
+        .expect(200);
+
+      const officialLogin = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'employees-e2e-official-login-official@example.test',
+          password: generatedPassword,
+        })
+        .expect(201);
+      expect((officialLogin.body as AuthBody).accessToken).toBeTruthy();
+
+      // Original login email must still work too — the login identity is
+      // never migrated, only widened.
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'employees-e2e-official-login@example.test',
+          password: generatedPassword,
+        })
+        .expect(201);
+    });
   });
 
   it('HR cannot create an ADMIN account (role-assignability check)', async () => {
