@@ -370,6 +370,66 @@ describe('Leave Types (e2e)', () => {
     expect(rowAfterSecondRun?.credited).toBe(1.5);
   });
 
+  it('switching from FIXED_ANNUAL to EARNED_MONTHLY rebases the existing upfront credit instead of leaving it stuck under the new accrual total', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Test Switch Leave',
+        code: 'TSL',
+        allocationType: 'FIXED_ANNUAL',
+        annualQuota: 6,
+        prorateOnJoining: false,
+      })
+      .expect(201);
+    const leaveTypeId = (created.body as LeaveTypeBody).id;
+    const year = new Date().getFullYear();
+
+    // Upfront credit lands the moment a balance row is first created.
+    await request(app.getHttpServer())
+      .get('/leaves/balance')
+      .query({ employeeId })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const upfrontRow = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId, year },
+    });
+    expect(upfrontRow?.credited).toBe(6);
+
+    // Switch to accrual-based — this used to leave `credited` stuck at 6,
+    // so the next accrual run added its cycle's amount on top of it
+    // instead of on top of a clean 0.
+    await request(app.getHttpServer())
+      .put(`/leave-types/${leaveTypeId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        allocationType: 'EARNED_MONTHLY',
+        accrualFrequency: 'QUARTERLY',
+        accrualAmountPerCycle: 1.5,
+      })
+      .expect(200);
+    const rebasedRow = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId, year },
+    });
+    expect(rebasedRow?.credited).toBe(0);
+
+    // totalDaysCredited is summed across every eligible employee in the
+    // org (this brand-new type has no department/gender restriction), not
+    // just employeeId — so it isn't directly comparable to one employee's
+    // row. What matters for this regression is employeeId's own row: a
+    // positive multiple of 1.5 (one per elapsed quarter since joining),
+    // never the old stale 6 resurfacing underneath it.
+    await request(app.getHttpServer())
+      .post(`/leave-types/${leaveTypeId}/run-accrual`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
+    const finalRow = await prisma.leaveBalance.findFirst({
+      where: { employeeId, leaveTypeId, year },
+    });
+    expect(finalRow!.credited).toBeGreaterThan(0);
+    expect(Number(finalRow!.credited) % 1.5).toBe(0);
+  });
+
   it('run-accrual-all credits every eligible leave type in one call', async () => {
     const created = await request(app.getHttpServer())
       .post('/leave-types')

@@ -10,13 +10,7 @@
 // first-ever credit to the employee's joining cycle (cyclesSinceJoining) rather than only the current one.
 import { randomUUID } from 'crypto';
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import {
-  AllocationType,
-  LeaveBalance,
-  LeaveType,
-  Prisma,
-  Role,
-} from '@prisma/client';
+import { LeaveBalance, LeaveType, Prisma, Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isEligible } from './leave-eligibility';
@@ -156,15 +150,16 @@ export class LeaveBalanceService {
     updated: LeaveType,
     organizationId: string,
   ): Promise<{ rowsUpdated: number }> {
-    if (
-      updated.allocationType !== AllocationType.FIXED_ANNUAL &&
-      updated.allocationType !== AllocationType.PRORATED_ON_JOINING
-    ) {
-      // EARNED_MONTHLY rows are driven purely by creditAccrual; UNLIMITED /
-      // NONE carry no upfront credit. Nothing to reconcile.
-      return { rowsUpdated: 0 };
-    }
-
+    // Deliberately no early return for "updated isn't an upfront type"
+    // anymore — that used to skip this whole function whenever Allocation
+    // Type was changed AWAY FROM Fixed Annual/Prorated on Joining (e.g. to
+    // Earned Monthly), leaving that old upfront grant permanently stuck in
+    // `credited`. Every later creditAccrual run then added fresh accrual on
+    // top of it, so the balance was inflated forever by whatever the
+    // employee had already been granted under the old policy. The formula
+    // below already handles "updated has no upfront credit" correctly
+    // (computeUpfrontCredit returns 0 for it) — it only needed to actually
+    // run.
     const year = new Date().getFullYear();
     const rows = await tx.leaveBalance.findMany({
       where: { organizationId, leaveTypeId: updated.id, year },
