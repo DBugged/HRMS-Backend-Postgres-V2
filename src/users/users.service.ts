@@ -1,6 +1,8 @@
 // Purpose: Minimal user-lookup helpers backing AuthService — email/reset-token lookup and last-login stamping.
-// Responsibilities: Owns the two legitimate tenant-scope-bypass lookups (findByEmail, findByResetToken) used
-// only where the organization is genuinely unknown yet; everything else is normal organizationId-scoped.
+// Responsibilities: Owns two of this app's three legitimate tenant-scope-bypass lookups (findByEmail,
+// findByResetToken) used only where the organization is genuinely unknown yet; everything else is normal
+// organizationId-scoped. The third lives in AuthService.findRefreshTokenByHash (same reasoning — an opaque
+// refresh-token hash at refresh/logout time, before the caller's org is known from anywhere else).
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';

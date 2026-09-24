@@ -116,6 +116,19 @@ function jsonOrDefault(v, fallback) {
 }
 
 async function main() {
+  // One-time historical script (already run once, hence the real org
+  // existing in backend-v2 at all) — TRUNCATEs every organization's data
+  // in whatever DATABASE_URL is set, unconditionally. It has no other
+  // guard (the hardcoded localhost:3306 legacy-MySQL connection below is
+  // the main practical protection, but that's incidental, not a real
+  // safeguard), so a hard refusal in production closes the gap on
+  // principle even though re-running this against a live prod DB would
+  // already fail at the MySQL connection step in every realistic setup.
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'migrate-legacy-data.js refuses to run with NODE_ENV=production — this TRUNCATEs every organization\'s data unconditionally and was a one-time historical migration, not something to ever run again against a live database.',
+    );
+  }
   const mysqlConn = await mysql.createConnection({
     host: '127.0.0.1',
     port: 3306,
