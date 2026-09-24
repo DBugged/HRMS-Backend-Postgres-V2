@@ -761,7 +761,17 @@ export class PayrollService {
         },
         financialYearStartMonth: settings.financialYearStartMonth,
       });
-      const incomeTaxAmount = Math.max(0, taxDetails.monthlyTDS || 0);
+      // No TDS withheld for a month with zero actual taxable gross (e.g. a
+      // full month of LOP/0 payable days) — monthlyTDS here is computed by
+      // spreading the employee's PROJECTED annual liability evenly across
+      // remaining months (see calculateTax's recurringMonthlyGross usage),
+      // independent of what was actually earned this specific month. Taking
+      // a full month's TDS installment out of ₹0 earned produces a negative
+      // net pay for no real income. Skipping it here doesn't lose the tax
+      // due — the annualized calc naturally recovers it across the
+      // remaining months once ytdGross/ytdTDS reflect this month as a gap.
+      const incomeTaxAmount =
+        taxableGross > 0 ? Math.max(0, taxDetails.monthlyTDS || 0) : 0;
       deductionsResults.push({
         code: SALARY_COMPONENT_CODES.INCOME_TAX,
         name: incomeTaxComponent.name,
