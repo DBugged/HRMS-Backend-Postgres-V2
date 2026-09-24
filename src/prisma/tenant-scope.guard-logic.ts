@@ -62,6 +62,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EmailTemplate',
   'LetterTemplate',
   'LetterOverride',
+  'EmployeeLetterAccess',
   'OrgListItem',
   'WorkSchedule',
   // Asset Inventory module (all organization-owned).

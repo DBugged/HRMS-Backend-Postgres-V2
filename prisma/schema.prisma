@@ -263,6 +263,7 @@ model Organization {
   emailTemplates           EmailTemplate[]
   letterTemplates          LetterTemplate[]
   letterOverrides          LetterOverride[]
+  employeeLetterAccess     EmployeeLetterAccess[]
   orgListItems             OrgListItem[]
   assets                   Asset[]
   assetMaintenances        AssetMaintenance[]
@@ -501,6 +502,8 @@ model User {
   loansClosed                      Loan[]                    @relation("LoanClosedBy")
   letterOverrides                  LetterOverride[]          @relation("LetterOverrideEmployee")
   letterOverridesUpdated           LetterOverride[]          @relation("LetterOverrideUpdatedBy")
+  letterAccess                     EmployeeLetterAccess[]    @relation("EmployeeLetterAccessEmployee")
+  letterAccessGranted              EmployeeLetterAccess[]    @relation("EmployeeLetterAccessGrantedBy")
   settlements                      Settlement[]              @relation("SettlementEmployee")
   settlementsProcessed             Settlement[]              @relation("SettlementProcessedBy")
   offboardingCases                 OffboardingCase[]         @relation("OffboardingCaseEmployee")
@@ -766,6 +769,40 @@ model LetterOverride {
   @@unique([organizationId, employeeId, key])
   @@index([organizationId, employeeId])
   @@map("letter_overrides")
+}
+
+// Per-employee visibility override for a small set of RESTRICTED_LETTER_KEYS
+// (see letters.service.ts) — disciplinary/sensitive letters (Warning,
+// Suspension, Show-Cause Notice) that must not be self-servable by every
+// employee just because the template is org-wide active, unlike routine
+// letters (Offer, NDA, ...) which stay visible/downloadable to everyone by
+// default with no row here at all. Absence of a row (or enabled: false)
+// means NOT visible for a restricted key; presence with enabled: true is an
+// explicit HR/Admin grant. Only ever consulted for the acting employee's
+// own self-service view/download — HR/Admin/Manager acting on someone
+// else's record always bypass this (see LettersService).
+model EmployeeLetterAccess {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("EmployeeLetterAccessEmployee", fields: [employeeId], references: [id])
+
+  // Matches LetterTemplate.key — same loose string coupling as
+  // LetterOverride.key above, not a foreign key.
+  key     String
+  enabled Boolean @default(true)
+
+  enabledById String?
+  enabledBy   User?   @relation("EmployeeLetterAccessGrantedBy", fields: [enabledById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId, key])
+  @@index([organizationId, employeeId])
+  @@map("employee_letter_access")
 }
 
 // Mirrors the old MySQL backend's WorkLocation.fenceType ENUM exactly.

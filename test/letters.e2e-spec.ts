@@ -391,4 +391,99 @@ describe('Letters (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
   });
+
+  describe('restricted (disciplinary) letters — per-employee access grant', () => {
+    it('an EMPLOYEE cannot self-download a restricted key with no grant', async () => {
+      await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters/warningLetter`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
+
+    it("the employee's own list shows it locked, with no restricted/accessEnabled fields", async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      const row = (
+        res.body as {
+          key: string;
+          unlocked: boolean;
+          reason: string | null;
+          restricted?: boolean;
+        }[]
+      ).find((r) => r.key === 'warningLetter')!;
+      expect(row.unlocked).toBe(false);
+      expect(row.reason).toBe('Not yet made available to you — contact HR.');
+      expect(row.restricted).toBeUndefined();
+    });
+
+    it("HR/Admin's own list shows restricted/accessEnabled for it, unaffected by the employee-only gate", async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const row = (
+        res.body as {
+          key: string;
+          unlocked: boolean;
+          restricted?: boolean;
+          accessEnabled?: boolean;
+        }[]
+      ).find((r) => r.key === 'warningLetter')!;
+      expect(row.unlocked).toBe(true); // ADMIN bypasses the gate
+      expect(row.restricted).toBe(true);
+      expect(row.accessEnabled).toBe(false);
+    });
+
+    it('an EMPLOYEE cannot grant themselves access', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/letters/warningLetter/access`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ enabled: true })
+        .expect(403);
+    });
+
+    it('rejects granting access for a non-restricted key', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/letters/appointmentLetter/access`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ enabled: true })
+        .expect(400);
+    });
+
+    it('HR grants access, the employee can then self-download, HR can revoke it again', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/letters/warningLetter/access`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ enabled: true })
+        .expect(200);
+
+      const listed = await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      expect(
+        (listed.body as { key: string; unlocked: boolean }[]).find(
+          (r) => r.key === 'warningLetter',
+        )!.unlocked,
+      ).toBe(true);
+
+      await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters/warningLetter`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+
+      // Revoke — back to blocked.
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/letters/warningLetter/access`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ enabled: false })
+        .expect(200);
+      await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters/warningLetter`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    });
+  });
 });

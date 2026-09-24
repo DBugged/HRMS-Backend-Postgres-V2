@@ -59,6 +59,21 @@ const PAID_OUT_STATUSES: PayrollRunStatus[] = [
   PayrollRunStatus.PAID,
 ];
 
+// Disciplinary/sensitive letter keys that must never be self-servable just
+// because the org's template for them is active — unlike every other
+// letter (Offer, NDA, ...), which stays visible/downloadable to the
+// employee by default. An employee only sees/downloads one of these once
+// HR/Admin explicitly grants it via EmployeeLetterAccess (see
+// setEmployeeAccess below) — presumably right after actually issuing one,
+// not as a standing self-service option. Only checked for actor.role ===
+// EMPLOYEE; HR/Admin/Manager acting on someone else's record always bypass
+// this (they're the ones who'd grant it in the first place).
+const RESTRICTED_LETTER_KEYS = new Set([
+  'warningLetter',
+  'suspensionLetter',
+  'showCauseNotice',
+]);
+
 @Injectable()
 export class LettersService {
   constructor(
@@ -90,6 +105,13 @@ export class LettersService {
       dataProfile: LetterDataProfile;
       unlocked: boolean;
       reason: string | null;
+      // Only present for a RESTRICTED_LETTER_KEYS entry — restricted is
+      // always true there; accessEnabled reflects the current
+      // EmployeeLetterAccess grant so a privileged caller's UI can render
+      // the right toggle state (an EMPLOYEE caller doesn't need these,
+      // `unlocked` already folds the grant in).
+      restricted?: boolean;
+      accessEnabled?: boolean;
     }>
   > {
     const employee = await this.scopedPrisma.user.findFirst({
@@ -109,7 +131,7 @@ export class LettersService {
       await this.letterTemplatesService.findAll(organizationId);
     const activeTemplates = templates.filter((t) => t.isActive);
 
-    const [hasOffboardingCase, hasPaidPayrollRun, hasSettlement] =
+    const [hasOffboardingCase, hasPaidPayrollRun, hasSettlement, grants] =
       await Promise.all([
         this.scopedPrisma.offboardingCase
           .findFirst({
@@ -134,7 +156,12 @@ export class LettersService {
             select: { id: true },
           })
           .then(Boolean),
+        this.scopedPrisma.employeeLetterAccess.findMany({
+          where: { organizationId, employeeId },
+          select: { key: true, enabled: true },
+        }),
       ]);
+    const grantByKey = new Map(grants.map((g) => [g.key, g.enabled]));
 
     const UNLOCK_BY_PROFILE: Record<
       LetterDataProfile,
@@ -158,12 +185,26 @@ export class LettersService {
 
     return activeTemplates.map((t) => {
       const gate = UNLOCK_BY_PROFILE[t.dataProfile];
+      const restricted = RESTRICTED_LETTER_KEYS.has(t.key);
+      const accessEnabled = grantByKey.get(t.key) ?? false;
+      // A plain EMPLOYEE also needs the explicit grant, on top of the
+      // usual dataProfile unlock, for a restricted key. HR/Admin/Manager
+      // are never subject to this — see the constant's own comment.
+      const employeeGateBlocked =
+        actor.role === Role.EMPLOYEE && restricted && !accessEnabled;
       return {
         key: t.key,
         name: t.name,
         dataProfile: t.dataProfile,
-        unlocked: gate.unlocked,
-        reason: gate.unlocked ? null : gate.reason,
+        unlocked: gate.unlocked && !employeeGateBlocked,
+        reason: employeeGateBlocked
+          ? 'Not yet made available to you — contact HR.'
+          : gate.unlocked
+            ? null
+            : gate.reason,
+        ...(restricted && actor.role !== Role.EMPLOYEE
+          ? { restricted, accessEnabled }
+          : {}),
       };
     });
   }
@@ -204,6 +245,23 @@ export class LettersService {
         actor.departmentId !== employee.departmentId)
     ) {
       throw new ForbiddenException('Not authorized to view this employee.');
+    }
+
+    // Mirrors listForEmployee's employeeGateBlocked check — this is the
+    // actual enforcement point (listForEmployee's `unlocked` is only a
+    // display hint); without this an EMPLOYEE could still GET
+    // /employees/:id/letters/:key directly for a restricted key nobody
+    // granted them.
+    if (actor.role === Role.EMPLOYEE && RESTRICTED_LETTER_KEYS.has(key)) {
+      const grant = await this.scopedPrisma.employeeLetterAccess.findFirst({
+        where: { organizationId, employeeId, key },
+        select: { enabled: true },
+      });
+      if (!grant?.enabled) {
+        throw new ForbiddenException(
+          'This letter has not been made available to you yet — contact HR.',
+        );
+      }
     }
 
     const organization = await this.scopedPrisma.organization.findFirst({
@@ -473,6 +531,61 @@ export class LettersService {
     });
 
     return this.previewContent(employeeId, key, actor, organizationId);
+  }
+
+  // HR/Admin-only (enforced at the controller) — grants or revokes one
+  // employee's self-service visibility for one RESTRICTED_LETTER_KEYS
+  // letter. A no-op key outside that set is rejected rather than silently
+  // accepted, since it would otherwise create a row nothing ever reads
+  // (every other letter is visible with no row at all — see the
+  // constant's own comment).
+  async setEmployeeAccess(
+    employeeId: string,
+    key: string,
+    enabled: boolean,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    if (!RESTRICTED_LETTER_KEYS.has(key)) {
+      throw new BadRequestException(
+        `'${key}' isn't a restricted letter — every employee can already see it once its template is active.`,
+      );
+    }
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { id: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
+    // updateMany-then-create rather than upsert — the scope extension can't
+    // inject organizationId into an upsert's compound-unique `where`, same
+    // reason saveOverride() above uses this exact shape.
+    const updated = await this.scopedPrisma.employeeLetterAccess.updateMany({
+      where: { organizationId, employeeId, key },
+      data: { enabled, enabledById: actor.id },
+    });
+    if (updated.count === 0) {
+      await this.scopedPrisma.employeeLetterAccess.create({
+        data: {
+          organizationId,
+          employeeId,
+          key,
+          enabled,
+          enabledById: actor.id,
+        },
+      });
+    }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: enabled ? 'LETTER_ACCESS_GRANTED' : 'LETTER_ACCESS_REVOKED',
+      module: AuditModule.DOCUMENT,
+      organizationId,
+      targetId: employeeId,
+      details: { key },
+    });
+
+    return { key, enabled };
   }
 
   async generate(

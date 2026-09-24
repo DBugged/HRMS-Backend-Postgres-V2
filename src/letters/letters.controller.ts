@@ -16,6 +16,7 @@ import {
   Delete,
   Get,
   Param,
+  Patch,
   Post,
   Put,
   Res,
@@ -28,6 +29,7 @@ import { Role, User } from '@prisma/client';
 import { LettersService } from './letters.service';
 import { SendLetterDto } from './dto/send-letter.dto';
 import { SaveLetterContentDto } from './dto/save-letter-content.dto';
+import { SetLetterAccessDto } from './dto/set-letter-access.dto';
 import { SelfOrRoles } from '../common/decorators/self-or-roles.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -132,6 +134,28 @@ export class LettersController {
     return this.lettersService.resetOverride(
       id,
       key,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // Grants/revokes one employee's self-service visibility for one of the
+  // small set of restricted (disciplinary) letter keys — see
+  // RESTRICTED_LETTER_KEYS in letters.service.ts. HR/Admin only, same as
+  // :key/content and :key/send.
+  @Patch(':key/access')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  async setAccess(
+    @Param('id') id: string,
+    @Param('key') key: string,
+    @Body() dto: SetLetterAccessDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.lettersService.setEmployeeAccess(
+      id,
+      key,
+      dto.enabled,
       caller,
       caller.organizationId,
     );
