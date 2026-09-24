@@ -21,10 +21,12 @@ import { attachWatermark } from '../common/pdf-watermark';
  *
  * One remaining deliberate scope reduction vs. the old system, because the
  * underlying data source doesn't exist anywhere in backend-v2 yet:
- * - PAN/UAN/PF Number/ESIC/Bank Details rows always render '-' — no
- *   employee statutory/bank-details fields exist on User yet. The
- *   template's own showPAN/showUAN/etc. toggles are preserved so a future
- *   "Employee Statutory & Bank Details" batch lights these up for free.
+ * - UAN/PF Number/ESIC/Bank Details rows always render '-' — PAN now
+ *   reads personalData.panNumber (see the showPAN branch below), but no
+ *   equivalent field exists yet for UAN/PF/ESIC/bank details as a
+ *   *payroll-facing* value (personalData.uanNumber/bank* exist but aren't
+ *   wired here yet). The template's own showUAN/etc. toggles are
+ *   preserved so a future pass can light these up the same way.
  * PayrollTemplate itself needs no "Organization fallback" (unlike the old
  * system) — its company* fields already carry real DB-level defaults
  * (Batch 5b), so the old applyOrganizationFallback() has no equivalent
@@ -165,6 +167,7 @@ interface PayslipRun {
     designation: string | null;
     joiningDate: Date | string | null;
     department: { name: string } | null;
+    personalData?: unknown;
   };
 }
 
@@ -259,6 +262,7 @@ export class PayslipPdfService {
             designation: true,
             joiningDate: true,
             department: { select: { name: true } },
+            personalData: true,
           },
         },
       },
@@ -552,7 +556,11 @@ export class PayslipPdfService {
       ];
       // No employee statutory/bank-details fields exist yet — these rows
       // always show '-' until that data source is built (see class doc).
-      if (template.showPAN) empFields.push(['PAN', '-']);
+      if (template.showPAN) {
+        const pd = run.employee.personalData as Record<string, unknown> | null;
+        const pan = typeof pd?.panNumber === 'string' ? pd.panNumber.trim() : '';
+        empFields.push(['PAN', pan || '-']);
+      }
       if (template.showUAN) empFields.push(['UAN', '-']);
       if (template.showPFNumber) empFields.push(['PF Number', '-']);
       if (template.showESIC) empFields.push(['ESIC Number', '-']);
