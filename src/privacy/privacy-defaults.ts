@@ -164,7 +164,7 @@ export function defaultCategories(): DataCategory[] {
       fields: [
         f('name', 'Name', 'users.name'),
         f('email', 'Login email', 'users.email'),
-        f('officialEmail', 'Official email', 'users.officialEmail'),
+        f('officialEmail', 'Company email', 'users.officialEmail'),
         f('contactNumber', 'Contact number', 'users.contactNumber'),
         f('gender', 'Gender', 'users.gender'),
         f('profileImage', 'Profile photo', 'users.profileImage'),
@@ -451,7 +451,7 @@ PRIVACY NOTICE FOR EMPLOYEES OF ${orgName.toUpperCase()}
 ${orgName} uses this HR system to manage your employment. This notice explains, in plain language, what personal data the system holds about you, why, who can see it, how long we keep it and what choices you have.
 
 2. What we collect
-- Identity and contact: name, login and official email, contact number, gender, date of birth, marital status, blood group, personal email, current address, profile photo.
+- Identity and contact: name, login and company email, contact number, gender, date of birth, marital status, blood group, personal email, current address, profile photo.
 - Family and emergency contacts: parents' names and contact details, emergency contacts.
 - Employment: employee ID, designation, department, joining date, employment status, reporting manager, previous employment details, role and status history.
 - Government and statutory identifiers: PAN, Aadhaar number, UAN and ESIC number.
