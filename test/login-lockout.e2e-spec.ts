@@ -142,6 +142,42 @@ describe('Login lockout (e2e)', () => {
     expect((await readUser()).failedLoginAttempts).toBe(0);
   });
 
+  // Regression: failedLoginAttempts was read at the start of login() and
+  // written back as `loaded + 1`, so a burst of concurrent wrong passwords
+  // all wrote the same small value and the account never locked.
+  it('a concurrent burst of wrong passwords still locks the account (exactly once)', async () => {
+    const lockedBefore = await prisma.auditLog.count({
+      where: { actorId: userId, action: 'LOGIN_LOCKED' },
+    });
+
+    const results = await Promise.all(
+      Array.from({ length: LOGIN_MAX_FAILED_ATTEMPTS * 2 }, () =>
+        login('WrongPassword1!'),
+      ),
+    );
+    for (const r of results) expect(r.status).toBe(401);
+
+    const user = await readUser();
+    expect(user.lockedUntil).not.toBeNull();
+    expect(user.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+    expect(
+      await prisma.auditLog.count({
+        where: { actorId: userId, action: 'LOGIN_LOCKED' },
+      }),
+    ).toBe(lockedBefore + 1);
+
+    // And the lock holds against the correct password.
+    await login(PASSWORD).expect(401);
+  });
+
+  it('counts every one of a small concurrent burst (no lost updates)', async () => {
+    const n = Math.min(4, LOGIN_MAX_FAILED_ATTEMPTS - 1);
+    await Promise.all(
+      Array.from({ length: n }, () => login('WrongPassword1!').expect(401)),
+    );
+    expect((await readUser()).failedLoginAttempts).toBe(n);
+  });
+
   it('completing a password reset clears the lock (the self-service way out)', async () => {
     const rawToken = 'lockout-e2e-reset-token';
     await prisma.user.updateMany({

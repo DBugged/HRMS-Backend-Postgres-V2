@@ -1,7 +1,9 @@
 import { PayFrequency } from '@prisma/client';
 import {
   clampLeaveDaysToMonth,
+  clampLeaveDaysToRange,
   daysInMonth,
+  daysInRange,
   isComponentPayableThisMonth,
   lastDayOfMonth,
   round,
@@ -125,5 +127,42 @@ describe('round', () => {
 
   it('none leaves the value untouched', () => {
     expect(round(100.123456, 'none', 0)).toBe(100.123456);
+  });
+});
+
+describe('clampLeaveDaysToRange / daysInRange', () => {
+  const leave = (startDate: string, endDate: string, isHalfDay = false) => ({
+    startDate,
+    endDate,
+    isHalfDay,
+  });
+
+  it('clamps a leave to an arbitrary window', () => {
+    expect(
+      clampLeaveDaysToRange(
+        leave('2026-06-10', '2026-06-20'),
+        '2026-06-16',
+        '2026-06-30',
+      ),
+    ).toBe(5);
+    expect(
+      clampLeaveDaysToRange(
+        leave('2026-06-10', '2026-06-12'),
+        '2026-06-16',
+        '2026-06-30',
+      ),
+    ).toBe(0);
+  });
+
+  it('a half-day counts only in the window containing it', () => {
+    const half = leave('2026-06-16', '2026-06-16', true);
+    expect(clampLeaveDaysToRange(half, '2026-06-01', '2026-06-15')).toBe(0);
+    expect(clampLeaveDaysToRange(half, '2026-06-16', '2026-06-30')).toBe(0.5);
+  });
+
+  it('daysInRange is inclusive', () => {
+    expect(daysInRange('2026-06-01', '2026-06-15')).toBe(15);
+    expect(daysInRange('2026-06-16', '2026-06-16')).toBe(1);
+    expect(daysInRange('2026-02-01', '2026-02-28')).toBe(28);
   });
 });

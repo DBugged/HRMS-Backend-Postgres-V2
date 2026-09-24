@@ -24,6 +24,7 @@ function attendance(
     unpaidLeaveDays: 0,
     halfDays: 0,
     overtimeHours: 5,
+    overtimeWeightedHours: 7.5,
     lateMarks: 1,
     holidayWorkDays: 0,
     weekendWorkDays: 0,
@@ -85,6 +86,8 @@ describe('buildBaseContext', () => {
     const ctx = buildBaseContext(attendance(), settings(), 4);
     expect(ctx.WORKING_DAYS).toBe(26);
     expect(ctx.PAYABLE_DAYS).toBe(27);
+    expect(ctx.OT_HOURS).toBe(5);
+    expect(ctx.OT_WEIGHTED_HOURS).toBe(7.5);
     expect(ctx.PF_EMPLOYEE_RATE).toBe(12);
     expect(ctx.GRATUITY_RATE).toBe(4.81);
   });

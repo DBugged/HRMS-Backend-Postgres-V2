@@ -170,12 +170,16 @@ export class LeaveTrackerService {
             organizationId,
             isActive: true,
             year: query.year,
-            ...(effectiveDepartmentId && {
-              OR: [
-                { departmentId: effectiveDepartmentId },
-                { departmentId: null },
-              ],
-            }),
+            ...(effectiveDepartmentId
+              ? {
+                  OR: [
+                    { departmentId: effectiveDepartmentId },
+                    { departmentId: null },
+                  ],
+                }
+              : // A departmentless MANAGER gets company-wide holidays only,
+                // not every department's (ADMIN/HR unfiltered = all).
+                actor.role === Role.MANAGER && { departmentId: null }),
           },
         }),
       ]);

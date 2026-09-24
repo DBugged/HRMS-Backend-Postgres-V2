@@ -14,6 +14,15 @@
  * time. `%` is a binary modulo operator on numbers, not a percent suffix.
  * Comparisons evaluate to 1/0, not booleans. Division/modulo by zero
  * returns 0 rather than throwing/Infinity/NaN.
+ *
+ * Money safety: a formula can never yield NaN/Infinity. Numeric literals
+ * must be plain decimals (`12`, `12.5` — not `.`, `1.2.3` or `.5`), every
+ * function call's argument count is checked at compile time (so `IF(a, b)`
+ * and `MIN()` are rejected up front instead of evaluating to
+ * undefined/±Infinity), and every intermediate and final value is checked
+ * to be finite. Any violation throws, which lands that employee in the
+ * payroll run's failures[] instead of saving and paying a NaN/Infinity
+ * payslip.
  */
 
 // The full set of non-component identifiers a formula may reference,
@@ -33,6 +42,9 @@ export const SYSTEM_VARS = [
   'UNPAID_LEAVE_DAYS',
   'HALF_DAYS',
   'OT_HOURS',
+  // Approved overtime hours weighted by each record's rateMultiplier (1.5x
+  // regular, 2x holiday/weekend, ...) — see computeAttendanceSummary.
+  'OT_WEIGHTED_HOURS',
   'LATE_MARKS',
   'HOLIDAY_WORK_DAYS',
   'WEEKEND_WORK_DAYS',
@@ -112,7 +124,13 @@ function tokenize(expr: string): Token[] {
     if (/[0-9.]/.test(ch)) {
       let j = i;
       while (j < expr.length && /[0-9.]/.test(expr[j])) j++;
-      tokens.push({ type: 'num', value: expr.slice(i, j) });
+      const raw = expr.slice(i, j);
+      // Only plain decimals — a bare "." or "1.2.3" used to reach Number()
+      // and become NaN, which then flowed straight into a saved payslip.
+      if (!/^\d+(\.\d+)?$/.test(raw)) {
+        throw new Error(`Invalid number "${raw}" in formula`);
+      }
+      tokens.push({ type: 'num', value: raw });
       i = j;
       continue;
     }
@@ -138,6 +156,42 @@ function tokenize(expr: string): Token[] {
     throw new Error(`Unexpected character "${ch}" in formula`);
   }
   return tokens;
+}
+
+// Allowed argument counts per function (max undefined = no upper bound).
+// Checked at compile time so a malformed call is rejected when the formula is
+// saved/validated, not discovered as undefined/±Infinity on a payslip:
+// IF(a, b) used to return undefined for a false condition, and MIN()/MAX()
+// with no arguments returned Infinity/-Infinity.
+const FUNCTION_ARITY: Record<string, { min: number; max?: number }> = {
+  IF: { min: 3, max: 3 },
+  AND: { min: 1 },
+  OR: { min: 1 },
+  NOT: { min: 1, max: 1 },
+  ROUND: { min: 1, max: 2 },
+  MIN: { min: 1 },
+  MAX: { min: 1 },
+  ABS: { min: 1, max: 1 },
+  PERCENT: { min: 2, max: 2 },
+  PT_SLAB_AMOUNT: { min: 1, max: 1 },
+};
+
+function plural(n: number): string {
+  return `${n} argument${n === 1 ? '' : 's'}`;
+}
+
+function assertCallArity(name: string, count: number): void {
+  const arity = FUNCTION_ARITY[name];
+  if (!arity) throw new Error(`Unknown function "${name}" in formula`);
+  const { min, max } = arity;
+  if (count >= min && (max === undefined || count <= max)) return;
+  const expected =
+    max === undefined
+      ? `at least ${plural(min)}`
+      : min === max
+        ? `exactly ${plural(min)}`
+        : `between ${min} and ${max} arguments`;
+  throw new Error(`${name}() expects ${expected}, got ${count}, in formula`);
 }
 
 class Parser {
@@ -211,7 +265,11 @@ class Parser {
     }
     if (tok.type === 'num') {
       this.consume();
-      return { type: 'num', value: Number(tok.value) };
+      const value = Number(tok.value);
+      if (!Number.isFinite(value)) {
+        throw new Error(`Number "${tok.value}" is too large in formula`);
+      }
+      return { type: 'num', value };
     }
     if (tok.type === 'lparen') {
       this.consume();
@@ -236,6 +294,7 @@ class Parser {
         if (this.peek()?.type !== 'rparen')
           throw new Error('Expected ")" in formula');
         this.consume();
+        assertCallArity(tok.value, args.length);
         return { type: 'call', name: tok.value, args };
       }
       return { type: 'ident', name: tok.value };
@@ -295,6 +354,13 @@ const FUNCTIONS: Record<string, (args: number[], context: Context) => number> =
     NOT: (args) => (args[0] ? 0 : 1),
     ROUND: (args) => {
       const decimals = args[1] ?? 0;
+      // A huge/fractional decimals argument made 10 ** decimals overflow to
+      // Infinity (and the result NaN/Infinity).
+      if (!Number.isInteger(decimals) || decimals < -10 || decimals > 10) {
+        throw new Error(
+          'ROUND() decimals must be a whole number between -10 and 10',
+        );
+      }
       const factor = 10 ** decimals;
       return Math.round(args[0] * factor) / factor;
     },
@@ -328,7 +394,20 @@ const FUNCTIONS: Record<string, (args: number[], context: Context) => number> =
     },
   };
 
+// Every node's value is checked, not just the final result — an
+// intermediate Infinity/NaN can otherwise be laundered into a finite-looking
+// number (e.g. `HUGE * HUGE > 0` evaluates to 1).
 function evaluateNode(node: AstNode, context: Context): number {
+  const value = evaluateNodeUnchecked(node, context);
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(
+      `Formula produced a non-finite value (${String(value)}) — check for overflow or an invalid calculation`,
+    );
+  }
+  return value;
+}
+
+function evaluateNodeUnchecked(node: AstNode, context: Context): number {
   switch (node.type) {
     case 'num':
       return node.value;
@@ -379,6 +458,8 @@ function evaluateNode(node: AstNode, context: Context): number {
     case 'call': {
       const fn = FUNCTIONS[node.name];
       if (!fn) throw new Error(`Unknown function "${node.name}" in formula`);
+      // Normally already enforced by the parser; re-checked defensively.
+      assertCallArity(node.name, node.args.length);
       const args = node.args.map((a) => evaluateNode(a, context));
       return fn(args, context);
     }

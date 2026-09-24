@@ -68,3 +68,53 @@ describe('sanitizeRichText', () => {
     expect(sanitizeRichText('')).toBe('');
   });
 });
+
+describe('sanitizeRichText — mutation-XSS payloads', () => {
+  const payloads = [
+    '<textarea><img title="</textarea><img src=x onerror=alert(2)>"></textarea>',
+    '<noembed><img title="</noembed><img src=x onerror=alert(2)>"></noembed>',
+    '<title><img title="</title><img src=x onerror=alert(2)>"></title>',
+    '<noframes><img title="</noframes><img src=x onerror=alert(2)>"></noframes>',
+    '<xmp><img title="</xmp><img src=x onerror=alert(2)>"></xmp>',
+    '<svg><style><img title="</style><img src=x onerror=alert(2)>"></style></svg>',
+    '<p title="</p><img src=x onerror=alert(2)>">t</p>',
+    '<img src=x onerror=alert(2)//',
+    '<b onclick="alert(2)">x</b>',
+  ];
+
+  it.each(payloads)(
+    'leaves no live tag other than the allowlist for %s',
+    (p) => {
+      const out = sanitizeRichText(p);
+      // Every '<' left in the output must open an allowlisted, attribute-free tag.
+      for (const m of out.matchAll(/<\/?([a-zA-Z][a-zA-Z0-9]*)([^>]*)>/g)) {
+        expect([
+          'b',
+          'strong',
+          'i',
+          'em',
+          'u',
+          'ul',
+          'ol',
+          'li',
+          'p',
+          'br',
+        ]).toContain(m[1].toLowerCase());
+        expect(m[2].replace(/\s*\/$/, '')).toBe('');
+      }
+      expect(out).not.toMatch(/<(?!\/?(b|strong|i|em|u|ul|ol|li|p|br)\b)/i);
+    },
+  );
+
+  it('entity-encodes text so a stray "<" cannot re-open a tag', () => {
+    expect(sanitizeRichText('Salary < 5000 & Bonus > 0')).toBe(
+      'Salary &lt; 5000 &amp; Bonus &gt; 0',
+    );
+  });
+
+  it('keeps line breaks in a legacy plain-text body', () => {
+    expect(sanitizeRichText('Full & Final,\nRegards')).toBe(
+      'Full &amp; Final,\nRegards',
+    );
+  });
+});

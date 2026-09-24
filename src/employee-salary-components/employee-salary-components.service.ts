@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   EmployeeSalaryComponent,
+  PayrollRunStatus,
   Prisma,
   SalaryComponent,
 } from '@prisma/client';
@@ -255,6 +256,7 @@ export class EmployeeSalaryComponentsService {
         `effectiveFrom (${from}) must be after the current revision's effectiveFrom (${current.effectiveFrom}) for ${component.code}.`,
       );
     }
+    await this.assertNoFinalizedPayrollFrom(employeeId, from, organizationId);
     if (current) {
       await this.scopedPrisma.employeeSalaryComponent.updateMany({
         where: { id: current.id, organizationId },
@@ -329,6 +331,40 @@ export class EmployeeSalaryComponentsService {
     });
 
     return created;
+  }
+
+  // A revision effective in (or before) a month this employee has already
+  // been paid for — a LOCKED or PAID regular payroll run — can never reach
+  // that payslip (locked runs are not recalculated), so it used to be
+  // accepted and then silently ignored for those months. Rejected instead:
+  // unlock the run to redo it, or date the revision after it and pay any
+  // difference as arrears.
+  private async assertNoFinalizedPayrollFrom(
+    employeeId: string,
+    effectiveFrom: string,
+    organizationId: string,
+  ) {
+    const fromYear = Number(effectiveFrom.slice(0, 4));
+    const fromMonth = Number(effectiveFrom.slice(5, 7));
+    const finalized = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        isFinalSettlement: false,
+        status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+        OR: [
+          { year: { gt: fromYear } },
+          { year: fromYear, month: { gte: fromMonth } },
+        ],
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+      select: { month: true, year: true, status: true },
+    });
+    if (finalized) {
+      throw new BadRequestException(
+        `Cannot apply a salary revision effective ${effectiveFrom}: this employee's ${finalized.month}/${finalized.year} payroll is already ${finalized.status.toLowerCase()}. Unlock that payroll run first, or choose an effective date after it and pay any difference as arrears.`,
+      );
+    }
   }
 
   // Resolves an employee's current monthly value for a single component

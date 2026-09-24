@@ -417,7 +417,10 @@ describe('Payroll (e2e)', () => {
     await prisma.salaryComponent.delete({ where: { id: realDeduction.id } });
   });
 
-  it('an income-tax line only appears once a TaxSlabConfig exists for the FY/regime', async () => {
+  // Changed with the P6 fix: with income tax enabled and no slab config for the FY, the employee used to be
+  // calculated with NO income-tax line (TDS silently 0, then paid). It now fails that employee with a message
+  // naming the FY, and nothing is saved over the existing run.
+  it('with income tax enabled, a missing TaxSlabConfig fails the employee instead of paying zero TDS', async () => {
     // INCOME_TAX is auto-seeded on every new org already (see
     // LeaveTypesService/SalaryComponentsService.seedDefaults). Registration also seeds both regimes' slabs
     // for the CURRENT financial year, so clear any FY 2026-27 NEW-regime config first to test the
@@ -436,15 +439,48 @@ describe('Payroll (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
     }
+    const before = await prisma.payrollRun.findFirstOrThrow({
+      where: { employeeId, month: MONTH, year: YEAR },
+    });
     const withoutSlab = await request(app.getHttpServer())
       .post('/payroll/calculate')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ month: MONTH, year: YEAR, employeeId })
       .expect(201);
-    const runWithout = (withoutSlab.body as CalculateResponseBody).payrolls[0];
-    expect(
-      runWithout.deductions.find((d) => d.code === 'INCOME_TAX'),
-    ).toBeUndefined();
+    const bodyWithout = withoutSlab.body as CalculateResponseBody;
+    expect(bodyWithout.payrolls).toHaveLength(0);
+    expect(bodyWithout.failures).toHaveLength(1);
+    expect(bodyWithout.failures[0].employeeId).toBe(employeeId);
+    // Regime-specific wording while the seeded OLD-regime config for 2026-27 still exists (i.e. when the suite
+    // runs in FY 2026-27); with none at all for the FY the message is the plain FY one.
+    expect(bodyWithout.failures[0].message).toMatch(
+      /^No income tax slabs configured for (the NEW regime for )?FY 2026-27 — add them under Statutory Compliance before running payroll$/,
+    );
+    const oldRegime = await prisma.taxSlabConfig.findMany({
+      where: { organizationId, financialYear: '2026-27' },
+    });
+    await prisma.taxSlabConfig.updateMany({
+      where: { id: { in: oldRegime.map((t) => t.id) } },
+      data: { isActive: false },
+    });
+    const noneAtAll = await request(app.getHttpServer())
+      .post('/payroll/calculate')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ month: MONTH, year: YEAR, employeeId })
+      .expect(201);
+    expect((noneAtAll.body as CalculateResponseBody).failures[0].message).toBe(
+      'No income tax slabs configured for FY 2026-27 — add them under Statutory Compliance before running payroll',
+    );
+    await prisma.taxSlabConfig.updateMany({
+      where: { id: { in: oldRegime.map((t) => t.id) } },
+      data: { isActive: true },
+    });
+    // The failed recalculation left the previously calculated run untouched.
+    const after = await prisma.payrollRun.findFirstOrThrow({
+      where: { id: before.id },
+    });
+    expect(after.netPay).toBe(before.netPay);
+    expect(after.calculatedAt).toEqual(before.calculatedAt);
 
     // financialYear for June 2026 with the default FY-start-month (April)
     // is "2026-27".
@@ -1234,6 +1270,14 @@ describe('Payroll (e2e)', () => {
         VAR_PAY_MONTH,
       );
 
+      // March 2026 is FY 2025-26, which registration doesn't seed slabs for — and with income tax enabled a
+      // missing slab config now fails the employee rather than silently skipping TDS.
+      await request(app.getHttpServer())
+        .post('/tax-slabs')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ financialYear: '2025-26', regime: 'NEW' })
+        .expect(201);
+
       await prisma.performanceRating.create({
         data: {
           organizationId,
@@ -1342,6 +1386,488 @@ describe('Payroll (e2e)', () => {
         .expect(200);
       const rows = res.body as { employeeId: string }[];
       expect(rows.some((r) => r.employeeId === gapsEmployeeId)).toBe(false);
+    });
+  });
+
+  describe('Payroll correctness regressions', () => {
+    interface TaxedRunBody extends PayrollRunBody {
+      employerContributions: { code: string; amount: number }[];
+      taxDetails: { grossAnnualIncome: number } | null;
+    }
+
+    async function createEmployee(
+      name: string,
+      email: string,
+      structure: {
+        componentCode: string;
+        fixedAmount: number;
+        effectiveFrom: string;
+      }[],
+    ): Promise<string> {
+      const res = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name, email });
+      const id = (res.body as EmployeeCreateBody).employee.id;
+      for (const line of structure) {
+        await request(app.getHttpServer())
+          .post(`/employee-salary/${id}/structure`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send(line)
+          .expect(201);
+      }
+      return id;
+    }
+
+    async function calculate(
+      empId: string,
+      month: number,
+      year: number = YEAR,
+    ): Promise<CalculateResponseBody> {
+      const res = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month, year, employeeId: empId })
+        .expect(201);
+      return res.body as CalculateResponseBody;
+    }
+
+    async function calculateOne(
+      empId: string,
+      month: number,
+    ): Promise<TaxedRunBody> {
+      const body = await calculate(empId, month);
+      expect(body.failures).toEqual([]);
+      return body.payrolls[0] as TaxedRunBody;
+    }
+
+    async function verifyAndApprove(runId: string) {
+      await request(app.getHttpServer())
+        .post(`/payroll/${runId}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/payroll/${runId}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+    }
+
+    const amountOf = (
+      lines: { code: string; amount: number }[],
+      code: string,
+    ) => lines.find((l) => l.code === code)?.amount;
+
+    // P1 — a formula that evaluates to NaN/Infinity used to be saved on the payslip and could be paid.
+    describe('non-finite amounts are never saved or paid', () => {
+      const NF_MONTH = 5;
+
+      it('a component formula that cannot produce a finite amount fails the employee; nothing is saved', async () => {
+        // Inserted directly — the salary-components API now rejects this formula at save time; this is the
+        // legacy-data case the run-time guard exists for.
+        const broken = await prisma.salaryComponent.create({
+          data: {
+            organizationId,
+            name: 'Broken Allowance',
+            code: 'BROKEN_ALLOWANCE',
+            type: 'EARNING',
+            calcType: 'FORMULA',
+            formula: 'MIN()',
+          },
+        });
+        try {
+          const body = await calculate(otherEmployeeId, NF_MONTH);
+          expect(body.payrolls).toHaveLength(0);
+          expect(body.failures).toHaveLength(1);
+          expect(body.failures[0].message).toMatch(/Broken Allowance/);
+          expect(body.failures[0].message).toMatch(/MIN\(\) expects/);
+          expect(
+            await prisma.payrollRun.count({
+              where: {
+                employeeId: otherEmployeeId,
+                month: NF_MONTH,
+                year: YEAR,
+              },
+            }),
+          ).toBe(0);
+        } finally {
+          await prisma.salaryComponent.delete({ where: { id: broken.id } });
+        }
+      });
+
+      it('a stored run with a non-numeric amount cannot be verified, singly or in bulk', async () => {
+        // A NaN line amount is stored as null in the JSON column — this is what such a payslip looks like.
+        const run = await prisma.payrollRun.create({
+          data: {
+            organizationId,
+            employeeId: otherEmployeeId,
+            month: NF_MONTH,
+            year: YEAR,
+            status: PayrollRunStatus.CALCULATED,
+            earnings: [{ code: 'BASIC', name: 'Basic', amount: null }],
+          },
+        });
+        try {
+          const single = await request(app.getHttpServer())
+            .post(`/payroll/${run.id}/verify`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(400);
+          expect((single.body as { message: string }).message).toMatch(
+            /non-numeric amount/,
+          );
+          const bulk = await request(app.getHttpServer())
+            .post('/payroll/bulk-transition')
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ ids: [run.id], action: 'verify' })
+            .expect(201);
+          const bulkBody = bulk.body as {
+            updatedCount: number;
+            skipped: { id: string; status: string }[];
+          };
+          expect(bulkBody.updatedCount).toBe(0);
+          expect(bulkBody.skipped[0]).toMatchObject({
+            id: run.id,
+            status: 'non_finite_amount',
+          });
+          const unchanged = await prisma.payrollRun.findFirstOrThrow({
+            where: { id: run.id },
+          });
+          expect(unchanged.status).toBe(PayrollRunStatus.CALCULATED);
+        } finally {
+          await prisma.payrollRun.delete({ where: { id: run.id } });
+        }
+      });
+    });
+
+    // P2 — EMIs used to be previewed off the live balance in every open month, so two unlocked months
+    // together deducted more than the loan's outstanding balance.
+    describe('loan EMI across several open months', () => {
+      let loanEmpId: string;
+
+      beforeAll(async () => {
+        loanEmpId = await createEmployee(
+          'Loan Months Employee',
+          'pay-e2e-loanmonths@example.test',
+          [
+            {
+              componentCode: 'BASIC',
+              fixedAmount: 30000,
+              effectiveFrom: '2026-01-01',
+            },
+          ],
+        );
+        for (const m of [4, 5, 6]) {
+          await markFullMonthPresent(prisma, organizationId, loanEmpId, m);
+        }
+      });
+
+      it("a second open month previews only what is left after the first open month's EMI", async () => {
+        const loan = await prisma.loan.create({
+          data: {
+            organizationId,
+            employeeId: loanEmpId,
+            loanType: 'ADVANCE',
+            principal: 1500,
+            interestRate: 0,
+            tenureMonths: 2,
+            emiAmount: 1000,
+            startMonth: 4,
+            startYear: YEAR,
+            outstandingBalance: 1500,
+            status: 'ACTIVE',
+          },
+        });
+
+        const april = await calculateOne(loanEmpId, 4);
+        expect(amountOf(april.deductions, 'LOAN_EMI')).toBe(1000);
+        const may = await calculateOne(loanEmpId, 5);
+        expect(amountOf(may.deductions, 'LOAN_EMI')).toBe(500); // not another 1000
+        // Recalculating April still sees May's pending 500 and keeps its own 1000.
+        const aprilAgain = await calculateOne(loanEmpId, 4);
+        expect(amountOf(aprilAgain.deductions, 'LOAN_EMI')).toBe(1000);
+
+        for (const run of [april, may]) {
+          await verifyAndApprove(run.id);
+          await request(app.getHttpServer())
+            .post(`/payroll/${run.id}/lock`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(201);
+        }
+        const settled = await prisma.loan.findFirstOrThrow({
+          where: { id: loan.id },
+        });
+        expect(settled.outstandingBalance).toBe(0);
+        expect(settled.status).toBe('CLOSED');
+        const repaid = await prisma.loanRepayment.aggregate({
+          where: { loanId: loan.id },
+          _sum: { amount: true },
+        });
+        expect(repaid._sum.amount).toBe(1500);
+      });
+
+      it('locking a run whose EMI is for a loan closed since calculate is refused and sent back for recalculation', async () => {
+        const loan = await prisma.loan.create({
+          data: {
+            organizationId,
+            employeeId: loanEmpId,
+            loanType: 'ADVANCE',
+            principal: 2000,
+            interestRate: 0,
+            tenureMonths: 1,
+            emiAmount: 2000,
+            startMonth: 6,
+            startYear: YEAR,
+            outstandingBalance: 2000,
+            status: 'ACTIVE',
+          },
+        });
+        const june = await calculateOne(loanEmpId, 6);
+        expect(amountOf(june.deductions, 'LOAN_EMI')).toBe(2000);
+        await verifyAndApprove(june.id);
+
+        // Closed after the payslip was calculated (e.g. repaid in cash).
+        await prisma.loan.update({
+          where: { id: loan.id },
+          data: { status: 'CLOSED', closureReason: 'Repaid in cash' },
+        });
+
+        const res = await request(app.getHttpServer())
+          .post(`/payroll/${june.id}/lock`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(400);
+        expect((res.body as { message: string }).message).toMatch(
+          /no longer active.*recalculate/,
+        );
+        const run = await prisma.payrollRun.findFirstOrThrow({
+          where: { id: june.id },
+        });
+        expect(run.status).toBe(PayrollRunStatus.CALCULATED);
+        expect(
+          await prisma.loanRepayment.count({ where: { loanId: loan.id } }),
+        ).toBe(0);
+
+        const recalculated = await calculateOne(loanEmpId, 6);
+        expect(amountOf(recalculated.deductions, 'LOAN_EMI')).toBeUndefined();
+      });
+
+      // P11 — a revision dated into a month already locked/paid used to be accepted and silently never
+      // reached that payslip.
+      it('a salary revision effective in (or before) a locked month is rejected', async () => {
+        for (const effectiveFrom of ['2026-05-10', '2026-03-01']) {
+          const res = await request(app.getHttpServer())
+            .post(`/employee-salary/${loanEmpId}/structure`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ componentCode: 'BASIC', fixedAmount: 35000, effectiveFrom })
+            .expect(400);
+          // May 2026 for the first date, April 2026 for the second (both locked above).
+          expect((res.body as { message: string }).message).toMatch(
+            effectiveFrom === '2026-05-10'
+              ? /5\/2026 payroll is already locked/
+              : /4\/2026 payroll is already locked/,
+          );
+        }
+        // After the last locked month (June is only calculated) it's fine.
+        await request(app.getHttpServer())
+          .post(`/employee-salary/${loanEmpId}/structure`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({
+            componentCode: 'BASIC',
+            fixedAmount: 35000,
+            effectiveFrom: '2026-07-01',
+          })
+          .expect(201);
+      });
+    });
+
+    it('P11: a statutory config version effective in a month with locked/paid payroll is rejected', async () => {
+      const nextYear = new Date().getFullYear() + 1;
+      const locked = await prisma.payrollRun.create({
+        data: {
+          organizationId,
+          employeeId: otherEmployeeId,
+          month: 12,
+          year: nextYear,
+          status: PayrollRunStatus.LOCKED,
+        },
+      });
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/statutory-config/pf')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({
+            isEnabled: false,
+            effectiveFrom: `${nextYear}-06-01`,
+            config: { employeeRate: 12, employerRate: 12, wageCeiling: 15000 },
+          })
+          .expect(400);
+        expect((res.body as { message: string }).message).toMatch(
+          new RegExp(`12/${nextYear} is already locked or paid`),
+        );
+      } finally {
+        await prisma.payrollRun.delete({ where: { id: locked.id } });
+      }
+    });
+
+    // P7 — a revision effective mid-month used to pay the whole month at the new rate.
+    describe('mid-month salary revision', () => {
+      it('pays each part of the month at the rate in force for it', async () => {
+        const revEmpId = await createEmployee(
+          'Revision Employee',
+          'pay-e2e-revision@example.test',
+          [
+            {
+              componentCode: 'BASIC',
+              fixedAmount: 30000,
+              effectiveFrom: '2026-01-01',
+            },
+            {
+              componentCode: 'BASIC',
+              fixedAmount: 60000,
+              effectiveFrom: '2026-06-16',
+            },
+          ],
+        );
+        await markFullMonthPresent(prisma, organizationId, revEmpId, MONTH);
+        const run = await calculateOne(revEmpId, MONTH);
+        // June has 30 days: 15 at 30,000 + 15 at 60,000.
+        expect(amountOf(run.earnings, 'BASIC')).toBe(45000);
+        expect(amountOf(run.earnings, 'HRA')).toBe(18000); // 40% of each part
+        expect(run.grossSalary).toBe(63000);
+      });
+
+      it('a mid-month joiner is not prorated twice (days before joining already carry no attendance)', async () => {
+        const joinerId = await createEmployee(
+          'Joiner Employee',
+          'pay-e2e-joiner@example.test',
+          [
+            {
+              componentCode: 'BASIC',
+              fixedAmount: 30000,
+              effectiveFrom: '2026-06-16',
+            },
+          ],
+        );
+        await prisma.attendance.createMany({
+          data: Array.from({ length: 15 }, (_, i) => ({
+            organizationId,
+            employeeId: joinerId,
+            date: `2026-06-${String(16 + i).padStart(2, '0')}`,
+            status: AttendanceStatus.PRESENT,
+            source: 'FACE_API' as const,
+          })),
+        });
+        const run = await calculateOne(joinerId, MONTH);
+        expect(amountOf(run.earnings, 'BASIC')).toBe(15000); // 30,000 × 15/30, same as before the fix
+      });
+    });
+
+    // P8 — YTD taxable income used to sum each earlier month's grossSalary, including non-taxable pay.
+    it('YTD taxable income counts only taxable earnings of earlier months', async () => {
+      await request(app.getHttpServer())
+        .post('/salary-components')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Meal Card Test',
+          code: 'MEAL_CARD_TEST',
+          type: 'EARNING',
+          isTaxable: false,
+        })
+        .expect(201);
+      const ytdEmpId = await createEmployee(
+        'YTD Employee',
+        'pay-e2e-ytd@example.test',
+        [
+          {
+            componentCode: 'BASIC',
+            fixedAmount: 100000,
+            effectiveFrom: '2026-01-01',
+          },
+          {
+            componentCode: 'MEAL_CARD_TEST',
+            fixedAmount: 50000,
+            effectiveFrom: '2026-01-01',
+          },
+        ],
+      );
+      for (const m of [4, 6]) {
+        await markFullMonthPresent(prisma, organizationId, ytdEmpId, m);
+      }
+      const april = await calculateOne(ytdEmpId, 4);
+      expect(april.grossSalary).toBe(190000); // 100,000 + 40,000 HRA + 50,000 meal card
+      const stored = await prisma.payrollRun.findFirstOrThrow({
+        where: { id: april.id },
+      });
+      expect(stored.taxableGross).toBe(140000);
+
+      const june = await calculateOne(ytdEmpId, 6);
+      // YTD (April, taxable only) + June + 9 more months of the 140,000 taxable structure.
+      expect(june.taxDetails?.grossAnnualIncome).toBe(140000 * 11);
+    });
+
+    // P9 + P10 — overtime is paid at its rateMultiplier, and a one-off OT month is not projected ×12 for TDS.
+    it('holiday overtime is paid at 2x and counted once in the annual tax projection', async () => {
+      const otEmpId = await createEmployee(
+        'Overtime Tax Employee',
+        'pay-e2e-ot@example.test',
+        [
+          {
+            componentCode: 'BASIC',
+            fixedAmount: 100000,
+            effectiveFrom: '2026-01-01',
+          },
+        ],
+      );
+      await markFullMonthPresent(prisma, organizationId, otEmpId, 4);
+      await prisma.overtimeRecord.create({
+        data: {
+          organizationId,
+          employeeId: otEmpId,
+          date: '2026-04-14',
+          hours: 40,
+          type: 'HOLIDAY',
+          rateMultiplier: 2,
+          status: 'APPROVED',
+        },
+      });
+      const april = await calculateOne(otEmpId, 4);
+      // ROUND(OT_WEIGHTED_HOURS * BASIC / 200) = 80 weighted hours × 500 — it was 40 × 500 before.
+      expect(amountOf(april.earnings, 'OVERTIME_PAY')).toBe(40000);
+      // This month's 180,000 once + 11 months of the regular 140,000 (not 180,000 × 12).
+      expect(april.taxDetails?.grossAnnualIncome).toBe(180000 + 140000 * 11);
+    });
+
+    // P13 — PF used the unrounded prorated Basic, so it could be ₹1 off 12% of the Basic on the payslip.
+    it('PF is computed from the Basic as printed on the payslip', async () => {
+      const pfEmpId = await createEmployee(
+        'PF Rounding Employee',
+        'pay-e2e-pfround@example.test',
+        [
+          {
+            componentCode: 'BASIC',
+            fixedAmount: 12008,
+            effectiveFrom: '2026-01-01',
+          },
+        ],
+      );
+      // 30 of July's 31 days present: Basic = 12,008 × 30/31 = 11,620.65 -> printed 11,621.
+      await markFullMonthPresent(prisma, organizationId, pfEmpId, 7);
+      await request(app.getHttpServer())
+        .put('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ pfEnabled: true })
+        .expect(200);
+      try {
+        const july = await calculateOne(pfEmpId, 7);
+        expect(amountOf(july.earnings, 'BASIC')).toBe(11621);
+        // 12% of 11,621 = 1,394.52 -> 1,395 (12% of the raw 11,620.65 rounded to 1,394).
+        expect(amountOf(july.deductions, 'PF')).toBe(1395);
+        expect(amountOf(july.employerContributions, 'PF_EMPLOYER')).toBe(1395);
+      } finally {
+        await request(app.getHttpServer())
+          .put('/payroll-settings')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ pfEnabled: false })
+          .expect(200);
+      }
     });
   });
 });

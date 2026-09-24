@@ -8,6 +8,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { IsStrongPassword } from '../../common/password-policy';
+import { NormalizeEmail, Trim } from '../../common/normalize-input';
 
 export class RegisterDto {
   @ApiProperty({ example: 'Acme Corp' })
@@ -23,11 +24,16 @@ export class RegisterDto {
   })
   organizationName!: string;
 
+  // Trimmed first so a whitespace-only name fails @IsNotEmpty instead of
+  // being stored as the founder's display name.
   @ApiProperty({ example: 'Jane Founder' })
+  @Trim()
+  @IsString()
   @IsNotEmpty()
   name!: string;
 
   @ApiProperty({ example: 'founder@acme.test' })
+  @NormalizeEmail()
   @IsEmail()
   email!: string;
 

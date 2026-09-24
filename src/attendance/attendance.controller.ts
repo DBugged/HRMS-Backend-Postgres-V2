@@ -64,7 +64,11 @@ export class AttendanceController {
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   manualPunch(@Body() dto: ManualPunchDto, @CurrentUser() caller: Caller) {
-    return this.attendanceService.manualPunch(dto, caller.organizationId);
+    return this.attendanceService.manualPunch(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   // No @Roles() — any authenticated caller punches for themselves only.

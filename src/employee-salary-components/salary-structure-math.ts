@@ -65,6 +65,48 @@ export function resolveCurrentRows<T extends RevisionRow>(
   return [...byCode.values()];
 }
 
+// One day after a YYYY-MM-DD string (UTC date arithmetic, see dayBefore).
+export function dayAfter(dateStr: string): string {
+  const date = new Date(`${dateStr}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+export interface PeriodSegment {
+  start: string;
+  end: string;
+}
+
+// Splits [periodStart, periodEnd] into contiguous segments wherever the set
+// of revision rows in force changes — i.e. at every row's effectiveFrom, and
+// the day after every row's effectiveTo, that falls strictly inside the
+// period. Returns a single segment when nothing changes mid-period (the
+// common case), so callers can keep their whole-period behaviour for it.
+export function splitPeriodAtRevisions(
+  rows: RevisionRow[],
+  periodStart: string,
+  periodEnd: string,
+): PeriodSegment[] {
+  const boundaries = new Set<string>();
+  for (const r of rows) {
+    if (r.effectiveFrom > periodStart && r.effectiveFrom <= periodEnd) {
+      boundaries.add(r.effectiveFrom);
+    }
+    if (
+      r.effectiveTo !== null &&
+      r.effectiveTo >= periodStart &&
+      r.effectiveTo < periodEnd
+    ) {
+      boundaries.add(dayAfter(r.effectiveTo));
+    }
+  }
+  const starts = [periodStart, ...[...boundaries].sort()];
+  return starts.map((start, i) => ({
+    start,
+    end: i + 1 < starts.length ? dayBefore(starts[i + 1]) : periodEnd,
+  }));
+}
+
 export interface SynthesizableComponent {
   id: string;
   code: string;

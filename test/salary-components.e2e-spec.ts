@@ -227,10 +227,12 @@ describe('Salary Components (e2e)', () => {
     expect((res.body as ComponentBody).isActive).toBe(false);
   });
 
-  it('a disabled component is excluded from circular-reference checks', async () => {
-    // BASIC_PAY is disabled now; a formula referencing it should be
-    // treated as an unknown external reference, not a cycle.
-    await request(app.getHttpServer())
+  // Changed with the P12a fix: this used to be accepted (201) — a disabled component is not in the payroll
+  // formula context, so the saved formula then failed with 'Unknown reference "BASIC_PAY"' for every employee
+  // on the next payroll run. It is now rejected at save time as an unknown reference (still not reported as a
+  // cycle — disabled components stay out of the cycle graph).
+  it('a formula referencing a disabled component is rejected as an unknown reference, not as a cycle', async () => {
+    const res = await request(app.getHttpServer())
       .post('/salary-components')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -239,7 +241,129 @@ describe('Salary Components (e2e)', () => {
         calcType: 'FORMULA',
         formula: 'BASIC_PAY * 0.1',
       })
+      .expect(400);
+    const message = (res.body as { message: string }).message;
+    expect(message).toMatch(/unknown name\(s\): BASIC_PAY/);
+    expect(message).not.toMatch(/Circular/);
+  });
+
+  // P12a — unknown references used to be accepted on save.
+  it('rejects saving a formula with an unknown reference; system variables and component codes are fine', async () => {
+    await request(app.getHttpServer())
+      .post('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Typo Allowance',
+        type: 'EARNING',
+        calcType: 'FORMULA',
+        formula: 'BASICC * 0.1',
+      })
+      .expect(400);
+    const ok = await request(app.getHttpServer())
+      .post('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Attendance Allowance',
+        type: 'EARNING',
+        calcType: 'FORMULA',
+        formula: 'ROUND(BASIC * PAYABLE_DAYS / TOTAL_DAYS_IN_MONTH * 0.05, 0)',
+      })
       .expect(201);
+    const okId = (ok.body as ComponentBody).id;
+    // Editing it to an unknown reference is rejected too.
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${okId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ formula: 'NOT_A_THING + 1' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .delete(`/salary-components/${okId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
+  // P1 — these used to be reported valid and saved, then paid out as NaN/Infinity.
+  it.each([
+    ['MIN()', /MIN\(\) expects/],
+    ['IF(1 > 2, 5)', /IF\(\) expects/],
+    ['.', /Invalid number/],
+    ['ROUND(BASIC, 400)', /ROUND\(\)/],
+  ])(
+    'validate-formula reports %s as invalid and create rejects it',
+    async (formula, reason) => {
+      const validated = await request(app.getHttpServer())
+        .post('/salary-components/validate-formula')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ formula })
+        .expect(201);
+      const body = validated.body as { valid: boolean; error: string };
+      expect(body.valid).toBe(false);
+      expect(body.error).toMatch(reason);
+
+      await request(app.getHttpServer())
+        .post('/salary-components')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: `Bad Formula ${formula}`,
+          code: `BAD_FORMULA_${formula.length}`,
+          type: 'EARNING',
+          calcType: 'FORMULA',
+          formula,
+        })
+        .expect(400);
+    },
+  );
+
+  // P12b — toggling a component back on re-adds it to the dependency graph without a cycle check.
+  it('re-enabling a component via toggle is rejected when it would close a reference cycle', async () => {
+    const a = await request(app.getHttpServer())
+      .post('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Toggle A',
+        type: 'EARNING',
+        calcType: 'PERCENTAGE',
+        percentageOf: 'TOGGLE_B',
+        percentageValue: 10,
+      })
+      .expect(201);
+    const aId = (a.body as ComponentBody).id;
+    await request(app.getHttpServer())
+      .patch(`/salary-components/${aId}/toggle`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    // With A disabled, B -> A passes the (active-only) cycle check.
+    const b = await request(app.getHttpServer())
+      .post('/salary-components')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Toggle B',
+        type: 'EARNING',
+        calcType: 'PERCENTAGE',
+        percentageOf: 'TOGGLE_A',
+        percentageValue: 10,
+      })
+      .expect(201);
+    const bId = (b.body as ComponentBody).id;
+
+    const res = await request(app.getHttpServer())
+      .patch(`/salary-components/${aId}/toggle`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    expect((res.body as { message: string }).message).toMatch(
+      /Circular reference detected in salary formulas/,
+    );
+    const stillOff = await prisma.salaryComponent.findFirstOrThrow({
+      where: { id: aId },
+    });
+    expect(stillOff.isActive).toBe(false);
+
+    for (const id of [bId, aId]) {
+      await request(app.getHttpServer())
+        .delete(`/salary-components/${id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    }
   });
 
   it('ADMIN deletes a component', async () => {

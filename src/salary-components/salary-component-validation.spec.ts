@@ -2,7 +2,9 @@ import { CalcType } from '@prisma/client';
 import {
   ComponentForCircularCheck,
   detectCircularReferences,
+  isKnownFormulaReference,
   isValidPercentage,
+  sampleEvaluationError,
 } from './salary-component-validation';
 
 function component(
@@ -130,4 +132,56 @@ describe('isValidPercentage', () => {
       expect(isValidPercentage(v)).toBe(false);
     },
   );
+});
+
+describe('isKnownFormulaReference', () => {
+  const codes = new Set(['BASIC', 'HRA']);
+
+  it('accepts active component codes, system variables and PT slab variables', () => {
+    expect(isKnownFormulaReference('BASIC', codes)).toBe(true);
+    expect(isKnownFormulaReference('GROSS_EARNINGS', codes)).toBe(true);
+    expect(isKnownFormulaReference('OT_WEIGHTED_HOURS', codes)).toBe(true);
+    expect(isKnownFormulaReference('PT_SLAB3_AMOUNT', codes)).toBe(true);
+    expect(isKnownFormulaReference('PT_SLAB12_UPTO', codes)).toBe(true);
+  });
+
+  it('rejects anything else', () => {
+    expect(isKnownFormulaReference('NONEXISTENT', codes)).toBe(false);
+    expect(isKnownFormulaReference('PT_SLAB_X_AMOUNT', codes)).toBe(false);
+  });
+});
+
+// Save/validate-time smoke test: a formula that can only ever produce
+// NaN/Infinity (or can't be evaluated at all) is reported, instead of being
+// accepted and paid out later.
+describe('sampleEvaluationError', () => {
+  it('is null for the seeded statutory formulas and ordinary expressions', () => {
+    for (const formula of [
+      'ROUND(MIN(PF_WAGES, PF_WAGE_CEILING) * PF_EMPLOYEE_RATE / 100, 0)',
+      'IF(ESI_APPLICABLE == 1, ROUND(GROSS_EARNINGS * ESI_EMPLOYEE_RATE / 100, 0), 0)',
+      'PT_SLAB_AMOUNT(GROSS_EARNINGS)',
+      'IF(GROSS_EARNINGS <= PT_SLAB1_UPTO, PT_SLAB1_AMOUNT, IF(GROSS_EARNINGS <= PT_SLAB2_UPTO, PT_SLAB2_AMOUNT, PT_SLAB3_AMOUNT))',
+      'ROUND(OT_WEIGHTED_HOURS * (BASIC / 200), 0)',
+      'BASIC * 0.4',
+      // Component codes that don't exist get a sample value too — unknown
+      // references are a separate check.
+      'SOME_CUSTOM_CODE + 1',
+    ]) {
+      expect(sampleEvaluationError(formula)).toBeNull();
+    }
+  });
+
+  it('reports formulas that parse but cannot produce a finite amount', () => {
+    expect(sampleEvaluationError('MIN()')).toMatch(/MIN\(\) expects/);
+    expect(sampleEvaluationError('IF(1 > 2, 5)')).toMatch(/IF\(\) expects/);
+    expect(sampleEvaluationError('.')).toMatch(/Invalid number/);
+    expect(sampleEvaluationError('ROUND(BASIC, 400)')).toMatch(/ROUND\(\)/);
+    expect(sampleEvaluationError(Array(100).fill('BASIC').join(' * '))).toMatch(
+      /non-finite/,
+    );
+  });
+
+  it('reports a parse error', () => {
+    expect(sampleEvaluationError('BASIC +')).not.toBeNull();
+  });
 });

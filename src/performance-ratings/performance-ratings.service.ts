@@ -73,8 +73,13 @@ export class PerformanceRatingsService {
       const deptEmployees = await this.scopedPrisma.user.findMany({
         where: {
           organizationId,
+          // A departmentless manager only gets direct reports — a
+          // `departmentId: null` branch would match every unassigned
+          // employee in the org (same guard as deptScopedEmployeeIds).
           OR: [
-            { departmentId: actor.departmentId },
+            ...(actor.departmentId !== null
+              ? [{ departmentId: actor.departmentId }]
+              : []),
             { reportingManagerId: actor.id },
           ],
         },
@@ -194,7 +199,9 @@ export class PerformanceRatingsService {
         throw new ForbiddenException('You cannot rate yourself.');
       }
       if (
-        employee.departmentId !== actor.departmentId &&
+        // null === null must not count as "same department".
+        (actor.departmentId === null ||
+          employee.departmentId !== actor.departmentId) &&
         employee.reportingManagerId !== actor.id
       ) {
         throw new ForbiddenException(

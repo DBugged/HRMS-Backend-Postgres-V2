@@ -47,3 +47,20 @@ describe('splitRichTextIntoParagraphs', () => {
     expect(splitRichTextIntoParagraphs('')).toEqual([]);
   });
 });
+
+describe('splitRichTextIntoParagraphs — legacy path entity decoding', () => {
+  // A plain-text template saved through sanitizeRichText is stored
+  // entity-encoded; the PDF must still print the original characters.
+  it('decodes entities in a legacy plain-text body', () => {
+    expect(
+      splitRichTextIntoParagraphs('Full &amp; Final\nSalary &lt; 5000'),
+    ).toEqual(['Full & Final', 'Salary < 5000']);
+  });
+
+  it('treats a self-closing <br /> as a paragraph break', () => {
+    expect(splitRichTextIntoParagraphs('<p>One<br />Two</p>')).toEqual([
+      'One',
+      'Two',
+    ]);
+  });
+});

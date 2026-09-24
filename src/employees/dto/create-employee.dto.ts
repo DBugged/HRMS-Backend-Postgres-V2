@@ -11,15 +11,18 @@ import {
 } from 'class-validator';
 import { Gender, Role } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
+import { NormalizeEmail, Trim } from '../../common/normalize-input';
 
 export class CreateEmployeeDto {
   @ApiProperty({ example: 'Jane Employee' })
+  @Trim()
   @IsNotEmpty()
   @IsString()
   @MaxLength(255)
   name!: string;
 
   @ApiProperty({ example: 'jane@acme.test' })
+  @NormalizeEmail()
   @IsEmail()
   email!: string;
 
@@ -36,6 +39,7 @@ export class CreateEmployeeDto {
   // @IsOptional alone only skips validation for undefined, same class of
   // bug as UpdateEmployeeDto.officialEmail / SendNotificationDto.department.
   @ApiPropertyOptional({ example: 'jane.personal@gmail.com' })
+  @NormalizeEmail()
   @IsOptional()
   @ValidateIf((o: CreateEmployeeDto) => o.personalEmail !== '')
   @IsEmail()

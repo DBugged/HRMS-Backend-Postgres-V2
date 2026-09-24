@@ -5,6 +5,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { ApprovalDelegationModule } from '../approval-delegation/approval-delegation.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
     EmployeeTimelineModule,
     ApprovalDelegationModule,
     EmailTemplatesModule,
+    AuditLogModule,
   ],
   controllers: [AttendanceController],
   providers: [AttendanceService],

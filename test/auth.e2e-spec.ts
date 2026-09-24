@@ -17,6 +17,7 @@ import * as bcrypt from 'bcrypt';
 import { Role } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { hashToken, REFRESH_REUSE_GRACE_MS } from '../src/auth/auth.service';
 
 // supertest's `res.body` is typed `any` — these mirror the real DTOs
 // (auth-response.dto.ts, register response) just enough to keep the
@@ -331,5 +332,146 @@ describe('Auth + RBAC (e2e)', () => {
       .send({ refreshToken })
       .expect(201);
     expect((res.body as AuthBody).accessToken).toEqual(expect.any(String));
+  });
+
+  describe('refresh-token rotation races and reuse detection', () => {
+    const loginAdmin = async () =>
+      (
+        (
+          await request(app.getHttpServer())
+            .post('/auth/login')
+            .send({ email: testEmails.admin, password })
+            .expect(201)
+        ).body as AuthBody
+      ).refreshToken;
+    const refresh = (refreshToken: string) =>
+      request(app.getHttpServer()).post('/auth/refresh').send({ refreshToken });
+
+    // Regression: the revokedAt check and the (unconditional) revoke ran
+    // around issuance, so 5 concurrent refreshes with one token minted 2+
+    // independent new pairs.
+    it('concurrent refreshes with one token issue exactly one new pair', async () => {
+      const token = await loginAdmin();
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () => refresh(token)),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+      expect(statuses.filter((s) => s === 401)).toHaveLength(4);
+
+      const presented = await prisma.refreshToken.findFirstOrThrow({
+        where: { tokenHash: hashToken(token) },
+      });
+      const winner = results.find((r) => r.status === 201)!.body as AuthBody;
+      expect(presented.revokedAt).not.toBeNull();
+      expect(presented.replacedByTokenHash).toBe(
+        hashToken(winner.refreshToken),
+      );
+    });
+
+    // Regression: replaying an already-rotated token didn't revoke the
+    // tokens descended from it, so a thief kept a live session.
+    it('replaying a rotated token (outside the grace window) revokes its whole family', async () => {
+      const a = await loginAdmin();
+      const b = ((await refresh(a).expect(201)).body as AuthBody).refreshToken;
+      const c = ((await refresh(b).expect(201)).body as AuthBody).refreshToken;
+
+      // Age the rotation of A past the benign-race grace window.
+      await prisma.refreshToken.updateMany({
+        where: { tokenHash: hashToken(a) },
+        data: { revokedAt: new Date(Date.now() - REFRESH_REUSE_GRACE_MS - 1) },
+      });
+
+      await refresh(a).expect(401);
+
+      const live = await prisma.refreshToken.findFirstOrThrow({
+        where: { tokenHash: hashToken(c) },
+      });
+      expect(live.revokedAt).not.toBeNull();
+      await refresh(c).expect(401);
+
+      const audit = await prisma.auditLog.findFirst({
+        where: { action: 'REFRESH_TOKEN_REUSE_DETECTED' },
+      });
+      expect(audit).not.toBeNull();
+    });
+
+    it('a replay within the grace window (concurrent tabs) is refused but does not kill the new session', async () => {
+      const a = await loginAdmin();
+      const b = ((await refresh(a).expect(201)).body as AuthBody).refreshToken;
+      await refresh(a).expect(401);
+      await refresh(b).expect(201);
+    });
+  });
+
+  // Regression (F7 / F9d): emails were stored/compared case-sensitively, so
+  // `A@X.test` and `a@x.test` were two accounts and mixed-case login failed;
+  // a whitespace-only founder name was accepted.
+  describe('register/login input normalization', () => {
+    it('lowercases the registration email, rejects a case-only duplicate, and logs in with any casing', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          organizationName: 'Case Org',
+          name: 'Case Founder',
+          email: ' E2E-Case-Founder@Example.TEST ',
+          password,
+        })
+        .expect(201);
+      const user = await prisma.user.findFirst({
+        where: { email: 'e2e-case-founder@example.test' },
+      });
+      expect(user).not.toBeNull();
+
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          organizationName: 'Case Org Twin',
+          name: 'Case Twin',
+          email: 'e2e-case-founder@example.test',
+          password,
+        })
+        .expect(409);
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'E2E-CASE-FOUNDER@example.test', password })
+        .expect(201);
+    });
+
+    it('concurrent registrations differing only by case create one account', async () => {
+      const results = await Promise.all(
+        ['E2E-Race@Example.test', 'e2e-race@example.test'].map((email, i) =>
+          request(app.getHttpServer())
+            .post('/auth/register')
+            .send({
+              organizationName: `Race Org ${i}`,
+              name: 'Racer',
+              email,
+              password,
+            }),
+        ),
+      );
+      expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+      expect(
+        await prisma.user.count({
+          where: {
+            email: { equals: 'e2e-race@example.test', mode: 'insensitive' },
+          },
+        }),
+      ).toBe(1);
+    });
+
+    it('rejects a whitespace-only founder name', async () => {
+      await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          organizationName: 'Blank Name Org',
+          name: '   ',
+          email: 'e2e-blank-name@example.test',
+          password,
+        })
+        .expect(400);
+    });
   });
 });

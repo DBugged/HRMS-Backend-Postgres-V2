@@ -29,12 +29,14 @@ interface ListFrame {
 export function splitRichTextIntoParagraphs(body: string): string[] {
   if (!body) return [];
 
-  // Legacy path — unchanged from the pre-rich-text behavior: plain text,
-  // one paragraph per line, blank lines ignored.
+  // Legacy path — the pre-rich-text behavior: plain text, one paragraph per
+  // line, blank lines ignored. Entities are decoded because a plain-text
+  // template saved through sanitizeRichText comes back HTML-escaped
+  // ("Full & Final" is stored as "Full &amp; Final").
   if (!BLOCK_TAG_PRESENT_RE.test(body)) {
     return body
       .split('\n')
-      .map((line) => line.trim())
+      .map((line) => decodeEntities(line).trim())
       .filter(Boolean);
   }
 

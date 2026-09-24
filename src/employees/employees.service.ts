@@ -59,6 +59,7 @@ import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
 import { DEFAULT_EMPLOYEE_TYPES } from '../organizations/employee-types';
+import { normalizeEmail } from '../common/normalize-input';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // Old system's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
@@ -186,6 +187,7 @@ export class EmployeesService {
     }
 
     await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
+    await this.assertOrgReferences(dto, organizationId);
 
     const generatedPassword = generatePolicyPassword();
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
@@ -528,12 +530,13 @@ export class EmployeesService {
     // (bcrypt hashing, etc.) instead of a fully sequential loop.
     await mapWithConcurrency(rows, 5, async (row) => {
       const name = asString(row.name).trim();
-      const email = asString(row.email).trim();
+      // Same normalization as the DTOs' @NormalizeEmail (trim + lowercase).
+      const email = normalizeEmail(asString(row.email));
       const designation = asString(row.designation).trim();
       const contactNumber = asString(row.contactNumber).trim();
       const genderInput = asString(row.gender).trim();
       const joiningDate = asString(row.joiningDate).trim();
-      const personalEmail = asString(row.personalEmail).trim();
+      const personalEmail = normalizeEmail(asString(row.personalEmail));
       const departmentName = asString(row.department).trim();
       const employeeCategoryName = asString(row.employeeCategory).trim();
       const roleInput = asString(row.role).trim();
@@ -791,6 +794,7 @@ export class EmployeesService {
     } = dto;
     const clean = stripLockedFields(updateFields, actor.role);
     await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
+    await this.assertOrgReferences(clean, organizationId);
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
     // decides whether HR/Admin *may* touch `role` at all (vs. a plain
@@ -1313,6 +1317,42 @@ export class EmployeesService {
           select: { reportingManagerId: true },
         });
       current = row?.reportingManagerId ?? null;
+    }
+  }
+
+  // departmentId / reportingManagerId must reference a row of the caller's
+  // own organization. The FKs are on id alone, so without this a
+  // Department/User id from another tenant was accepted and full-profile
+  // then showed that org's department/manager names. Same 400 whether the
+  // id doesn't exist at all or exists in another org — no existence oracle.
+  private async assertOrgReferences(
+    refs: {
+      departmentId?: string | null;
+      reportingManagerId?: string | null;
+    },
+    organizationId: string,
+  ) {
+    if (refs.departmentId) {
+      const dept = await this.scopedPrisma.department.findFirst({
+        where: { id: refs.departmentId, organizationId },
+        select: { id: true },
+      });
+      if (!dept) {
+        throw new BadRequestException(
+          'The specified department was not found.',
+        );
+      }
+    }
+    if (refs.reportingManagerId) {
+      const manager = await this.scopedPrisma.user.findFirst({
+        where: { id: refs.reportingManagerId, organizationId },
+        select: { id: true },
+      });
+      if (!manager) {
+        throw new BadRequestException(
+          'The specified reporting manager was not found.',
+        );
+      }
     }
   }
 

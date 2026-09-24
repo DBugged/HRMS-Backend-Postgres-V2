@@ -3,6 +3,7 @@ import {
   IsBoolean,
   IsEmail,
   IsEnum,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
@@ -11,6 +12,7 @@ import {
 } from 'class-validator';
 import { EmploymentStatus, Gender, Role } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
+import { NormalizeEmail, Trim } from '../../common/normalize-input';
 
 // Note: employeeId is deliberately not editable through this DTO at all
 // (not even by HR/Admin) — unlike the old system, which technically
@@ -18,14 +20,19 @@ import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.v
 // It's auto-generated and uniquely constrained per org; a general update
 // endpoint isn't the right place to let it be hand-edited.
 export class UpdateEmployeeDto {
+  // Trimmed + non-empty when present: a whitespace-only name used to be
+  // stored as-is.
   @ApiPropertyOptional()
+  @Trim()
   @IsOptional()
   @IsString()
+  @IsNotEmpty()
   @MaxLength(255)
   name?: string;
 
   // Locked for self-update — see employee-field-lock.ts.
   @ApiPropertyOptional()
+  @NormalizeEmail()
   @IsOptional()
   @IsEmail()
   email?: string;
@@ -37,6 +44,7 @@ export class UpdateEmployeeDto {
   // provisioned) has to stay valid — @IsOptional alone only skips
   // validation for undefined, not ''.
   @ApiPropertyOptional()
+  @NormalizeEmail()
   @IsOptional()
   @ValidateIf((o: UpdateEmployeeDto) => o.officialEmail !== '')
   @IsEmail()

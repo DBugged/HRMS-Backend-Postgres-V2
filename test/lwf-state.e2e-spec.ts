@@ -11,6 +11,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AttendanceStatus } from '@prisma/client';
+import { getFinancialYear } from '../src/payroll-settings/financial-year';
 
 interface AuthBody {
   accessToken: string;
@@ -174,6 +175,12 @@ describe('State-wise LWF by work location (e2e)', () => {
           },
         ],
       },
+    }).expect(201);
+    // December of next year is in a financial year registration doesn't seed income-tax slabs for; with income
+    // tax enabled a missing slab config now fails the employee instead of silently skipping TDS.
+    await post('/tax-slabs', {
+      financialYear: getFinancialYear(MONTH, YEAR, 4),
+      regime: 'NEW',
     }).expect(201);
   });
 

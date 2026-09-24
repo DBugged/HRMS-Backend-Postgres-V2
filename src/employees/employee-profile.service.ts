@@ -480,20 +480,47 @@ export class EmployeeProfileService {
     }
     const isFounderDoc = employee.role === Role.ADMIN;
     const category = dto.category ?? EmployeeDocumentCategory.DOCUMENT;
-    const doc = await this.scopedPrisma.employeeDocument.create({
-      data: {
-        organizationId,
-        employeeId: id,
-        docType: dto.docType,
-        fileName: dto.fileName,
-        fileUrl: dto.fileUrl,
-        category,
-        ...(isFounderDoc && {
-          status: EmployeeDocumentStatus.APPROVED,
-          reviewedById: actor.id,
-          reviewedAt: new Date(),
-        }),
-      },
+    // Duplicate-submission guard (same idea as ReimbursementsService.create):
+    // a double-click / retried request re-posting the SAME stored file for
+    // the same docType used to create two independent rows. Matching is on
+    // what makes two submissions "the same document" (employee, docType,
+    // storage key), excluding REJECTED so a rejected upload can still be
+    // resubmitted. Unlike the reimbursement guard, the check-then-insert is
+    // serialized with a transaction-scoped advisory lock on that key (same
+    // mechanism PrivacyAuditService uses), so truly concurrent duplicates
+    // can't both slip through.
+    const doc = await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`employee-doc:${organizationId}:${id}:${dto.docType}:${dto.fileUrl}`}))`;
+      const duplicate = await tx.employeeDocument.findFirst({
+        where: {
+          organizationId,
+          employeeId: id,
+          docType: dto.docType,
+          fileUrl: dto.fileUrl,
+          status: { not: EmployeeDocumentStatus.REJECTED },
+        },
+        select: { id: true },
+      });
+      if (duplicate) {
+        throw new ConflictException(
+          'This file has already been uploaded for this document type.',
+        );
+      }
+      return tx.employeeDocument.create({
+        data: {
+          organizationId,
+          employeeId: id,
+          docType: dto.docType,
+          fileName: dto.fileName,
+          fileUrl: dto.fileUrl,
+          category,
+          ...(isFounderDoc && {
+            status: EmployeeDocumentStatus.APPROVED,
+            reviewedById: actor.id,
+            reviewedAt: new Date(),
+          }),
+        },
+      });
     });
     // Mandatory-doc completion tracking only concerns the Documents tab's
     // DocumentRequirement list — a manually-uploaded Letter never matches
@@ -816,31 +843,72 @@ export class EmployeeProfileService {
       );
     }
 
-    await this.scopedPrisma.employeeAsset.updateMany({
-      where: { id: assetId, organizationId },
-      data: {
-        status: dto.status,
-        returnedDate:
-          dto.status === 'RETURNED' ? dto.returnedDate : asset.returnedDate,
-        // Only ever set (never cleared) on an actual RETURNED transition —
-        // records who processed the return, mirroring allocatedById, which
-        // is always set at creation time by contrast.
-        returnedById: dto.status === 'RETURNED' ? actor.id : asset.returnedById,
-      },
-    });
-
-    // Status sync back to the Asset Inventory master, for allocations that
-    // were made against one (assetId non-null — every pre-inventory row is
-    // null here and skips this entirely). The inventory module never
-    // assigns; this side effect is the whole of the link in the other
-    // direction. ALLOCATED is deliberately not handled — an already-created
-    // allocation row can only move forward to RETURNED/LOST.
-    if (asset.assetId && dto.status !== 'ALLOCATED') {
-      await this.scopedPrisma.asset.updateMany({
-        where: { id: asset.assetId, organizationId },
-        data: { status: dto.status === 'RETURNED' ? 'AVAILABLE' : 'LOST' },
-      });
+    // An allocation row only ever moves forward: ALLOCATED -> RETURNED or
+    // ALLOCATED -> LOST. Re-sending RETURNED on an already-returned row used
+    // to re-run the inventory sync below and flip an asset that had since
+    // been re-allocated to someone else back to AVAILABLE (letting it be
+    // allocated again — one asset ended up ALLOCATED to several people), and
+    // a RETURNED row could be reopened to ALLOCATED.
+    if (dto.status === 'ALLOCATED' || asset.status !== 'ALLOCATED') {
+      throw new ConflictException(
+        `This allocation is already ${asset.status} and cannot be changed to ${dto.status}.`,
+      );
     }
+
+    await this.scopedPrisma.$transaction(async (tx) => {
+      // Compare-and-swap on the expected current status: of two concurrent
+      // requests that both passed the check above, only one flips the row.
+      const { count } = await tx.employeeAsset.updateMany({
+        where: {
+          id: assetId,
+          organizationId,
+          isActive: true,
+          status: 'ALLOCATED',
+        },
+        data: {
+          status: dto.status,
+          returnedDate:
+            dto.status === 'RETURNED' ? dto.returnedDate : asset.returnedDate,
+          // Only ever set (never cleared) on an actual RETURNED transition —
+          // records who processed the return, mirroring allocatedById, which
+          // is always set at creation time by contrast.
+          returnedById:
+            dto.status === 'RETURNED' ? actor.id : asset.returnedById,
+        },
+      });
+      if (count === 0) {
+        throw new ConflictException(
+          'This allocation was already updated by another request.',
+        );
+      }
+
+      // Status sync back to the Asset Inventory master, for allocations that
+      // were made against one (assetId non-null — every pre-inventory row is
+      // null here and skips this entirely). The inventory module never
+      // assigns; this side effect is the whole of the link in the other
+      // direction. Only done when this allocation was the asset's current
+      // open allocation — if some other live ALLOCATED row points at the same
+      // asset (legacy data), the asset is still held and must stay ASSIGNED.
+      if (asset.assetId) {
+        const otherOpen = await tx.employeeAsset.count({
+          where: {
+            organizationId,
+            assetId: asset.assetId,
+            status: 'ALLOCATED',
+            isActive: true,
+            id: { not: assetId },
+          },
+        });
+        if (otherOpen === 0) {
+          await tx.asset.updateMany({
+            where: { id: asset.assetId, organizationId },
+            data: {
+              status: dto.status === 'RETURNED' ? 'AVAILABLE' : 'LOST',
+            },
+          });
+        }
+      }
+    });
 
     const updated = await this.scopedPrisma.employeeAsset.findFirstOrThrow({
       where: { id: assetId, organizationId },

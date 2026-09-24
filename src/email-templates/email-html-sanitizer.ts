@@ -1,59 +1,122 @@
 // Purpose: Server-side sanitizer for admin-authored Email Template bodies and email signatures.
 //   More permissive than letter-templates/rich-text-sanitizer.ts because email layout legitimately
-//   needs inline styles, tables and images — but it unconditionally removes anything executable:
-//   <script>/<style> (tag and contents), every on* event-handler attribute, and javascript:/data:/
-//   vbscript: URLs in URL-bearing attributes (href, src, ...). Other tags/attributes pass through.
-// Important: Text content is not re-encoded, so {{variable}} placeholders survive untouched.
+//   needs inline styles, tables and images — but it unconditionally removes anything executable.
+// Responsibilities: Parses with sanitize-html (a real HTML parser — htmlparser2) against an explicit
+//   allowlist of formatting/layout tags and attributes. Everything else is dropped: <script>/<style> and
+//   the raw-text/RCDATA elements (textarea, title, noembed, noframes, xmp, plaintext, noscript, iframe...)
+//   are removed together with their contents, every on* event-handler attribute is dropped (none are in
+//   the allowlist), URL attributes only accept http(s)/mailto/tel or relative URLs (no javascript:/data:/
+//   vbscript:), and dangerous CSS (expression(), javascript:, behavior, -moz-binding) drops the style.
+// Important: This replaced a regex tokenizer that kept '<'/'>' inside quoted attribute values verbatim,
+//   so `<textarea><img title="</textarea><img src=x onerror=...>">` survived and re-parsed as a live
+//   <img onerror> in the browser (mutation XSS). sanitize-html re-serializes from the parse tree and
+//   entity-escapes every attribute value and text node, so nothing can re-open a tag. {{variable}}
+//   placeholders survive (braces are never escaped), including inside href/src.
+import sanitizeHtml from 'sanitize-html';
 
-// Removed with their contents.
-const STRIP_WITH_CONTENT_RE = /<(script|style)\b[\s\S]*?<\/\1\s*>/gi;
-// An unterminated <script>/<style> swallows the rest of the document.
-const STRIP_UNCLOSED_RE = /<(script|style)\b[\s\S]*$/i;
+// Formatting, layout (email-shell tables) and media tags an email body or
+// signature legitimately uses. Deliberately excludes every raw-text/RCDATA
+// element and anything that can execute, load a document, or submit data.
+const ALLOWED_TAGS = [
+  'a',
+  'abbr',
+  'address',
+  'b',
+  'big',
+  'blockquote',
+  'br',
+  'caption',
+  'center',
+  'cite',
+  'code',
+  'col',
+  'colgroup',
+  'dd',
+  'del',
+  'div',
+  'dl',
+  'dt',
+  'em',
+  'font',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'hr',
+  'i',
+  'img',
+  'ins',
+  'kbd',
+  'li',
+  'mark',
+  'ol',
+  'p',
+  'pre',
+  'q',
+  's',
+  'small',
+  'span',
+  'strike',
+  'strong',
+  'sub',
+  'sup',
+  'table',
+  'tbody',
+  'td',
+  'tfoot',
+  'th',
+  'thead',
+  'tr',
+  'u',
+  'ul',
+];
 
-// Tags dropped outright (markup only; any inner text is kept, then sanitized).
-const BLOCKED_TAGS = new Set([
+// Presentational attributes any allowed tag may carry. No on* handlers.
+const GLOBAL_ATTRS = [
+  'style',
+  'class',
+  'id',
+  'title',
+  'dir',
+  'lang',
+  'role',
+  'align',
+  'valign',
+  'width',
+  'height',
+  'bgcolor',
+  'border',
+  'cellpadding',
+  'cellspacing',
+  'colspan',
+  'rowspan',
+  'color',
+  'face',
+  'size',
+  'aria-*',
+];
+
+// Contents of these are dropped along with the tag (not kept as text).
+const NON_TEXT_TAGS = [
   'script',
   'style',
+  'textarea',
+  'option',
+  'select',
+  'title',
+  'noembed',
+  'noframes',
+  'noscript',
+  'xmp',
+  'plaintext',
   'iframe',
-  'frame',
-  'frameset',
+  'template',
   'object',
-  'embed',
-  'applet',
-  'base',
-  'meta',
-  'link',
-  'form',
   'svg',
   'math',
-  'noscript',
-  'template',
-]);
-
-const URL_ATTRS = new Set([
-  'href',
-  'src',
-  'action',
-  'formaction',
-  'background',
-  'poster',
-  'xlink:href',
-  'srcset',
-  'lowsrc',
-  'dynsrc',
-  'cite',
-  'longdesc',
-  'usemap',
-]);
-
-// One comment, one tag (quoted attribute values may contain '>'), or a stray '<'.
-const TOKEN_RE =
-  /<!--[\s\S]*?-->|<![^>]*>|<\?[^>]*>|<(\/?)([a-zA-Z][a-zA-Z0-9-]*)((?:[^>"']|"[^"]*"|'[^']*')*)>|</g;
-
-const ATTR_RE =
-  /([^\s"'<>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/g;
-
-const SAFE_ATTR_NAME_RE = /^[a-zA-Z_:][-a-zA-Z0-9_:.]*$/;
+];
 
 function decodeEntities(value: string): string {
   return value
@@ -63,15 +126,7 @@ function decodeEntities(value: string): string {
     .replace(/&#(\d+);?/g, (_, d: string) =>
       String.fromCodePoint(parseInt(d, 10) || 0),
     )
-    .replace(/&colon;/gi, ':')
-    .replace(/&tab;/gi, '\t')
-    .replace(/&newline;/gi, '\n');
-}
-
-function isDangerousUrl(value: string): boolean {
-  // eslint-disable-next-line no-control-regex
-  const normalized = decodeEntities(value).replace(/[\s\u0000-\u001f]/g, '');
-  return /(^|,)(javascript|data|vbscript):/i.test(normalized);
+    .replace(/&colon;/gi, ':');
 }
 
 function isDangerousStyle(value: string): boolean {
@@ -81,23 +136,32 @@ function isDangerousStyle(value: string): boolean {
   );
 }
 
-function sanitizeAttributes(raw: string): string {
-  let out = '';
-  for (const m of raw.matchAll(ATTR_RE)) {
-    const name = m[1].toLowerCase();
-    if (!SAFE_ATTR_NAME_RE.test(name)) continue;
-    if (name.startsWith('on')) continue; // event handlers
-    const hasValue =
-      m[2] !== undefined || m[3] !== undefined || m[4] !== undefined;
-    const value = m[2] ?? m[3] ?? m[4] ?? '';
-    if (URL_ATTRS.has(name) && isDangerousUrl(value)) continue;
-    if (name === 'style' && isDangerousStyle(value)) continue;
-    out += hasValue
-      ? ` ${name}="${value.replace(/"/g, '&quot;')}"`
-      : ` ${name}`;
-  }
-  return out;
-}
+const OPTIONS: sanitizeHtml.IOptions = {
+  allowedTags: ALLOWED_TAGS,
+  allowedAttributes: {
+    '*': GLOBAL_ATTRS,
+    a: ['href', 'name', 'target', 'rel'],
+    img: ['src', 'alt'],
+  },
+  allowedSchemes: ['http', 'https', 'mailto', 'tel'],
+  allowedSchemesByTag: {},
+  allowProtocolRelative: true,
+  disallowedTagsMode: 'discard',
+  nonTextTags: NON_TEXT_TAGS,
+  // Keeps the stored style text as written (no postcss re-serialization);
+  // dangerous CSS is removed by the transform below instead.
+  parseStyleAttributes: false,
+  transformTags: {
+    '*': (tagName, attribs) => {
+      if (attribs.style !== undefined && isDangerousStyle(attribs.style)) {
+        const rest = { ...attribs };
+        delete rest.style;
+        return { tagName, attribs: rest };
+      }
+      return { tagName, attribs };
+    },
+  },
+};
 
 export function sanitizeEmailHtml(html: string): string;
 export function sanitizeEmailHtml(
@@ -107,19 +171,5 @@ export function sanitizeEmailHtml(
   html: string | null | undefined,
 ): string | null | undefined {
   if (!html) return html;
-  const stripped = html
-    .replace(STRIP_WITH_CONTENT_RE, '')
-    .replace(STRIP_UNCLOSED_RE, '');
-  return stripped.replace(
-    TOKEN_RE,
-    (match: string, slash?: string, tagName?: string, attrs?: string) => {
-      if (match === '<') return '&lt;'; // stray '<' that isn't a well-formed tag
-      if (!tagName) return ''; // comment / doctype / processing instruction
-      const name = tagName.toLowerCase();
-      if (BLOCKED_TAGS.has(name)) return '';
-      if (slash) return `</${name}>`;
-      const selfClosing = /\/\s*$/.test(attrs ?? '');
-      return `<${name}${sanitizeAttributes(attrs ?? '')}${selfClosing ? ' /' : ''}>`;
-    },
-  );
+  return sanitizeHtml(html, OPTIONS);
 }

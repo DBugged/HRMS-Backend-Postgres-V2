@@ -478,6 +478,63 @@ describe('Employee Rich Profile (e2e)', () => {
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(200);
     });
+
+    // Regression: a double-submitted upload (same stored file, same docType)
+    // used to create two independent rows when the requests raced.
+    it('concurrent duplicate uploads of the same file create exactly one document', async () => {
+      const payload = {
+        docType: 'Passport',
+        fileName: 'passport.pdf',
+        fileUrl: 'documents/passport-dup.pdf',
+      };
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          request(app.getHttpServer())
+            .post(`/employees/${empId}/documents`)
+            .set('Authorization', `Bearer ${empToken}`)
+            .send(payload),
+        ),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+      expect(statuses.filter((s) => s === 409)).toHaveLength(4);
+      const rows = await prisma.employeeDocument.count({
+        where: { employeeId: empId, fileUrl: payload.fileUrl },
+      });
+      expect(rows).toBe(1);
+
+      // A different file for the same docType is still accepted.
+      await request(app.getHttpServer())
+        .post(`/employees/${empId}/documents`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({ ...payload, fileUrl: 'documents/passport-dup-2.pdf' })
+        .expect(201);
+    });
+
+    it('the same file can be re-uploaded after the previous one was rejected', async () => {
+      const payload = {
+        docType: 'Voter ID',
+        fileName: 'voter.pdf',
+        fileUrl: 'documents/voter-resubmit.pdf',
+      };
+      const first = await request(app.getHttpServer())
+        .post(`/employees/${empId}/documents`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send(payload)
+        .expect(201);
+      await request(app.getHttpServer())
+        .patch(
+          `/employees/${empId}/documents/${(first.body as DocumentBody).id}/review`,
+        )
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'REJECTED', reason: 'Wrong file' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/employees/${empId}/documents`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send(payload)
+        .expect(201);
+    });
   });
 
   describe('assets', () => {
@@ -551,6 +608,69 @@ describe('Employee Rich Profile (e2e)', () => {
         .set('Authorization', `Bearer ${empToken}`)
         .send({ status: 'LOST' })
         .expect(403);
+    });
+
+    // Regression: an allocation row only moves forward (ALLOCATED ->
+    // RETURNED/LOST). Re-sending RETURNED used to re-run the inventory sync
+    // and a RETURNED row could be reopened to ALLOCATED.
+    it('re-sending RETURNED on an already-returned allocation is rejected (409)', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/assets/${assetId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'RETURNED', returnedDate: '2026-03-01' })
+        .expect(409);
+      const row = await prisma.employeeAsset.findFirstOrThrow({
+        where: { id: assetId },
+      });
+      // The original return is untouched.
+      expect(row.returnedDate).toBe('2026-02-01');
+    });
+
+    it('a RETURNED allocation cannot be reopened to ALLOCATED or marked LOST (409)', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/assets/${assetId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'ALLOCATED' })
+        .expect(409);
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/assets/${assetId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'LOST' })
+        .expect(409);
+      const row = await prisma.employeeAsset.findFirstOrThrow({
+        where: { id: assetId },
+      });
+      expect(row.status).toBe('RETURNED');
+    });
+
+    it('only one of several concurrent returns of the same allocation succeeds', async () => {
+      const alloc = await request(app.getHttpServer())
+        .post(`/employees/${otherEmpId}/assets`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          assetType: 'Headset',
+          assetName: 'Concurrent Return Headset',
+          allocatedDate: '2026-01-20',
+        })
+        .expect(201);
+      const allocId = (alloc.body as AssetBody).id;
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, (_, i) =>
+          request(app.getHttpServer())
+            .patch(`/employees/${otherEmpId}/assets/${allocId}`)
+            .set('Authorization', `Bearer ${hrToken}`)
+            .send({ status: 'RETURNED', returnedDate: `2026-02-0${i + 1}` }),
+        ),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === 200)).toHaveLength(1);
+      expect(statuses.filter((s) => s === 409)).toHaveLength(4);
+
+      const returnedEvents = await prisma.auditLog.count({
+        where: { action: 'ASSET_RETURNED', targetId: allocId },
+      });
+      expect(returnedEvents).toBe(1);
     });
 
     describe('duplicate assetTag', () => {

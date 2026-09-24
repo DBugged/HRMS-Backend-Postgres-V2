@@ -606,5 +606,46 @@ describe('Performance Ratings (e2e)', () => {
         .send({ employeeId: crossId, financialYear: '2026-27', rating: 2 })
         .expect(403);
     });
+
+    // Regression: a departmentless MANAGER's OR-branch `departmentId: null`
+    // matched every unassigned employee (list), and `null !== null` was
+    // false so they could rate any unassigned employee too.
+    it("a departmentless MANAGER can neither list nor rate another manager's unassigned reportee", async () => {
+      const cross = await prisma.user.findFirstOrThrow({
+        where: { email: 'perf-e2e-cross@example.test' },
+      });
+      expect(cross.departmentId).toBeNull();
+
+      const m3 = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Unassigned Manager',
+          email: 'perf-e2e-mgr-nodept@example.test',
+          role: 'MANAGER',
+        })
+        .expect(201);
+      const login3 = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'perf-e2e-mgr-nodept@example.test',
+          password: (m3.body as EmployeeCreateBody).generatedPassword,
+        });
+      const token3 = (login3.body as AuthBody).accessToken;
+
+      const list = await request(app.getHttpServer())
+        .get('/performance-ratings')
+        .set('Authorization', `Bearer ${token3}`)
+        .expect(200);
+      expect(
+        (list.body as { data: RatingBody[] }).data.map((r) => r.employeeId),
+      ).not.toContain(cross.id);
+
+      await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${token3}`)
+        .send({ employeeId: cross.id, financialYear: '2026-27', rating: 1 })
+        .expect(403);
+    });
   });
 });

@@ -423,10 +423,30 @@ describe('Settlements (e2e)', () => {
     expect(earnings.find((e) => e.code === 'REIMBURSEMENT')?.amount).toBe(
       REIMBURSEMENT_AMOUNT,
     );
+    // P4: the pending salary is carried as the month's real lines, not one net PENDING_SALARY figure.
+    expect(earnings.find((e) => e.code === 'PENDING_SALARY')).toBeUndefined();
+    expect(earnings.find((e) => e.code === 'BASIC')?.amount).toBe(
+      BASIC_MONTHLY,
+    );
+    expect(earnings.find((e) => e.code === 'HRA')?.amount).toBe(HRA_MONTHLY);
+    const run = await prisma.payrollRun.findFirstOrThrow({
+      where: { id: body.payrollRun.id },
+    });
+    const deductions = run.deductions as { code: string; amount: number }[];
+    // The month's EMI is not deducted twice — the loan is recovered in full as LOAN_RECOVERY.
+    expect(deductions.find((d) => d.code === 'LOAN_EMI')).toBeUndefined();
+    expect(deductions.find((d) => d.code === 'LOAN_RECOVERY')?.amount).toBe(
+      5000,
+    );
+    expect(run.grossSalary - run.totalDeductions).toBeCloseTo(run.netPay, 0);
   });
 
+  // Changed with the P3 fix: a CALCULATED (not yet locked) regular run used to count as "already paid", so the
+  // settlement dropped the salary while the run could still be locked later (charging that month's EMI on top of
+  // the settlement's full loan recovery). An open run now blocks the settlement; only a LOCKED/PAID run covers
+  // the month.
   it('does not pay the LWD month salary again when a regular payroll run already exists for it', async () => {
-    await prisma.payrollRun.create({
+    const run = await prisma.payrollRun.create({
       data: {
         organizationId,
         employeeId,
@@ -435,6 +455,19 @@ describe('Settlements (e2e)', () => {
         status: 'CALCULATED',
         netPay: 12345,
       },
+    });
+    const blocked = await request(app.getHttpServer())
+      .post('/settlements/calculate')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ employeeId, lastWorkingDay: `${YEAR}-07-15` })
+      .expect(400);
+    expect((blocked.body as { message: string }).message).toMatch(
+      /7\/2026 payroll run for this employee is calculated but not locked/,
+    );
+
+    await prisma.payrollRun.update({
+      where: { id: run.id },
+      data: { status: 'LOCKED' },
     });
     const res = await request(app.getHttpServer())
       .post('/settlements/calculate')
@@ -490,5 +523,260 @@ describe('Settlements (e2e)', () => {
       .post(`/settlements/${settlementId}/pay`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
+  });
+
+  // R1: calculate/process/pay were only on the employee timeline, never in the audit log.
+  it('writes audit log entries for calculate, process and pay', async () => {
+    const logs = await prisma.auditLog.findMany({
+      where: { organizationId, targetId: settlementId, module: 'PAYROLL' },
+    });
+    const actions = new Set(logs.map((l) => l.action));
+    expect(actions.has('SETTLEMENT_CALCULATED')).toBe(true);
+    expect(actions.has('SETTLEMENT_PROCESSED')).toBe(true);
+    expect(actions.has('SETTLEMENT_PAID')).toBe(true);
+    const processed = logs.find((l) => l.action === 'SETTLEMENT_PROCESSED');
+    expect(
+      (processed?.details as { employeeId?: string } | null)?.employeeId,
+    ).toBe(employeeId);
+  });
+
+  describe('Loan recovery, statutory detail and gratuity (regressions)', () => {
+    async function newEmployee(
+      name: string,
+      email: string,
+      joiningDate: string,
+      basic: number,
+    ): Promise<string> {
+      const res = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name, email, joiningDate });
+      const id = (res.body as EmployeeCreateBody).employee.id;
+      await request(app.getHttpServer())
+        .post(`/employee-salary/${id}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentCode: 'BASIC',
+          fixedAmount: basic,
+          effectiveFrom: '2026-01-01',
+        })
+        .expect(201);
+      return id;
+    }
+
+    async function markPresent(empId: string, month: number, days: number) {
+      await prisma.attendance.createMany({
+        data: Array.from({ length: days }, (_, i) => ({
+          organizationId,
+          employeeId: empId,
+          date: `${YEAR}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`,
+          status: AttendanceStatus.PRESENT,
+          source: 'FACE_API' as const,
+        })),
+      });
+    }
+
+    // P3: the settlement recovered the loan's full balance while the LWD month's regular run (counted as
+    // "already paid" even though only CALCULATED) went on to deduct that month's EMI again once locked; and
+    // process() never re-read the balance captured at calculate time.
+    it('never recovers the same loan money twice', async () => {
+      const loanEmpId = await newEmployee(
+        'FnF Loan Employee',
+        'settle-e2e-loan@example.test',
+        '2024-01-01',
+        BASIC_MONTHLY,
+      );
+      await markPresent(loanEmpId, 8, 31);
+      const loanRes = await request(app.getHttpServer())
+        .post('/loans')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          employeeId: loanEmpId,
+          principal: 3000,
+          tenureMonths: 3,
+          startMonth: 8,
+          startYear: YEAR,
+        })
+        .expect(201);
+      const loanId = (loanRes.body as { id: string }).id;
+      const lwd = `${YEAR}-08-20`;
+
+      // The August run is calculated (with its 1,000 EMI) but not locked -> the settlement is refused.
+      const calc = await request(app.getHttpServer())
+        .post('/payroll/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: 8, year: YEAR, employeeId: loanEmpId })
+        .expect(201);
+      const augRun = (
+        calc.body as {
+          payrolls: {
+            id: string;
+            deductions: { code: string; amount: number }[];
+          }[];
+        }
+      ).payrolls[0];
+      expect(augRun.deductions.find((d) => d.code === 'LOAN_EMI')?.amount).toBe(
+        1000,
+      );
+      await request(app.getHttpServer())
+        .post('/settlements/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ employeeId: loanEmpId, lastWorkingDay: lwd })
+        .expect(400);
+
+      // Locked: August pays the salary and charges its EMI; the settlement recovers only what's left.
+      for (const step of ['verify', 'approve', 'lock']) {
+        await request(app.getHttpServer())
+          .post(`/payroll/${augRun.id}/${step}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(201);
+      }
+      const draft = await request(app.getHttpServer())
+        .post('/settlements/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ employeeId: loanEmpId, lastWorkingDay: lwd })
+        .expect(201);
+      const draftBody = draft.body as SettlementBody;
+      expect(draftBody.pendingSalaryAmount).toBe(0);
+      expect(draftBody.loanBalanceRecovered).toBe(2000); // not the original 3,000
+
+      // The balance moves again before processing (a manual repayment) -> process refuses the stale figure.
+      await prisma.loan.update({
+        where: { id: loanId },
+        data: { outstandingBalance: 1500 },
+      });
+      const stale = await request(app.getHttpServer())
+        .post(`/settlements/${draftBody.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(409);
+      expect((stale.body as { message: string }).message).toMatch(
+        /loan balance changed/i,
+      );
+      const stillDraft = await prisma.settlement.findFirstOrThrow({
+        where: { id: draftBody.id },
+      });
+      expect(stillDraft.status).toBe('DRAFT');
+
+      const recalculated = await request(app.getHttpServer())
+        .post('/settlements/calculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ employeeId: loanEmpId, lastWorkingDay: lwd })
+        .expect(201);
+      expect((recalculated.body as SettlementBody).loanBalanceRecovered).toBe(
+        1500,
+      );
+      const processed = await request(app.getHttpServer())
+        .post(`/settlements/${draftBody.id}/process`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      const fnfRun = await prisma.payrollRun.findFirstOrThrow({
+        where: { id: (processed.body as ProcessResultBody).payrollRun.id },
+      });
+      const fnfDeductions = fnfRun.deductions as {
+        code: string;
+        amount: number;
+      }[];
+      expect(
+        fnfDeductions.find((d) => d.code === 'LOAN_RECOVERY')?.amount,
+      ).toBe(1500);
+      const loan = await prisma.loan.findFirstOrThrow({
+        where: { id: loanId },
+      });
+      expect(loan.status).toBe('CLOSED');
+    });
+
+    // P4 + P5: the final-settlement run carries the LWD month's statutory lines, and gratuity follows the
+    // GRATUITY statutory version (it read only the legacy payroll-settings flag, so it was always 0 for an
+    // org that enabled gratuity under Statutory Compliance).
+    it('carries PF and employer contributions onto the FnF run, and pays gratuity enabled via Statutory Compliance', async () => {
+      const BASIC = 20000;
+      const JOINED = '2015-01-01';
+      const LWD = `${YEAR}-05-20`;
+      const fnfEmpId = await newEmployee(
+        'FnF Detail Employee',
+        'settle-e2e-detail@example.test',
+        JOINED,
+        BASIC,
+      );
+      await markPresent(fnfEmpId, 5, 31);
+
+      // Legacy flag OFF; gratuity ON only through an effective GRATUITY statutory version.
+      await request(app.getHttpServer())
+        .put('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ gratuityEnabled: false, pfEnabled: true })
+        .expect(200);
+      const version = await prisma.statutoryConfigVersion.create({
+        data: {
+          organizationId,
+          module: 'GRATUITY',
+          effectiveFrom: `${YEAR}-01-01`,
+          effectiveTo: `${YEAR}-06-30`,
+          config: { rate: 4.81 },
+          isEnabled: true,
+        },
+      });
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/settlements/calculate')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ employeeId: fnfEmpId, lastWorkingDay: LWD })
+          .expect(201);
+        const settlement = res.body as SettlementBody;
+        const years =
+          (new Date(LWD).getTime() - new Date(JOINED).getTime()) /
+          (1000 * 60 * 60 * 24 * 365.25);
+        expect(settlement.gratuityAmount).toBe(calculateGratuity(BASIC, years));
+        expect(settlement.gratuityAmount).toBeGreaterThan(0);
+        // Gross 28,000 (Basic + 40% HRA) less PF: 12% of Basic capped at the (legacy default) 15,000 ceiling.
+        expect(settlement.pendingSalaryAmount).toBe(28000 - 1800);
+
+        const processed = await request(app.getHttpServer())
+          .post(`/settlements/${settlement.id}/process`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(201);
+        const run = await prisma.payrollRun.findFirstOrThrow({
+          where: { id: (processed.body as ProcessResultBody).payrollRun.id },
+        });
+        const earnings = run.earnings as { code: string; amount: number }[];
+        const deductions = run.deductions as { code: string; amount: number }[];
+        const employer = run.employerContributions as {
+          code: string;
+          amount: number;
+        }[];
+        expect(
+          earnings.find((e) => e.code === 'PENDING_SALARY'),
+        ).toBeUndefined();
+        expect(earnings.find((e) => e.code === 'BASIC')?.amount).toBe(BASIC);
+        expect(earnings.find((e) => e.code === 'GRATUITY')?.amount).toBe(
+          settlement.gratuityAmount,
+        );
+        expect(deductions.find((d) => d.code === 'PF')?.amount).toBe(1800);
+        expect(employer.find((e) => e.code === 'PF_EMPLOYER')?.amount).toBe(
+          1800,
+        );
+        // Gratuity accrual (4.81% of 20,000) is on too, via the same GRATUITY version.
+        expect(
+          employer.find((e) => e.code === 'GRATUITY_ACCRUAL')?.amount,
+        ).toBe(962);
+        expect(run.totalEmployerContributions).toBe(
+          employer.reduce((s, e) => s + e.amount, 0),
+        );
+        expect(run.netPay).toBe(settlement.netSettlementAmount);
+        expect(run.grossSalary - run.totalDeductions).toBeCloseTo(
+          run.netPay,
+          0,
+        );
+      } finally {
+        await prisma.statutoryConfigVersion.delete({
+          where: { id: version.id },
+        });
+        await request(app.getHttpServer())
+          .put('/payroll-settings')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ gratuityEnabled: true, pfEnabled: false })
+          .expect(200);
+      }
+    });
   });
 });

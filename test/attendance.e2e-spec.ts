@@ -311,6 +311,18 @@ describe('Attendance (e2e)', () => {
       });
       expect(row?.isLate).toBe(false);
       expect(row?.workDurationMinutes).toBe(9 * 60);
+
+      // R1: each manual (HR-entered) punch is audited.
+      const audits = await prisma.auditLog.findMany({
+        where: { organizationId, action: 'ATTENDANCE_MANUAL_PUNCH' },
+      });
+      const forThisDay = audits.filter(
+        (a) =>
+          (a.details as { employeeId?: string; attendanceDate?: string })
+            .employeeId === employeeId &&
+          (a.details as { attendanceDate?: string }).attendanceDate === date,
+      );
+      expect(forThisDay).toHaveLength(2);
     });
 
     it('a single short punch on a weekly-off day resolves to WEEKLY_OFF, not ABSENT', async () => {
@@ -1130,6 +1142,86 @@ describe('Attendance (e2e)', () => {
     });
   });
 
+  // Regression: a MANAGER with no department used to be scoped by
+  // `departmentId: actor.departmentId` = `departmentId IS NULL`, i.e. every
+  // employee in the org without a department.
+  describe('Departmentless MANAGER scoping', () => {
+    let noDeptManagerToken: string;
+    const wfhDate = offsetDate(-300);
+
+    beforeAll(async () => {
+      const mgrCreate = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'No Dept Manager',
+          email: 'att-e2e-nodept-mgr@example.test',
+          role: 'MANAGER',
+        })
+        .expect(201);
+      const mgrLogin = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-nodept-mgr@example.test',
+          password: (mgrCreate.body as EmployeeCreateBody).generatedPassword,
+        });
+      noDeptManagerToken = (mgrLogin.body as AuthBody).accessToken;
+
+      // A departmentless employee with attendance + a pending WFH request.
+      await prisma.attendance.upsert({
+        where: {
+          organizationId_employeeId_date: {
+            organizationId,
+            employeeId: noDeptEmployeeId,
+            date: wfhDate,
+          },
+        },
+        create: {
+          organizationId,
+          employeeId: noDeptEmployeeId,
+          date: wfhDate,
+          workArrangement: 'WFH',
+          workArrangementStatus: 'PENDING',
+        },
+        update: { workArrangement: 'WFH', workArrangementStatus: 'PENDING' },
+      });
+    });
+
+    it("does not see other departmentless employees' attendance", async () => {
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId: noDeptEmployeeId })
+        .set('Authorization', `Bearer ${noDeptManagerToken}`)
+        .expect(200);
+      const records = (res.body as { data: { employeeId: string }[] }).data;
+      expect(records.some((r) => r.employeeId === noDeptEmployeeId)).toBe(
+        false,
+      );
+    });
+
+    it("does not see other departmentless employees' pending WFH requests", async () => {
+      const hrView = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect(
+        (hrView.body as { employeeId: string }[]).some(
+          (r) => r.employeeId === noDeptEmployeeId,
+        ),
+      ).toBe(true);
+
+      const res = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/pending')
+        .set('Authorization', `Bearer ${noDeptManagerToken}`)
+        .expect(200);
+      expect(
+        (res.body as { employeeId: string }[]).some(
+          (r) => r.employeeId === noDeptEmployeeId,
+        ),
+      ).toBe(false);
+    });
+  });
+
   describe('GET /attendance day-detail fields (holidayName / leaveTypeName)', () => {
     let listLeaveTypeId: string;
 
@@ -1357,6 +1449,13 @@ describe('Attendance (e2e)', () => {
       expect(body.workDurationMinutes).toBe(9 * 60);
       expect(body.regularization.status).toBe('approved');
       expect(body.regularization.reviewComments).toBe('Looks right');
+
+      // R1: the review decision is audited.
+      const audit = await prisma.auditLog.findFirst({
+        where: { action: 'REGULARIZATION_APPROVED', targetId: attendanceId },
+      });
+      expect(audit?.module).toBe('ATTENDANCE');
+      expect(audit?.details).toMatchObject({ employeeId, date });
 
       // Already approved — resubmitting for the same date must not be able
       // to silently reset an approved decision back to pending.
@@ -1817,6 +1916,63 @@ describe('Attendance (e2e)', () => {
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(201);
       expect((rejected.body as { status: string }).status).toBe('REJECTED');
+
+      // R1: the rejection is audited.
+      const audit = await prisma.auditLog.findFirst({
+        where: { action: 'ATTENDANCE_IMPORT_REJECTED', targetId: batchId },
+      });
+      expect(audit?.module).toBe('ATTENDANCE');
+    });
+
+    // Regression: execute's status check and final write weren't guarded,
+    // so concurrent executes of one VALIDATED batch each imported every row.
+    it('concurrent executes of one batch run it exactly once (409 for the rest)', async () => {
+      const date = nextWeekday(3, -60 + 21);
+      const { batchId, body } = await uploadValidate([
+        {
+          employeeId: importEmployeeHumanId,
+          date,
+          inTime: `${date}T09:00:00.000Z`,
+          outTime: `${date}T18:00:00.000Z`,
+        },
+      ]);
+      expect(body.status).toBe('VALIDATED');
+
+      const results = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          request(app.getHttpServer())
+            .post(`/attendance/import/${batchId}/execute`)
+            .set('Authorization', `Bearer ${hrToken}`),
+        ),
+      );
+      const statuses = results.map((r) => r.status);
+      expect(statuses.filter((s) => s === 201)).toHaveLength(1);
+      // 409 = lost the claim; 400 = arrived after the winner already
+      // flipped the status (the pre-check's friendly error).
+      for (const s of statuses) expect([201, 400, 409]).toContain(s);
+
+      const batch = await prisma.attendanceImportBatch.findFirstOrThrow({
+        where: { id: batchId },
+      });
+      expect(batch.status).toBe('EXECUTED');
+      expect(batch.executionResult).toMatchObject({ imported: 1, errors: 0 });
+
+      // R1: one execution audit entry, not five.
+      expect(
+        await prisma.auditLog.count({
+          where: { action: 'ATTENDANCE_IMPORT_EXECUTED', targetId: batchId },
+        }),
+      ).toBe(1);
+
+      // Executing again, or rejecting after the fact, is refused.
+      await request(app.getHttpServer())
+        .post(`/attendance/import/${batchId}/execute`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`/attendance/import/${batchId}/reject`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(409);
     });
   });
 

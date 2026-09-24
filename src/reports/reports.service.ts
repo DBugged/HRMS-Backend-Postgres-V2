@@ -70,7 +70,16 @@ export class ReportsService {
     if (actor.role === Role.MANAGER) {
       // Ignore query.department for MANAGER — always their own, never a
       // caller-chosen one, so a MANAGER can't request another dept's report.
-      where.employee = { departmentId: actor.departmentId };
+      // deptScopedEmployeeIds scopes a departmentless MANAGER to nobody —
+      // `employee: { departmentId: null }` would match every unassigned
+      // employee in the org.
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     } else if (query.department) {
       where.employee = { departmentId: query.department };
     }
@@ -293,7 +302,14 @@ export class ReportsService {
     if (query.from) where.endDate = { gte: query.from };
     if (query.to) where.startDate = { lte: query.to };
     if (actor.role === Role.MANAGER) {
-      where.employee = { departmentId: actor.departmentId };
+      // Same null-department guard as attendanceReport.
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     }
 
     const departmentWhere: Prisma.DepartmentWhereInput =

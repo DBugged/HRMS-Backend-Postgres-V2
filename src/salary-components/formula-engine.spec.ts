@@ -1,6 +1,7 @@
 import {
   compileFormula,
   evaluateFormula,
+  SYSTEM_VARS,
   topoSortComponents,
 } from './formula-engine';
 
@@ -102,6 +103,109 @@ describe('evaluateFormula — functions', () => {
     expect(() => evaluateFormula('NOPE(1)', {})).toThrow(
       'Unknown function "NOPE" in formula',
     );
+  });
+});
+
+// Regression: each of these used to evaluate to NaN / undefined / ±Infinity,
+// which was saved onto the payslip and could be approved, locked and paid.
+describe('evaluateFormula — never returns a non-finite amount', () => {
+  it('rejects malformed numeric literals instead of turning them into NaN', () => {
+    expect(() => evaluateFormula('.', {})).toThrow('Invalid number "."');
+    expect(() => evaluateFormula('1.2.3 + 1', {})).toThrow(
+      'Invalid number "1.2.3"',
+    );
+    expect(() => evaluateFormula('.5 * 2', {})).toThrow('Invalid number ".5"');
+    expect(() => evaluateFormula('5.', {})).toThrow('Invalid number "5."');
+  });
+
+  it('still accepts plain integers and decimals', () => {
+    expect(evaluateFormula('12.5 * 2', {})).toBe(25);
+    expect(evaluateFormula('0.4 * 100', {})).toBeCloseTo(40);
+  });
+
+  it('rejects a literal too large to be a finite number', () => {
+    expect(() => compileFormula('9'.repeat(400))).toThrow(/too large/);
+  });
+
+  it('IF requires exactly three arguments (a missing else used to yield undefined)', () => {
+    expect(() => evaluateFormula('IF(1 > 2, 5)', {})).toThrow(
+      'IF() expects exactly 3 arguments, got 2',
+    );
+    expect(() => compileFormula('IF(1, 2, 3, 4)')).toThrow(
+      /IF\(\) expects exactly 3 arguments, got 4/,
+    );
+  });
+
+  it('MIN/MAX require at least one argument (empty used to be ±Infinity)', () => {
+    expect(() => evaluateFormula('MIN()', {})).toThrow(
+      'MIN() expects at least 1 argument, got 0',
+    );
+    expect(() => evaluateFormula('MAX()', {})).toThrow(
+      'MAX() expects at least 1 argument, got 0',
+    );
+  });
+
+  it('checks the argument count of every function at compile time', () => {
+    expect(() => compileFormula('NOT()')).toThrow(/NOT\(\) expects exactly 1/);
+    expect(() => compileFormula('ABS(1, 2)')).toThrow(/ABS\(\) expects/);
+    expect(() => compileFormula('PERCENT(10)')).toThrow(
+      /PERCENT\(\) expects exactly 2/,
+    );
+    expect(() => compileFormula('ROUND()')).toThrow(
+      /ROUND\(\) expects between 1 and 2 arguments/,
+    );
+    expect(() => compileFormula('ROUND(1, 2, 3)')).toThrow(/ROUND\(\)/);
+    expect(() => compileFormula('AND()')).toThrow(/AND\(\) expects/);
+    expect(() => compileFormula('PT_SLAB_AMOUNT()')).toThrow(
+      /PT_SLAB_AMOUNT\(\)/,
+    );
+  });
+
+  it('an unknown function is rejected when compiling, not only when evaluating', () => {
+    expect(() => compileFormula('NOPE(1)')).toThrow(
+      'Unknown function "NOPE" in formula',
+    );
+  });
+
+  it('ROUND rejects a decimals argument that would overflow', () => {
+    expect(() => evaluateFormula('ROUND(5, 400)', {})).toThrow(
+      /ROUND\(\) decimals must be a whole number/,
+    );
+    expect(() => evaluateFormula('ROUND(5, 1.5)', {})).toThrow(
+      /ROUND\(\) decimals/,
+    );
+    expect(evaluateFormula('ROUND(1234, -2)', {})).toBe(1200);
+  });
+
+  it('an overflowing result throws instead of returning Infinity', () => {
+    const huge = { BIG: Number.MAX_VALUE };
+    expect(() => evaluateFormula('BIG * 10', huge)).toThrow(/non-finite/);
+    expect(() => evaluateFormula('ROUND(BIG * 10, 0)', huge)).toThrow(
+      /non-finite/,
+    );
+  });
+
+  it('an intermediate Infinity is caught even when the final value would look finite', () => {
+    expect(() =>
+      evaluateFormula('IF(BIG * 10 > 0, 1, 0)', { BIG: Number.MAX_VALUE }),
+    ).toThrow(/non-finite/);
+  });
+
+  it('a NaN coming in through the context is rejected', () => {
+    expect(() => evaluateFormula('BASIC * 2', { BASIC: NaN })).toThrow(
+      /non-finite/,
+    );
+  });
+
+  it('division by zero still returns 0 (documented behaviour, unchanged)', () => {
+    expect(evaluateFormula('BASIC / 0', { BASIC: 100 })).toBe(0);
+  });
+});
+
+describe('SYSTEM_VARS', () => {
+  it('exposes the weighted overtime hours next to the raw hours', () => {
+    expect(SYSTEM_VARS).toContain('OT_HOURS');
+    expect(SYSTEM_VARS).toContain('OT_WEIGHTED_HOURS');
   });
 });
 

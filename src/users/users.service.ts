@@ -26,6 +26,8 @@ export class UsersService {
    * class-wide `any` — the cast documents exactly where the bypass is used
    * instead of hiding it.
    */
+  // Login emails are stored lowercased (see normalizeEmail in the DTOs and
+  // the users_email_lower_key unique index), so the lookup is too.
   findByEmail(email: string): Promise<User | null> {
     // Prisma's generated findFirst arg type has a `[key: string]: never`
     // excess-property guard, so `__tenantScopeBypass` (read and stripped
@@ -35,7 +37,7 @@ export class UsersService {
     // exactly this one extension-only field, not a general `any` typing.
     type FindFirstArgs = Parameters<typeof this.prisma.user.findFirst>[0];
     const args = {
-      where: { email },
+      where: { email: email.trim().toLowerCase() },
       __tenantScopeBypass: true,
     } as unknown as FindFirstArgs;
     return this.prisma.user.findFirst(args);
@@ -85,33 +87,66 @@ export class UsersService {
   // threshold is reached the counter is reset alongside setting lockedUntil,
   // so when the lock expires the account gets a fresh window rather than
   // re-locking on the very next wrong password.
-  recordFailedLogin(
-    user: Pick<User, 'id' | 'organizationId' | 'failedLoginAttempts'>,
+  //
+  // Both steps are atomic in the database — this used to read
+  // failedLoginAttempts from the row loaded at the start of login() and
+  // write back `loaded + 1`, so N concurrent wrong passwords all wrote the
+  // same value and the lock never tripped. Now:
+  //   1. increment in SQL (`failedLoginAttempts + 1`), only while the account
+  //      isn't already locked — an attempt whose bcrypt check finished after
+  //      a concurrent request set the lock neither counts nor extends it;
+  //   2. compare-and-swap the lock on the incremented value: of several
+  //      requests that pushed the counter past the threshold, exactly one
+  //      sees count === 1 (it reset the counter), so the lock + LOGIN_LOCKED
+  //      audit entry happen once.
+  async recordFailedLogin(
+    user: Pick<User, 'id' | 'organizationId'>,
     maxAttempts: number,
     lockoutMinutes: number,
   ): Promise<{ locked: boolean }> {
-    const attempts = user.failedLoginAttempts + 1;
-    const locked = attempts >= maxAttempts;
-    return this.prisma.user
-      .updateMany({
-        where: { id: user.id, organizationId: user.organizationId },
-        data: locked
-          ? {
-              failedLoginAttempts: 0,
-              lockedUntil: new Date(Date.now() + lockoutMinutes * 60_000),
-            }
-          : { failedLoginAttempts: attempts },
-      })
-      .then(() => ({ locked }));
+    const now = new Date();
+    const notLocked: Prisma.UserWhereInput = {
+      OR: [{ lockedUntil: null }, { lockedUntil: { lte: now } }],
+    };
+    const { count: counted } = await this.prisma.user.updateMany({
+      where: { id: user.id, organizationId: user.organizationId, ...notLocked },
+      data: { failedLoginAttempts: { increment: 1 } },
+    });
+    if (counted === 0) return { locked: false }; // already locked
+
+    const { count: lockedNow } = await this.prisma.user.updateMany({
+      where: {
+        id: user.id,
+        organizationId: user.organizationId,
+        failedLoginAttempts: { gte: maxAttempts },
+        ...notLocked,
+      },
+      data: {
+        failedLoginAttempts: 0,
+        lockedUntil: new Date(Date.now() + lockoutMinutes * 60_000),
+      },
+    });
+    return { locked: lockedNow === 1 };
   }
 
-  clearLoginFailures(
+  // Success-path counterpart of recordFailedLogin: clears the counters only
+  // if the account is not locked *right now*. login() checks lockedUntil on
+  // the row it loaded before the (slow) bcrypt compare, so a concurrent burst
+  // of guesses could lock the account while a correct guess was in flight;
+  // returning false here lets login() refuse that guess instead of letting
+  // it through the lock.
+  async clearLoginFailuresIfUnlocked(
     id: string,
     organizationId: string,
-  ): Promise<Prisma.BatchPayload> {
-    return this.prisma.user.updateMany({
-      where: { id, organizationId },
+  ): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: {
+        id,
+        organizationId,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }],
+      },
       data: { failedLoginAttempts: 0, lockedUntil: null },
     });
+    return count === 1;
   }
 }

@@ -11,6 +11,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AttendanceStatus } from '@prisma/client';
+import { getFinancialYear } from '../src/payroll-settings/financial-year';
 
 interface AuthBody {
   accessToken: string;
@@ -32,6 +33,8 @@ const PASSWORD = 'TestPass123!';
 // Next year, so the org's seeded statutory versions (dated the day it registers) always precede these and the
 // suite doesn't depend on today's date. ESI contribution periods are Apr-Sep / Oct-Mar, so Oct + Nov share one.
 const YEAR = new Date().getFullYear() + 1;
+// The financial year of October-December YEAR (FY starts in April).
+const TAX_FY = getFinancialYear(10, YEAR, 4);
 
 describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus accrual (e2e)', () => {
   let app: INestApplication<App>;
@@ -197,6 +200,11 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
       eligibilityCeiling: 21000,
       calculationCeiling: 7000,
     });
+    // Oct-Dec of next year fall in a financial year registration doesn't seed income-tax slabs for, and with
+    // income tax enabled a missing slab config now fails the employee instead of silently skipping TDS.
+    await post('/tax-slabs', { financialYear: TAX_FY, regime: 'NEW' }).expect(
+      201,
+    );
   });
 
   afterAll(async () => {
@@ -211,6 +219,7 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
       .get('/tax-slabs')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
+    // Excludes the NEW-regime config this suite adds for next year's TAX_FY in beforeAll.
     const rows = (
       res.body as {
         data: {
@@ -219,7 +228,7 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
           rebate87AAmount: number;
         }[];
       }
-    ).data;
+    ).data.filter((r) => r.financialYear !== TAX_FY);
     expect(rows.map((r) => r.regime).sort()).toEqual(['NEW', 'OLD']);
     expect(new Set(rows.map((r) => r.financialYear)).size).toBe(1);
     expect(rows.find((r) => r.regime === 'NEW')?.rebate87AAmount).toBe(60000);

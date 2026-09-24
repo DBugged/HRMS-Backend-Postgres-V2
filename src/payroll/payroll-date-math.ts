@@ -74,6 +74,32 @@ export function clampLeaveDaysToMonth(
   return Math.round((endMs - startMs) / 86400000) + 1;
 }
 
+// Same as clampLeaveDaysToMonth, for an arbitrary inclusive YYYY-MM-DD
+// window inside a month (a segment of a month split at a salary revision).
+// A half-day leave counts only in the window containing its date.
+export function clampLeaveDaysToRange(
+  leave: ClampableLeave,
+  from: string,
+  to: string,
+): number {
+  if (leave.isHalfDay) {
+    return leave.startDate >= from && leave.startDate <= to ? 0.5 : 0;
+  }
+  const clampedStart = leave.startDate > from ? leave.startDate : from;
+  const clampedEnd = leave.endDate < to ? leave.endDate : to;
+  if (clampedStart > clampedEnd) return 0;
+  const startMs = new Date(`${clampedStart}T00:00:00.000Z`).getTime();
+  const endMs = new Date(`${clampedEnd}T00:00:00.000Z`).getTime();
+  return Math.round((endMs - startMs) / 86400000) + 1;
+}
+
+// Inclusive calendar-day count of a YYYY-MM-DD range.
+export function daysInRange(from: string, to: string): number {
+  const startMs = new Date(`${from}T00:00:00.000Z`).getTime();
+  const endMs = new Date(`${to}T00:00:00.000Z`).getTime();
+  return Math.round((endMs - startMs) / 86400000) + 1;
+}
+
 export function round(
   value: number,
   roundingRule: string,

@@ -8,10 +8,14 @@ import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
+import { StatutoryConfigModule } from '../statutory-config/statutory-config.module';
+import { AuditLogModule } from '../audit-log/audit-log.module';
 
 @Module({
   imports: [
     PayrollModule,
+    StatutoryConfigModule,
+    AuditLogModule,
     PayrollSettingsModule,
     EmployeeSalaryComponentsModule,
     LeaveBalancesModule,

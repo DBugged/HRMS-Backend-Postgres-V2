@@ -22,6 +22,7 @@ import {
 import { Cron } from '@nestjs/schedule';
 import {
   Attendance,
+  AttendanceImportBatch,
   AttendanceSource,
   AttendanceStatus,
   Holiday,
@@ -46,7 +47,10 @@ import { signFileToken } from '../files/file-token';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
-import { assertManagerScopeOrDelegate } from '../common/dept-scope';
+import {
+  assertManagerScopeOrDelegate,
+  deptScopedEmployeeIds,
+} from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import {
   enumerateDateStrings,
@@ -69,6 +73,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
@@ -270,6 +275,14 @@ interface ImportRow {
   outLocation?: unknown;
 }
 
+// Stored in AttendanceImportBatch.executionResult once a batch is EXECUTED.
+type ImportExecutionResult = {
+  imported: number;
+  skipped: number;
+  errors: number;
+  rowErrors: { row: number; error: string }[];
+};
+
 // Selfies are stored as the storage relativeKey (POST /files/upload/selfies) — not servable as-is, so every read
 // signs them, like receipts/documents. External http(s) links and already-signed /files/ URLs pass through.
 function signSelfieKey(
@@ -292,6 +305,7 @@ export class AttendanceService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly delegationService: ApprovalDelegationService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // The core engine — derives an Attendance row for one employee/day from
@@ -809,7 +823,11 @@ export class AttendanceService {
     );
   }
 
-  async manualPunch(dto: ManualPunchDto, organizationId: string) {
+  async manualPunch(
+    dto: ManualPunchDto,
+    organizationId: string,
+    actorId: string,
+  ) {
     const user = await this.scopedPrisma.user.findFirst({
       where: { id: dto.employeeId, organizationId },
     });
@@ -849,6 +867,22 @@ export class AttendanceService {
       attendanceDate,
       organizationId,
     );
+
+    // HR/Admin back-entering a punch on someone else's behalf changes their
+    // attendance (and so payroll) — recorded like other HR write actions.
+    await this.auditLogService.log({
+      actorId,
+      action: 'ATTENDANCE_MANUAL_PUNCH',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: punch.id,
+      details: {
+        employeeId: user.id,
+        punchTime: punchTime.toISOString(),
+        attendanceDate,
+        attendanceId: attendance?.id ?? null,
+      },
+    });
 
     return { punch, attendance };
   }
@@ -1086,11 +1120,16 @@ export class AttendanceService {
     };
 
     if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
-      where.employeeId = { in: deptEmployees.map((e) => e.id) };
+      // deptScopedEmployeeIds scopes a departmentless manager to nobody —
+      // a raw `departmentId: actor.departmentId` filter would turn into
+      // `IS NULL` and match every unassigned employee in the org.
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
     }
 
     return this.scopedPrisma.attendance.findMany({
@@ -1223,11 +1262,10 @@ export class AttendanceService {
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
     } else if (actor.role === Role.MANAGER) {
-      const deptEmployees = await this.scopedPrisma.user.findMany({
-        where: { organizationId, departmentId: actor.departmentId },
-        select: { id: true },
-      });
-      const deptEmployeeIds = new Set(deptEmployees.map((e) => e.id));
+      // Same null-department guard as listPendingWfhRequests.
+      const deptEmployeeIds = new Set(
+        await deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId),
+      );
       where.employeeId =
         query.employeeId && deptEmployeeIds.has(query.employeeId)
           ? query.employeeId
@@ -1723,6 +1761,26 @@ export class AttendanceService {
       );
     }
 
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action:
+        dto.decision === 'APPROVED'
+          ? 'REGULARIZATION_APPROVED'
+          : 'REGULARIZATION_REJECTED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: row.employeeId,
+        date: row.date,
+        previousInTime: row.inTime?.toISOString() ?? null,
+        previousOutTime: row.outTime?.toISOString() ?? null,
+        requestedInTime: existingReg.requestedInTime ?? null,
+        requestedOutTime: existingReg.requestedOutTime ?? null,
+        comments: dto.comments ?? '',
+      },
+    });
+
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: row.employeeId, organizationId },
     });
@@ -1971,6 +2029,94 @@ export class AttendanceService {
       throw new BadRequestException('Only a validated batch can be executed.');
     }
 
+    // Claim the batch before touching the ledger (guarded compare-and-swap,
+    // same convention as the rest of the codebase). The status check above
+    // is only a fast-path for a friendly error — two concurrent executes
+    // (double-click, retried request) could both pass it and both import
+    // every row. Only the request that flips VALIDATED -> EXECUTING runs.
+    const { count: claimed } =
+      await this.scopedPrisma.attendanceImportBatch.updateMany({
+        where: { id, organizationId, status: ImportBatchStatus.VALIDATED },
+        data: {
+          status: ImportBatchStatus.EXECUTING,
+          executedById: actor.id,
+          executedAt: new Date(),
+        },
+      });
+    if (claimed === 0) {
+      throw new ConflictException(
+        'This import batch is already being executed or was already executed.',
+      );
+    }
+
+    let result: ImportExecutionResult;
+    try {
+      result = await this.applyImportBatchRows(batch, organizationId);
+    } catch (err) {
+      // An unexpected failure (per-row errors are already caught inside)
+      // must not leave the batch stuck in EXECUTING forever. Rows written
+      // before the failure stay written; the batch is marked FAILED.
+      await this.scopedPrisma.attendanceImportBatch.updateMany({
+        where: { id, organizationId, status: ImportBatchStatus.EXECUTING },
+        data: {
+          status: ImportBatchStatus.FAILED,
+          executionResult: {
+            imported: 0,
+            skipped: 0,
+            errors: 0,
+            failure:
+              err instanceof Error ? err.message : 'Import execution failed',
+          },
+        },
+      });
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'ATTENDANCE_IMPORT_FAILED',
+        module: 'ATTENDANCE',
+        organizationId,
+        targetId: id,
+        details: { fileName: batch.fileName },
+      });
+      throw err;
+    }
+
+    await this.scopedPrisma.attendanceImportBatch.updateMany({
+      where: { id, organizationId, status: ImportBatchStatus.EXECUTING },
+      data: {
+        status: ImportBatchStatus.EXECUTED,
+        executedById: actor.id,
+        executedAt: new Date(),
+        executionResult: result,
+      },
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'ATTENDANCE_IMPORT_EXECUTED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: id,
+      details: {
+        fileName: batch.fileName,
+        uploadedById: batch.uploadedById,
+        imported: result.imported,
+        skipped: result.skipped,
+        errors: result.errors,
+      },
+    });
+
+    return this.scopedPrisma.attendanceImportBatch.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+  }
+
+  // The ledger-writing body of executeImportBatch, run only after the batch
+  // has been claimed (EXECUTING). Per-row failures are collected into
+  // rowErrors; anything thrown out of here marks the batch FAILED.
+  private async applyImportBatchRows(
+    batch: AttendanceImportBatch,
+    organizationId: string,
+  ): Promise<ImportExecutionResult> {
     const rows = batch.rows as unknown as ImportRow[];
     const employeeCodes = [
       ...new Set(
@@ -2235,24 +2381,7 @@ export class AttendanceService {
       }
     }
 
-    await this.scopedPrisma.attendanceImportBatch.updateMany({
-      where: { id, organizationId },
-      data: {
-        status: ImportBatchStatus.EXECUTED,
-        executedById: actor.id,
-        executedAt: new Date(),
-        executionResult: {
-          imported,
-          skipped,
-          errors,
-          rowErrors,
-        },
-      },
-    });
-
-    return this.scopedPrisma.attendanceImportBatch.findFirstOrThrow({
-      where: { id, organizationId },
-    });
+    return { imported, skipped, errors, rowErrors };
   }
 
   async rejectImportBatch(id: string, actor: Actor, organizationId: string) {
@@ -2261,12 +2390,40 @@ export class AttendanceService {
     });
     if (!batch) throw new NotFoundException('Import batch not found.');
 
-    await this.scopedPrisma.attendanceImportBatch.updateMany({
-      where: { id, organizationId },
+    // A batch that is executing (or already executed) has written to the
+    // ledger — flipping it to REJECTED would misrepresent that, and could
+    // race executeImportBatch's own final status write. Guarded in the
+    // write's where-clause, not just a pre-check.
+    const { count } = await this.scopedPrisma.attendanceImportBatch.updateMany({
+      where: {
+        id,
+        organizationId,
+        status: {
+          notIn: [ImportBatchStatus.EXECUTING, ImportBatchStatus.EXECUTED],
+        },
+      },
       data: {
         status: ImportBatchStatus.REJECTED,
         validatedById: actor.id,
         validatedAt: new Date(),
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException(
+        'This import batch is being executed or was already executed and can no longer be rejected.',
+      );
+    }
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'ATTENDANCE_IMPORT_REJECTED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: id,
+      details: {
+        fileName: batch.fileName,
+        uploadedById: batch.uploadedById,
+        previousStatus: batch.status,
       },
     });
 

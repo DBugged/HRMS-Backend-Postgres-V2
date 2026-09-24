@@ -16,6 +16,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  PayrollRunStatus,
   Prisma,
   StatutoryConfigVersion,
   StatutoryModule,
@@ -157,6 +158,30 @@ export class StatutoryConfigService {
     if (latest && dto.effectiveFrom < latest.effectiveFrom) {
       throw new BadRequestException(
         `New version must start after the most recent version's effective date (${latest.effectiveFrom}). Versions must be created in chronological order — backdating before the latest version is not supported.`,
+      );
+    }
+
+    // A version effective in (or before) a month the org has already
+    // finalized payroll for can never reach those payslips — locked runs are
+    // not recalculated — so it used to be accepted and silently ignored for
+    // them. Rejected instead, same rule as a backdated salary revision.
+    const fromYear = Number(dto.effectiveFrom.slice(0, 4));
+    const fromMonth = Number(dto.effectiveFrom.slice(5, 7));
+    const finalized = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+        OR: [
+          { year: { gt: fromYear } },
+          { year: fromYear, month: { gte: fromMonth } },
+        ],
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+      select: { month: true, year: true },
+    });
+    if (finalized) {
+      throw new BadRequestException(
+        `Cannot add a ${module} version effective ${dto.effectiveFrom}: payroll for ${finalized.month}/${finalized.year} is already locked or paid. Choose an effective date after the last finalized payroll month, or unlock those payroll runs first.`,
       );
     }
 

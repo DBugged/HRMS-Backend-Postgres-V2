@@ -307,4 +307,46 @@ describe('EmailTemplates (e2e)', () => {
     );
     expect(rendered).toBe('Sam and Sam again');
   });
+
+  // Regression: the old regex sanitizer kept '<'/'>' inside quoted attribute
+  // values, so these raw-text/RCDATA payloads were stored intact and turned
+  // into a live <img onerror> when the frontend previewed them via
+  // dangerouslySetInnerHTML / innerHTML (stored mutation XSS).
+  describe('stored mutation-XSS payloads are neutralized', () => {
+    const payloads = [
+      '<textarea><img title="</textarea><img src=x onerror=alert(2)>"></textarea>',
+      '<noembed><img title="</noembed><img src=x onerror=alert(2)>"></noembed>',
+      '<title><img title="</title><img src=x onerror=alert(2)>"></title>',
+    ];
+    // A live tag carrying an on* handler, ignoring (escaped) quoted values.
+    const hasLiveHandler = (s: string) =>
+      /<[a-z][^>]*\son[a-z]+\s*=/i.test(s.replace(/"[^"]*"/g, '""'));
+
+    it.each(payloads)('custom template body: %s', async (payload) => {
+      const res = await request(app.getHttpServer())
+        .post('/email-templates')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: `mXSS ${payload.slice(1, 9)}`,
+          subject: 'Hi',
+          bodyHtml: `<p>ok</p>${payload}`,
+        })
+        .expect(201);
+      const body = (res.body as EmailTemplateBody).bodyHtml;
+      expect(body).toContain('<p>ok</p>');
+      expect(hasLiveHandler(body)).toBe(false);
+      expect(body).not.toMatch(/<(textarea|noembed|title)\b/i);
+    });
+
+    it.each(payloads)('signature html: %s', async (payload) => {
+      const res = await request(app.getHttpServer())
+        .post('/email-templates/signatures')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `sig ${payload.slice(1, 9)}`, html: payload })
+        .expect(201);
+      const html = (res.body as { html: string }).html;
+      expect(hasLiveHandler(html)).toBe(false);
+      expect(html).not.toMatch(/<(textarea|noembed|title)\b/i);
+    });
+  });
 });

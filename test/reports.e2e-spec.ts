@@ -11,6 +11,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AttendanceStatus } from '@prisma/client';
+import { ReportsService } from '../src/reports/reports.service';
 
 interface AuthBody {
   accessToken: string;
@@ -335,6 +336,93 @@ describe('Reports (e2e)', () => {
       .get('/reports/attrition')
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
+  });
+
+  // Regression: a MANAGER with no department was filtered by
+  // `employee: { departmentId: null }`, i.e. every unassigned employee.
+  it("a departmentless MANAGER's attendance and department-leave reports exclude other unassigned employees", async () => {
+    const unassignedCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Unassigned Person',
+        email: 'rpt-e2e-unassigned@example.test',
+      })
+      .expect(201);
+    const unassignedId = (unassignedCreate.body as EmployeeCreateBody).employee
+      .id;
+    const mgrCreate = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Unassigned Manager',
+        email: 'rpt-e2e-unassigned-mgr@example.test',
+        role: 'MANAGER',
+      })
+      .expect(201);
+    const mgrId = (mgrCreate.body as EmployeeCreateBody).employee.id;
+
+    await prisma.attendance.create({
+      data: {
+        organizationId,
+        employeeId: unassignedId,
+        date: offsetDate(-3),
+        status: AttendanceStatus.PRESENT,
+        source: 'FACE_API',
+        workDurationMinutes: 480,
+      },
+    });
+    const leaveType = await prisma.leaveType.findFirstOrThrow({
+      where: { organizationId, code: 'TAL' },
+    });
+    await prisma.leave.create({
+      data: {
+        organizationId,
+        employeeId: unassignedId,
+        leaveTypeId: leaveType.id,
+        startDate: offsetDate(-10),
+        endDate: offsetDate(-10),
+        totalDays: 1,
+        status: 'APPROVED',
+      },
+    });
+
+    const reports = app.get(ReportsService);
+    const manager = await prisma.user.findFirstOrThrow({
+      where: { id: mgrId },
+      omit: { password: true },
+    });
+    expect(manager.departmentId).toBeNull();
+
+    const attendance = await reports.attendanceReport(
+      {} as never,
+      manager,
+      organizationId,
+    );
+    expect(attendance.rows.some((r) => r.name === 'Unassigned Person')).toBe(
+      false,
+    );
+
+    const deptSummary = await reports.departmentLeaveSummaryReport(
+      {} as never,
+      manager,
+      organizationId,
+    );
+    expect(deptSummary.rows).toHaveLength(0);
+
+    // Sanity: HR does see the unassigned employee's rows.
+    const hr = await prisma.user.findFirstOrThrow({
+      where: { email: 'rpt-e2e-hr@example.test' },
+      omit: { password: true },
+    });
+    const hrAttendance = await reports.attendanceReport(
+      {} as never,
+      hr,
+      organizationId,
+    );
+    expect(hrAttendance.rows.some((r) => r.name === 'Unassigned Person')).toBe(
+      true,
+    );
   });
 
   it('rejects an invalid format value', async () => {

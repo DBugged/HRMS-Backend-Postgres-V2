@@ -1,8 +1,10 @@
 import { CalcType } from '@prisma/client';
 import {
+  dayAfter,
   dayBefore,
   localDateStr,
   resolveCurrentRows,
+  splitPeriodAtRevisions,
   synthesizeMissingRows,
   SynthesizableComponent,
 } from './salary-structure-math';
@@ -211,5 +213,76 @@ describe('synthesizeMissingRows', () => {
     );
     expect(result).toHaveLength(1);
     expect(result[0].formula).toBe('BASIC * 0.1');
+  });
+});
+
+describe('dayAfter', () => {
+  it('rolls over month and year ends', () => {
+    expect(dayAfter('2026-06-30')).toBe('2026-07-01');
+    expect(dayAfter('2026-12-31')).toBe('2027-01-01');
+  });
+});
+
+describe('splitPeriodAtRevisions', () => {
+  const row = (effectiveFrom: string, effectiveTo: string | null) => ({
+    componentCode: 'BASIC',
+    effectiveFrom,
+    effectiveTo,
+  });
+
+  it('is one segment when nothing changes inside the period', () => {
+    expect(
+      splitPeriodAtRevisions(
+        [row('2026-01-01', null)],
+        '2026-06-01',
+        '2026-06-30',
+      ),
+    ).toEqual([{ start: '2026-06-01', end: '2026-06-30' }]);
+  });
+
+  it('a revision effective on the 1st does not split the month', () => {
+    expect(
+      splitPeriodAtRevisions(
+        [row('2026-01-01', '2026-05-31'), row('2026-06-01', null)],
+        '2026-06-01',
+        '2026-06-30',
+      ),
+    ).toHaveLength(1);
+  });
+
+  it('splits at a mid-month revision', () => {
+    expect(
+      splitPeriodAtRevisions(
+        [row('2026-01-01', '2026-06-15'), row('2026-06-16', null)],
+        '2026-06-01',
+        '2026-06-30',
+      ),
+    ).toEqual([
+      { start: '2026-06-01', end: '2026-06-15' },
+      { start: '2026-06-16', end: '2026-06-30' },
+    ]);
+  });
+
+  it('splits at every boundary, including a row that simply ends mid-month', () => {
+    expect(
+      splitPeriodAtRevisions(
+        [
+          row('2026-01-01', '2026-06-09'),
+          row('2026-06-10', '2026-06-19'),
+          {
+            componentCode: 'ALLOWANCE',
+            effectiveFrom: '2026-01-01',
+            effectiveTo: '2026-06-24',
+          },
+        ],
+        '2026-06-01',
+        '2026-06-30',
+      ),
+    ).toEqual([
+      { start: '2026-06-01', end: '2026-06-09' },
+      { start: '2026-06-10', end: '2026-06-19' },
+      { start: '2026-06-20', end: '2026-06-24' },
+      { start: '2026-06-25', end: '2026-06-30' },
+    ]);
   });
 });

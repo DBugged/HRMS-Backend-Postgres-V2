@@ -5,9 +5,13 @@
 // payslip renderer works, closes active loans, pays out APPROVED reimbursements) inside one transaction;
 // delegates the pending-salary component to PayrollService.calculatePayroll.
 // Important: process() does NOT deactivate the employee — that (with the exit gates, manager reassignment and
-// final employmentStatus) belongs to OffboardingService.complete(). Pending salary is 0 when a non-final
-// PayrollRun for the last-working-day month already exists (it was paid there, so paying it again would
-// double-pay). Gratuity requires >= 5 years of service (YEARS_FOR_GRATUITY_ELIGIBILITY, Payment of Gratuity
+// final employmentStatus) belongs to OffboardingService.complete(). Pending salary is 0 when a LOCKED/PAID
+// regular PayrollRun for the last-working-day month already exists (it was paid there, so paying it again would
+// double-pay); while that month's regular run is still open (calculated but not locked) the settlement can't be
+// calculated or processed at all — whether it pays the salary (and recovers that month's EMI) isn't settled yet.
+// The loan balance recovered is re-checked inside process(). Gratuity is gated by the GRATUITY statutory
+// version in force on the last working day (falling back to the legacy payroll-settings flag), like monthly
+// payroll. Gratuity requires >= 5 years of service (YEARS_FOR_GRATUITY_ELIGIBILITY, Payment of Gratuity
 // Act 1972, ported verbatim); leave-encashment sums every encashment-allowed LeaveType's closing balance
 // with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
 // email goes to the employee's personalEmail, not their login email, since by process() time the account is
@@ -16,6 +20,7 @@ import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
+  HttpException,
   Inject,
   Injectable,
   NotFoundException,
@@ -29,8 +34,11 @@ import {
   ReimbursementStatus,
   Role,
   SettlementStatus,
+  StatutoryModule,
   User,
 } from '@prisma/client';
+import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
+import { AuditLogService } from '../audit-log/audit-log.service';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollService } from '../payroll/payroll.service';
@@ -67,6 +75,27 @@ interface SettlementPayrollLine {
   taxable?: boolean;
 }
 
+// Settlement.pendingSalaryBreakdown — the LWD-month payroll lines behind pendingSalaryAmount.
+interface PendingSalaryBreakdown {
+  earnings: SettlementPayrollLine[];
+  deductions: SettlementPayrollLine[];
+  employerContributions: (SettlementPayrollLine & {
+    breakup?: { eps: number; epf: number };
+  })[];
+}
+
+// A regular run in one of these states has not paid anything yet and can still change.
+const OPEN_REGULAR_RUN_STATUSES: PayrollRunStatus[] = [
+  PayrollRunStatus.CALCULATED,
+  PayrollRunStatus.VERIFIED,
+  PayrollRunStatus.APPROVED,
+];
+// ...and in these it has — the LWD month's salary is covered by it.
+const SETTLED_REGULAR_RUN_STATUSES: PayrollRunStatus[] = [
+  PayrollRunStatus.LOCKED,
+  PayrollRunStatus.PAID,
+];
+
 @Injectable()
 export class SettlementsService {
   constructor(
@@ -79,6 +108,8 @@ export class SettlementsService {
     private readonly emailService: EmailService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly statutoryConfigService: StatutoryConfigService,
+    private readonly auditLogService: AuditLogService,
   ) {}
 
   // Adds the Code on Social Security's 30-day gratuity deadline (from the last working day) to a settlement, and
@@ -164,12 +195,29 @@ export class SettlementsService {
     const month = lwd.getMonth() + 1;
     const year = lwd.getFullYear();
 
-    const calc = await this.payrollService.calculatePayroll(
+    await this.assertNoOpenRegularRun(
       dto.employeeId,
       month,
       year,
       organizationId,
     );
+
+    let calc: Awaited<ReturnType<PayrollService['calculatePayroll']>>;
+    try {
+      calc = await this.payrollService.calculatePayroll(
+        dto.employeeId,
+        month,
+        year,
+        organizationId,
+      );
+    } catch (err) {
+      // A payroll misconfiguration (missing tax slabs, a broken formula) is
+      // the caller's to fix, not a server error.
+      if (err instanceof HttpException) throw err;
+      throw new BadRequestException(
+        `Could not calculate the ${month}/${year} pending salary: ${(err as Error).message}`,
+      );
+    }
     // calculatePayroll() (a plain preview — it never calls
     // LoansService.recordRepayment, that only happens when a normal
     // payroll run is actually locked) includes a LOAN_EMI deduction line
@@ -182,9 +230,11 @@ export class SettlementsService {
     const loanEmiDeduction = calc.deductions
       .filter((d) => d.code === 'LOAN_EMI')
       .reduce((sum, d) => sum + d.amount, 0);
-    // A regular (non-final) payroll run already booked for the LWD month has paid that salary — paying it
-    // again through the settlement would double-pay. A bare DRAFT row has no figures, so it doesn't count.
-    const monthAlreadyPaid = await this.hasNonFinalPayrollRun(
+    // A LOCKED/PAID regular (non-final) payroll run for the LWD month has paid that salary — paying it again
+    // through the settlement would double-pay. Only a locked/paid run counts: a CALCULATED one used to count
+    // too, so the settlement dropped the salary AND (since the loan is recovered in full below) the regular run,
+    // once locked, deducted that month's EMI a second time. Open runs are refused above instead.
+    const monthAlreadyPaid = await this.hasSettledRegularRun(
       dto.employeeId,
       month,
       year,
@@ -193,6 +243,29 @@ export class SettlementsService {
     const pendingSalaryAmount = monthAlreadyPaid
       ? 0
       : calc.netPay + loanEmiDeduction;
+    // The real lines behind that figure, carried onto the final-settlement payroll run by process() so its
+    // payslip (and statutory reports) show the actual earnings, PF/ESI/PT/TDS and employer contributions. The
+    // EMI line is left out for the same reason it is added back above.
+    const pendingSalaryBreakdown: PendingSalaryBreakdown | null =
+      monthAlreadyPaid
+        ? null
+        : {
+            earnings: calc.earnings.map((e) => ({
+              code: e.code,
+              name: e.name,
+              amount: e.amount,
+              ...(e.taxable !== undefined ? { taxable: e.taxable } : {}),
+            })),
+            deductions: calc.deductions
+              .filter((d) => d.code !== 'LOAN_EMI')
+              .map((d) => ({ code: d.code, name: d.name, amount: d.amount })),
+            employerContributions: calc.employerContributions.map((e) => ({
+              code: e.code,
+              name: e.name,
+              amount: e.amount,
+              ...(e.breakup ? { breakup: e.breakup } : {}),
+            })),
+          };
 
     const activeLoans = await this.scopedPrisma.loan.findMany({
       where: {
@@ -240,10 +313,23 @@ export class SettlementsService {
     });
     const leaveEncashmentAmount = Math.round(leaveDaysEncashed * ratePerDay);
 
+    // Same source of truth as monthly payroll (applyStatutoryOverrides): the GRATUITY statutory version in
+    // force on the last working day decides, and only an org with no version for that date falls back to the
+    // legacy payroll-settings flag. Reading only the legacy flag made gratuity 0 for every org that switched it
+    // on under Statutory Compliance.
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
+    const { version: gratuityVersion } =
+      await this.statutoryConfigService.getEffective(
+        StatutoryModule.GRATUITY,
+        dto.lastWorkingDay.slice(0, 10),
+        organizationId,
+      );
+    const gratuityEnabled = gratuityVersion
+      ? gratuityVersion.isEnabled
+      : settings.gratuityEnabled;
     let gratuityAmount = 0;
-    if (settings.gratuityEnabled) {
+    if (gratuityEnabled) {
       const yearsOfService =
         (lwd.getTime() - employee.joiningDate.getTime()) /
         (1000 * 60 * 60 * 24 * 365.25);
@@ -277,6 +363,9 @@ export class SettlementsService {
     const data = {
       lastWorkingDay: dto.lastWorkingDay,
       pendingSalaryAmount,
+      pendingSalaryBreakdown: pendingSalaryBreakdown
+        ? (pendingSalaryBreakdown as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull,
       leaveEncashmentAmount,
       bonusAmount,
       recoveriesAmount,
@@ -303,6 +392,13 @@ export class SettlementsService {
         where: { id: existing.id, organizationId },
         data,
       });
+      await this.logSettlementCalculated(
+        actor.id,
+        organizationId,
+        existing.id,
+        data,
+        dto.employeeId,
+      );
       return {
         ...this.withGratuityPayout(
           await this.scopedPrisma.settlement.findFirstOrThrow({
@@ -315,6 +411,13 @@ export class SettlementsService {
     const created = await this.scopedPrisma.settlement.create({
       data: { organizationId, employeeId: dto.employeeId, ...data },
     });
+    await this.logSettlementCalculated(
+      actor.id,
+      organizationId,
+      created.id,
+      data,
+      dto.employeeId,
+    );
     // FNF_INITIATED — only on the first calculate() for this employee (the
     // `existing` branch above is a re-preview of the same in-flight draft,
     // not a new initiation), so re-calculating doesn't spam the timeline.
@@ -327,7 +430,8 @@ export class SettlementsService {
     return { ...this.withGratuityPayout(created), pendingSalaryNote };
   }
 
-  private async hasNonFinalPayrollRun(
+  // Whether a LOCKED/PAID regular payroll run already paid the LWD month.
+  private async hasSettledRegularRun(
     employeeId: string,
     month: number,
     year: number,
@@ -340,11 +444,72 @@ export class SettlementsService {
         month,
         year,
         isFinalSettlement: false,
-        status: { not: PayrollRunStatus.DRAFT },
+        status: { in: SETTLED_REGULAR_RUN_STATUSES },
       },
       select: { id: true },
     });
     return !!run;
+  }
+
+  // A regular run for the LWD month that is calculated but not yet locked
+  // hasn't paid anything, but may still be locked and paid — so neither
+  // "the settlement pays this month's salary" nor "the regular run does" is
+  // safe to assume. (Treating it as paid dropped the salary from the
+  // settlement while the run, once locked, charged that month's EMI on top of
+  // the settlement's full loan recovery.) A bare DRAFT row carries no figures
+  // and is not counted, as before.
+  private async assertNoOpenRegularRun(
+    employeeId: string,
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<void> {
+    const open = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        month,
+        year,
+        isFinalSettlement: false,
+        status: { in: OPEN_REGULAR_RUN_STATUSES },
+      },
+      select: { status: true },
+    });
+    if (open) {
+      throw new BadRequestException(
+        `The regular ${month}/${year} payroll run for this employee is ${open.status.toLowerCase()} but not locked — lock that run first (it then pays the ${month}/${year} salary), then calculate the settlement.`,
+      );
+    }
+  }
+
+  private async logSettlementCalculated(
+    actorId: string,
+    organizationId: string,
+    settlementId: string,
+    data: {
+      lastWorkingDay: string;
+      pendingSalaryAmount: number;
+      gratuityAmount: number;
+      loanBalanceRecovered: number;
+      netSettlementAmount: number;
+    },
+    employeeId: string,
+  ) {
+    await this.auditLogService.log({
+      actorId,
+      action: 'SETTLEMENT_CALCULATED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: settlementId,
+      details: {
+        employeeId,
+        lastWorkingDay: data.lastWorkingDay,
+        pendingSalaryAmount: data.pendingSalaryAmount,
+        gratuityAmount: data.gratuityAmount,
+        loanBalanceRecovered: data.loanBalanceRecovered,
+        netSettlementAmount: data.netSettlementAmount,
+      },
+    });
   }
 
   private async sumApprovedReimbursements(
@@ -383,23 +548,50 @@ export class SettlementsService {
     const month = lwd.getMonth() + 1;
     const year = lwd.getFullYear();
 
+    // The LWD month's regular run may have moved since calculate(): still
+    // open -> can't tell who pays the salary yet; now locked/paid while this
+    // draft still pays the salary -> it would be paid twice.
+    await this.assertNoOpenRegularRun(
+      settlement.employeeId,
+      month,
+      year,
+      organizationId,
+    );
+    const regularRunSettled = await this.hasSettledRegularRun(
+      settlement.employeeId,
+      month,
+      year,
+      organizationId,
+    );
+    if (regularRunSettled && settlement.pendingSalaryAmount > 0) {
+      throw new ConflictException(
+        `The regular ${month}/${year} payroll run was locked after this settlement was calculated, so it already pays that salary — recalculate the settlement first.`,
+      );
+    }
     const salaryAlreadyPaid =
-      settlement.pendingSalaryAmount === 0 &&
-      (await this.hasNonFinalPayrollRun(
-        settlement.employeeId,
-        month,
-        year,
-        organizationId,
-      ));
+      settlement.pendingSalaryAmount === 0 && regularRunSettled;
+    const breakdown =
+      settlement.pendingSalaryAmount > 0
+        ? (settlement.pendingSalaryBreakdown as unknown as PendingSalaryBreakdown | null)
+        : null;
+    // The pending salary goes onto the final payslip as the LWD month's real
+    // lines (Basic, HRA, ..., PF/ESI/PT/TDS and the employer contributions)
+    // when calculate() recorded them; a draft calculated before that fall back
+    // to the single net PENDING_SALARY line it always had. Either way the
+    // pending-salary portion nets to settlement.pendingSalaryAmount.
     const earnings: SettlementPayrollLine[] = [
-      {
-        code: 'PENDING_SALARY',
-        name: salaryAlreadyPaid
-          ? `Pending Salary (already paid in ${month}/${year} payroll)`
-          : 'Pending Salary',
-        amount: settlement.pendingSalaryAmount,
-        taxable: true,
-      },
+      ...(breakdown
+        ? breakdown.earnings
+        : [
+            {
+              code: 'PENDING_SALARY',
+              name: salaryAlreadyPaid
+                ? `Pending Salary (already paid in ${month}/${year} payroll)`
+                : 'Pending Salary',
+              amount: settlement.pendingSalaryAmount,
+              taxable: true,
+            },
+          ]),
       {
         code: 'LEAVE_ENCASHMENT',
         name: 'Leave Encashment',
@@ -432,7 +624,10 @@ export class SettlementsService {
       });
     }
 
-    const deductions: SettlementPayrollLine[] = [];
+    const deductions: SettlementPayrollLine[] = [
+      ...(breakdown?.deductions ?? []),
+    ];
+    const employerContributions = breakdown?.employerContributions ?? [];
     if (settlement.recoveriesAmount > 0) {
       deductions.push({
         code: 'RECOVERIES',
@@ -456,7 +651,14 @@ export class SettlementsService {
     }
 
     const grossSalary = earnings.reduce((sum, e) => sum + e.amount, 0);
+    const taxableGross = earnings
+      .filter((e) => e.taxable !== false)
+      .reduce((sum, e) => sum + e.amount, 0);
     const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
+    const totalEmployerContributions = employerContributions.reduce(
+      (sum, e) => sum + e.amount,
+      0,
+    );
     const now = new Date();
 
     const result = await this.scopedPrisma.$transaction(async (tx) => {
@@ -476,6 +678,28 @@ export class SettlementsService {
         throw new ConflictException('This settlement was already processed.');
       }
 
+      // The loan balance recovered was captured at calculate() time; a
+      // regular run locked since then (charging an EMI) or a manual repayment
+      // lowers it, and recovering the stale figure would take that EMI twice.
+      // Re-read it here, inside the transaction that closes the loans.
+      const activeLoans = await tx.loan.findMany({
+        where: {
+          employeeId: settlement.employeeId,
+          organizationId,
+          status: LoanStatus.ACTIVE,
+        },
+        select: { outstandingBalance: true },
+      });
+      const loanBalanceNow = activeLoans.reduce(
+        (sum, loan) => sum + loan.outstandingBalance,
+        0,
+      );
+      if (Math.abs(loanBalanceNow - settlement.loanBalanceRecovered) > 0.005) {
+        throw new ConflictException(
+          `Outstanding loan balance changed since this settlement was calculated (${settlement.loanBalanceRecovered} then, ${loanBalanceNow} now) — recalculate it first.`,
+        );
+      }
+
       const run = await tx.payrollRun.create({
         data: {
           organizationId,
@@ -488,9 +712,12 @@ export class SettlementsService {
           status: PayrollRunStatus.APPROVED,
           earnings: earnings as unknown as Prisma.InputJsonValue,
           deductions: deductions as unknown as Prisma.InputJsonValue,
-          employerContributions: [],
+          employerContributions:
+            employerContributions as unknown as Prisma.InputJsonValue,
           grossSalary,
+          taxableGross,
           totalDeductions,
+          totalEmployerContributions,
           netPay: settlement.netSettlementAmount,
           netPayInWords: amountInWords(settlement.netSettlementAmount),
           calculatedById: actor.id,
@@ -549,6 +776,20 @@ export class SettlementsService {
         }),
         payrollRun: run,
       };
+    });
+
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'SETTLEMENT_PROCESSED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: settlement.employeeId,
+        payrollRunId: result.payrollRun.id,
+        netSettlementAmount: settlement.netSettlementAmount,
+        loanBalanceRecovered: settlement.loanBalanceRecovered,
+      },
     });
 
     // Sent to the personal email on file, not the login email — by this
@@ -616,7 +857,7 @@ export class SettlementsService {
       );
     }
 
-    return this.scopedPrisma.$transaction(async (tx) => {
+    const paid = await this.scopedPrisma.$transaction(async (tx) => {
       // Re-asserts PROCESSED in the `where` — a second concurrent
       // markPaid() call (double-click) would otherwise still pass the
       // pre-transaction check and silently overwrite paidAt/paidById a
@@ -642,5 +883,18 @@ export class SettlementsService {
         await tx.settlement.findFirstOrThrow({ where: { id, organizationId } }),
       );
     });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'SETTLEMENT_PAID',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: settlement.employeeId,
+        payrollRunId: settlement.payrollRunId,
+        netSettlementAmount: settlement.netSettlementAmount,
+      },
+    });
+    return paid;
   }
 }

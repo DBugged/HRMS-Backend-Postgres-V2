@@ -1034,6 +1034,91 @@ describe('Asset Inventory (e2e)', () => {
     });
   });
 
+  // Regression: re-sending RETURNED on an old, already-returned allocation
+  // flipped the inventory asset back to AVAILABLE even though it had since
+  // been re-allocated — letting it be allocated again (one asset ended up
+  // ALLOCATED to three employees).
+  describe('stale return of an old allocation', () => {
+    it('cannot free an asset now held by a newer allocation', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/assets')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send(validAsset())
+        .expect(201);
+      const assetId = (res.body as AssetBody).id;
+      const allocate = async (date: string) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .post(`/employees/${employeeId}/assets`)
+              .set('Authorization', `Bearer ${hrToken}`)
+              .send({
+                assetId,
+                assetType: 'Laptop',
+                assetName: 'MacBook Air M2',
+                allocatedDate: date,
+              })
+              .expect(201)
+          ).body as { id: string }
+        ).id;
+
+      const first = await allocate('2026-07-01');
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/assets/${first}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'RETURNED', returnedDate: '2026-07-10' })
+        .expect(200);
+      const second = await allocate('2026-07-11');
+
+      // Replaying the first allocation's return (and trying to reopen it).
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/assets/${first}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'RETURNED', returnedDate: '2026-07-12' })
+        .expect(409);
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/assets/${first}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'ALLOCATED' })
+        .expect(409);
+
+      const asset = await request(app.getHttpServer())
+        .get(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect((asset.body as AssetBody).status).toBe('ASSIGNED');
+
+      // So it still can't be allocated a second time.
+      await request(app.getHttpServer())
+        .post(`/employees/${employeeId}/assets`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          assetId,
+          assetType: 'Laptop',
+          assetName: 'MacBook Air M2',
+          allocatedDate: '2026-07-13',
+        })
+        .expect(400);
+      expect(
+        await prisma.employeeAsset.count({
+          where: { assetId, isActive: true, status: 'ALLOCATED' },
+        }),
+      ).toBe(1);
+
+      // Returning the current allocation does free it.
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/assets/${second}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'RETURNED', returnedDate: '2026-07-20' })
+        .expect(200);
+      const after = await request(app.getHttpServer())
+        .get(`/assets/${assetId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect((after.body as AssetBody).status).toBe('AVAILABLE');
+    });
+  });
+
   describe('bulk import', () => {
     it('creates rows by resolving Category by name, and reports per-row errors', async () => {
       const res = await request(app.getHttpServer())

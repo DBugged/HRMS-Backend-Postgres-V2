@@ -132,6 +132,11 @@ export interface CalculateTaxInput {
   month: number;
   year: number;
   currentMonthGross: number;
+  // The employee's regular full-month taxable pay (recurring monthly components only — no proration, overtime,
+  // arrears, bonus, encashment or other one-offs). When given, the months after this one are projected at this
+  // figure and this month's actual gross is counted once; when omitted, every remaining month is projected at
+  // currentMonthGross (the original behaviour).
+  recurringMonthlyGross?: number;
   ytdGross?: number;
   ytdTDS?: number;
   basicAnnual?: number;
@@ -174,6 +179,7 @@ export function calculateTax({
   month,
   year,
   currentMonthGross,
+  recurringMonthlyGross,
   ytdGross = 0,
   ytdTDS = 0,
   basicAnnual = 0,
@@ -194,7 +200,14 @@ export function calculateTax({
     year,
     financialYearStartMonth,
   );
-  const projectedRemainingGross = currentMonthGross * remainingMonths;
+  // Multiplying this month's actual gross by every remaining month projected a one-off (an overtime/bonus/
+  // encashment month) as if it recurred all year, and a prorated joining/LOP month as if the whole year were
+  // prorated. With the recurring figure, this month counts once at its actual amount and only the regular
+  // structure is projected forward.
+  const projectedRemainingGross =
+    recurringMonthlyGross === undefined
+      ? currentMonthGross * remainingMonths
+      : currentMonthGross + recurringMonthlyGross * (remainingMonths - 1);
   const previousEmployerIncome = declaration?.previousEmployerIncome || 0;
   // Tax the previous employer already deducted on that income. Collected on
   // the declaration form since day one but never read, so previous-employer

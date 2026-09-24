@@ -1,5 +1,9 @@
 import { AttendanceStatus, OvertimeType } from '@prisma/client';
-import { clampLeaveDaysToMonth, daysInMonth } from './payroll-date-math';
+import {
+  clampLeaveDaysToMonth,
+  clampLeaveDaysToRange,
+  daysInMonth,
+} from './payroll-date-math';
 
 /**
  * Pure port of the old backend's payrollEngine.js computeAttendanceSummary
@@ -32,6 +36,9 @@ export interface LeaveRowWithType {
 export interface OvertimeRowLike {
   hours: number;
   type: OvertimeType;
+  // Fixed per record at log time from its type (see OvertimeService). A row
+  // without one counts at 1x.
+  rateMultiplier?: number;
 }
 
 export interface AttendanceSummary {
@@ -42,6 +49,9 @@ export interface AttendanceSummary {
   unpaidLeaveDays: number;
   halfDays: number;
   overtimeHours: number;
+  // Σ hours × rateMultiplier over the approved overtime — the OT_WEIGHTED_HOURS formula variable. rateMultiplier
+  // was stored on every OvertimeRecord but never read, so holiday/weekend OT was paid at the regular rate.
+  overtimeWeightedHours: number;
   lateMarks: number;
   holidayWorkDays: number;
   weekendWorkDays: number;
@@ -88,6 +98,10 @@ export function computeAttendanceSummary(
   }
 
   const overtimeHours = overtimeRows.reduce((s, o) => s + o.hours, 0);
+  const overtimeWeightedHours = overtimeRows.reduce(
+    (s, o) => s + o.hours * (o.rateMultiplier ?? 1),
+    0,
+  );
   const holidayWorkDays = overtimeRows.filter(
     (o) => o.type === OvertimeType.HOLIDAY,
   ).length;
@@ -112,6 +126,7 @@ export function computeAttendanceSummary(
     unpaidLeaveDays,
     halfDays,
     overtimeHours,
+    overtimeWeightedHours,
     lateMarks,
     holidayWorkDays,
     weekendWorkDays,
@@ -120,4 +135,44 @@ export function computeAttendanceSummary(
     lopDays,
     payableDays,
   };
+}
+
+export interface DatedAttendanceRowLike {
+  date: string;
+  status: AttendanceStatus;
+}
+
+/**
+ * Payable days (same definition as computeAttendanceSummary's payableDays:
+ * present + half-days x 0.5 + holidays + weekly offs + the paid share of
+ * leave) that fall within [from, to] — one YYYY-MM-DD range inside a single
+ * payroll month. Used to prorate each segment of a month split at a
+ * mid-month salary revision; summed over a partition of the month it equals
+ * the month's payableDays exactly.
+ */
+export function payableDaysInRange(
+  attendanceRows: DatedAttendanceRowLike[],
+  leaveRows: LeaveRowWithType[],
+  from: string,
+  to: string,
+): number {
+  let days = 0;
+  for (const row of attendanceRows) {
+    if (row.date < from || row.date > to) continue;
+    if (
+      row.status === AttendanceStatus.PRESENT ||
+      row.status === AttendanceStatus.HOLIDAY ||
+      row.status === AttendanceStatus.WEEKLY_OFF
+    ) {
+      days += 1;
+    } else if (row.status === AttendanceStatus.HALF_DAY) {
+      days += 0.5;
+    }
+  }
+  for (const leave of leaveRows) {
+    if (!leave.leaveType.isPaid) continue;
+    const pct = (leave.leaveType.salaryImpactPercent ?? 100) / 100;
+    days += clampLeaveDaysToRange(leave, from, to) * pct;
+  }
+  return days;
 }

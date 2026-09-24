@@ -523,6 +523,205 @@ describe('Employees + Departments (e2e)', () => {
     );
   });
 
+  // Regression (F4): departmentId / reportingManagerId FKs are on id only,
+  // so another tenant's ids were accepted and full-profile then showed that
+  // org's names. Same 400 whether the id exists elsewhere or not at all.
+  describe('cross-tenant references are rejected', () => {
+    let foreignDepartmentId: string;
+    let foreignUserId: string;
+    const missingId = '00000000-0000-4000-8000-000000000000';
+
+    beforeAll(async () => {
+      const reg = await request(app.getHttpServer())
+        .post('/auth/register')
+        .send({
+          organizationName: 'Employees E2E Foreign Org',
+          name: 'Foreign Founder',
+          email: 'employees-e2e-foreign-admin@example.test',
+          password: PASSWORD,
+        })
+        .expect(201);
+      void reg;
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'employees-e2e-foreign-admin@example.test',
+          password: PASSWORD,
+        })
+        .expect(201);
+      const foreignToken = (login.body as AuthBody).accessToken;
+      const dept = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${foreignToken}`)
+        .send({ name: 'Foreign Secret Dept', code: 'FSD' })
+        .expect(201);
+      foreignDepartmentId = (dept.body as DepartmentBody).id;
+      foreignUserId = (
+        await prisma.user.findFirstOrThrow({
+          where: { email: 'employees-e2e-foreign-admin@example.test' },
+        })
+      ).id;
+    });
+
+    it('create: a department or reporting manager from another org is a 400 (same as a nonexistent id)', async () => {
+      const foreignDept = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Tenant Hopper',
+          email: 'employees-e2e-hopper1@example.test',
+          departmentId: foreignDepartmentId,
+        })
+        .expect(400);
+      const missingDept = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Tenant Hopper',
+          email: 'employees-e2e-hopper1@example.test',
+          departmentId: missingId,
+        })
+        .expect(400);
+      expect((foreignDept.body as { message: string }).message).toBe(
+        (missingDept.body as { message: string }).message,
+      );
+
+      const foreignMgr = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Tenant Hopper',
+          email: 'employees-e2e-hopper2@example.test',
+          reportingManagerId: foreignUserId,
+        })
+        .expect(400);
+      const missingMgr = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Tenant Hopper',
+          email: 'employees-e2e-hopper2@example.test',
+          reportingManagerId: missingId,
+        })
+        .expect(400);
+      expect((foreignMgr.body as { message: string }).message).toBe(
+        (missingMgr.body as { message: string }).message,
+      );
+
+      expect(
+        await prisma.user.count({
+          where: {
+            email: {
+              in: [
+                'employees-e2e-hopper1@example.test',
+                'employees-e2e-hopper2@example.test',
+              ],
+            },
+          },
+        }),
+      ).toBe(0);
+    });
+
+    it('update: a department or reporting manager from another org is a 400 and nothing changes', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Tenant Stayer',
+          email: 'employees-e2e-stayer@example.test',
+          departmentId: engDepartmentId,
+        })
+        .expect(201);
+      const id = (created.body as EmployeeBody).employee.id;
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ departmentId: foreignDepartmentId })
+        .expect(400);
+      await request(app.getHttpServer())
+        .patch(`/employees/${id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reportingManagerId: foreignUserId })
+        .expect(400);
+
+      const row = await prisma.user.findFirstOrThrow({ where: { id } });
+      expect(row.departmentId).toBe(engDepartmentId);
+      expect(row.reportingManagerId).toBeNull();
+
+      const profile = await request(app.getHttpServer())
+        .get(`/employees/${id}/full-profile`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect(JSON.stringify(profile.body)).not.toContain('Foreign Secret Dept');
+      expect(JSON.stringify(profile.body)).not.toContain('Foreign Founder');
+    });
+  });
+
+  // Regression (F7 / F9d): login emails are trimmed + lowercased on input,
+  // and whitespace-only names are rejected.
+  describe('email normalization and name trimming', () => {
+    it('stores a mixed-case email lowercased, logs in with any casing, and rejects a case-only duplicate', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Mixed Case',
+          email: '  Employees-E2E-MixedCase@Example.TEST ',
+        })
+        .expect(201);
+      const body = created.body as EmployeeBody;
+      const row = await prisma.user.findFirstOrThrow({
+        where: { id: body.employee.id },
+      });
+      expect(row.email).toBe('employees-e2e-mixedcase@example.test');
+
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'EMPLOYEES-E2E-MIXEDCASE@example.test',
+          password: body.generatedPassword,
+        })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Mixed Case Twin',
+          email: 'employees-e2e-mixedcase@EXAMPLE.test',
+        })
+        .expect(409);
+    });
+
+    it('rejects a whitespace-only name on create and update', async () => {
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ name: '   ', email: 'employees-e2e-blank@example.test' })
+        .expect(400);
+
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: '  Padded Name  ',
+          email: 'employees-e2e-padded@example.test',
+        })
+        .expect(201);
+      const id = (created.body as EmployeeBody).employee.id;
+      expect((await prisma.user.findFirstOrThrow({ where: { id } })).name).toBe(
+        'Padded Name',
+      );
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ name: '   ' })
+        .expect(400);
+    });
+  });
+
   describe('list sorting (server-side sortBy/sortOrder)', () => {
     it('sorts by name asc/desc and rejects a non-whitelisted sortBy', async () => {
       const asc = await request(app.getHttpServer())

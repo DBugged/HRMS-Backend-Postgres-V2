@@ -3,12 +3,20 @@
 //   stored. Same allowlist spirit as email-layout.ts's escapeHtml (never trust markup a browser sent us),
 //   but here a fixed, small set of tags is deliberately let through rather than the whole string escaped,
 //   since bodyText is the one field in the app meant to hold real (if very limited) HTML.
-// Responsibilities: Removes <script>/<style> blocks (tag *and* contents) outright, then walks every other
-//   tag one at a time — an allowed tag survives with all attributes stripped (no style=, no onclick=, no
-//   href="javascript:..."), anything else (its own tag markup only — inner text is kept) is dropped.
-// Important: No entity decoding/re-encoding happens here — text content passes through byte for byte, so a
-//   template saved before rich text existed (plain text, one paragraph per line) round-trips unchanged.
-const ALLOWED_TAGS = new Set([
+// Responsibilities: Parses with sanitize-html (htmlparser2) — an allowed tag survives with all attributes
+//   stripped (no style=, no onclick=, no href="javascript:..."), any other tag is dropped but its inner
+//   text kept, and <script>/<style>/raw-text elements (textarea, title, noembed, xmp, ...) are removed
+//   together with their contents. Comments are dropped.
+// Important: This replaced a regex tag walker (same approach as the old email sanitizer, which was
+//   vulnerable to mutation XSS via '<'/'>' left raw in the output). Text is now re-serialized from the
+//   parse tree, so '&', '<' and '>' in text come back entity-encoded ('&amp;', '&lt;', '&gt;');
+//   letters/rich-text-blocks.ts decodes entities on both its rich and legacy plain-text paths so the PDF
+//   still prints the original characters. Newlines and {{placeholders}} pass through untouched, so a
+//   legacy plain-text template (one paragraph per line) keeps its paragraph structure. Void tags are
+//   serialized as `<br />`.
+import sanitizeHtml from 'sanitize-html';
+
+const ALLOWED_TAGS = [
   'b',
   'strong',
   'i',
@@ -19,30 +27,33 @@ const ALLOWED_TAGS = new Set([
   'li',
   'p',
   'br',
-]);
+];
 
-// <script>/<style> are removed with their contents — an allowlist walk
-// alone would drop the tags but leave the (potentially executable/CSS)
-// text between them behind.
-const STRIP_WITH_CONTENT_RE = /<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi;
-
-// Matches one HTML tag, comment, or CDATA section at a time. Capture group
-// 1 is the tag name for a real tag; comments/CDATA have no capture and are
-// dropped outright.
-const TAG_RE =
-  /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*\/?>/g;
+const OPTIONS: sanitizeHtml.IOptions = {
+  allowedTags: ALLOWED_TAGS,
+  allowedAttributes: {},
+  disallowedTagsMode: 'discard',
+  nonTextTags: [
+    'script',
+    'style',
+    'textarea',
+    'option',
+    'select',
+    'title',
+    'noembed',
+    'noframes',
+    'noscript',
+    'xmp',
+    'plaintext',
+    'iframe',
+    'template',
+    'object',
+    'svg',
+    'math',
+  ],
+};
 
 export function sanitizeRichText(html: string | null | undefined): string {
   if (!html) return html ?? '';
-  const withoutScriptsAndStyles = html.replace(STRIP_WITH_CONTENT_RE, '');
-  return withoutScriptsAndStyles.replace(
-    TAG_RE,
-    (match: string, tagName?: string) => {
-      if (!tagName) return ''; // comment / doctype / CDATA — drop entirely
-      const name = tagName.toLowerCase();
-      if (!ALLOWED_TAGS.has(name)) return ''; // disallowed tag — keep inner text, drop the tag itself
-      const closing = match.startsWith('</');
-      return closing ? `</${name}>` : `<${name}>`; // allowed tag — kept, attributes stripped
-    },
-  );
+  return sanitizeHtml(html, OPTIONS);
 }

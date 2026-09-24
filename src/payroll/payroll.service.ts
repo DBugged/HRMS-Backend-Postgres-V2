@@ -47,7 +47,11 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { getFinancialYear } from '../payroll-settings/financial-year';
-import { resolveCurrentRows } from '../employee-salary-components/salary-structure-math';
+import {
+  resolveCurrentRows,
+  splitPeriodAtRevisions,
+  type PeriodSegment,
+} from '../employee-salary-components/salary-structure-math';
 import {
   extractDependencies,
   resolveComponentValue,
@@ -55,6 +59,7 @@ import {
 import { topoSortComponents } from '../salary-components/formula-engine';
 import {
   daysInMonth,
+  daysInRange,
   isComponentPayableThisMonth,
   lastDayOfMonth,
   round,
@@ -66,7 +71,10 @@ import {
 } from './statutory-overlay';
 import {
   computeAttendanceSummary,
+  payableDaysInRange,
   type AttendanceSummary,
+  type DatedAttendanceRowLike,
+  type LeaveRowWithType,
 } from './attendance-summary';
 import {
   buildBaseContext,
@@ -97,7 +105,7 @@ import { PayslipEmailQueueService } from './payslip-email-queue.service';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { effectiveWorkLocation } from '../common/effective-work-location';
 import { LoansService } from '../loans/loans.service';
-import { payoffAmount } from '../loans/loan-math';
+import { payoffAmount, splitRepayment } from '../loans/loan-math';
 
 type Actor = Omit<User, 'password'>;
 
@@ -150,6 +158,15 @@ const TRANSITIONS: Record<PayrollTransitionAction, TransitionConfig> = {
   },
 };
 
+// A run transitionMany() did not move, and why. `reason` carries a
+// user-facing explanation for the checks that have one (non-numeric amounts,
+// a stale loan EMI at lock).
+export interface TransitionSkip {
+  id: string;
+  status: string;
+  reason?: string;
+}
+
 // The shape the earnings/deductions JSON columns are read back as.
 interface PayrollLineRecord {
   code: string;
@@ -194,6 +211,9 @@ export interface CalculatedPayroll {
   }[];
   taxDetails: TaxDetails | null;
   grossSalary: number;
+  // Sum of the earning lines that are taxable (taxable !== false) — the income-tax base for this month, persisted
+  // on the run so later months' YTD taxable income doesn't have to re-derive it from grossSalary.
+  taxableGross: number;
   totalDeductions: number;
   totalEmployerContributions: number;
   netPay: number;
@@ -229,6 +249,50 @@ const STATUTORY_ENABLED_KEY: Partial<
   // update-payroll-settings.dto.ts/PayrollSettingsPage.tsx/
   // statutory-overlay.ts) if this is ever requested again.
 };
+
+const MONEY_TOTAL_FIELDS = [
+  'grossSalary',
+  'totalDeductions',
+  'totalEmployerContributions',
+  'netPay',
+  'ctcMonthly',
+] as const;
+const MONEY_LINE_FIELDS = [
+  'earnings',
+  'deductions',
+  'employerContributions',
+] as const;
+
+// Names the first money figure on a run (a calculated snapshot or a stored
+// PayrollRun) that is not a finite number, or returns null when every total
+// and line amount is finite. A NaN/Infinity amount used to be saved and could
+// be verified, approved, locked and paid like any other run (the netPay < 0
+// guard is false for NaN). JSON line amounts that were NaN/Infinity come back
+// from Postgres as null, so anything that isn't a finite number counts.
+export function nonFiniteMoneyField(run: {
+  grossSalary: number;
+  totalDeductions: number;
+  totalEmployerContributions: number;
+  netPay: number;
+  ctcMonthly: number;
+  earnings: unknown;
+  deductions: unknown;
+  employerContributions: unknown;
+}): string | null {
+  for (const field of MONEY_TOTAL_FIELDS) {
+    if (!Number.isFinite(run[field])) return field;
+  }
+  for (const field of MONEY_LINE_FIELDS) {
+    const lines = run[field];
+    if (!Array.isArray(lines)) continue;
+    for (const line of lines as { code?: string; amount?: unknown }[]) {
+      if (typeof line?.amount !== 'number' || !Number.isFinite(line.amount)) {
+        return `${field} line ${line?.code ?? '?'}`;
+      }
+    }
+  }
+  return null;
+}
 
 @Injectable()
 export class PayrollService {
@@ -354,18 +418,21 @@ export class PayrollService {
       }),
     ]);
 
+    const leaves: LeaveRowWithType[] = leaveRows.map((l) => ({
+      startDate: l.startDate,
+      endDate: l.endDate,
+      isHalfDay: l.isHalfDay,
+      leaveType: l.leaveType,
+    }));
     const attendanceSummary = computeAttendanceSummary(
       attendanceRows,
-      leaveRows.map((l) => ({
-        startDate: l.startDate,
-        endDate: l.endDate,
-        isHalfDay: l.isHalfDay,
-        leaveType: l.leaveType,
-      })),
+      leaves,
       overtimeRows,
       month,
       year,
     );
+    const roundAmount = (n: number) =>
+      round(n, settings.roundingRule, settings.roundingDecimals);
 
     // State-wise statutory rules (LWF, Professional Tax): the employee's state is their effective work
     // location's state (own override, else the department's). Only looked up when the org actually has state rates configured, so orgs on the single
@@ -432,13 +499,52 @@ export class PayrollService {
       (c) =>
         c.type === SalaryComponentType.EARNING && !c.isEmployerContribution,
     );
-    const { results: earningsResults, context: afterEarnings } =
-      this.resolveGroup(
-        earningComponents,
-        overridesByCode,
-        baseContext,
-        attendanceSummary,
-      );
+    const attendanceProration =
+      attendanceSummary.totalDaysInMonth > 0
+        ? attendanceSummary.payableDays / attendanceSummary.totalDaysInMonth
+        : 1;
+
+    // A salary revision effective partway through the month used to be
+    // resolved once, as of month end, so the whole month was paid at the new
+    // rate. The month is now split at every revision boundary and each part
+    // paid at the rate in force for it; with no mid-month revision (the
+    // usual case) there is one segment and the calculation is unchanged.
+    // Only earning revisions split the month — deductions and employer
+    // contributions are derived from the combined earnings as before.
+    const earningCodes = new Set(
+      allComponents
+        .filter(
+          (c) =>
+            c.type === SalaryComponentType.EARNING && !c.isEmployerContribution,
+        )
+        .map((c) => c.code),
+    );
+    const segments = splitPeriodAtRevisions(
+      overrideRows.filter((r) => earningCodes.has(r.componentCode)),
+      `${monthPrefix}-01`,
+      periodDate,
+    );
+    const earningsResults =
+      segments.length === 1
+        ? this.resolveGroup(
+            earningComponents,
+            overridesByCode,
+            baseContext,
+            attendanceProration,
+            roundAmount,
+          ).results
+        : this.resolveSegmentedEarnings({
+            segments,
+            overrideRows,
+            allComponents,
+            month,
+            settings,
+            baseContext,
+            attendanceRows,
+            leaves,
+            totalDaysInMonth,
+            roundAmount,
+          });
 
     const financialYear = getFinancialYear(
       month,
@@ -450,9 +556,12 @@ export class PayrollService {
     // PerformanceRating.payoutPercentage for this financial year. No
     // rating on file -> 100% (unscaled).
     const variableEarningCodes = new Set(
-      earningComponents
-        .filter((c) => c.payFrequency !== PayFrequency.MONTHLY)
-        .map((c) => c.code),
+      earningsResults
+        .filter(
+          (l) =>
+            l.component && l.component.payFrequency !== PayFrequency.MONTHLY,
+        )
+        .map((l) => l.code),
     );
     if (variableEarningCodes.size > 0) {
       const perfRating = await this.scopedPrisma.performanceRating.findFirst({
@@ -533,6 +642,21 @@ export class PayrollService {
       settings.roundingRule,
       settings.roundingDecimals,
     );
+    const taxableGross = round(
+      earningsLines
+        .filter((e) => e.taxable !== false)
+        .reduce((s, e) => s + e.amount, 0),
+      settings.roundingRule,
+      settings.roundingDecimals,
+    );
+    // The context the deduction and employer formulas see carries each
+    // earning at exactly the amount printed on the payslip. It used to carry
+    // the raw unrounded (and, for variable pay, unscaled) value, so e.g. PF
+    // was 12% of 14516.13 while the payslip showed Basic 14516.
+    const afterEarnings: Record<string, number> = { ...baseContext };
+    for (const line of earningsLines) {
+      if (line.component) afterEarnings[line.code] = line.amount;
+    }
     afterEarnings.GROSS_EARNINGS = grossSalary;
     // Wage bases and the ESI coverage flag — all depend on this month's gross, so they're derived here.
     Object.assign(
@@ -562,7 +686,8 @@ export class PayrollService {
         deductionComponents,
         overridesByCode,
         afterEarnings,
-        attendanceSummary,
+        attendanceProration,
+        roundAmount,
       );
 
     let taxDetails: TaxDetails | null = null;
@@ -578,56 +703,72 @@ export class PayrollService {
       const taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
         where: { organizationId, financialYear, regime, isActive: true },
       });
-      // No slab config yet for this FY/regime -> income tax is silently
-      // skipped, ported as-is (not an error).
-      if (taxSlabConfig) {
-        const { ytdGross, ytdTDS } = await this.getYtdFigures(
-          employeeId,
-          financialYear,
-          month,
-          year,
-          organizationId,
-        );
-        const taxableGross = earningsLines
-          .filter((e) => e.taxable !== false)
-          .reduce((s, e) => s + e.amount, 0);
-        const basicLine = earningsLines.find(
-          (e) => e.code === SALARY_COMPONENT_CODES.BASIC,
-        );
-        const hraLine = earningsLines.find(
-          (e) => e.code === SALARY_COMPONENT_CODES.HRA,
-        );
-
-        taxDetails = calculateTax({
-          month,
-          year,
-          currentMonthGross: taxableGross,
-          ytdGross,
-          ytdTDS,
-          basicAnnual: (basicLine?.amount ?? 0) * 12,
-          hraReceivedAnnual: (hraLine?.amount ?? 0) * 12,
-          declaration,
-          taxSlabConfig: {
-            regime: taxSlabConfig.regime,
-            standardDeduction: taxSlabConfig.standardDeduction,
-            slabs: taxSlabConfig.slabs as unknown as TaxSlab[],
-            surchargeSlabs:
-              taxSlabConfig.surchargeSlabs as unknown as TaxSlab[],
-            cessRate: taxSlabConfig.cessRate,
-            rebate87ALimit: taxSlabConfig.rebate87ALimit,
-            rebate87AAmount: taxSlabConfig.rebate87AAmount,
-          },
-          financialYearStartMonth: settings.financialYearStartMonth,
+      // Income tax is on for the org but there's nothing to compute it
+      // against. This used to silently skip TDS (paying the month with zero
+      // tax withheld); it now fails this employee so the run's failures[]
+      // says exactly what to configure.
+      if (!taxSlabConfig) {
+        const otherRegime = await this.scopedPrisma.taxSlabConfig.findFirst({
+          where: { organizationId, financialYear, isActive: true },
+          select: { id: true },
         });
-        const incomeTaxAmount = Math.max(0, taxDetails.monthlyTDS || 0);
-        deductionsResults.push({
-          code: SALARY_COMPONENT_CODES.INCOME_TAX,
-          name: incomeTaxComponent.name,
-          amount: incomeTaxAmount,
-          component: incomeTaxComponent,
-        });
-        afterDeductions.INCOME_TAX = incomeTaxAmount;
+        throw new Error(
+          otherRegime
+            ? `No income tax slabs configured for the ${regime} regime for FY ${financialYear} — add them under Statutory Compliance before running payroll`
+            : `No income tax slabs configured for FY ${financialYear} — add them under Statutory Compliance before running payroll`,
+        );
       }
+      const { ytdGross, ytdTDS } = await this.getYtdFigures(
+        employeeId,
+        financialYear,
+        month,
+        year,
+        organizationId,
+      );
+      const basicLine = earningsLines.find(
+        (e) => e.code === SALARY_COMPONENT_CODES.BASIC,
+      );
+      const hraLine = earningsLines.find(
+        (e) => e.code === SALARY_COMPONENT_CODES.HRA,
+      );
+
+      taxDetails = calculateTax({
+        month,
+        year,
+        currentMonthGross: taxableGross,
+        // Remaining months are projected from the regular monthly structure,
+        // not from this month's actual (possibly prorated / one-off-inflated)
+        // taxable gross.
+        recurringMonthlyGross: this.recurringMonthlyTaxableGross(
+          earningComponents,
+          overridesByCode,
+          baseContext,
+          roundAmount,
+        ),
+        ytdGross,
+        ytdTDS,
+        basicAnnual: (basicLine?.amount ?? 0) * 12,
+        hraReceivedAnnual: (hraLine?.amount ?? 0) * 12,
+        declaration,
+        taxSlabConfig: {
+          regime: taxSlabConfig.regime,
+          standardDeduction: taxSlabConfig.standardDeduction,
+          slabs: taxSlabConfig.slabs as unknown as TaxSlab[],
+          surchargeSlabs: taxSlabConfig.surchargeSlabs as unknown as TaxSlab[],
+          cessRate: taxSlabConfig.cessRate,
+          rebate87ALimit: taxSlabConfig.rebate87ALimit,
+          rebate87AAmount: taxSlabConfig.rebate87AAmount,
+        },
+        financialYearStartMonth: settings.financialYearStartMonth,
+      });
+      const incomeTaxAmount = Math.max(0, taxDetails.monthlyTDS || 0);
+      deductionsResults.push({
+        code: SALARY_COMPONENT_CODES.INCOME_TAX,
+        name: incomeTaxComponent.name,
+        amount: incomeTaxAmount,
+        component: incomeTaxComponent,
+      });
+      afterDeductions.INCOME_TAX = roundAmount(incomeTaxAmount);
     }
 
     // Same shape as the leave-encashment fold-in above: any ACTIVE loan/
@@ -678,7 +819,8 @@ export class PayrollService {
       employerComponents,
       overridesByCode,
       { ...afterDeductions, TOTAL_DEDUCTIONS: totalDeductions },
-      attendanceSummary,
+      attendanceProration,
+      roundAmount,
     );
     // Same rounding-order fix as earnings/deductions above.
     for (const e of employerResults) {
@@ -705,7 +847,7 @@ export class PayrollService {
       settings.roundingDecimals,
     );
 
-    return {
+    const result: CalculatedPayroll = {
       attendanceSummary,
       // earningsLines/deductionsResults/employerResults are already
       // rounded (see the comments where each is built) — mapped here
@@ -739,12 +881,23 @@ export class PayrollService {
       })),
       taxDetails,
       grossSalary,
+      taxableGross,
       totalDeductions,
       totalEmployerContributions,
       netPay,
       ctcMonthly,
       financialYear,
     };
+    // Last line of defence: never hand back a snapshot that would save (and
+    // later pay) NaN/Infinity. Thrown as a per-employee error so it lands in
+    // calculate()'s failures[] like any other misconfiguration.
+    const badField = nonFiniteMoneyField(result);
+    if (badField || !Number.isFinite(taxableGross)) {
+      throw new Error(
+        `Payroll calculation produced a non-numeric amount (${badField ?? 'taxableGross'}) — check this employee's salary component formulas.`,
+      );
+    }
+    return result;
   }
 
   async draft(dto: DraftPayrollDto, actor: Actor, organizationId: string) {
@@ -895,6 +1048,12 @@ export class PayrollService {
           dto.year,
           organizationId,
         );
+        const badField = nonFiniteMoneyField(calc);
+        if (badField) {
+          throw new Error(
+            `Payroll calculation produced a non-numeric amount (${badField}) — not saved.`,
+          );
+        }
         // Issued once (stable across recalculation before lock) from the
         // org's documentNumbering.payslip config — a short transaction
         // just for the row-locked issue, not the whole calculation.
@@ -917,6 +1076,7 @@ export class PayrollService {
             ? (calc.taxDetails as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
           grossSalary: calc.grossSalary,
+          taxableGross: calc.taxableGross,
           totalDeductions: calc.totalDeductions,
           totalEmployerContributions: calc.totalEmployerContributions,
           netPay: calc.netPay,
@@ -1188,8 +1348,24 @@ export class PayrollService {
     }
 
     const roundTwo = (n: number) => round(n, 'nearest', 2);
+    // An edited line that doesn't say whether it's taxable keeps the flag the
+    // calculated line with the same code had, so the run's taxableGross (the
+    // YTD income-tax base) doesn't silently change on a manual correction.
+    const previousTaxable = new Map(
+      ((run.earnings ?? []) as unknown as PayrollLineDto[]).map((e) => [
+        e.code,
+        e.taxable,
+      ]),
+    );
     const earnings: PayrollLineDto[] = dto.earnings
-      ? dto.earnings.map((e) => ({ ...e, amount: roundTwo(e.amount) }))
+      ? dto.earnings.map((e) => {
+          const taxable = e.taxable ?? previousTaxable.get(e.code);
+          return {
+            ...e,
+            amount: roundTwo(e.amount),
+            ...(taxable !== undefined ? { taxable } : {}),
+          };
+        })
       : (run.earnings as unknown as PayrollLineDto[]);
     const deductions: PayrollLineDto[] = dto.deductions
       ? dto.deductions.map((d) => ({ ...d, amount: roundTwo(d.amount) }))
@@ -1213,6 +1389,11 @@ export class PayrollService {
       earnings: earnings as unknown as Prisma.InputJsonValue,
       deductions: deductions as unknown as Prisma.InputJsonValue,
       grossSalary,
+      taxableGross: roundTwo(
+        earnings
+          .filter((e) => e.taxable !== false)
+          .reduce((s, e) => s + Number(e.amount || 0), 0),
+      ),
       totalDeductions,
       netPay,
       ctcMonthly,
@@ -1569,13 +1750,13 @@ export class PayrollService {
     organizationId: string,
   ): Promise<{
     updated: PayrollRun[];
-    skipped: { id: string; status: string }[];
+    skipped: TransitionSkip[];
   }> {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where: { id: { in: runIds }, organizationId },
     });
     const byId = new Map(runs.map((r) => [r.id, r]));
-    const skipped: { id: string; status: string }[] = [];
+    const skipped: TransitionSkip[] = [];
     for (const id of runIds) {
       if (!byId.has(id)) skipped.push({ id, status: 'not_found' });
     }
@@ -1593,9 +1774,53 @@ export class PayrollService {
       // separate method, never routed through transitionMany), so a run
       // stuck here can still be unlocked/recalculated to fix the
       // underlying deduction/attendance issue.
+      //
+      // A NaN/Infinity figure is blocked the same way — `NaN < 0` is false, so
+      // the negative check alone let a non-numeric payslip through to paid.
+      const badField = nonFiniteMoneyField(run);
+      if (badField) {
+        skipped.push({
+          id: run.id,
+          status: 'non_finite_amount',
+          reason: `This payroll run has a non-numeric amount (${badField}) — recalculate it before it can proceed.`,
+        });
+        continue;
+      }
       if (run.netPay < 0) {
         skipped.push({ id: run.id, status: 'negative_net_pay' });
         continue;
+      }
+      if (config.toStatus === PayrollRunStatus.LOCKED) {
+        const loanProblem = await this.staleLoanEmiReason(run, organizationId);
+        if (loanProblem) {
+          // An APPROVED run can't otherwise be recalculated (calculate() and
+          // adjust() both leave approved runs alone, and unlock() needs a
+          // LOCKED one), so the stale sign-off is dropped — the same way
+          // adjust() demotes an edited VERIFIED run — to make "recalculate"
+          // actually possible.
+          await this.scopedPrisma.payrollRun.updateMany({
+            where: {
+              id: run.id,
+              organizationId,
+              status: PayrollRunStatus.APPROVED,
+            },
+            data: { status: PayrollRunStatus.CALCULATED },
+          });
+          await this.auditLogService.log({
+            actorId: actor.id,
+            action: 'PAYROLL_LOCK_REFUSED',
+            module: 'PAYROLL',
+            organizationId,
+            targetId: run.id,
+            details: { reason: loanProblem },
+          });
+          skipped.push({
+            id: run.id,
+            status: 'loan_emi_stale',
+            reason: `${loanProblem} It has been moved back to Calculated so it can be recalculated.`,
+          });
+          continue;
+        }
       }
 
       const data: Prisma.PayrollRunUpdateManyMutationInput = {
@@ -1659,6 +1884,9 @@ export class PayrollService {
         throw new BadRequestException(
           'This payroll run has a negative net pay — adjust the underlying deductions or attendance before it can proceed.',
         );
+      }
+      if (skipped[0]?.reason) {
+        throw new BadRequestException(skipped[0].reason);
       }
       throw new BadRequestException(
         `Cannot move payroll from "${skipped[0].status}" to "${config.toStatus}".`,
@@ -1742,9 +1970,11 @@ export class PayrollService {
         where: { organizationId, loanId, payrollRunId: run.id },
       });
       if (alreadyCharged) continue;
-      // The loan may have been closed or fully repaid between calculate and
-      // lock; recordRepayment rejects a non-ACTIVE loan, and that is not a
-      // reason to fail the whole lock.
+      // A loan closed or repaid between calculate and lock is refused up front
+      // by staleLoanEmiReason() (the lock doesn't happen, so the payslip can't
+      // keep an EMI that is never charged). This remains only as a guard for a
+      // loan closed in the instant between that check and this write;
+      // recordRepayment rejects a non-ACTIVE loan.
       const loan = await this.scopedPrisma.loan.findFirst({
         where: { id: loanId, organizationId, status: LoanStatus.ACTIVE },
       });
@@ -1757,6 +1987,42 @@ export class PayrollService {
     }
   }
 
+  // Why a run can't be locked because of a loan EMI on its payslip, or null.
+  // The EMI line was computed at calculate time; if the loan has since been
+  // closed/cancelled, or the balance fell below the EMI (another month's run
+  // was locked in between, or a manual repayment was recorded), locking would
+  // either keep a deduction that is never charged against the loan or charge
+  // more than is owed. Either way the payslip is stale — refuse and ask for a
+  // recalculation instead of silently diverging.
+  private async staleLoanEmiReason(
+    run: PayrollRun,
+    organizationId: string,
+  ): Promise<string | null> {
+    const deductions = (run.deductions ?? []) as unknown as PayrollLineRecord[];
+    for (const line of deductions) {
+      if (line.code !== 'LOAN_EMI' || !line.sourceIds?.length) continue;
+      const loanId = line.sourceIds[0];
+      // Already charged for this very run (a relock) — nothing more to take.
+      const charged = await this.scopedPrisma.loanRepayment.findFirst({
+        where: { organizationId, loanId, payrollRunId: run.id },
+        select: { id: true },
+      });
+      if (charged) continue;
+      const loan = await this.scopedPrisma.loan.findFirst({
+        where: { id: loanId, organizationId },
+      });
+      if (!loan || loan.status !== LoanStatus.ACTIVE) {
+        return `The ${line.name || 'loan EMI'} on this payslip is for a loan that is no longer active${loan ? ` (${loan.status.toLowerCase()})` : ''} — recalculate this payroll run before locking it.`;
+      }
+      const owed = payoffAmount(loan.outstandingBalance, loan.interestRate);
+      // Tolerates the payslip's own rounding (under one currency unit).
+      if (line.amount - owed >= 1) {
+        return `The ${line.name || 'loan EMI'} on this payslip (${line.amount}) is more than is still owed on the loan (${owed}) — recalculate this payroll run before locking it.`;
+      }
+    }
+    return null;
+  }
+
   // ACTIVE loans/advances whose repayment period has started (loan.
   // startYear/startMonth <= this run's year/month) and still have a
   // balance — each one's EMI, capped at whatever's left outstanding so
@@ -1764,6 +2030,12 @@ export class PayrollService {
   // (a read-only preview line) and afterLock (which actually records the
   // repayment), same "approved-but-not-yet-processed" split leave
   // encashment uses.
+  //
+  // "Outstanding" accounts for EMIs already sitting on this employee's OTHER
+  // calculated-but-not-yet-locked regular runs: the balance only drops when a
+  // run is locked, so two open months each used to preview the full EMI off
+  // the same live balance and, once both were locked, deduct more than was
+  // ever owed (e.g. a 1,500 balance recovered as 1,500 + 1,500).
   private async getDueLoanEmis(
     employeeId: string,
     month: number,
@@ -1778,34 +2050,83 @@ export class PayrollService {
         outstandingBalance: { gt: 0 },
       },
     });
-    return loans
-      .filter(
-        (l) =>
-          l.startYear < year || (l.startYear === year && l.startMonth <= month),
-      )
-      .map((l) => ({
-        loan: l,
-        // Capped at the full payoff (balance + this month's interest), not
-        // the bare balance: the EMI is split interest-first, so a final
-        // installment capped at the balance alone would leave the interest
-        // unpaid and the balance could never reach zero.
-        amount: Math.min(
-          l.emiAmount,
-          payoffAmount(l.outstandingBalance, l.interestRate),
-        ),
-      }))
+    const dueLoans = loans.filter(
+      (l) =>
+        l.startYear < year || (l.startYear === year && l.startMonth <= month),
+    );
+    if (dueLoans.length === 0) return [];
+
+    const openRuns = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        isFinalSettlement: false,
+        status: {
+          in: [
+            PayrollRunStatus.CALCULATED,
+            PayrollRunStatus.VERIFIED,
+            PayrollRunStatus.APPROVED,
+          ],
+        },
+        NOT: { month, year },
+      },
+      select: { month: true, year: true, deductions: true },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+    });
+    const pendingByLoan = new Map<string, number[]>();
+    for (const r of openRuns) {
+      for (const d of (r.deductions ?? []) as unknown as PayrollLineRecord[]) {
+        const loanId = d.code === 'LOAN_EMI' ? d.sourceIds?.[0] : undefined;
+        if (!loanId) continue;
+        pendingByLoan.set(loanId, [
+          ...(pendingByLoan.get(loanId) ?? []),
+          d.amount,
+        ]);
+      }
+    }
+
+    return dueLoans
+      .map((l) => {
+        // Walk the balance forward through the EMIs other open runs will
+        // charge, the same interest-first way recordRepayment() will.
+        let balance = l.outstandingBalance;
+        for (const pending of pendingByLoan.get(l.id) ?? []) {
+          const { principalComponent } = splitRepayment(
+            pending,
+            balance,
+            l.interestRate,
+          );
+          balance = Math.max(0, balance - principalComponent);
+        }
+        return {
+          loan: l,
+          // Capped at the full payoff (balance + this month's interest), not
+          // the bare balance: the EMI is split interest-first, so a final
+          // installment capped at the balance alone would leave the interest
+          // unpaid and the balance could never reach zero.
+          amount: Math.min(l.emiAmount, payoffAmount(balance, l.interestRate)),
+        };
+      })
       .filter(({ amount }) => amount > 0);
   }
 
   // Resolves a group of same-type components (all earnings, or all
-  // deductions, etc.) in dependency order. Proration is applied only to
-  // FIXED-type values — PERCENTAGE/FORMULA/MANUAL authors are expected to
-  // reference PAYABLE_DAYS/LOP_DAYS themselves if they want proration.
+  // deductions, etc.) in dependency order. Proration (`prorationFactor`,
+  // payable days / days in the period) is applied only to FIXED-type values —
+  // PERCENTAGE/FORMULA/MANUAL authors are expected to reference
+  // PAYABLE_DAYS/LOP_DAYS themselves if they want proration.
+  //
+  // Later components in the group (and, via the caller, later groups) read
+  // each resolved value back out of the context ROUNDED the way the payslip
+  // line will be, so a formula like PF = 12% of BASIC matches the Basic
+  // printed on the payslip; the returned line amount stays raw and is rounded
+  // exactly once by the caller, giving the same figure.
   private resolveGroup(
     components: SalaryComponent[],
     overridesByCode: Map<string, EmployeeSalaryComponent>,
     context: Record<string, number>,
-    attendance: AttendanceSummary,
+    prorationFactor: number,
+    roundAmount: (n: number) => number,
   ): { results: ResolvedLine[]; context: Record<string, number> } {
     const byCode = new Map(components.map((c) => [c.code, c]));
     const edges: Record<string, string[]> = {};
@@ -1819,23 +2140,33 @@ export class PayrollService {
 
     const results: ResolvedLine[] = [];
     const localContext = { ...context };
-    const prorationFactor =
-      attendance.totalDaysInMonth > 0
-        ? attendance.payableDays / attendance.totalDaysInMonth
-        : 1;
 
     for (const code of order) {
       const component = byCode.get(code);
       if (!component) continue;
       const override = overridesByCode.get(code) ?? null;
       const valueType = override?.valueType ?? component.calcType;
-      let value = resolveComponentValue(component, override, localContext);
+      let value: number;
+      try {
+        value = resolveComponentValue(component, override, localContext);
+      } catch (err) {
+        throw new Error(
+          `Salary component "${component.name}" (${code}): ${(err as Error).message}`,
+        );
+      }
 
       if (valueType === CalcType.FIXED) {
         value = value * prorationFactor;
       }
+      // Math.max(0, NaN) is NaN — this used to carry a NaN straight onto the
+      // payslip.
+      if (!Number.isFinite(value)) {
+        throw new Error(
+          `Salary component "${component.name}" (${code}) produced a non-numeric amount (${value}) — check its formula/value.`,
+        );
+      }
       value = Math.max(0, value);
-      localContext[code] = value;
+      localContext[code] = roundAmount(value);
       results.push({
         code,
         name: component.name,
@@ -1845,6 +2176,138 @@ export class PayrollService {
       });
     }
     return { results, context: localContext };
+  }
+
+  // Earnings for a month that a salary revision splits into segments (see
+  // splitPeriodAtRevisions). Each segment is resolved against the structure
+  // in force for it, as if it were a whole month — FIXED values prorated by
+  // the payable days within the segment over its calendar days — and then
+  // weighted by its share of the month's calendar days. With a single segment
+  // this reduces exactly to the ordinary calculation (weight 1, proration
+  // payableDays / daysInMonth), so a full-attendance month revised on the
+  // 16th of a 30-day month pays 15/30 at the old rate + 15/30 at the new.
+  //
+  // MANUAL amounts (bonus, arrears, one-off incentives) are lump sums, not
+  // monthly rates: they are never pro-rated by calendar days and are taken as
+  // they stand at month end, exactly as before.
+  private resolveSegmentedEarnings(args: {
+    segments: PeriodSegment[];
+    overrideRows: EmployeeSalaryComponent[];
+    allComponents: SalaryComponent[];
+    month: number;
+    settings: OverlaidSettings;
+    baseContext: Record<string, number>;
+    attendanceRows: DatedAttendanceRowLike[];
+    leaves: LeaveRowWithType[];
+    totalDaysInMonth: number;
+    roundAmount: (n: number) => number;
+  }): ResolvedLine[] {
+    const combined = new Map<string, ResolvedLine>();
+    const lastIndex = args.segments.length - 1;
+    args.segments.forEach((segment, index) => {
+      const overrides = new Map<string, EmployeeSalaryComponent>(
+        resolveCurrentRows(args.overrideRows, segment.end).map((r) => [
+          r.componentCode,
+          r,
+        ]),
+      );
+      const applicable = args.allComponents.filter((c) =>
+        this.isApplicable(
+          c,
+          overrides.get(c.code) ?? null,
+          args.month,
+          args.settings,
+        ),
+      );
+      const applicableCodes = new Set(applicable.map((c) => c.code));
+      const context = { ...args.baseContext };
+      for (const c of args.allComponents) {
+        if (!applicableCodes.has(c.code)) context[c.code] = 0;
+      }
+      const calendarDays = daysInRange(segment.start, segment.end);
+      const payableDays = payableDaysInRange(
+        args.attendanceRows,
+        args.leaves,
+        segment.start,
+        segment.end,
+      );
+      const { results } = this.resolveGroup(
+        applicable.filter(
+          (c) =>
+            c.type === SalaryComponentType.EARNING && !c.isEmployerContribution,
+        ),
+        overrides,
+        context,
+        calendarDays > 0 ? payableDays / calendarDays : 1,
+        args.roundAmount,
+      );
+      const weight = calendarDays / args.totalDaysInMonth;
+      for (const line of results) {
+        const valueType =
+          overrides.get(line.code)?.valueType ?? line.component?.calcType;
+        const isLumpSum = valueType === CalcType.MANUAL;
+        if (isLumpSum && index !== lastIndex) continue;
+        const amount = isLumpSum ? line.amount : line.amount * weight;
+        const existing = combined.get(line.code);
+        if (existing) existing.amount += amount;
+        else combined.set(line.code, { ...line, amount });
+      }
+    });
+    return [...combined.values()];
+  }
+
+  // This employee's regular full-month taxable pay under the month-end
+  // structure: recurring (MONTHLY, non-MANUAL) earnings resolved for a
+  // standard month — no proration, no overtime/holiday work, no LOP — summing
+  // only the taxable lines. The tax engine projects the rest of the FY from
+  // this instead of multiplying this month's actual (possibly prorated or
+  // one-off-inflated) gross. Returns undefined (the engine's original
+  // projection) if the structure can't be resolved that way.
+  private recurringMonthlyTaxableGross(
+    earningComponents: SalaryComponent[],
+    overridesByCode: Map<string, EmployeeSalaryComponent>,
+    baseContext: Record<string, number>,
+    roundAmount: (n: number) => number,
+  ): number | undefined {
+    const recurring = earningComponents.filter((c) => {
+      const valueType = overridesByCode.get(c.code)?.valueType ?? c.calcType;
+      return (
+        c.payFrequency === PayFrequency.MONTHLY && valueType !== CalcType.MANUAL
+      );
+    });
+    const recurringCodes = new Set(recurring.map((c) => c.code));
+    const totalDays = baseContext.TOTAL_DAYS_IN_MONTH ?? 0;
+    const context: Record<string, number> = {
+      ...baseContext,
+      PRESENT_DAYS: baseContext.WORKING_DAYS ?? totalDays,
+      PAYABLE_DAYS: totalDays,
+      PAID_LEAVE_DAYS: 0,
+      UNPAID_LEAVE_DAYS: 0,
+      HALF_DAYS: 0,
+      LOP_DAYS: 0,
+      LATE_MARKS: 0,
+      OT_HOURS: 0,
+      OT_WEIGHTED_HOURS: 0,
+      HOLIDAY_WORK_DAYS: 0,
+      WEEKEND_WORK_DAYS: 0,
+    };
+    for (const c of earningComponents) {
+      if (!recurringCodes.has(c.code)) context[c.code] = 0;
+    }
+    try {
+      const { results } = this.resolveGroup(
+        recurring,
+        overridesByCode,
+        context,
+        1,
+        roundAmount,
+      );
+      return results
+        .filter((l) => l.taxable !== false)
+        .reduce((s, l) => s + roundAmount(l.amount), 0);
+    } catch {
+      return undefined;
+    }
   }
 
   private isApplicable(
@@ -1882,8 +2345,15 @@ export class PayrollService {
     return !!override && override.isEnabled !== false;
   }
 
-  // Sums gross earnings + TDS already recorded for this employee within
+  // Sums TAXABLE earnings + TDS already recorded for this employee within
   // the given FY, for every month strictly before beforeMonth/beforeYear.
+  //
+  // ytdGross is the income-tax base, so it must use the same taxable-only
+  // figure the current month uses (run.taxableGross) — summing grossSalary
+  // counted non-taxable pay (reimbursement-type allowances etc.) in every
+  // earlier month and over-withheld TDS for the rest of the year. Runs saved
+  // before taxableGross existed are re-derived from their stored lines'
+  // `taxable` flags, or fall back to grossSalary if the lines carry none.
   private async getYtdFigures(
     employeeId: string,
     financialYear: string,
@@ -1916,7 +2386,7 @@ export class PayrollService {
         run.year < beforeYear ||
         (run.year === beforeYear && run.month < beforeMonth);
       if (!isBefore) continue;
-      ytdGross += run.grossSalary;
+      ytdGross += this.runTaxableGross(run);
       const deductions = run.deductions as unknown as {
         code: string;
         amount: number;
@@ -1927,6 +2397,25 @@ export class PayrollService {
       ytdTDS += incomeTaxLine ? incomeTaxLine.amount : 0;
     }
     return { ytdGross, ytdTDS };
+  }
+
+  private runTaxableGross(run: PayrollRun): number {
+    if (run.taxableGross !== null && run.taxableGross !== undefined) {
+      return run.taxableGross;
+    }
+    const lines = (run.earnings ?? []) as unknown as {
+      amount: number;
+      taxable?: boolean;
+    }[];
+    if (
+      Array.isArray(lines) &&
+      lines.some((l) => typeof l.taxable === 'boolean')
+    ) {
+      return lines
+        .filter((l) => l.taxable !== false)
+        .reduce((s, l) => s + (Number(l.amount) || 0), 0);
+    }
+    return run.grossSalary;
   }
 
   private async targetEmployees(

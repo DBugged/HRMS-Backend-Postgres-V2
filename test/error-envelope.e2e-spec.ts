@@ -78,4 +78,32 @@ describe('Global error envelope (e2e)', () => {
     expect(Array.isArray(body.message)).toBe(true);
     expect(body.path).toBe('/auth/login');
   });
+
+  // Regression: body-parser's `entity.too.large` error isn't an
+  // HttpException, so an oversized body fell through to the generic 500.
+  it('a body over the size limit is a 413 in the standard envelope, not a 500', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/auth/login')
+      .set('Content-Type', 'application/json')
+      .send(
+        JSON.stringify({
+          email: 'big@example.test',
+          password: 'x'.repeat(2 * 1024 * 1024),
+        }),
+      )
+      .expect(413);
+    const body = res.body as ErrorBody;
+    expect(body.statusCode).toBe(413);
+    expect(body.error).toBe('Payload Too Large');
+    expect(body.path).toBe('/auth/login');
+  });
+
+  it('malformed JSON is a 400, not a 500', async () => {
+    const res = await request(app.getHttpServer())
+      .post('/auth/login')
+      .set('Content-Type', 'application/json')
+      .send('{"email": ')
+      .expect(400);
+    expect((res.body as ErrorBody).statusCode).toBe(400);
+  });
 });

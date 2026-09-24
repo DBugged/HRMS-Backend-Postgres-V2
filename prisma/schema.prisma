@@ -359,7 +359,11 @@ model User {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   // Globally unique (not per-org) so login can resolve the tenant from the
-  // email alone, same reasoning as the old system.
+  // email alone, same reasoning as the old system. Always stored lowercased
+  // (DTOs normalize via @NormalizeEmail); migration
+  // 20260924040000_normalize_user_email_case also adds a hand-written
+  // expression index, users_email_lower_key UNIQUE (lower(email)), which
+  // Prisma can't express here — keep it if a future diff proposes dropping it.
   email    String @unique
   password String
   name     String
@@ -1628,6 +1632,11 @@ enum ImportBatchStatus {
   VALIDATED
   REJECTED
   EXECUTED
+  // Claimed by executeImportBatch (VALIDATED -> EXECUTING compare-and-swap)
+  // while it writes to the ledger, so a concurrent execute can't run twice.
+  EXECUTING
+  // Execution threw unexpectedly; rows written before the failure remain.
+  FAILED
 }
 
 // Staging table for the two-stage Excel import (upload -> validate ->
@@ -1830,6 +1839,10 @@ model PayrollRun {
   taxDetails            Json?
 
   grossSalary                Float  @default(0)
+  // Sum of the taxable earning lines — the month's income-tax base, summed
+  // for YTD taxable income. Null on runs saved before it existed (YTD then
+  // re-derives it from the stored lines' `taxable` flags, else grossSalary).
+  taxableGross               Float?
   totalDeductions            Float  @default(0)
   totalEmployerContributions Float  @default(0)
   netPay                     Float  @default(0)
@@ -2061,6 +2074,14 @@ model Settlement {
   lastWorkingDay String
 
   pendingSalaryAmount   Float @default(0)
+  // The LWD-month payroll snapshot pendingSalaryAmount was derived from —
+  // {earnings, deductions, employerContributions} as calculated (LOAN_EMI
+  // excluded, since the loan balance is recovered separately). process()
+  // copies these real lines (PF/ESI/PT/TDS, employer contributions) onto the
+  // final-settlement PayrollRun instead of one net PENDING_SALARY figure.
+  // Null when no pending salary was due, and on drafts calculated before this
+  // column existed (those fall back to the single PENDING_SALARY line).
+  pendingSalaryBreakdown Json?
   // Unlike the old system (which read a dead, always-zero legacy
   // User.leaveBalance.el JSON field — never written anywhere else in that
   // codebase), this sums (closing balance × rate/day) across every

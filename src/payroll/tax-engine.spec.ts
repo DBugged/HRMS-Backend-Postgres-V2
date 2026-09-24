@@ -346,3 +346,71 @@ describe('marginal relief', () => {
     ).toBe(applySurcharge(tax, 6000000, newRegime.surchargeSlabs));
   });
 });
+
+// Regression: the remaining months were projected as `currentMonthGross ×
+// remainingMonths`, so a one-off (overtime/bonus/encashment) in this month was
+// taxed as if it recurred every month, and a prorated joining month as if the
+// whole year were prorated. With the recurring figure, this month counts once
+// and only the regular structure is projected forward.
+describe('calculateTax — projection from the recurring structure', () => {
+  const taxSlabConfig = {
+    regime: TaxRegime.NEW,
+    ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+  };
+  const base = {
+    month: 4,
+    year: 2026,
+    ytdGross: 0,
+    ytdTDS: 0,
+    declaration: null,
+    taxSlabConfig,
+    financialYearStartMonth: 4,
+  };
+
+  it('a one-off bonus month is counted once, not ×12', () => {
+    // Regular 100,000/month plus a 200,000 bonus in April.
+    const result = calculateTax({
+      ...base,
+      currentMonthGross: 300000,
+      recurringMonthlyGross: 100000,
+    });
+    expect(result.grossAnnualIncome).toBe(300000 + 100000 * 11);
+    const oldProjection = calculateTax({ ...base, currentMonthGross: 300000 });
+    expect(oldProjection.grossAnnualIncome).toBe(300000 * 12);
+    expect(result.totalAnnualTax).toBeLessThan(oldProjection.totalAnnualTax);
+  });
+
+  it('a prorated joining month does not shrink the whole-year projection', () => {
+    const result = calculateTax({
+      ...base,
+      month: 10,
+      currentMonthGross: 50000, // joined mid-October
+      recurringMonthlyGross: 150000,
+    });
+    // October + November..March (5 more months) at the full rate.
+    expect(result.remainingMonths).toBe(6);
+    expect(result.grossAnnualIncome).toBe(50000 + 150000 * 5);
+  });
+
+  it('is identical to the old projection when this month IS the regular month', () => {
+    const withRecurring = calculateTax({
+      ...base,
+      currentMonthGross: 125000,
+      recurringMonthlyGross: 125000,
+    });
+    const without = calculateTax({ ...base, currentMonthGross: 125000 });
+    expect(withRecurring).toEqual(without);
+  });
+
+  it('in the last FY month only the actual month counts', () => {
+    const result = calculateTax({
+      ...base,
+      month: 3,
+      year: 2027,
+      currentMonthGross: 80000,
+      recurringMonthlyGross: 999999,
+    });
+    expect(result.remainingMonths).toBe(1);
+    expect(result.grossAnnualIncome).toBe(80000);
+  });
+});

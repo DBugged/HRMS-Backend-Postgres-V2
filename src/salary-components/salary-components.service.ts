@@ -25,7 +25,9 @@ import { compileFormula, SYSTEM_VARS } from './formula-engine';
 import { wrapAll } from '../common/pagination';
 import {
   detectCircularReferences,
+  isKnownFormulaReference,
   isValidPercentage,
+  sampleEvaluationError,
 } from './salary-component-validation';
 import { SALARY_COMPONENT_DEFAULTS } from './salary-component-defaults';
 import {
@@ -110,6 +112,11 @@ export class SalaryComponentsService {
         formula: dto.formula ?? null,
       },
     ]);
+    this.assertFormulaUsable(
+      dto.calcType ?? CalcType.FIXED,
+      dto.formula ?? null,
+      active.map((c) => c.code),
+    );
 
     const component = await this.scopedPrisma.salaryComponent.create({
       data: {
@@ -185,6 +192,15 @@ export class SalaryComponentsService {
               !systemVarSet.has(n) &&
               n !== dto.excludeCode,
           );
+          // Parsing alone used to be the whole check, so a formula that can
+          // only ever produce NaN/Infinity was reported valid. Evaluate it
+          // once against a representative context (every referenced name
+          // gets a sample value — unknown references are still reported via
+          // unknownRefs, as before).
+          const evaluationError = sampleEvaluationError(dto.formula);
+          if (evaluationError) {
+            return { valid: false, error: evaluationError };
+          }
           return {
             valid: true,
             referencedNames,
@@ -261,6 +277,17 @@ export class SalaryComponentsService {
       ...active.filter((c) => c.id !== id),
       candidate,
     ]);
+    // Only when the formula itself (or the calc type that makes it apply)
+    // is being changed — an unrelated edit (e.g. the taxable flag) must not
+    // start failing because some OTHER component this formula references has
+    // since been deactivated.
+    if (dto.formula !== undefined || dto.calcType !== undefined) {
+      this.assertFormulaUsable(
+        candidate.calcType,
+        candidate.formula,
+        active.filter((c) => c.id !== id).map((c) => c.code),
+      );
+    }
 
     await this.scopedPrisma.salaryComponent.updateMany({
       where: { id, organizationId },
@@ -333,6 +360,19 @@ export class SalaryComponentsService {
       throw new BadRequestException(
         `${existing.name} is controlled by Statutory Compliance — enable or disable it there.`,
       );
+    }
+    // Re-enabling puts the component back into the dependency graph. The
+    // cycle check on create/update only ever saw the ACTIVE set, so
+    // disable A -> point B at A -> re-enable A used to slip an A <-> B
+    // cycle past it.
+    if (!existing.isActive) {
+      const active = await this.scopedPrisma.salaryComponent.findMany({
+        where: { organizationId, isActive: true },
+      });
+      this.assertNoCircularReferences([
+        ...active.filter((c) => c.id !== id),
+        existing,
+      ]);
     }
     await this.scopedPrisma.salaryComponent.updateMany({
       where: { id, organizationId },
@@ -407,6 +447,44 @@ export class SalaryComponentsService {
       detectCircularReferences(components);
     } catch (err) {
       throw new BadRequestException((err as Error).message);
+    }
+  }
+
+  // A FORMULA component's formula must only reference names that exist at
+  // payroll time (an active component code or a system variable) and must
+  // evaluate to a finite number for a representative input. Previously any
+  // parseable formula was accepted: an unknown reference only surfaced as a
+  // per-employee failure on the next payroll run, and a formula such as
+  // "MIN()" or "IF(1 > 2, 5)" was saved and later paid out as
+  // Infinity/NaN.
+  private assertFormulaUsable(
+    calcType: CalcType,
+    formula: string | null,
+    activeCodes: string[],
+  ) {
+    if (calcType !== CalcType.FORMULA || !formula) return;
+    let referencedNames: string[];
+    try {
+      referencedNames = compileFormula(formula).referencedNames;
+    } catch (err) {
+      throw new BadRequestException(
+        `Invalid formula: ${(err as Error).message}`,
+      );
+    }
+    const known = new Set(activeCodes);
+    const unknown = referencedNames.filter(
+      (n) => !isKnownFormulaReference(n, known),
+    );
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `Formula references unknown name(s): ${unknown.join(', ')} — use an active salary component code or a system variable.`,
+      );
+    }
+    const evaluationError = sampleEvaluationError(formula);
+    if (evaluationError) {
+      throw new BadRequestException(
+        `Formula cannot be evaluated: ${evaluationError}`,
+      );
     }
   }
 

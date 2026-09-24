@@ -25,6 +25,37 @@ function duplicateFieldMessage(
   return `A record with this ${fields} already exists.`;
 }
 
+// Recognizes an error raised by body-parser (raw-body / http-errors): a
+// string `type` such as 'entity.too.large' or 'entity.parse.failed', a 4xx
+// `status`, and `expose: true` (http-errors' flag for a client-safe message).
+function asBodyParserError(
+  exception: unknown,
+): { type: string; status: number; message: string } | null {
+  if (!(exception instanceof Error)) return null;
+  const e = exception as Error & {
+    type?: unknown;
+    status?: unknown;
+    statusCode?: unknown;
+    expose?: unknown;
+  };
+  const status =
+    typeof e.status === 'number'
+      ? e.status
+      : typeof e.statusCode === 'number'
+        ? e.statusCode
+        : undefined;
+  if (
+    typeof e.type !== 'string' ||
+    e.expose !== true ||
+    status === undefined ||
+    status < 400 ||
+    status > 499
+  ) {
+    return null;
+  }
+  return { type: e.type, status, message: e.message };
+}
+
 // Every error response, HttpException or not, comes out in this exact
 // shape. statusCode/message/error are Nest's own fields (preserved
 // as-is — many e2e tests assert res.body.message directly), path/
@@ -48,11 +79,18 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const isDuplicateKey =
       exception instanceof Prisma.PrismaClientKnownRequestError &&
       exception.code === 'P2002';
+    // body-parser rejects a request before any controller runs (body over
+    // the size limit, malformed JSON, bad charset) with a plain Error
+    // carrying `type` + a 4xx `status` and `expose: true`. Those are client
+    // errors — an oversized body used to come back as a 500.
+    const bodyParserError = asBodyParserError(exception);
     const status = isHttp
       ? exception.getStatus()
       : isDuplicateKey
         ? HttpStatus.CONFLICT
-        : HttpStatus.INTERNAL_SERVER_ERROR;
+        : bodyParserError
+          ? bodyParserError.status
+          : HttpStatus.INTERNAL_SERVER_ERROR;
 
     let message: string | string[];
     let error: string;
@@ -69,6 +107,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
     } else if (isDuplicateKey) {
       message = duplicateFieldMessage(exception);
       error = 'Conflict';
+    } else if (bodyParserError) {
+      if (bodyParserError.type === 'entity.too.large') {
+        message = 'Request body is too large.';
+        error = 'Payload Too Large';
+      } else {
+        message = bodyParserError.message;
+        error = 'Bad Request';
+      }
     } else {
       message = 'Internal server error';
       error = 'Internal Server Error';

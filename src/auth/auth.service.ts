@@ -55,6 +55,9 @@ import {
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // 30 minutes — matches the old system's window exactly.
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+// See refresh(): a rotated refresh token replayed within this window is a
+// concurrent-tab race, not reuse, and doesn't trigger family revocation.
+export const REFRESH_REUSE_GRACE_MS = 5_000;
 // Same generic message regardless of whether the email exists — never
 // reveals account existence, ported from the old system's forgotPassword.
 const FORGOT_PASSWORD_GENERIC_MESSAGE =
@@ -287,8 +290,15 @@ export class AuthService {
       throw new UnauthorizedException('Invalid email or password.');
     }
 
-    if (user.failedLoginAttempts > 0 || user.lockedUntil) {
-      await this.usersService.clearLoginFailures(user.id, user.organizationId);
+    // Always runs (not only when the loaded row showed failures): it is the
+    // atomic re-check that a concurrent burst of wrong guesses didn't lock
+    // the account while this request's bcrypt compare was in flight.
+    const stillUnlocked = await this.usersService.clearLoginFailuresIfUnlocked(
+      user.id,
+      user.organizationId,
+    );
+    if (!stillUnlocked) {
+      throw new UnauthorizedException('Invalid email or password.');
     }
     await this.usersService.updateLastLogin(user.id, user.organizationId);
     const tokens = await this.issueTokenPair(
@@ -325,7 +335,23 @@ export class AuthService {
     const tokenHash = hashToken(rawToken);
     const existing = await this.findRefreshTokenByHash(tokenHash);
 
-    if (!existing || existing.revokedAt || existing.expiresAt < new Date()) {
+    if (!existing) {
+      throw new UnauthorizedException('Refresh token is invalid or expired.');
+    }
+    // Reuse detection: a token that was already rotated (replacedByTokenHash
+    // set) being presented again means it leaked — either the attacker or
+    // the legitimate client is replaying it. We can't tell which, so every
+    // token descended from it is revoked and both parties must log in again.
+    // A replay within REFRESH_REUSE_GRACE_MS of the rotation is treated as a
+    // benign race instead (two browser tabs sharing the cookie refreshing at
+    // the same moment) — still a 401, but it doesn't log out the other tab.
+    if (existing.revokedAt) {
+      if (Date.now() - existing.revokedAt.getTime() > REFRESH_REUSE_GRACE_MS) {
+        await this.revokeTokenFamily(existing);
+      }
+      throw new UnauthorizedException('Refresh token is invalid or expired.');
+    }
+    if (existing.expiresAt < new Date()) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
     }
 
@@ -345,21 +371,78 @@ export class AuthService {
     // than reusing it — the old system had no refresh tokens at all, so
     // this is new ground, and rotation-on-use is the standard mitigation
     // against a leaked refresh token being replayed indefinitely.
-    const tokens = await this.issueTokenPair(
+    //
+    // Revoke-first compare-and-swap: the presented token is revoked (and
+    // linked to its successor) only if it is still unrevoked at write time.
+    // Previously the revokedAt check above and an unconditional update ran
+    // around the issuance, so concurrent refreshes with one token each
+    // minted their own new pair. Of N concurrent requests exactly one now
+    // sees count === 1; the rest 401 without issuing anything.
+    const rawRefreshToken = generateRefreshToken();
+    const { count } = await this.scopedPrisma.refreshToken.updateMany({
+      where: {
+        id: existing.id,
+        organizationId: existing.organizationId,
+        revokedAt: null,
+      },
+      data: {
+        revokedAt: new Date(),
+        replacedByTokenHash: hashToken(rawRefreshToken),
+      },
+    });
+    if (count === 0) {
+      throw new UnauthorizedException('Refresh token is invalid or expired.');
+    }
+
+    return this.issueTokenPair(
       user.id,
       user.organizationId,
       user.role,
       meta,
+      rawRefreshToken,
     );
-    await this.scopedPrisma.refreshToken.updateMany({
-      where: { id: existing.id, organizationId: existing.organizationId },
-      data: {
-        revokedAt: new Date(),
-        replacedByTokenHash: hashToken(tokens.refreshToken),
-      },
-    });
+  }
 
-    return tokens;
+  // Walks the rotation chain forward from a replayed token
+  // (replacedByTokenHash -> that token's replacedByTokenHash -> ...) and
+  // revokes every still-live descendant. Bounded so a corrupt chain can't
+  // loop forever.
+  private async revokeTokenFamily(token: {
+    id: string;
+    userId: string;
+    organizationId: string;
+    replacedByTokenHash: string | null;
+  }): Promise<void> {
+    const { organizationId } = token;
+    const now = new Date();
+    const seen = new Set<string>();
+    let nextHash = token.replacedByTokenHash;
+    let revoked = 0;
+    for (let hops = 0; nextHash && hops < 10_000; hops++) {
+      if (seen.has(nextHash)) break;
+      seen.add(nextHash);
+      const child = await this.scopedPrisma.refreshToken.findFirst({
+        where: { tokenHash: nextHash, organizationId },
+        select: { id: true, replacedByTokenHash: true },
+      });
+      if (!child) break;
+      const { count } = await this.scopedPrisma.refreshToken.updateMany({
+        where: { id: child.id, organizationId, revokedAt: null },
+        data: { revokedAt: now },
+      });
+      revoked += count;
+      nextHash = child.replacedByTokenHash;
+    }
+    if (revoked > 0) {
+      await this.auditLogService.log({
+        actorId: token.userId,
+        action: 'REFRESH_TOKEN_REUSE_DETECTED',
+        module: 'AUTH',
+        organizationId,
+        targetId: token.id,
+        details: { revokedDescendants: revoked },
+      });
+    }
   }
 
   async logout(rawToken: string): Promise<void> {
@@ -594,6 +677,9 @@ export class AuthService {
     organizationId: string,
     role: Role,
     meta: { ip?: string; userAgent?: string },
+    // refresh() pre-generates the new raw token so its hash can be linked
+    // (replacedByTokenHash) in the same guarded write that revokes the old one.
+    rawRefreshToken: string = generateRefreshToken(),
   ): Promise<IssuedTokens> {
     const payload: JwtPayload = {
       sub: userId,
@@ -608,7 +694,6 @@ export class AuthService {
       expiresIn: ACCESS_TOKEN_TTL_SECONDS,
     });
 
-    const rawRefreshToken = crypto.randomBytes(48).toString('hex');
     const expiresAt = new Date(
       Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000,
     );
@@ -652,6 +737,10 @@ export class AuthService {
     } as unknown as FindFirstArgs;
     return this.scopedPrisma.refreshToken.findFirst(args);
   }
+}
+
+function generateRefreshToken(): string {
+  return crypto.randomBytes(48).toString('hex');
 }
 
 export function hashToken(raw: string): string {
