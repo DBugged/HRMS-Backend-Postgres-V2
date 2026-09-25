@@ -396,17 +396,24 @@ export class AttendanceService {
 
     if (punches.length > 0) {
       const first = punches[0];
-      const last = punches[punches.length - 1];
       inTime = first.punchTime;
-      outTime = last.punchTime;
       checkinLocation = first.location;
       checkinLatitude = first.latitude;
       checkinLongitude = first.longitude;
       checkinSelfieUrl = first.selfieUrl;
-      checkoutLocation = last.location;
-      checkoutLatitude = last.latitude;
-      checkoutLongitude = last.longitude;
-      checkoutSelfieUrl = last.selfieUrl;
+      // A single punch is a check-in with no check-out yet — checkout
+      // fields must stay null. With only `first`, `last` would equal
+      // `first` and duplicate the check-in's own time/location/selfie
+      // into the checkout columns, making an in-progress day look like a
+      // completed one.
+      if (punches.length > 1) {
+        const last = punches[punches.length - 1];
+        outTime = last.punchTime;
+        checkoutLocation = last.location;
+        checkoutLatitude = last.latitude;
+        checkoutLongitude = last.longitude;
+        checkoutSelfieUrl = last.selfieUrl;
+      }
     }
 
     const { status, workDurationMinutes, isLate, isEarlyOut } =
