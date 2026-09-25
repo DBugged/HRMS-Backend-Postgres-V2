@@ -338,6 +338,12 @@ export class OrganizationSettingsService {
       // payload — same rationale as defaultNoticeDays/enableTaxDeclaration
       // above.
       autoCarryForwardEnabled: !!policies.autoCarryForwardEnabled,
+      // Org's configured IANA timezone (defaults to Asia/Kolkata — see the
+      // Organization schema). Needed client-side wherever a user enters a
+      // wall-clock time that must be converted to UTC before being sent to
+      // an endpoint that stores/interprets timestamps as UTC (e.g. the
+      // attendance Excel import) — see attendance-import date handling.
+      timezone: org.timezone,
     };
   }
 
