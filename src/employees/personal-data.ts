@@ -31,6 +31,15 @@ const IDENTIFIER_PATTERNS: Record<string, { pattern: RegExp; label: string; exam
     label: 'ESIC number',
     example: '1234567890',
   },
+  // Plain 10-digit phone numbers — the employee's own Contact Number lives
+  // on the User row (validated by @Matches on Create/UpdateEmployeeDto
+  // instead), but these family/emergency contact numbers live in
+  // personalData like the identifiers above, so they go through the same
+  // validator.
+  fatherContact: { pattern: /^[0-9]{10}$/, label: "Father's contact number", example: '9876543210' },
+  motherContact: { pattern: /^[0-9]{10}$/, label: "Mother's contact number", example: '9876543210' },
+  emergencyContact1Number: { pattern: /^[0-9]{10}$/, label: 'Emergency contact 1 number', example: '9876543210' },
+  emergencyContact2Number: { pattern: /^[0-9]{10}$/, label: 'Emergency contact 2 number', example: '9876543210' },
 };
 
 // Throws on the first invalid identifier found in `patch` — called before

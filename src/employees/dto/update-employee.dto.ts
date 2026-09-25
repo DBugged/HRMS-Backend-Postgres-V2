@@ -83,6 +83,11 @@ export class UpdateEmployeeDto {
   @IsString()
   employeeCategory?: string;
 
+  // Not format-validated — Profile.tsx's self-service edit sends this via
+  // PhoneInput as "+<dialcode> <national>" (e.g. "+91 9876543210"), while
+  // the admin "Add/Edit Employee" form sends plain 10-digit input (see
+  // create-employee.dto.ts's sibling field). A single regex can't satisfy
+  // both real, already-shipped formats on this one shared column.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

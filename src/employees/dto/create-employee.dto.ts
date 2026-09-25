@@ -73,6 +73,12 @@ export class CreateEmployeeDto {
   @IsString()
   employeeCategory?: string;
 
+  // Not format-validated here — this endpoint (admin "Add Employee") always
+  // gets plain 10-digit input from the frontend, but Profile.tsx's own
+  // self-service edit sends this same field through PhoneInput as
+  // "+<dialcode> <national>" (e.g. "+91 9876543210") via PATCH
+  // /employees/:id, which shares this DTO's sibling in update-employee.dto.
+  // A digits-only regex here would reject every legitimate self-edit.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
