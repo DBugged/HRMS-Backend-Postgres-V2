@@ -1,4 +1,56 @@
+import { BadRequestException } from '@nestjs/common';
 import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
+
+// Format checks for the identifier fields inside personalData — these were
+// previously free-text with no validation at all (any string, any length,
+// any characters), unlike every other structured field in this codebase.
+// Each pattern is the standard published format for that document; a blank
+// value is always allowed since none of these fields are mandatory.
+const IDENTIFIER_PATTERNS: Record<string, { pattern: RegExp; label: string; example: string }> = {
+  panNumber: {
+    pattern: /^[A-Z]{5}[0-9]{4}[A-Z]$/,
+    label: 'PAN',
+    example: 'ABCDE1234F',
+  },
+  // Stored/displayed with spaces (see Profile.tsx's "1234 5678 9012"
+  // placeholder) — spaces are stripped before matching, not persisted
+  // differently, since the merge below writes back whatever the caller
+  // sent verbatim once it passes validation.
+  aadharNumber: {
+    pattern: /^[2-9][0-9]{11}$/,
+    label: 'Aadhaar number',
+    example: '234567890123',
+  },
+  uanNumber: {
+    pattern: /^[0-9]{12}$/,
+    label: 'UAN',
+    example: '123456789012',
+  },
+  esicNumber: {
+    pattern: /^[0-9]{10}$/,
+    label: 'ESIC number',
+    example: '1234567890',
+  },
+};
+
+// Throws on the first invalid identifier found in `patch` — called before
+// merging a personalData patch onto the stored blob. Only checks fields
+// actually present in this patch (a partial edit that doesn't touch PAN
+// isn't re-validated against a possibly-already-invalid stored value).
+export function assertValidIdentifiers(patch: Record<string, unknown>): void {
+  for (const [key, { pattern, label, example }] of Object.entries(IDENTIFIER_PATTERNS)) {
+    if (!(key in patch)) continue;
+    const value = patch[key];
+    if (typeof value !== 'string') continue;
+    const normalized = key === 'aadharNumber' ? value.replace(/\s+/g, '') : value.trim();
+    if (normalized === '') continue;
+    if (!pattern.test(normalized)) {
+      throw new BadRequestException(
+        `Invalid ${label} format — expected something like ${example}.`,
+      );
+    }
+  }
+}
 
 interface PreviousEmploymentEntry {
   documentUrl?: string;

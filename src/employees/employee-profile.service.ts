@@ -45,6 +45,7 @@ import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
 import {
   areMandatoryDocumentsUploaded,
+  assertValidIdentifiers,
   mergePersonalData,
 } from './personal-data';
 import { assertNotSelfApproval } from '../common/dept-scope';
@@ -197,6 +198,7 @@ export class EmployeeProfileService {
     if (!HR_ROLES.includes(actor.role)) {
       delete patch.personalEmail;
     }
+    assertValidIdentifiers(patch);
     const merged = mergePersonalData(
       before,
       patch,
