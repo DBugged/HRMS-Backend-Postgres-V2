@@ -165,6 +165,11 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       timeFormat: '24',
       enableTaxDeclaration: true,
       autoCarryForwardEnabled: false,
+      // Needed client-side wherever a user enters a wall-clock time that
+      // must be converted to UTC before being sent to an endpoint that
+      // stores/interprets timestamps as UTC (e.g. attendance Excel import)
+      // — see getPublicBranding()'s own comment on this field.
+      timezone: 'Asia/Kolkata',
     });
   });
 
