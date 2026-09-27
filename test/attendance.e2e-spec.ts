@@ -2136,4 +2136,113 @@ describe('Attendance (e2e)', () => {
       expect(afterCorrection).toBeNull();
     });
   });
+
+  describe('Punch-out reminder', () => {
+    it('nudges an employee still punched in with their shift ending soon, once per day', async () => {
+      const now = new Date();
+      // Shift end 10 minutes from "now" (literal UTC, same convention as
+      // buildShiftDateTime/every other shift-config test in this file) —
+      // lands inside the 15-minute reminder window.
+      const soon = new Date(now.getTime() + 10 * 60000);
+      const shiftEndTime = `${String(soon.getUTCHours()).padStart(2, '0')}:${String(soon.getUTCMinutes()).padStart(2, '0')}`;
+
+      const dept = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Reminder Dept',
+          code: 'RMD',
+          shiftStartTime: '00:00',
+          shiftEndTime,
+        });
+      const remDeptId = (dept.body as { id: string }).id;
+
+      const emp = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Reminder Employee',
+          email: 'att-e2e-reminder@example.test',
+          departmentId: remDeptId,
+        });
+      const remEmployeeId = (emp.body as EmployeeCreateBody).employee.id;
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: remEmployeeId, punchTime: now.toISOString() })
+        .expect(201);
+      // Read back whatever shift-day the punch actually landed on, instead
+      // of independently recomputing "today" — this test only cares that
+      // the reminder fires for the row that's actually open, not which
+      // exact calendar date that turned out to be near a timezone boundary.
+      const attRow = await prisma.attendance.findFirstOrThrow({
+        where: { organizationId, employeeId: remEmployeeId },
+      });
+
+      await attendanceService.remindUpcomingPunchOuts();
+
+      const title = `Punch-Out Reminder — ${attRow.date}`;
+      const notifs = await prisma.notification.findMany({
+        where: { organizationId, userId: remEmployeeId, title },
+      });
+      expect(notifs.length).toBe(1);
+
+      // Running it again the same day must not duplicate the notification.
+      await attendanceService.remindUpcomingPunchOuts();
+      const notifsAgain = await prisma.notification.findMany({
+        where: { organizationId, userId: remEmployeeId, title },
+      });
+      expect(notifsAgain.length).toBe(1);
+    });
+
+    it('does not nudge an employee who has already punched out', async () => {
+      const now = new Date();
+      const soon = new Date(now.getTime() + 10 * 60000);
+      const shiftEndTime = `${String(soon.getUTCHours()).padStart(2, '0')}:${String(soon.getUTCMinutes()).padStart(2, '0')}`;
+
+      const dept = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Reminder Dept 2',
+          code: 'RMD2',
+          shiftStartTime: '00:00',
+          shiftEndTime,
+        });
+      const remDeptId = (dept.body as { id: string }).id;
+
+      const emp = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Already Out Employee',
+          email: 'att-e2e-reminder2@example.test',
+          departmentId: remDeptId,
+        });
+      const remEmployeeId = (emp.body as EmployeeCreateBody).employee.id;
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: remEmployeeId, punchTime: new Date(now.getTime() - 60 * 60000).toISOString() })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: remEmployeeId, punchTime: now.toISOString() })
+        .expect(201);
+
+      await attendanceService.remindUpcomingPunchOuts();
+
+      const notifs = await prisma.notification.findMany({
+        where: {
+          organizationId,
+          userId: remEmployeeId,
+          title: { startsWith: 'Punch-Out Reminder' },
+        },
+      });
+      expect(notifs.length).toBe(0);
+    });
+  });
 });

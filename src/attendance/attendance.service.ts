@@ -2798,4 +2798,97 @@ export class AttendanceService {
       }
     }
   }
+
+  // How far ahead of shift end to nudge — long enough to actually be
+  // useful (not a 1-minute-warning nobody can act on), short enough that
+  // it's clearly tied to "your shift is ending now", not a vague
+  // end-of-day reminder.
+  private static readonly PUNCH_OUT_REMINDER_WINDOW_MINUTES = 15;
+
+  // Nudges an employee shortly before their shift ends if they're still
+  // punched in — the whole point of the auto-suggested-overtime feature
+  // (suggestOvertimeFromPunchOut) and accurate day-status both depend on a
+  // real punch-out actually happening, not on someone remembering. Runs
+  // every 5 minutes; per-employee/day title-dedupe (same convention as
+  // notifyLateOrAbsent) means each employee gets at most one nudge per day
+  // regardless of how many 5-minute ticks land inside the reminder window.
+  @Cron('*/5 * * * *')
+  async remindUpcomingPunchOuts() {
+    const now = new Date();
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const org of organizations) {
+      try {
+        await this.remindUpcomingPunchOutsForOrg(org.id, now);
+      } catch (err) {
+        this.logger.error(
+          `remindUpcomingPunchOuts failed for org ${org.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+  }
+
+  private async remindUpcomingPunchOutsForOrg(
+    organizationId: string,
+    now: Date,
+  ) {
+    // Still punched in: has an in-time, no out-time yet. Deliberately NOT
+    // filtered by `date: todayInOrgTz(...)` — Attendance.date is attributed
+    // in literal UTC (resolveAttendanceDateForPunch has no org-timezone
+    // awareness), so for an org ahead of UTC (e.g. Asia/Kolkata, +5:30) the
+    // org-local "today" and the row's own UTC-attributed date disagree for
+    // part of every day (currently 18:30-23:59 UTC) — a date filter here
+    // would silently skip every open row during that window. A bounded
+    // recency filter on inTime (36h, generous enough for a crossesMidnight
+    // shift still mid-shift near its end) does the same "don't resurface
+    // ancient stuck-open rows" job without needing to guess "today" at all.
+    const openRows = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        inTime: { not: null, gte: new Date(now.getTime() - 36 * 60 * 60000) },
+        outTime: null,
+      },
+      include: { employee: { include: { department: true } } },
+    });
+    if (openRows.length === 0) return;
+
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+    const orgPrefs = org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
+
+    for (const row of openRows) {
+      const shiftConfig = resolveShiftConfig(row.employee.department, orgPrefs);
+      const shiftEnd = buildShiftDateTime(
+        shiftConfig.crossesMidnight ? addDaysStr(row.date, 1) : row.date,
+        shiftConfig.shiftEndTime,
+      );
+      const minutesUntilEnd = Math.round(
+        (shiftEnd.getTime() - now.getTime()) / 60000,
+      );
+      if (
+        minutesUntilEnd <= 0 ||
+        minutesUntilEnd > AttendanceService.PUNCH_OUT_REMINDER_WINDOW_MINUTES
+      ) {
+        continue;
+      }
+
+      const title = `Punch-Out Reminder — ${row.date}`;
+      const alreadyNotified = await this.scopedPrisma.notification.findFirst({
+        where: { organizationId, userId: row.employeeId, title },
+      });
+      if (alreadyNotified) continue;
+
+      await this.notificationsService.create({
+        organizationId,
+        userId: row.employeeId,
+        title,
+        message: `Your shift ends in about ${minutesUntilEnd} minute(s) — don't forget to punch out.`,
+        category: NotificationCategory.ATTENDANCE,
+      });
+    }
+  }
 }

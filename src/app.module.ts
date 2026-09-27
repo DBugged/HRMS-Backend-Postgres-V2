@@ -47,6 +47,7 @@ import { AuditLogModule } from './audit-log/audit-log.module';
 import { EmployeeTimelineModule } from './employee-timeline/employee-timeline.module';
 import { ApprovalDelegationModule } from './approval-delegation/approval-delegation.module';
 import { DocumentsModule } from './documents/documents.module';
+import { PolicyAssistantModule } from './policy-assistant/policy-assistant.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ApprovalsDigestModule } from './approvals-digest/approvals-digest.module';
 import { HrEventsModule } from './hr-events/hr-events.module';
@@ -133,6 +134,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     EmployeeTimelineModule,
     ApprovalDelegationModule,
     DocumentsModule,
+    PolicyAssistantModule,
     NotificationsModule,
     HrEventsModule,
     ApprovalsDigestModule,
