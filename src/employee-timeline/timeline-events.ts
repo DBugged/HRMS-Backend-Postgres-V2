@@ -140,6 +140,10 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   WARNING_LETTER: { category: 'PERFORMANCE', title: 'Warning Letter' },
   APPRECIATION: { category: 'PERFORMANCE', title: 'Appreciation' },
   // Compliance
+  POLICY_ACKNOWLEDGED: {
+    category: 'COMPLIANCE',
+    title: 'Policy Document Acknowledged',
+  },
   KYC_UPDATED: { category: 'COMPLIANCE', title: 'KYC Updated' },
   PF_UPDATED: { category: 'COMPLIANCE', title: 'PF Updated' },
   ESI_UPDATED: { category: 'COMPLIANCE', title: 'ESI Updated' },

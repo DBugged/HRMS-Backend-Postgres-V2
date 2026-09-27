@@ -9,6 +9,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -27,12 +28,14 @@ import { deleteStoredFile } from '../files/delete-stored-file';
 import { signFileToken } from '../files/file-token';
 import { CreatePolicyDocumentDto } from './dto/create-policy-document.dto';
 import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
+import { AcknowledgePolicyDocumentDto } from './dto/acknowledge-policy-document.dto';
 import { CreateDocumentRequirementDto } from './dto/create-document-requirement.dto';
 import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.dto';
 import { BulkDeleteDocumentRequirementsDto } from './dto/bulk-delete-document-requirements.dto';
 import { BulkImportDocumentRequirementsDto } from './dto/bulk-import-document-requirements.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -63,6 +66,7 @@ export class DocumentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
+    private readonly timelineService: EmployeeTimelineService,
   ) {}
 
   // Registration-time seed (same integration point as LeaveTypesService/OrgListItemsService
@@ -127,7 +131,109 @@ export class DocumentsService {
     const visible = isHr
       ? policies
       : policies.filter((p) => this.canView(p, actor));
-    return wrapAll(visible.map((p) => this.withSignedUrl(p)));
+
+    // "Have I already acknowledged this exact version" — one query for the
+    // whole list rather than N, same pattern as every other list+per-row-
+    // status lookup in this codebase (e.g. LettersService.listForEmployee).
+    const myAcks = visible.length
+      ? await this.scopedPrisma.policyDocumentAcknowledgment.findMany({
+          where: {
+            organizationId,
+            employeeId: actor.id,
+            policyDocumentId: { in: visible.map((p) => p.id) },
+          },
+          select: { policyDocumentId: true, acknowledgedAt: true },
+        })
+      : [];
+    const ackByPolicyId = new Map(
+      myAcks.map((a) => [a.policyDocumentId, a.acknowledgedAt]),
+    );
+
+    return wrapAll(
+      visible.map((p) => ({
+        ...this.withSignedUrl(p),
+        acknowledgedAt: ackByPolicyId.get(p.id) ?? null,
+      })),
+    );
+  }
+
+  // Employee e-acknowledges a specific policy document version. Immutable
+  // once created — a re-attempt is rejected rather than silently
+  // overwriting an existing signature (see the model's own doc comment).
+  async acknowledgePolicy(
+    id: string,
+    dto: AcknowledgePolicyDocumentDto,
+    actor: Actor,
+    organizationId: string,
+    ipAddress: string | null,
+    userAgent: string | null,
+  ) {
+    const policy = await this.scopedPrisma.policyDocument.findFirst({
+      where: { id, organizationId },
+    });
+    if (!policy) throw new NotFoundException('Document not found.');
+    if (!policy.isPublished) {
+      throw new BadRequestException(
+        'This document version has been retired and can no longer be acknowledged.',
+      );
+    }
+    if (!HR_ROLES.includes(actor.role) && !this.canView(policy, actor)) {
+      throw new ForbiddenException('Not authorized to view this document.');
+    }
+
+    const existing =
+      await this.scopedPrisma.policyDocumentAcknowledgment.findFirst({
+        where: { organizationId, policyDocumentId: id, employeeId: actor.id },
+      });
+    if (existing) {
+      throw new ConflictException('You have already acknowledged this document.');
+    }
+
+    const signatureName = dto.signatureName.trim();
+    const record = await this.scopedPrisma.policyDocumentAcknowledgment.create(
+      {
+        data: {
+          organizationId,
+          policyDocumentId: id,
+          employeeId: actor.id,
+          signatureName,
+          ipAddress,
+          userAgent,
+        },
+      },
+    );
+
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: actor.id,
+      eventKey: 'POLICY_ACKNOWLEDGED',
+      performedById: actor.id,
+      description: `Acknowledged "${policy.title}" (v${policy.version}), signed as "${signatureName}".`,
+      relatedDocument: policy.title,
+    });
+
+    return record;
+  }
+
+  // HR/Admin compliance view — who has (and, by elimination, hasn't) signed
+  // this specific version. Only meaningful for a document that's actually
+  // targeted at specific people (EVERYONE-visibility docs don't have a
+  // fixed roster to diff against, so this just returns who signed).
+  async listAcknowledgments(id: string, organizationId: string) {
+    const policy = await this.scopedPrisma.policyDocument.findFirst({
+      where: { id, organizationId },
+    });
+    if (!policy) throw new NotFoundException('Document not found.');
+
+    const acknowledgments =
+      await this.scopedPrisma.policyDocumentAcknowledgment.findMany({
+        where: { organizationId, policyDocumentId: id },
+        include: {
+          employee: { select: { id: true, name: true, employeeId: true } },
+        },
+        orderBy: { acknowledgedAt: 'desc' },
+      });
+    return wrapAll(acknowledgments);
   }
 
   async createPolicy(

@@ -573,4 +573,103 @@ describe('Documents (e2e)', () => {
       .send({ name: 'X' })
       .expect(404);
   });
+
+  describe('Policy document acknowledgment (e-sign)', () => {
+    // Not reusing everyonePolicyId — by this point in the file it's been
+    // superseded by a v2 (see the versioning describe block above) and is
+    // no longer isPublished, which acknowledgePolicy correctly rejects.
+    let ackPolicyId: string;
+
+    beforeAll(async () => {
+      const res = await request(app.getHttpServer())
+        .post('/documents/policies')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          title: 'Acknowledgment Test Policy',
+          fileUrl: '00000000-0000-0000-0000-000000000000/documents/ack.pdf',
+          fileName: 'ack.pdf',
+        })
+        .expect(201);
+      ackPolicyId = (res.body as PolicyBody).id;
+    });
+
+    it('an employee can acknowledge a document they can view', async () => {
+      const res = await request(app.getHttpServer())
+        .post(`/documents/policies/${ackPolicyId}/acknowledge`)
+        .set('Authorization', `Bearer ${outsideEmployeeToken}`)
+        .send({ signatureName: 'Jane Doe' })
+        .expect(201);
+      const body = res.body as {
+        id: string;
+        signatureName: string;
+        policyDocumentId: string;
+      };
+      expect(body.signatureName).toBe('Jane Doe');
+      expect(body.policyDocumentId).toBe(ackPolicyId);
+    });
+
+    it('re-acknowledging the same version is rejected, not silently overwritten', async () => {
+      await request(app.getHttpServer())
+        .post(`/documents/policies/${ackPolicyId}/acknowledge`)
+        .set('Authorization', `Bearer ${outsideEmployeeToken}`)
+        .send({ signatureName: 'Jane Doe Again' })
+        .expect(409);
+    });
+
+    it('the list endpoint now reflects acknowledgedAt for that employee', async () => {
+      const res = await request(app.getHttpServer())
+        .get('/documents/policies')
+        .set('Authorization', `Bearer ${outsideEmployeeToken}`)
+        .expect(200);
+      const body = (res.body as PaginatedBody<PolicyBody & { acknowledgedAt: string | null }>)
+        .data;
+      const mine = body.find((p) => p.id === ackPolicyId);
+      expect(mine?.acknowledgedAt).not.toBeNull();
+    });
+
+    it('rejects an empty signatureName', async () => {
+      await request(app.getHttpServer())
+        .post(`/documents/policies/${ackPolicyId}/acknowledge`)
+        .set('Authorization', `Bearer ${deptEmployeeToken}`)
+        .send({ signatureName: '' })
+        .expect(400);
+    });
+
+    it('EMPLOYEE gets 403 listing acknowledgments (HR/Admin only)', async () => {
+      await request(app.getHttpServer())
+        .get(`/documents/policies/${ackPolicyId}/acknowledgments`)
+        .set('Authorization', `Bearer ${outsideEmployeeToken}`)
+        .expect(403);
+    });
+
+    it('HR sees the recorded acknowledgment with employee details', async () => {
+      const res = await request(app.getHttpServer())
+        .get(`/documents/policies/${ackPolicyId}/acknowledgments`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const body = (
+        res.body as PaginatedBody<{
+          signatureName: string;
+          employee: { id: string; name: string };
+        }>
+      ).data;
+      expect(
+        body.some(
+          (a) =>
+            a.employee.id === outsideEmployeeId &&
+            a.signatureName === 'Jane Doe',
+        ),
+      ).toBe(true);
+    });
+
+    it('404s acknowledging a non-existent document', async () => {
+      await request(app.getHttpServer())
+        .post(
+          '/documents/policies/00000000-0000-4000-8000-000000000000/acknowledge',
+        )
+        .set('Authorization', `Bearer ${deptEmployeeToken}`)
+        .send({ signatureName: 'Someone' })
+        .expect(404);
+    });
+  });
 });

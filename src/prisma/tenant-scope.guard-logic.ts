@@ -53,6 +53,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EmployeeTimeline',
   'ApprovalDelegation',
   'PolicyDocument',
+  'PolicyDocumentAcknowledgment',
   'DocumentRequirement',
   'Notification',
   'EmployeeDocument',

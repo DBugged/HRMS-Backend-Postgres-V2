@@ -254,6 +254,7 @@ model Organization {
   timelineEvents           EmployeeTimeline[]
   approvalDelegations      ApprovalDelegation[]
   policyDocuments          PolicyDocument[]
+  policyDocumentAcknowledgments PolicyDocumentAcknowledgment[]
   documentRequirements     DocumentRequirement[]
   notifications            Notification[]
   employeeDocuments        EmployeeDocument[]
@@ -518,6 +519,7 @@ model User {
   delegationsReceived              ApprovalDelegation[]      @relation("DelegationDelegate")
   delegationsCreated               ApprovalDelegation[]      @relation("DelegationCreatedBy")
   policyDocumentsUploaded          PolicyDocument[]          @relation("PolicyDocumentUploadedBy")
+  policyDocumentAcknowledgments    PolicyDocumentAcknowledgment[]
   documentRequirementsCreated      DocumentRequirement[]     @relation("DocumentRequirementCreatedBy")
   notifications                    Notification[]
   organizationsInitialized         Organization[]            @relation("OrganizationInitializedBy")
@@ -2403,11 +2405,44 @@ model PolicyDocument {
   version           Int     @default(1)
   previousVersionId String?
 
+  acknowledgments PolicyDocumentAcknowledgment[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([organizationId, createdAt])
   @@map("policy_documents")
+}
+
+// A lightweight e-acknowledgment, not a certified digital signature — an
+// employee typing their name against a specific PolicyDocument *version*
+// (each version is its own row via previousVersionId, so re-publishing a
+// document naturally requires re-acknowledgment; nothing here needs to
+// track version numbers itself). Immutable once created — see
+// DocumentsService.acknowledgePolicy's "already acknowledged" guard; this
+// is a signed record, not an editable form.
+model PolicyDocumentAcknowledgment {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  policyDocumentId String
+  policyDocument   PolicyDocument @relation(fields: [policyDocumentId], references: [id])
+
+  employeeId String
+  employee   User   @relation(fields: [employeeId], references: [id])
+
+  // What the employee typed as their signature at acknowledgment time —
+  // captured verbatim (not necessarily identical to their profile name),
+  // same as a wet-ink signature not always matching a printed name exactly.
+  signatureName String
+  ipAddress     String?
+  userAgent     String?
+  acknowledgedAt DateTime @default(now())
+
+  @@unique([organizationId, policyDocumentId, employeeId])
+  @@index([organizationId, employeeId])
+  @@map("policy_document_acknowledgments")
 }
 
 // HR/Admin-defined master list of expected employee document types (NDA,

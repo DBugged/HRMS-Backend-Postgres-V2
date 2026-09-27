@@ -9,13 +9,16 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { DocumentsService } from './documents.service';
 import { CreatePolicyDocumentDto } from './dto/create-policy-document.dto';
 import { UpdatePolicyDocumentDto } from './dto/update-policy-document.dto';
+import { AcknowledgePolicyDocumentDto } from './dto/acknowledge-policy-document.dto';
 import { CreateDocumentRequirementDto } from './dto/create-document-requirement.dto';
 import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.dto';
 import { BulkDeleteDocumentRequirementsDto } from './dto/bulk-delete-document-requirements.dto';
@@ -84,6 +87,35 @@ export class DocumentsController {
       id,
       caller.organizationId,
       caller.id,
+    );
+  }
+
+  // No @Roles() — any authenticated caller who can view the document can
+  // acknowledge it (visibility is re-checked service-side).
+  @Post('policies/:id/acknowledge')
+  acknowledgePolicy(
+    @Param('id') id: string,
+    @Body() dto: AcknowledgePolicyDocumentDto,
+    @CurrentUser() caller: Caller,
+    @Req() req: Request,
+  ) {
+    return this.documentsService.acknowledgePolicy(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+      req.ip ?? null,
+      req.headers['user-agent'] ?? null,
+    );
+  }
+
+  @Get('policies/:id/acknowledgments')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  listAcknowledgments(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.documentsService.listAcknowledgments(
+      id,
+      caller.organizationId,
     );
   }
 
