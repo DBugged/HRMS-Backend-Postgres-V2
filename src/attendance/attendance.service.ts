@@ -33,6 +33,9 @@ import {
   Leave,
   LeaveStatus,
   NotificationCategory,
+  OvertimeSource,
+  OvertimeStatus,
+  OvertimeType,
   PayrollRunStatus,
   Prisma,
   Punch,
@@ -77,6 +80,7 @@ import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { RATE_MULTIPLIERS } from '../overtime/overtime.service';
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
@@ -469,6 +473,16 @@ export class AttendanceService {
       });
     }
 
+    await this.suggestOvertimeFromPunchOut(
+      db,
+      organizationId,
+      employeeId,
+      dateStr,
+      status,
+      outTime,
+      shiftConfig,
+    );
+
     await this.notifyLateOrAbsent(
       employeeId,
       dateStr,
@@ -609,6 +623,97 @@ export class AttendanceService {
     }
 
     return { status, workDurationMinutes, isLate, isEarlyOut };
+  }
+
+  // Below this overshoot, a punch-out isn't worth a review-queue entry —
+  // clocking out 5-10 minutes late is noise, not overtime.
+  private static readonly AUTO_OVERTIME_MIN_MINUTES = 30;
+
+  // Suggests overtime the moment a punch-out lands past the resolved shift
+  // end — instead of relying on the employee to remember to self-submit it
+  // (POST /overtime) after the fact. Still PENDING, still goes through the
+  // same review() approval gate; this never auto-approves anything, it only
+  // saves the employee the manual step for the common case (they were
+  // physically punched in past their shift end). Idempotent: re-running
+  // this for the same day (e.g. the nightly absence-sweep re-deriving an
+  // already-closed day) updates the existing AUTO_PUNCH row rather than
+  // duplicating it, and never touches one HR has already reviewed.
+  private async suggestOvertimeFromPunchOut(
+    db: Db,
+    organizationId: string,
+    employeeId: string,
+    dateStr: string,
+    status: AttendanceStatus,
+    outTime: Date | null,
+    shiftConfig: ShiftConfig,
+  ): Promise<void> {
+    if (!outTime) return;
+    // No real shift was worked — nothing to overshoot.
+    if (
+      status === AttendanceStatus.ABSENT ||
+      status === AttendanceStatus.ON_LEAVE
+    ) {
+      return;
+    }
+
+    const shiftEnd = buildShiftDateTime(
+      shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
+      shiftConfig.shiftEndTime,
+    );
+    const overshootMinutes = Math.round(
+      (outTime.getTime() - shiftEnd.getTime()) / 60000,
+    );
+
+    const existingAuto = await db.overtimeRecord.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        date: dateStr,
+        source: OvertimeSource.AUTO_PUNCH,
+      },
+    });
+
+    if (overshootMinutes < AttendanceService.AUTO_OVERTIME_MIN_MINUTES) {
+      // A correction (e.g. a regularization) can shrink a day's punch span
+      // below the threshold after an auto-suggestion was already created —
+      // only ever clean up our own not-yet-reviewed suggestion, never a
+      // decision HR already made.
+      if (existingAuto && existingAuto.status === OvertimeStatus.PENDING) {
+        await db.overtimeRecord.deleteMany({
+          where: { id: existingAuto.id, organizationId },
+        });
+      }
+      return;
+    }
+
+    const type =
+      status === AttendanceStatus.HOLIDAY
+        ? OvertimeType.HOLIDAY
+        : status === AttendanceStatus.WEEKLY_OFF
+          ? OvertimeType.WEEKEND
+          : OvertimeType.REGULAR;
+    const hours = Math.round((overshootMinutes / 60) * 100) / 100;
+    const rateMultiplier = RATE_MULTIPLIERS[type];
+
+    if (existingAuto) {
+      if (existingAuto.status !== OvertimeStatus.PENDING) return;
+      await db.overtimeRecord.updateMany({
+        where: { id: existingAuto.id, organizationId },
+        data: { hours, type, rateMultiplier },
+      });
+    } else {
+      await db.overtimeRecord.create({
+        data: {
+          organizationId,
+          employeeId,
+          date: dateStr,
+          hours,
+          type,
+          rateMultiplier,
+          source: OvertimeSource.AUTO_PUNCH,
+        },
+      });
+    }
   }
 
   // Notifies the employee when this recalculation marks them late (no

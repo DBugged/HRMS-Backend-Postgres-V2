@@ -45,8 +45,10 @@ import {
 
 type Actor = Omit<User, 'password'>;
 
-// Derived server-side from `type`, never client-supplied.
-const RATE_MULTIPLIERS: Record<OvertimeType, number> = {
+// Derived server-side from `type`, never client-supplied. Exported so
+// AttendanceService's punch-out auto-suggestion (recalculateAttendanceForDay)
+// can compute the same rate without injecting the whole OvertimeService.
+export const RATE_MULTIPLIERS: Record<OvertimeType, number> = {
   [OvertimeType.REGULAR]: 1.5,
   [OvertimeType.HOLIDAY]: 2,
   [OvertimeType.WEEKEND]: 2,

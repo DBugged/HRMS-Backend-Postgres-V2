@@ -1729,6 +1729,16 @@ enum OvertimeStatus {
   REJECTED
 }
 
+// SELF = employee logged it themselves (OvertimeService.log). AUTO_PUNCH =
+// system-suggested from a punch-out that landed past the resolved shift end
+// (AttendanceService.recalculateAttendanceForDay) — still PENDING, still
+// goes through the same review() approval gate as a self-logged entry;
+// this only marks *how the record originated*, never auto-approves it.
+enum OvertimeSource {
+  SELF
+  AUTO_PUNCH
+}
+
 // One row per employee/day/overtime-entry — not unique-constrained on date,
 // an employee can log multiple entries the same day (e.g. different types).
 model OvertimeRecord {
@@ -1750,6 +1760,7 @@ model OvertimeRecord {
   status       OvertimeStatus @default(PENDING)
   approvedById String?
   approvedBy   User?          @relation("OvertimeApprovedBy", fields: [approvedById], references: [id])
+  source       OvertimeSource @default(SELF)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

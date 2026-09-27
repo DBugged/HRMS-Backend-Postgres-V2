@@ -2059,4 +2059,81 @@ describe('Attendance (e2e)', () => {
         .expect(403);
     });
   });
+
+  describe('Auto-suggested overtime from a punch-out past shift end', () => {
+    // employeeId's department has no explicit shift override, so it uses
+    // the schema default 09:30-18:30.
+    const punchAt = (empId: string, punchTime: string) =>
+      request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employeeId: empId, punchTime })
+        .expect(201);
+
+    it('creates a PENDING AUTO_PUNCH overtime record for a punch-out well past shift end', async () => {
+      const date = offsetDateAvoidingHolidays(-30);
+      await punchAt(employeeId, `${date}T09:30:00.000Z`);
+      await punchAt(employeeId, `${date}T19:15:00.000Z`); // 45 min past 18:30.
+
+      const record = await prisma.overtimeRecord.findFirstOrThrow({
+        where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
+      });
+      expect(record.status).toBe('PENDING');
+      expect(record.type).toBe('REGULAR');
+      expect(record.hours).toBe(0.75);
+      expect(record.rateMultiplier).toBe(1.5);
+
+      // Still goes through the normal review endpoint like a self-logged one.
+      await request(app.getHttpServer())
+        .patch(`/overtime/${record.id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ status: 'APPROVED' })
+        .expect(200);
+      const reviewed = await prisma.overtimeRecord.findFirstOrThrow({
+        where: { id: record.id },
+      });
+      expect(reviewed.status).toBe('APPROVED');
+      expect(reviewed.source).toBe('AUTO_PUNCH');
+    });
+
+    it('does not create a record for a punch-out only a few minutes past shift end', async () => {
+      const date = offsetDateAvoidingHolidays(-31);
+      await punchAt(employeeId, `${date}T09:30:00.000Z`);
+      await punchAt(employeeId, `${date}T18:40:00.000Z`); // 10 min past.
+
+      const record = await prisma.overtimeRecord.findFirst({
+        where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
+      });
+      expect(record).toBeNull();
+    });
+
+    it('a later correction that removes the overshoot deletes the still-PENDING suggestion', async () => {
+      const date = offsetDateAvoidingHolidays(-32);
+      await punchAt(employeeId, `${date}T09:30:00.000Z`);
+      await punchAt(employeeId, `${date}T19:15:00.000Z`);
+      const created = await prisma.overtimeRecord.findFirstOrThrow({
+        where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
+      });
+      expect(created.status).toBe('PENDING');
+
+      // Directly re-derive the day as if the checkout were corrected to
+      // right at shift end — exercising recalculateAttendanceForDay again,
+      // same as a regularization approval would.
+      await prisma.punch.updateMany({
+        where: { employeeId, organizationId, punchTime: new Date(`${date}T19:15:00.000Z`) },
+        data: { punchTime: new Date(`${date}T18:30:00.000Z`) },
+      });
+      await attendanceService.recalculateAttendanceForDay(
+        scopedPrisma,
+        employeeId,
+        date,
+        organizationId,
+      );
+
+      const afterCorrection = await prisma.overtimeRecord.findFirst({
+        where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
+      });
+      expect(afterCorrection).toBeNull();
+    });
+  });
 });

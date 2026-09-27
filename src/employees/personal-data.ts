@@ -42,6 +42,13 @@ const IDENTIFIER_PATTERNS: Record<string, { pattern: RegExp; label: string; exam
   emergencyContact2Number: { pattern: /^[0-9]{10}$/, label: 'Emergency contact 2 number', example: '9876543210' },
 };
 
+const PHONE_KEYS = new Set([
+  'fatherContact',
+  'motherContact',
+  'emergencyContact1Number',
+  'emergencyContact2Number',
+]);
+
 // Throws on the first invalid identifier found in `patch` — called before
 // merging a personalData patch onto the stored blob. Only checks fields
 // actually present in this patch (a partial edit that doesn't touch PAN
@@ -53,6 +60,13 @@ export function assertValidIdentifiers(patch: Record<string, unknown>): void {
     if (typeof value !== 'string') continue;
     const normalized = key === 'aadharNumber' ? value.replace(/\s+/g, '') : value.trim();
     if (normalized === '') continue;
+    // The phone-type fields accept an existing "+<dialcode> <national>"
+    // value without complaint (same leniency as the frontend's phoneError)
+    // — a value with any non-digit character is assumed to already be a
+    // deliberately-formatted international number from elsewhere, not a
+    // stray format this check should reject. Only a purely numeric value
+    // gets held to the exact-10-digits rule.
+    if (PHONE_KEYS.has(key) && !/^[0-9]+$/.test(normalized)) continue;
     if (!pattern.test(normalized)) {
       throw new BadRequestException(
         `Invalid ${label} format — expected something like ${example}.`,
