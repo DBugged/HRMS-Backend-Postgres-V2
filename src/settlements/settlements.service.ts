@@ -543,6 +543,16 @@ export class SettlementsService {
         'Only a draft settlement can be processed.',
       );
     }
+    // Same guard payroll applies before LOCK (payroll.service.ts's
+    // transitionMany): paying a negative amount isn't a meaningful
+    // instruction to a bank/payroll processor. Recalculate the settlement
+    // (e.g. reduce the recovered loan/notice amount, or resolve the
+    // underlying loan) before it can be processed.
+    if (settlement.netSettlementAmount < 0) {
+      throw new BadRequestException(
+        'This settlement has a negative net amount — recalculate it after adjusting the underlying recoveries/loan balance before it can be processed.',
+      );
+    }
 
     const lwd = new Date(settlement.lastWorkingDay);
     const month = lwd.getMonth() + 1;

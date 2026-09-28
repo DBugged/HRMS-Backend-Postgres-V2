@@ -2,12 +2,11 @@
 // Responsibilities: Owns request-time eligibility/limit checks against the leave type's `encashment` rule
 // and rate calculation (current BASIC monthly value via EmployeeSalaryComponentsService, converted with
 // dailyRateFromMonthly); delegates the actual balance debit to LeaveBalanceService.
-// Important: review()'s balance deduction on APPROVED is a second, independent deduction — request() only
-// validated availability, it never reserved a hold. review() itself guards against being replayed (a
-// compare-and-swap status check inside the transaction, atomic `encashed` increment) so a double-click or
-// retried request can't double-deduct; there's no cross-request hold preventing two *different* pending
-// encashment requests from jointly overdrawing the same balance, same class of gap as leave application's
-// own affordability check.
+// Important: request() reserves a hold in LeaveBalance.pending (same mechanism leave application uses via
+// checkAffordability) so two different pending encashment requests can no longer jointly overdraw the same
+// balance. review() converts that hold into an actual `encashed` deduction on APPROVED; it guards against
+// being replayed (a compare-and-swap status check inside the transaction) so a double-click or retried
+// request can't double-deduct.
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -150,6 +149,13 @@ export class LeaveEncashmentsService {
 
     return this.scopedPrisma
       .$transaction(async (tx) => {
+        // Row-lock the requester's own User row so two concurrent request()
+        // calls for the same employee serialize instead of both reading the
+        // same pre-transaction balance snapshot — same pattern as
+        // LeavesService.createLeaveInternal's apply() lock, for the same
+        // reason: without it, two requests each affordable alone could both
+        // pass the check below and jointly overdraw the balance.
+        await tx.$queryRaw`SELECT id FROM "users" WHERE id = ${actor.id} FOR UPDATE`;
         const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
           tx,
           actor.id,
@@ -157,13 +163,23 @@ export class LeaveEncashmentsService {
           year,
           organizationId,
         );
-        const available = balanceRow.closing;
         const minRetain = rule.minBalanceToRetain ?? 0;
+        // `pending` (this employee's other open encashment/leave holds on
+        // this leave type) is subtracted here, same as leave application's
+        // checkAffordability — closing alone ignores holds not yet decided.
+        const available = balanceRow.closing - balanceRow.pending;
         if (!dto.days || dto.days > available - minRetain) {
           throw new BadRequestException(
             `Cannot encash more than ${Math.max(0, available - minRetain)} day(s) (must retain ${minRetain}).`,
           );
         }
+        // Reserve the hold now, under the row lock above, so a second
+        // concurrent request for this employee+leaveType sees it via
+        // `pending` rather than the pre-hold snapshot.
+        await tx.leaveBalance.updateMany({
+          where: { id: balanceRow.id, organizationId },
+          data: { pending: { increment: dto.days } },
+        });
 
         const org = await tx.organization.findFirst({
           where: { id: organizationId },
@@ -268,8 +284,8 @@ export class LeaveEncashmentsService {
         );
       }
 
-      // A second, independent deduction from the balance — the request
-      // step only validated availability, it never reserved a hold.
+      // Converts request()'s hold into an actual deduction: releases the
+      // `pending` reserved at request time and moves it into `encashed`.
       if (dto.status === LeaveEncashmentStatus.APPROVED && row.leaveTypeId) {
         const year = new Date().getFullYear();
         const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
@@ -279,14 +295,17 @@ export class LeaveEncashmentsService {
           year,
           organizationId,
         );
-        // Atomic increment (not `balanceRow.encashed + row.days`, a stale
-        // JS-computed value) — see the guarded updateMany above for why a
-        // second call can no longer reach this point at all, but this
-        // still closes the gap against any other concurrent writer of the
-        // same balance row (e.g. a simultaneous accrual run).
+        // Atomic increment/decrement (not JS-computed stale values) — see
+        // the guarded updateMany above for why a second call can no longer
+        // reach this point at all, but this still closes the gap against
+        // any other concurrent writer of the same balance row (e.g. a
+        // simultaneous accrual run).
         await tx.leaveBalance.updateMany({
           where: { id: balanceRow.id, organizationId },
-          data: { encashed: { increment: row.days } },
+          data: {
+            encashed: { increment: row.days },
+            pending: { decrement: row.days },
+          },
         });
         await this.leaveBalanceService.recalculate(
           tx,

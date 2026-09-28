@@ -725,12 +725,32 @@ export class PayrollService {
         year,
         organizationId,
       );
-      const basicLine = earningsLines.find(
+      const recurringResults = this.recurringMonthlyEarnings(
+        earningComponents,
+        overridesByCode,
+        baseContext,
+        roundAmount,
+      );
+      // Basic/HRA annualized from the regular (non-prorated) monthly
+      // structure — not from this month's earningsLines, which on a
+      // LOP/joining/exit month are prorated and would understate the HRA
+      // exemption and 80CCD2 cap, over-deducting TDS that month. Falls back
+      // to earningsLines only if the recurring structure couldn't be
+      // resolved (recurringMonthlyEarnings returned undefined).
+      const recurringBasicLine = recurringResults?.find(
         (e) => e.code === SALARY_COMPONENT_CODES.BASIC,
       );
-      const hraLine = earningsLines.find(
+      const recurringHraLine = recurringResults?.find(
         (e) => e.code === SALARY_COMPONENT_CODES.HRA,
       );
+      const basicMonthly = recurringBasicLine
+        ? roundAmount(recurringBasicLine.amount)
+        : (earningsLines.find((e) => e.code === SALARY_COMPONENT_CODES.BASIC)
+            ?.amount ?? 0);
+      const hraMonthly = recurringHraLine
+        ? roundAmount(recurringHraLine.amount)
+        : (earningsLines.find((e) => e.code === SALARY_COMPONENT_CODES.HRA)
+            ?.amount ?? 0);
 
       taxDetails = calculateTax({
         month,
@@ -740,15 +760,13 @@ export class PayrollService {
         // not from this month's actual (possibly prorated / one-off-inflated)
         // taxable gross.
         recurringMonthlyGross: this.recurringMonthlyTaxableGross(
-          earningComponents,
-          overridesByCode,
-          baseContext,
+          recurringResults,
           roundAmount,
         ),
         ytdGross,
         ytdTDS,
-        basicAnnual: (basicLine?.amount ?? 0) * 12,
-        hraReceivedAnnual: (hraLine?.amount ?? 0) * 12,
+        basicAnnual: basicMonthly * 12,
+        hraReceivedAnnual: hraMonthly * 12,
         declaration,
         taxSlabConfig: {
           regime: taxSlabConfig.regime,
@@ -1357,7 +1375,25 @@ export class PayrollService {
       );
     }
 
-    const roundTwo = (n: number) => round(n, 'nearest', 2);
+    // The org's configured rounding rule/decimals — not a hardcoded
+    // 'nearest'/2 — so a manually-adjusted run rounds the same way a
+    // normally-calculated one does (calculate() resolves this same
+    // ROUNDING override via applyStatutoryOverrides).
+    const settingsRow =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const { version: roundingVersion } =
+      await this.statutoryConfigService.getEffective(
+        StatutoryModule.ROUNDING,
+        lastDayOfMonth(run.month, run.year),
+        organizationId,
+      );
+    const roundingConfig = roundingVersion?.config as
+      | { rule: string; decimals: number }
+      | undefined;
+    const roundingRule = roundingConfig?.rule ?? settingsRow.roundingRule;
+    const roundingDecimals =
+      roundingConfig?.decimals ?? settingsRow.roundingDecimals;
+    const roundTwo = (n: number) => round(n, roundingRule, roundingDecimals);
     // An edited line that doesn't say whether it's taxable keeps the flag the
     // calculated line with the same code had, so the run's taxableGross (the
     // YTD income-tax base) doesn't silently change on a manual correction.
@@ -2175,7 +2211,13 @@ export class PayrollService {
           `Salary component "${component.name}" (${code}) produced a non-numeric amount (${value}) — check its formula/value.`,
         );
       }
-      value = Math.max(0, value);
+      // MANUAL lines (arrears, one-off corrections) are exempt from the
+      // floor: a negative MANUAL amount is a deliberate clawback/recovery
+      // entered by HR, not a formula error, and clamping it to 0 silently
+      // discards the recovery with no trace on the payslip or in failures[].
+      if (valueType !== CalcType.MANUAL) {
+        value = Math.max(0, value);
+      }
       localContext[code] = roundAmount(value);
       results.push({
         code,
@@ -2266,19 +2308,19 @@ export class PayrollService {
     return [...combined.values()];
   }
 
-  // This employee's regular full-month taxable pay under the month-end
-  // structure: recurring (MONTHLY, non-MANUAL) earnings resolved for a
-  // standard month — no proration, no overtime/holiday work, no LOP — summing
-  // only the taxable lines. The tax engine projects the rest of the FY from
-  // this instead of multiplying this month's actual (possibly prorated or
-  // one-off-inflated) gross. Returns undefined (the engine's original
-  // projection) if the structure can't be resolved that way.
-  private recurringMonthlyTaxableGross(
+  // This employee's regular full-month earnings under the month-end
+  // structure: recurring (MONTHLY, non-MANUAL) components resolved for a
+  // standard month — no proration, no overtime/holiday work, no LOP. Used
+  // both to project the rest of the FY (instead of multiplying this month's
+  // actual, possibly prorated or one-off-inflated, gross) and to annualize
+  // Basic/HRA for HRA exemption / 80CCD2 without inheriting this month's
+  // proration. Returns undefined if the structure can't be resolved that way.
+  private recurringMonthlyEarnings(
     earningComponents: SalaryComponent[],
     overridesByCode: Map<string, EmployeeSalaryComponent>,
     baseContext: Record<string, number>,
     roundAmount: (n: number) => number,
-  ): number | undefined {
+  ): ResolvedLine[] | undefined {
     const recurring = earningComponents.filter((c) => {
       const valueType = overridesByCode.get(c.code)?.valueType ?? c.calcType;
       return (
@@ -2312,12 +2354,22 @@ export class PayrollService {
         1,
         roundAmount,
       );
-      return results
-        .filter((l) => l.taxable !== false)
-        .reduce((s, l) => s + roundAmount(l.amount), 0);
+      return results;
     } catch {
       return undefined;
     }
+  }
+
+  // Sum of the taxable recurring lines — what the tax engine projects the
+  // remaining FY months from.
+  private recurringMonthlyTaxableGross(
+    recurringResults: ResolvedLine[] | undefined,
+    roundAmount: (n: number) => number,
+  ): number | undefined {
+    if (!recurringResults) return undefined;
+    return recurringResults
+      .filter((l) => l.taxable !== false)
+      .reduce((s, l) => s + roundAmount(l.amount), 0);
   }
 
   private isApplicable(
