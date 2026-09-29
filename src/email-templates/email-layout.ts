@@ -339,8 +339,13 @@ function footerHtml(b: EmailBranding): string {
       : '') +
     `<p style="margin:0 0 4px;font-family:${FONT_BODY};font-size:12px;line-height:18px;color:${T.faint};">This is an automated message${name ? ` from ${esc(name)} HRMS` : ''}. Please do not reply to this email.</p>` +
     (name
-      ? `<p style="margin:0;font-family:${FONT_BODY};font-size:12px;line-height:18px;color:${T.faint};">&copy; ${new Date().getFullYear()} ${esc(name)}</p>`
-      : '')
+      ? `<p style="margin:0 0 10px;font-family:${FONT_BODY};font-size:12px;line-height:18px;color:${T.faint};">&copy; ${new Date().getFullYear()} ${esc(name)}</p>`
+      : '') +
+    // Vendor credit — deliberately the smallest, faintest line in the
+    // footer (below the recipient org's own name/copyright), same "don't
+    // compete with the tenant's own branding" reasoning as Layout.tsx's
+    // sidebar credit line.
+    `<p style="margin:0;font-family:${FONT_BODY};font-size:11px;line-height:16px;color:${T.faint};">D&rsquo;CoreHR by D&rsquo;Bugged Programmers</p>`
   );
 }
 
