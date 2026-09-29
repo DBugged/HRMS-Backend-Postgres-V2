@@ -664,14 +664,16 @@ export class AttendanceService {
       (outTime.getTime() - shiftEnd.getTime()) / 60000,
     );
 
-    const existingAuto = await db.overtimeRecord.findFirst({
-      where: {
-        organizationId,
-        employeeId,
-        date: dateStr,
-        source: OvertimeSource.AUTO_PUNCH,
-      },
+    // Looked up WITHOUT filtering by source: OvertimeRecord now has a
+    // (organizationId, employeeId, date) unique constraint (one overtime
+    // record per employee/day, any source — see its schema comment), so a
+    // day the employee already manually logged overtime for (source=SELF)
+    // must be left alone here, not raced against with a second create.
+    const existing = await db.overtimeRecord.findFirst({
+      where: { organizationId, employeeId, date: dateStr },
     });
+    const existingAuto =
+      existing?.source === OvertimeSource.AUTO_PUNCH ? existing : null;
 
     if (overshootMinutes < AttendanceService.AUTO_OVERTIME_MIN_MINUTES) {
       // A correction (e.g. a regularization) can shrink a day's punch span
@@ -685,6 +687,11 @@ export class AttendanceService {
       }
       return;
     }
+
+    // A manually-logged (non-AUTO_PUNCH) record already covers this day —
+    // the employee (or someone on their behalf) already accounted for it,
+    // so don't also create a second, auto-suggested one for the same day.
+    if (existing && !existingAuto) return;
 
     const type =
       status === AttendanceStatus.HOLIDAY
@@ -1031,6 +1038,16 @@ export class AttendanceService {
       },
     });
     const orgTimezone = await this.getOrgTimezone(organizationId);
+    const punchTime = new Date();
+    const selfShiftConfig = await this.resolveEmployeeShiftConfig(
+      actor.id,
+      organizationId,
+    );
+    const attendanceDate = resolveAttendanceDateForPunch(
+      punchTime,
+      selfShiftConfig,
+    );
+
     const fence = employee ? effectiveWorkLocation(employee) : null;
     if (fence && fence.isActive) {
       // WFH-only, and only once approved (see WfhApprovalStatus's comment
@@ -1038,11 +1055,18 @@ export class AttendanceService {
       // other arrangement (HYBRID/CLIENT_SITE included), still enforces
       // the fence exactly as before. Checked fresh on every punch (not
       // just punch-in) so switching arrangement mid-day is respected.
+      // Looked up by `attendanceDate` — the same shift-day this punch will
+      // itself be attributed to (resolveAttendanceDateForPunch) — not by
+      // todayInOrgTz(orgTimezone): those two disagree for part of every day
+      // for a non-crossesMidnight shift (date attribution here is UTC-based,
+      // org-timezone-agnostic), which previously caused an approved WFH row
+      // for "today" to go unmatched — and the fence to wrongly apply — for
+      // employees punching in during that mismatch window.
       const today = await this.scopedPrisma.attendance.findFirst({
         where: {
           organizationId,
           employeeId: actor.id,
-          date: todayInOrgTz(orgTimezone),
+          date: attendanceDate,
         },
         select: { workArrangement: true, workArrangementStatus: true },
       });
@@ -1060,15 +1084,6 @@ export class AttendanceService {
       }
     }
 
-    const punchTime = new Date();
-    const selfShiftConfig = await this.resolveEmployeeShiftConfig(
-      actor.id,
-      organizationId,
-    );
-    const attendanceDate = resolveAttendanceDateForPunch(
-      punchTime,
-      selfShiftConfig,
-    );
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       organizationId,

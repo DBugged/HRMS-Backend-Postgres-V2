@@ -104,6 +104,20 @@ export class OvertimeService {
       }
     }
 
+    // One overtime record per employee/day, regardless of source — without
+    // this, a manual log here and AttendanceService's own auto-suggestion
+    // (source=AUTO_PUNCH, created when a punch-out overshoots shift end)
+    // could both exist for the same day, both get approved independently,
+    // and double-pay the same overshoot in payroll's monthly OT sum.
+    const existing = await this.scopedPrisma.overtimeRecord.findFirst({
+      where: { organizationId, employeeId: actor.id, date: dto.date },
+    });
+    if (existing) {
+      throw new ConflictException(
+        `An overtime record already exists for ${dto.date} (status: ${existing.status.toLowerCase()}). Edit or cancel it instead of logging a new one.`,
+      );
+    }
+
     const record = await this.scopedPrisma.overtimeRecord.create({
       data: {
         organizationId,

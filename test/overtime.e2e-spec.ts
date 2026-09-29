@@ -175,17 +175,19 @@ describe('Overtime (e2e)', () => {
   });
 
   it.each([
-    ['REGULAR', 1.5],
-    ['HOLIDAY', 2],
-    ['WEEKEND', 2],
-    ['NIGHT', 1.75],
+    ['REGULAR', 1.5, '2026-07-02'],
+    ['HOLIDAY', 2, '2026-07-03'],
+    ['WEEKEND', 2, '2026-07-04'],
+    ['NIGHT', 1.75, '2026-07-05'],
   ])(
+    // Distinct dates per case — one overtime record per employee/day is now
+    // enforced (unique constraint), so these can't all share a date.
     'derives the correct rateMultiplier for type %s',
-    async (type, expectedMultiplier) => {
+    async (type, expectedMultiplier, date) => {
       const res = await request(app.getHttpServer())
         .post('/overtime')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ date: '2026-07-02', hours: 2, type })
+        .send({ date, hours: 2, type })
         .expect(201);
       const body = res.body as OvertimeBody;
       expect(body.type).toBe(type);
@@ -195,11 +197,25 @@ describe('Overtime (e2e)', () => {
     },
   );
 
+  it('rejects a second overtime log for a day that already has one', async () => {
+    await request(app.getHttpServer())
+      .post('/overtime')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ date: '2026-07-10', hours: 1, type: 'REGULAR' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post('/overtime')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ date: '2026-07-10', hours: 2, type: 'REGULAR' })
+      .expect(409);
+  });
+
   it('a caller can only log overtime for themselves — the DTO has no employeeId field at all', async () => {
     const res = await request(app.getHttpServer())
       .post('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ date: '2026-07-03', hours: 1 })
+      .send({ date: '2026-07-11', hours: 1 })
       .expect(201);
     expect((res.body as OvertimeBody).employeeId).toBe(employeeId);
 
@@ -208,7 +224,7 @@ describe('Overtime (e2e)', () => {
     await request(app.getHttpServer())
       .post('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ date: '2026-07-03', hours: 1, employeeId: 'someone-else' })
+      .send({ date: '2026-07-11', hours: 1, employeeId: 'someone-else' })
       .expect(400);
   });
 

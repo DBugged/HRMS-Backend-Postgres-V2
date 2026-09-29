@@ -1767,7 +1767,14 @@ model OvertimeRecord {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([organizationId, employeeId, date])
+  // One overtime record per employee/day regardless of source — without
+  // this, OvertimeService.log() and AttendanceService's own auto-suggestion
+  // (source=AUTO_PUNCH) could both create a row for the same day, both get
+  // approved independently, and double-pay the same overshoot in payroll's
+  // monthly OT sum. The service layer also pre-checks before creating (for
+  // a friendly error instead of a raw conflict), but this is what actually
+  // closes the race.
+  @@unique([organizationId, employeeId, date])
   @@map("overtime_records")
 }
 
