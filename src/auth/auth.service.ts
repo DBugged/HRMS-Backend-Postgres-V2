@@ -37,6 +37,7 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import { LetterTemplatesService } from '../letter-templates/letter-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
+import { ControlCenterClient } from '../platform-internal/control-center.client';
 import { frontendUrl } from '../common/frontend-url';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
@@ -98,6 +99,7 @@ export class AuthService {
     private readonly letterTemplatesService: LetterTemplatesService,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
+    private readonly controlCenter: ControlCenterClient,
     private readonly jwt: JwtService,
   ) {}
 
@@ -219,6 +221,20 @@ export class AuthService {
         return { organization, user };
       },
     );
+
+    // Notify the separate HRMS Control Center (its own DB, own Super Admin
+    // auth) the moment the org exists, so it shows up there automatically —
+    // no manual "add this org" step. Fire-and-forget: never throws (see
+    // ControlCenterClient), so an unreachable/misconfigured Control Center
+    // can never fail a customer's registration. Not awaited-and-checked
+    // deliberately, same reasoning as the welcome email's error handling
+    // below but one step more tolerant, since this integration is optional
+    // infrastructure the org's own signup flow doesn't depend on.
+    void this.controlCenter.provisionOrg({
+      name: organization.name,
+      billingEmail: dto.email,
+      externalHrmsOrgId: organization.id,
+    });
 
     // Welcome email for the founder account — sent synchronously, right
     // after the account+org transaction commits and before the response

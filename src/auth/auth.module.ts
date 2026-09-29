@@ -15,10 +15,14 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { OrgListItemsModule } from '../org-list-items/org-list-items.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { TaxSlabsModule } from '../tax-slabs/tax-slabs.module';
+import { PlatformInternalModule } from '../platform-internal/platform-internal.module';
 
 @Module({
   imports: [
     UsersModule,
+    // For ControlCenterClient — registration notifies the separate HRMS
+    // Control Center so the new org shows up there automatically.
+    PlatformInternalModule,
     // For EmployeeIdService only (the founder is Employee #1 of their own
     // org) — see AuthService's constructor comment.
     EmployeesModule,
