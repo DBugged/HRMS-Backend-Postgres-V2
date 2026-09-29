@@ -2038,12 +2038,20 @@ export class AttendanceService {
       if (existingReg.requestedOutTime) data.outTime = outTime;
 
       // No shift-based late/half-day recompute here — a hard override,
-      // matching the old system exactly.
+      // matching the old system exactly. status must flip to PRESENT
+      // whenever the approval actually established a real in/out time,
+      // not only when BOTH are present — a regularization that only
+      // supplied one side (e.g. a forgotten punch-out with no punch-in on
+      // record either) previously left the row silently stuck at ABSENT
+      // forever despite being approved, since workDurationMinutes can't be
+      // computed without both.
       if (inTime && outTime) {
         data.workDurationMinutes = Math.max(
           0,
           Math.round((outTime.getTime() - inTime.getTime()) / 60000),
         );
+        data.status = AttendanceStatus.PRESENT;
+      } else if (inTime || outTime) {
         data.status = AttendanceStatus.PRESENT;
       }
       data.source = AttendanceSource.REGULARIZED;

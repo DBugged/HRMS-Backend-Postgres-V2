@@ -1520,6 +1520,56 @@ describe('Attendance (e2e)', () => {
         .expect(409);
     });
 
+    it('approving a request with only ONE of in/out time still flips status to PRESENT (not stuck ABSENT)', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Regularization Single-Side Employee',
+          email: 'att-e2e-reg-single@example.test',
+        });
+      const createdBody = created.body as EmployeeCreateBody;
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-reg-single@example.test',
+          password: createdBody.generatedPassword,
+        });
+      const singleSideToken = (login.body as AuthBody).accessToken;
+
+      const date = offsetDate(-5);
+      const req = await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${singleSideToken}`)
+        .send({
+          date,
+          // Only a check-in correction — no requestedOutTime, and no prior
+          // punch supplies one either, so outTime stays null even after
+          // approval. Previously this meant `if (inTime && outTime)` never
+          // fired and status silently stayed ABSENT despite the approval.
+          requestedInTime: `${date}T09:00:00.000Z`,
+          reason: 'Forgot to punch in, never punched out that day either',
+        })
+        .expect(201);
+      const attendanceId = (req.body as { id: string }).id;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/attendance/regularization/${attendanceId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      const body = res.body as {
+        status: string;
+        source: string;
+        outTime: string | null;
+        regularization: { status: string };
+      };
+      expect(body.status).toBe('PRESENT');
+      expect(body.source).toBe('REGULARIZED');
+      expect(body.outTime).toBeNull();
+      expect(body.regularization.status).toBe('approved');
+    });
+
     it('rejecting leaves inTime/outTime/status/source untouched, only the regularization sub-fields change', async () => {
       // Every offset in [-7, 0] against the shared `employeeToken`/
       // `noDeptEmployeeToken` fixtures is already spoken for elsewhere in
