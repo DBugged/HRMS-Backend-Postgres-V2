@@ -18,4 +18,13 @@ export class CalculatePayrollDto {
   @IsOptional()
   @IsUUID()
   employeeId?: string;
+
+  // Ignored when employeeId is set (that's already a single explicit
+  // target). Only applies to the bulk "run for everyone" path — lets HR
+  // skip specific employees for this one run without giving them the
+  // standing User.excludeFromPayroll flag.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsUUID('4', { each: true })
+  excludeEmployeeIds?: string[];
 }

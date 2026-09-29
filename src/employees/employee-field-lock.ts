@@ -18,6 +18,7 @@ const LOCKED_FIELDS_FOR_EMPLOYEE: (keyof UpdateEmployeeDto)[] = [
   'gradeLevel',
   'employeeCategory',
   'isActive',
+  'excludeFromPayroll',
   'joiningDate',
   'reportingManagerId',
   'email',

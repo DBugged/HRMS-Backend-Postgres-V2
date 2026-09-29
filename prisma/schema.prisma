@@ -391,6 +391,14 @@ model User {
   emailVerified      Boolean   @default(true)
   lastLoginAt        DateTime?
 
+  // Standing opt-out from bulk payroll runs (PayrollService.targetEmployees)
+  // — for someone tracked in the HRMS (attendance/leave) but never actually
+  // paid through it, e.g. an unpaid intern. Doesn't affect a run explicitly
+  // targeting this employee by id (dto.employeeId) — that's still an
+  // explicit, deliberate action. Separate from CalculatePayrollDto's
+  // per-run excludeEmployeeIds, which is for a one-off skip instead.
+  excludeFromPayroll Boolean @default(false)
+
   // Per-account brute-force lockout. The @Throttle() on POST /auth/login is
   // per-IP only, so a distributed attempt against ONE account (credential
   // stuffing from a botnet) never trips it — each IP stays under its own

@@ -914,6 +914,7 @@ export class PayrollService {
     const employees = await this.targetEmployees(
       dto.employeeId,
       organizationId,
+      dto.excludeEmployeeIds,
     );
 
     // One batched existence check instead of one findFirst per employee,
@@ -974,6 +975,7 @@ export class PayrollService {
     const employees = await this.targetEmployees(
       dto.employeeId,
       organizationId,
+      dto.excludeEmployeeIds,
     );
     const results: PayrollRun[] = [];
     const failures: {
@@ -2431,8 +2433,12 @@ export class PayrollService {
   private async targetEmployees(
     employeeId: string | undefined,
     organizationId: string,
+    excludeEmployeeIds?: string[],
   ) {
     if (employeeId) {
+      // An explicit single-employee target is a deliberate action —
+      // neither the standing excludeFromPayroll flag nor a per-run
+      // excludeEmployeeIds list overrides it.
       const employee = await this.scopedPrisma.user.findFirst({
         where: { id: employeeId, organizationId, isActive: true },
       });
@@ -2447,6 +2453,12 @@ export class PayrollService {
         // EMPLOYEE/MANAGER/HR — and only skip ADMIN, since that account
         // is the org's system/owner login rather than a paid role here.
         role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR] },
+        // Standing opt-out (e.g. an unpaid intern) — see the field's own
+        // schema comment.
+        excludeFromPayroll: false,
+        ...(excludeEmployeeIds?.length
+          ? { id: { notIn: excludeEmployeeIds } }
+          : {}),
       },
       orderBy: EMPLOYEE_ORDER_BY,
     });

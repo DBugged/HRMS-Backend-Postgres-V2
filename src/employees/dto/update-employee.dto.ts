@@ -136,6 +136,14 @@ export class UpdateEmployeeDto {
   @IsBoolean()
   isActive?: boolean;
 
+  // Standing opt-out from bulk payroll runs — see the User.excludeFromPayroll
+  // schema comment. A plain flag with no side effects (unlike isActive
+  // above), so no special-casing needed in EmployeesService.update().
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  excludeFromPayroll?: boolean;
+
   // Durable relativeKey from POST /files/upload/profile-photos — never a
   // signed URL (see file-token.ts). Self-editable, not in the HR-only
   // locked-fields list.

@@ -18,4 +18,11 @@ export class DraftPayrollDto {
   @IsOptional()
   @IsUUID()
   employeeId?: string;
+
+  // See CalculatePayrollDto's own comment — same exclude-for-this-run-only
+  // semantics, ignored when employeeId is set.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsUUID('4', { each: true })
+  excludeEmployeeIds?: string[];
 }

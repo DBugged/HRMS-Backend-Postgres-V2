@@ -1870,4 +1870,63 @@ describe('Payroll (e2e)', () => {
       }
     });
   });
+
+  describe('Skipping employees from a bulk run', () => {
+    it('excludeEmployeeIds skips a normally-included employee for just this run', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/payroll/draft')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ month: 8, year: YEAR, excludeEmployeeIds: [otherEmployeeId] })
+        .expect(201);
+      const ids = (res.body as { runs: { employeeId: string }[] }).runs.map(
+        (r) => r.employeeId,
+      );
+      expect(ids).toContain(employeeId);
+      expect(ids).not.toContain(otherEmployeeId);
+
+      const run = await prisma.payrollRun.findFirst({
+        where: { organizationId, employeeId: otherEmployeeId, month: 8, year: YEAR },
+      });
+      expect(run).toBeNull();
+    });
+
+    it('User.excludeFromPayroll is a standing opt-out — no per-run list needed', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${otherEmployeeId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ excludeFromPayroll: true })
+        .expect(200);
+
+      try {
+        const res = await request(app.getHttpServer())
+          .post('/payroll/draft')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ month: 9, year: YEAR })
+          .expect(201);
+        const ids = (res.body as { runs: { employeeId: string }[] }).runs.map(
+          (r) => r.employeeId,
+        );
+        expect(ids).toContain(employeeId);
+        expect(ids).not.toContain(otherEmployeeId);
+
+        // An explicit single-employee target still works — the standing
+        // flag only affects the "run for everyone" path.
+        const single = await request(app.getHttpServer())
+          .post('/payroll/draft')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ month: 9, year: YEAR, employeeId: otherEmployeeId })
+          .expect(201);
+        expect(
+          (single.body as { runs: { employeeId: string }[] }).runs[0]
+            .employeeId,
+        ).toBe(otherEmployeeId);
+      } finally {
+        await request(app.getHttpServer())
+          .patch(`/employees/${otherEmployeeId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ excludeFromPayroll: false })
+          .expect(200);
+      }
+    });
+  });
 });
