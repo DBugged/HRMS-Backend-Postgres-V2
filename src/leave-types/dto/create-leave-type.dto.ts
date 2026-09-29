@@ -151,7 +151,8 @@ export class CreateLeaveTypeDto {
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsInt()
-  autoApproveDays?: number;
+  @Min(0)
+  autoApproveHours?: number;
 
   @ApiPropertyOptional({ type: LeaveRulesDto })
   @IsOptional()

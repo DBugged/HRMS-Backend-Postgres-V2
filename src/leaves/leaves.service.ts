@@ -14,8 +14,10 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
+import { Cron } from '@nestjs/schedule';
 import {
   AllocationType,
   Leave,
@@ -123,6 +125,8 @@ function isUnbalancedType(leaveType: LeaveType): boolean {
 
 @Injectable()
 export class LeavesService {
+  private readonly logger = new Logger(LeavesService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly leaveBalanceService: LeaveBalanceService,
@@ -451,28 +455,53 @@ export class LeavesService {
       );
     }
 
+    return this.applyDecision(
+      leave,
+      leaveType,
+      dto.decision,
+      dto.comments ?? '',
+      actor.id,
+      organizationId,
+    );
+  }
+
+  // The actual status flip + balance/attendance/comp-off side effects,
+  // shared by review() (a human decision) and autoApprovePendingLeaves
+  // below (an unattended one — reviewedById is null there). Callers are
+  // responsible for whatever permission/two-level checks apply to them;
+  // this only enforces the data-integrity guarantee (status:PENDING
+  // compare-and-swap) that makes it safe to call from either place,
+  // including both racing for the same leave at once.
+  private async applyDecision(
+    leave: Leave,
+    leaveType: LeaveType,
+    decision: 'APPROVED' | 'REJECTED' | 'RETURNED',
+    comments: string,
+    reviewedById: string | null,
+    organizationId: string,
+  ) {
     await this.scopedPrisma.$transaction(async (tx) => {
-      // status: PENDING re-asserted here (not just in the pre-transaction
-      // check above) so a second concurrent review() call — double-click,
-      // or a retried request — can't slip past the earlier check (which
-      // ran outside any lock) and re-apply the balance/attendance/comp-off
-      // side effects below a second time. count === 0 means another
-      // review already won the race; bail out instead of double-crediting
-      // or double-debiting.
+      // status: PENDING re-asserted here (not just in whatever check the
+      // caller already ran) so a second concurrent call — double-click, a
+      // retried request, or this same leave's own auto-approve deadline
+      // firing mid-review — can't slip past and re-apply the balance/
+      // attendance/comp-off side effects below a second time. count === 0
+      // means another decision already won the race; bail out instead of
+      // double-crediting or double-debiting.
       const { count } = await tx.leave.updateMany({
-        where: { id, organizationId, status: LeaveStatus.PENDING },
+        where: { id: leave.id, organizationId, status: LeaveStatus.PENDING },
         data: {
-          status: dto.decision,
-          reviewedById: actor.id,
+          status: decision,
+          reviewedById,
           reviewedAt: new Date(),
-          reviewComments: dto.comments ?? '',
+          reviewComments: comments,
         },
       });
       if (count === 0) {
         throw new ConflictException('This leave request was already reviewed.');
       }
 
-      if (dto.decision === 'APPROVED') {
+      if (decision === 'APPROVED') {
         await this.attendanceService.writeAttendanceForApprovedLeave(
           tx,
           leave,
@@ -529,8 +558,66 @@ export class LeavesService {
       }
     });
 
-    await this.notifyLeaveDecision(leave, dto, organizationId);
-    return this.findByIdOrThrow(id, organizationId);
+    await this.notifyLeaveDecision(leave, { decision, comments }, organizationId);
+    return this.findByIdOrThrow(leave.id, organizationId);
+  }
+
+  // Sweeps every org for PENDING leave requests whose LeaveType has
+  // autoApproveIfNoAction on and have sat past their own createdAt +
+  // autoApproveHours deadline with no reviewer decision — gives HR a
+  // configurable SLA instead of a request waiting forever. Runs every 15
+  // minutes; applyDecision's own status:PENDING compare-and-swap means a
+  // human reviewing the same leave at the same moment can't race this into
+  // a double-decision either way.
+  @Cron('*/15 * * * *')
+  async autoApprovePendingLeaves() {
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const org of organizations) {
+      try {
+        await this.autoApprovePendingLeavesForOrg(org.id);
+      } catch (err) {
+        this.logger.error(
+          `autoApprovePendingLeaves failed for org ${org.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+  }
+
+  private async autoApprovePendingLeavesForOrg(organizationId: string) {
+    const now = new Date();
+    const candidates = await this.scopedPrisma.leave.findMany({
+      where: {
+        organizationId,
+        status: LeaveStatus.PENDING,
+        leaveType: { autoApproveIfNoAction: true, autoApproveHours: { gt: 0 } },
+      },
+      include: { leaveType: true },
+    });
+    for (const leave of candidates) {
+      const deadline = new Date(
+        leave.createdAt.getTime() + leave.leaveType.autoApproveHours * 60 * 60000,
+      );
+      if (now < deadline) continue;
+      try {
+        await this.applyDecision(
+          leave,
+          leave.leaveType,
+          'APPROVED',
+          'Auto-approved: no reviewer action within the configured window.',
+          null,
+          organizationId,
+        );
+      } catch (err) {
+        this.logger.error(
+          `Auto-approve failed for leave ${leave.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
   }
 
   private async notifyLevel1Approved(leave: Leave, organizationId: string) {

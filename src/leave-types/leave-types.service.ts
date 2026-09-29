@@ -168,7 +168,7 @@ export class LeaveTypesService {
         requiresApproval: dto.requiresApproval ?? true,
         approvalLevels: dto.approvalLevels ?? 2,
         autoApproveIfNoAction: dto.autoApproveIfNoAction ?? false,
-        autoApproveDays: dto.autoApproveDays ?? 0,
+        autoApproveHours: dto.autoApproveHours ?? 0,
         ...(dto.rules !== undefined && {
           rules: dto.rules as unknown as Prisma.InputJsonValue,
         }),
@@ -296,8 +296,8 @@ export class LeaveTypesService {
           ...(dto.autoApproveIfNoAction !== undefined && {
             autoApproveIfNoAction: dto.autoApproveIfNoAction,
           }),
-          ...(dto.autoApproveDays !== undefined && {
-            autoApproveDays: dto.autoApproveDays,
+          ...(dto.autoApproveHours !== undefined && {
+            autoApproveHours: dto.autoApproveHours,
           }),
           ...(dto.rules !== undefined && {
             rules: dto.rules as unknown as Prisma.InputJsonValue,

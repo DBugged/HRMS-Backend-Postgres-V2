@@ -959,14 +959,14 @@ model LeaveType {
   salaryImpactPercent   Float   @default(100)
   affectsLopCalculation Boolean @default(true)
 
-  // approvalLevels/autoApprove* are read by the future Leave-requests
-  // module, not this one. autoApproveIfNoAction/autoApproveDays are
-  // carried for schema parity with the old system, where they were also
-  // dead fields (no code path implemented auto-approval there either).
+  // autoApproveIfNoAction/autoApproveHours drive LeavesService's
+  // autoApprovePendingLeaves cron — a PENDING leave of this type past
+  // autoApproveHours since createdAt with no reviewer decision gets
+  // force-approved. Hours (not days) so a same-day SLA is expressible.
   requiresApproval      Boolean @default(true)
   approvalLevels        Int     @default(2)
   autoApproveIfNoAction Boolean @default(false)
-  autoApproveDays       Int     @default(0)
+  autoApproveHours      Int     @default(0)
 
   // Default mirrors the old system's rules object exactly.
   rules Json @default("{\"minDurationDays\":0.5,\"maxDurationDays\":null,\"noticePeriodDays\":0,\"allowBackdated\":false,\"maxBackdateDays\":0,\"allowFutureDated\":true,\"maxAdvanceDays\":null,\"allowHalfDay\":true,\"sandwichLeaveApplies\":false,\"restrictPrefixSuffixHoliday\":false,\"maxConsecutiveDays\":null,\"minGapBetweenRequestsDays\":0}")

@@ -10,6 +10,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { LeavesService } from '../src/leaves/leaves.service';
 
 interface AuthBody {
   accessToken: string;
@@ -50,6 +51,7 @@ const MON = offsetToWeekday(10, 1);
 describe('Leaves (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
+  let leavesService: LeavesService;
 
   let adminToken: string;
   let hrToken: string;
@@ -77,6 +79,7 @@ describe('Leaves (e2e)', () => {
     );
     await app.init();
     prisma = app.get(PrismaService);
+    leavesService = app.get(LeavesService);
 
     await request(app.getHttpServer()).post('/auth/register').send({
       organizationName: 'Leaves E2E Org',
@@ -671,6 +674,85 @@ describe('Leaves (e2e)', () => {
     expect(after?.pending).toBe(pendingBefore);
     expect(after?.pending).toBeGreaterThanOrEqual(0);
   });
+  describe('auto-approve after no reviewer action', () => {
+    it('approves a PENDING leave past its deadline, and leaves an under-deadline one alone', async () => {
+      const autoType = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Auto Approve Leave',
+          code: 'AAL',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 24,
+          prorateOnJoining: false,
+          approvalLevels: 1,
+          autoApproveIfNoAction: true,
+          autoApproveHours: 1,
+        });
+      const autoTypeId = (autoType.body as LeaveTypeBody).id;
+      const wed = offsetToWeekday(60, 3);
+
+      const overdue = await request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          leaveType: autoTypeId,
+          startDate: offsetDate(wed),
+          endDate: offsetDate(wed),
+        })
+        .expect(201);
+      const overdueId = (overdue.body as LeaveBody).id;
+      // Backdate createdAt past the 1-hour deadline — applying via the API
+      // always stamps "now", so this is the only way to simulate elapsed
+      // time without sleeping the test.
+      await prisma.leave.update({
+        where: { id: overdueId },
+        data: { createdAt: new Date(Date.now() - 2 * 60 * 60000) },
+      });
+
+      const fri = offsetToWeekday(62, 5);
+      const withinWindow = await request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          leaveType: autoTypeId,
+          startDate: offsetDate(fri),
+          endDate: offsetDate(fri),
+        })
+        .expect(201);
+      const withinWindowId = (withinWindow.body as LeaveBody).id;
+
+      await leavesService.autoApprovePendingLeaves();
+
+      const overdueRow = await prisma.leave.findUniqueOrThrow({
+        where: { id: overdueId },
+      });
+      expect(overdueRow.status).toBe('APPROVED');
+      expect(overdueRow.reviewedById).toBeNull();
+
+      const withinWindowRow = await prisma.leave.findUniqueOrThrow({
+        where: { id: withinWindowId },
+      });
+      expect(withinWindowRow.status).toBe('PENDING');
+
+      const year = new Date().getFullYear();
+      const balance = await prisma.leaveBalance.findFirstOrThrow({
+        where: { employeeId, leaveTypeId: autoTypeId, year },
+      });
+      // The auto-approved day moved from pending to availed; the
+      // still-pending one's hold is untouched.
+      expect(balance.availed).toBe(1);
+      expect(balance.pending).toBe(1);
+
+      // Running it again must not re-approve or double-credit anything.
+      await leavesService.autoApprovePendingLeaves();
+      const balanceAgain = await prisma.leaveBalance.findFirstOrThrow({
+        where: { employeeId, leaveTypeId: autoTypeId, year },
+      });
+      expect(balanceAgain.availed).toBe(1);
+    });
+  });
+
   describe('intra-range weekends vs sandwichLeaveApplies (L8)', () => {
     // Fri -> Mon, with the department on a Sat+Sun weekend for these tests.
     let departmentId: string;
