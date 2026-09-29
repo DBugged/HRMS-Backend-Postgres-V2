@@ -117,8 +117,33 @@ export class AuthService {
     // at all, so that part wouldn't matter either way).
     const { organization, user } = await this.scopedPrisma.$transaction(
       async (tx) => {
+        // companyName/legalName/contactEmail/signatories are all re-editable
+        // later (Organization Settings > Company Profile / Contact
+        // Information / Authorized Signatory) — seeded here from what the
+        // founder already typed on this form so the Setup Wizard doesn't ask
+        // them to retype the same organization name, email, and their own
+        // name a second time. legalName is just a starting point (it
+        // genuinely differs from the trade name for some orgs) — same as
+        // companyName, not locked. `name` (a distinct, non-nullable field
+        // the rest of the app treats as the org's internal identifier) is
+        // unaffected.
         const organization = await tx.organization.create({
-          data: { name: dto.organizationName },
+          data: {
+            name: dto.organizationName,
+            companyName: dto.organizationName,
+            legalName: dto.organizationName,
+            contactEmail: dto.email,
+            signatories: [
+              {
+                id: crypto.randomUUID(),
+                name: dto.name,
+                designation: '',
+                signatureUrl: null,
+                signatureMeta: null,
+                isPrimary: true,
+              },
+            ],
+          },
         });
         // Every new org gets all 9 statutory modules pre-seeded (most
         // disabled, payroll_calendar/rounding always enabled) so the

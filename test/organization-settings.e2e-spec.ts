@@ -147,7 +147,10 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .expect(200);
     expect(res.body).toEqual({
       isInitialized: false,
-      companyName: null,
+      // Seeded at registration from organizationName (see AuthService.register)
+      // so the Setup Wizard's Company Profile step doesn't ask the founder to
+      // retype it — still fully editable, just no longer blank on day one.
+      companyName: 'Org Settings E2E Org',
       tagline: null,
       companyLogoUrl: null,
       // companyLogoKey and the currency/date/time/tax-declaration prefs
