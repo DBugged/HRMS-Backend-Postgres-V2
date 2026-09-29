@@ -59,6 +59,7 @@ import { LetterTemplatesModule } from './letter-templates/letter-templates.modul
 import { LeaveTrackerModule } from './leave-tracker/leave-tracker.module';
 import { PrivacyModule } from './privacy/privacy.module';
 import { AssetsModule } from './assets/assets.module';
+import { PlatformInternalModule } from './platform-internal/platform-internal.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PasswordRotationGuard } from './common/guards/password-rotation.guard';
@@ -146,6 +147,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     LeaveTrackerModule,
     PrivacyModule,
     AssetsModule,
+    PlatformInternalModule,
   ],
   controllers: [AppController],
   providers: [
