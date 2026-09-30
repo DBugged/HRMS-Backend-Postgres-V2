@@ -642,7 +642,7 @@ describe('Payroll (e2e)', () => {
       expect(body.status).toBe('CALCULATED');
     });
 
-    it('adjust with lopDaysOverride corrects lopDays and recomputes payableDays, leaving earnings/deductions untouched', async () => {
+    it('adjust with lopDaysOverride re-runs the calculation engine against the corrected day count', async () => {
       const before = await request(app.getHttpServer())
         .get(`/payroll/${runId}`)
         .set('Authorization', `Bearer ${adminToken}`)
@@ -661,14 +661,20 @@ describe('Payroll (e2e)', () => {
         .expect(200);
       const body = res.body as PayrollRunBody;
       expect(body.attendanceSummary.lopDays).toBe(2);
-      expect(body.attendanceSummary.payableDays).toBe(
-        totalDaysInMonth - 2 - unpaidLeaveDays,
-      );
-      // Earnings/deductions (and the totals derived from them) are exactly
-      // what the previous test's override left them at — lopDaysOverride
-      // corrects the recorded day count only, it never recalculates money.
-      expect(body.grossSalary).toBe(beforeBody.grossSalary);
-      expect(body.netPay).toBe(beforeBody.netPay);
+      const expectedPayableDays = totalDaysInMonth - 2 - unpaidLeaveDays;
+      expect(body.attendanceSummary.payableDays).toBe(expectedPayableDays);
+      // BASIC (fixed 30,000, opted into for this employee in this describe
+      // block's setup) is prorated by payableDays/totalDaysInMonth — same
+      // direction as the dedicated LOP-proration test above. This is real,
+      // freshly computed money from the formula engine, not the flat
+      // 50,000/200 the previous test's manual override left behind —
+      // lopDaysOverride re-derives everything from the corrected day count
+      // instead of just relabeling the stored figures.
+      const basic = body.earnings.find((e) => e.code === 'BASIC');
+      expect(basic?.amount).toBeGreaterThan(0);
+      expect(basic?.amount).toBeLessThan(30000);
+      expect(body.grossSalary).not.toBe(beforeBody.grossSalary);
+      expect(body.netPay).not.toBe(beforeBody.netPay);
 
       const historyRes = await request(app.getHttpServer())
         .get('/payroll/history')

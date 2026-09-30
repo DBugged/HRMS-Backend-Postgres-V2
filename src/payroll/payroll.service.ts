@@ -356,6 +356,13 @@ export class PayrollService {
     month: number,
     year: number,
     organizationId: string,
+    // lopDaysOverride: used by adjust()'s manual LOP correction to re-run
+    // this whole engine — formula components, proration, statutory
+    // deductions, tax — against a corrected day count instead of what
+    // attendance/leave records alone would have produced. Every other
+    // input (attendance rows, leave rows, overtime, salary structure) is
+    // still read fresh, exactly as a normal calculate() would.
+    options?: { lopDaysOverride?: number },
   ): Promise<CalculatedPayroll> {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: employeeId, organizationId },
@@ -431,6 +438,23 @@ export class PayrollService {
       month,
       year,
     );
+    if (options?.lopDaysOverride !== undefined) {
+      // Inverse of computeAttendanceSummary's own lopDays formula —
+      // payableDays moves opposite LOP so everything downstream (formula
+      // proration, LOP_DAYS/PAYABLE_DAYS in formula-context.ts, statutory
+      // and tax calculations) sees a fully consistent corrected summary.
+      attendanceSummary.lopDays = round(options.lopDaysOverride, 'nearest', 2);
+      attendanceSummary.payableDays = Math.max(
+        0,
+        round(
+          attendanceSummary.totalDaysInMonth -
+            attendanceSummary.lopDays -
+            attendanceSummary.unpaidLeaveDays,
+          'nearest',
+          2,
+        ),
+      );
+    }
     const roundAmount = (n: number) =>
       round(n, settings.roundingRule, settings.roundingDecimals);
 
@@ -1360,14 +1384,35 @@ export class PayrollService {
     }
 
     const roundTwo = (n: number) => round(n, 'nearest', 2);
+
+    // A manual LOP correction re-runs the whole calculation engine against
+    // the corrected day count, so the resulting earnings/deductions/tax/
+    // employer contributions are what calculate() itself would have
+    // produced had attendance genuinely shown that many LOP days — not
+    // just a relabeled day count with stale money still attached to it.
+    // dto.earnings/dto.deductions (if also sent in the same request) still
+    // apply on top of that recalculation, same as they would on top of the
+    // run's existing figures below.
+    const recalculated =
+      dto.lopDaysOverride !== undefined
+        ? await this.calculatePayroll(
+            run.employeeId,
+            run.month,
+            run.year,
+            organizationId,
+            { lopDaysOverride: dto.lopDaysOverride },
+          )
+        : null;
+    const baselineEarnings = (recalculated?.earnings ??
+      run.earnings) as unknown as PayrollLineDto[];
+    const baselineDeductions = (recalculated?.deductions ??
+      run.deductions) as unknown as PayrollLineDto[];
+
     // An edited line that doesn't say whether it's taxable keeps the flag the
-    // calculated line with the same code had, so the run's taxableGross (the
+    // baseline line with the same code had, so the run's taxableGross (the
     // YTD income-tax base) doesn't silently change on a manual correction.
     const previousTaxable = new Map(
-      ((run.earnings ?? []) as unknown as PayrollLineDto[]).map((e) => [
-        e.code,
-        e.taxable,
-      ]),
+      baselineEarnings.map((e) => [e.code, e.taxable]),
     );
     const earnings: PayrollLineDto[] = dto.earnings
       ? dto.earnings.map((e) => {
@@ -1378,10 +1423,10 @@ export class PayrollService {
             ...(taxable !== undefined ? { taxable } : {}),
           };
         })
-      : (run.earnings as unknown as PayrollLineDto[]);
+      : baselineEarnings;
     const deductions: PayrollLineDto[] = dto.deductions
       ? dto.deductions.map((d) => ({ ...d, amount: roundTwo(d.amount) }))
-      : (run.deductions as unknown as PayrollLineDto[]);
+      : baselineDeductions;
 
     const grossSalary = roundTwo(
       earnings.reduce((s, e) => s + Number(e.amount || 0), 0),
@@ -1390,12 +1435,15 @@ export class PayrollService {
       deductions.reduce((s, d) => s + Number(d.amount || 0), 0),
     );
     const netPay = roundTwo(grossSalary - totalDeductions);
-    // ctcMonthly = grossSalary + employer contributions — employer
-    // contributions aren't part of this DTO (adjust only edits
-    // earnings/deductions), but ctcMonthly must still track the new
-    // grossSalary or it goes stale relative to every other figure this
-    // method just recomputed.
-    const ctcMonthly = roundTwo(grossSalary + run.totalEmployerContributions);
+    // ctcMonthly = grossSalary + employer contributions. Employer
+    // contributions aren't part of this DTO directly, but a recalculation
+    // refreshes them too (PF/ESI employer-side amounts move with payable
+    // days the same way the employee-side ones do) — otherwise they just
+    // carry over from the run unchanged, as before.
+    const totalEmployerContributions =
+      recalculated?.totalEmployerContributions ??
+      run.totalEmployerContributions;
+    const ctcMonthly = roundTwo(grossSalary + totalEmployerContributions);
 
     const data: Prisma.PayrollRunUpdateManyMutationInput = {
       earnings: earnings as unknown as Prisma.InputJsonValue,
@@ -1414,27 +1462,14 @@ export class PayrollService {
     if (run.status === PayrollRunStatus.VERIFIED) {
       data.status = PayrollRunStatus.CALCULATED;
     }
-    if (dto.lopDaysOverride !== undefined) {
-      const attendanceSummary =
-        run.attendanceSummary as unknown as AttendanceSummary;
-      const lopDays = roundTwo(dto.lopDaysOverride);
-      // Inverse of computeAttendanceSummary's own lopDays formula — payableDays
-      // moves opposite LOP so the two stay consistent with each other and with
-      // totalDaysInMonth, exactly as they would have if attendance/leave data
-      // itself had produced this LOP figure.
-      const payableDays = roundTwo(
-        Math.max(
-          0,
-          attendanceSummary.totalDaysInMonth -
-            lopDays -
-            attendanceSummary.unpaidLeaveDays,
-        ),
-      );
-      data.attendanceSummary = {
-        ...attendanceSummary,
-        lopDays,
-        payableDays,
-      };
+    if (recalculated) {
+      data.attendanceSummary =
+        recalculated.attendanceSummary as unknown as Prisma.InputJsonValue;
+      data.employerContributions = recalculated.employerContributions;
+      data.totalEmployerContributions = roundTwo(totalEmployerContributions);
+      data.taxDetails = recalculated.taxDetails
+        ? (recalculated.taxDetails as unknown as Prisma.InputJsonValue)
+        : Prisma.JsonNull;
     }
 
     await this.scopedPrisma.payrollRun.updateMany({
