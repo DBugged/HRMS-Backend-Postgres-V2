@@ -119,7 +119,14 @@ export class LettersService {
       select: { departmentId: true },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
+    // Self-view (My Letters) always bypasses the department check below —
+    // a Manager with no department assigned (actor.departmentId === null)
+    // would otherwise be forbidden from viewing their own letters, since
+    // that branch treats a null department as "can't be trusted to view
+    // anyone," self included. Same "self-access always allowed" pattern
+    // as canAccessDocuments elsewhere in the app.
     if (
+      employeeId !== actor.id &&
       actor.role === Role.MANAGER &&
       (actor.departmentId === null ||
         actor.departmentId !== employee.departmentId)
@@ -186,12 +193,20 @@ export class LettersService {
     return activeTemplates.map((t) => {
       const gate = UNLOCK_BY_PROFILE[t.dataProfile];
       const restricted = RESTRICTED_LETTER_KEYS.has(t.key);
-      const accessEnabled = grantByKey.get(t.key) ?? false;
-      // A plain EMPLOYEE also needs the explicit grant, on top of the
-      // usual dataProfile unlock, for a restricted key. HR/Admin/Manager
-      // are never subject to this — see the constant's own comment.
+      // No EmployeeLetterAccess row yet: a restricted (disciplinary) key
+      // defaults hidden (opt-in, per the constant's own comment), every
+      // other key defaults visible (opt-out) — matches the existing
+      // "every other letter stays visible by default" behavior exactly,
+      // just now revocable per employee via the same grant row instead of
+      // being un-hideable.
+      const accessEnabled = grantByKey.has(t.key)
+        ? grantByKey.get(t.key)!
+        : !restricted;
+      // A plain EMPLOYEE also needs the (now-universal) grant, on top of
+      // the usual dataProfile unlock. HR/Admin/Manager are never subject
+      // to this — see the constant's own comment.
       const employeeGateBlocked =
-        actor.role === Role.EMPLOYEE && restricted && !accessEnabled;
+        actor.role === Role.EMPLOYEE && !accessEnabled;
       return {
         key: t.key,
         name: t.name,
@@ -202,9 +217,10 @@ export class LettersService {
           : gate.unlocked
             ? null
             : gate.reason,
-        ...(restricted && actor.role !== Role.EMPLOYEE
-          ? { restricted, accessEnabled }
-          : {}),
+        // Present for every key (not just restricted ones) so a
+        // privileged caller's UI can render the "Visible to employee"
+        // toggle everywhere, not only on the 3 disciplinary keys.
+        ...(actor.role !== Role.EMPLOYEE ? { restricted, accessEnabled } : {}),
       };
     });
   }
@@ -239,7 +255,11 @@ export class LettersService {
     // Same view-scoping rule as EmployeeTimelineService.assertCanView — HR/
     // ADMIN see anyone, a MANAGER only their own department, an EMPLOYEE
     // only themselves (self-or-role already enforced at the controller).
+    // Self-view always bypasses this — see listForEmployee's identical
+    // guard for why (a department-less Manager downloading their own
+    // letter shouldn't be blocked by a department check).
     if (
+      employeeId !== actor.id &&
       actor.role === Role.MANAGER &&
       (actor.departmentId === null ||
         actor.departmentId !== employee.departmentId)
@@ -250,14 +270,17 @@ export class LettersService {
     // Mirrors listForEmployee's employeeGateBlocked check — this is the
     // actual enforcement point (listForEmployee's `unlocked` is only a
     // display hint); without this an EMPLOYEE could still GET
-    // /employees/:id/letters/:key directly for a restricted key nobody
-    // granted them.
-    if (actor.role === Role.EMPLOYEE && RESTRICTED_LETTER_KEYS.has(key)) {
+    // /employees/:id/letters/:key directly for a key HR has hidden from
+    // them (or never granted, for a restricted one).
+    if (actor.role === Role.EMPLOYEE) {
       const grant = await this.scopedPrisma.employeeLetterAccess.findFirst({
         where: { organizationId, employeeId, key },
         select: { enabled: true },
       });
-      if (!grant?.enabled) {
+      const accessEnabled = grant
+        ? grant.enabled
+        : !RESTRICTED_LETTER_KEYS.has(key);
+      if (!accessEnabled) {
         throw new ForbiddenException(
           'This letter has not been made available to you yet — contact HR.',
         );
@@ -552,11 +575,11 @@ export class LettersService {
   }
 
   // HR/Admin-only (enforced at the controller) — grants or revokes one
-  // employee's self-service visibility for one RESTRICTED_LETTER_KEYS
-  // letter. A no-op key outside that set is rejected rather than silently
-  // accepted, since it would otherwise create a row nothing ever reads
-  // (every other letter is visible with no row at all — see the
-  // constant's own comment).
+  // employee's self-service visibility for one letter. Works for any
+  // active template's key, not just the RESTRICTED_LETTER_KEYS set: those
+  // default hidden (opt-in) with no row, every other letter defaults
+  // visible (opt-out) with no row — see listForEmployee's accessEnabled
+  // computation, which this row feeds either way.
   async setEmployeeAccess(
     employeeId: string,
     key: string,
@@ -564,9 +587,13 @@ export class LettersService {
     actor: Actor,
     organizationId: string,
   ) {
-    if (!RESTRICTED_LETTER_KEYS.has(key)) {
+    const template = await this.letterTemplatesService.findActiveByKey(
+      key,
+      organizationId,
+    );
+    if (!template) {
       throw new BadRequestException(
-        `'${key}' isn't a restricted letter — every employee can already see it once its template is active.`,
+        `No active letter template found for '${key}'.`,
       );
     }
     const employee = await this.scopedPrisma.user.findFirst({

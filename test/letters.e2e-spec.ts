@@ -444,12 +444,66 @@ describe('Letters (e2e)', () => {
         .expect(403);
     });
 
-    it('rejects granting access for a non-restricted key', async () => {
+    it('rejects a key with no active template at all', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/letters/notARealLetterKey/access`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ enabled: true })
+        .expect(400);
+    });
+
+    it('HR can revoke and re-grant a non-restricted key too — every letter is toggleable now, not just the disciplinary ones', async () => {
+      // Visible by default with no grant row — same as any other non-restricted letter.
+      const before = await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      expect(
+        (before.body as { key: string; unlocked: boolean }[]).find(
+          (r) => r.key === 'appointmentLetter',
+        )!.unlocked,
+      ).toBe(true);
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${employeeId}/letters/appointmentLetter/access`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ enabled: false })
+        .expect(200);
+
+      const revoked = await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      const row = (
+        revoked.body as {
+          key: string;
+          unlocked: boolean;
+          reason: string | null;
+        }[]
+      ).find((r) => r.key === 'appointmentLetter')!;
+      expect(row.unlocked).toBe(false);
+      expect(row.reason).toBe('Not yet made available to you — contact HR.');
+
+      await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters/appointmentLetter`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+
+      // Re-grant — back to visible.
       await request(app.getHttpServer())
         .patch(`/employees/${employeeId}/letters/appointmentLetter/access`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ enabled: true })
-        .expect(400);
+        .expect(200);
+      const restored = await request(app.getHttpServer())
+        .get(`/employees/${employeeId}/letters`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      expect(
+        (restored.body as { key: string; unlocked: boolean }[]).find(
+          (r) => r.key === 'appointmentLetter',
+        )!.unlocked,
+      ).toBe(true);
     });
 
     it('HR grants access, the employee can then self-download, HR can revoke it again', async () => {
