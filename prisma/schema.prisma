@@ -86,6 +86,15 @@ model Organization {
   // Attendance — the column on Attendance always accepts WFH regardless, so
   // disabling this later doesn't orphan history.
   enableWFH              Boolean @default(true)
+  // Same "auto-approve after N hours with no reviewer action" idea
+  // LeaveType.autoApproveIfNoAction/autoApproveHours already gives HR per
+  // leave type — WFH and Regularization requests have no "type" of their
+  // own, so this lives org-wide instead. Off by default: nothing changes
+  // for an org until HR/Admin explicitly turns it on and sets the window.
+  wfhAutoApproveIfNoAction            Boolean @default(false)
+  wfhAutoApproveHours                 Int     @default(24)
+  regularizationAutoApproveIfNoAction Boolean @default(false)
+  regularizationAutoApproveHours      Int     @default(24)
   // Org-wide fallback shift config, used by AttendanceService whenever an
   // employee's Department has none set (or there's no department at all).
   // A department's own shift-config fields always win over these. NOT the

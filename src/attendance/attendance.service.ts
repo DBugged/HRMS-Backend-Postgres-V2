@@ -2881,7 +2881,8 @@ export class AttendanceService {
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
     });
-    const orgPrefs = org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
+    const orgPrefs =
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
 
     for (const row of openRows) {
       const shiftConfig = resolveShiftConfig(row.employee.department, orgPrefs);
@@ -2912,6 +2913,259 @@ export class AttendanceService {
         message: `Your shift ends in about ${minutesUntilEnd} minute(s) — don't forget to punch out.`,
         category: NotificationCategory.ATTENDANCE,
       });
+    }
+  }
+
+  // Same "auto-approve after N hours with no reviewer action" idea
+  // LeavesService.autoApprovePendingLeaves already gives HR per leave type
+  // (LeaveType.autoApproveIfNoAction/autoApproveHours) — WFH and
+  // Regularization requests have no "type" of their own to hang a toggle
+  // off, so this reads Organization.wfhAutoApproveIfNoAction/
+  // regularizationAutoApproveIfNoAction instead. Off by default: only an
+  // org that's explicitly turned this on (Organization Settings > Work
+  // Arrangement) is ever swept. Runs every 15 minutes, same cadence as
+  // the leave sweep.
+  @Cron('*/15 * * * *')
+  async autoApprovePendingWorkArrangementsAndRegularizations() {
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: {
+        isActive: true,
+        OR: [
+          { wfhAutoApproveIfNoAction: true },
+          { regularizationAutoApproveIfNoAction: true },
+        ],
+      },
+      select: {
+        id: true,
+        wfhAutoApproveIfNoAction: true,
+        wfhAutoApproveHours: true,
+        regularizationAutoApproveIfNoAction: true,
+        regularizationAutoApproveHours: true,
+      },
+    });
+    for (const org of organizations) {
+      try {
+        if (org.wfhAutoApproveIfNoAction) {
+          await this.autoApprovePendingWfhForOrg(
+            org.id,
+            org.wfhAutoApproveHours,
+          );
+        }
+        if (org.regularizationAutoApproveIfNoAction) {
+          await this.autoApprovePendingRegularizationsForOrg(
+            org.id,
+            org.regularizationAutoApproveHours,
+          );
+        }
+      } catch (err) {
+        this.logger.error(
+          `autoApprovePendingWorkArrangementsAndRegularizations failed for org ${org.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+  }
+
+  private static readonly AUTO_APPROVE_COMMENT =
+    'Auto-approved: no reviewer action within the configured window.';
+
+  private async autoApprovePendingWfhForOrg(
+    organizationId: string,
+    hours: number,
+  ) {
+    // updatedAt, not createdAt — the Attendance row can predate the WFH
+    // request itself (e.g. already had punches for that date), same
+    // "closest available requested at" reasoning the WFH Requests table's
+    // own Requested At column already relies on for this same row.
+    const cutoff = new Date(Date.now() - hours * 60 * 60000);
+    const candidates = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        workArrangement: WorkArrangement.WFH,
+        workArrangementStatus: WfhApprovalStatus.PENDING,
+        updatedAt: { lte: cutoff },
+      },
+      include: { employee: true },
+    });
+    if (candidates.length === 0) return;
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    for (const row of candidates) {
+      try {
+        // Same compare-and-swap guarantee as reviewWorkArrangement — a
+        // human reviewer acting on this row at the same moment this sweep
+        // reaches it can't race into a double-decision either way.
+        const { count } = await this.scopedPrisma.attendance.updateMany({
+          where: {
+            id: row.id,
+            organizationId,
+            workArrangementStatus: WfhApprovalStatus.PENDING,
+          },
+          data: {
+            workArrangementStatus: WfhApprovalStatus.APPROVED,
+            workArrangementReviewedById: null,
+            workArrangementReviewedAt: new Date(),
+            workArrangementReviewComments:
+              AttendanceService.AUTO_APPROVE_COMMENT,
+          },
+        });
+        if (count === 0) continue;
+
+        await this.timelineService.logEvent({
+          organizationId,
+          employeeId: row.employeeId,
+          eventKey: 'WFH_APPROVED',
+          performedById: null,
+          description: AttendanceService.AUTO_APPROVE_COMMENT,
+        });
+
+        const title = 'Work From Home Request APPROVED';
+        const message = `Your Work From Home request for ${formatDateDisplay(row.date, '', dateFormat)} was automatically approved — no reviewer acted within the configured window.`;
+        await this.notificationsService.create({
+          organizationId,
+          userId: row.employeeId,
+          title,
+          message,
+          category: NotificationCategory.ATTENDANCE,
+        });
+        const { subject, html } =
+          await this.emailTemplatesService.renderOccasion(
+            organizationId,
+            'WFH_DECISION',
+            {
+              employeeName: row.employee.name,
+              decision: 'APPROVED',
+              date: formatDateDisplay(row.date, '', dateFormat),
+              comments: AttendanceService.AUTO_APPROVE_COMMENT,
+            },
+            { subject: title, html: message },
+          );
+        void this.emailService.send({
+          to: row.employee.email,
+          subject,
+          html,
+          organizationId,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Auto-approve WFH failed for attendance ${row.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+  }
+
+  private async autoApprovePendingRegularizationsForOrg(
+    organizationId: string,
+    hours: number,
+  ) {
+    const cutoff = new Date(Date.now() - hours * 60 * 60000);
+    const candidates = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        regularization: { path: ['status'], equals: 'pending' },
+        updatedAt: { lte: cutoff },
+      },
+      include: { employee: true },
+    });
+    if (candidates.length === 0) return;
+    const { dateFormat } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    for (const row of candidates) {
+      try {
+        const existingReg =
+          row.regularization as unknown as RegularizationState;
+        const regularization: RegularizationState = {
+          ...existingReg,
+          status: 'approved',
+          reviewedBy: null,
+          reviewedAt: new Date().toISOString(),
+          reviewComments: AttendanceService.AUTO_APPROVE_COMMENT,
+        };
+        const data: Prisma.AttendanceUpdateManyMutationInput = {
+          regularization: regularization as unknown as Prisma.InputJsonValue,
+        };
+        // Same hard-override reasoning as reviewRegularization's own
+        // APPROVED branch — status flips to PRESENT whenever the approval
+        // actually established a real in/out time, even if only one side
+        // was requested.
+        const inTime = existingReg.requestedInTime
+          ? new Date(existingReg.requestedInTime)
+          : row.inTime;
+        const outTime = existingReg.requestedOutTime
+          ? new Date(existingReg.requestedOutTime)
+          : row.outTime;
+        if (existingReg.requestedInTime) data.inTime = inTime;
+        if (existingReg.requestedOutTime) data.outTime = outTime;
+        if (inTime && outTime) {
+          data.workDurationMinutes = Math.max(
+            0,
+            Math.round((outTime.getTime() - inTime.getTime()) / 60000),
+          );
+          data.status = AttendanceStatus.PRESENT;
+        } else if (inTime || outTime) {
+          data.status = AttendanceStatus.PRESENT;
+        }
+        data.source = AttendanceSource.REGULARIZED;
+
+        // Same compare-and-swap guarantee as reviewRegularization — a
+        // human reviewer acting on this row at the same moment can't race
+        // this sweep into a double-decision either way.
+        const { count } = await this.scopedPrisma.attendance.updateMany({
+          where: {
+            id: row.id,
+            organizationId,
+            regularization: { path: ['status'], equals: 'pending' },
+          },
+          data,
+        });
+        if (count === 0) continue;
+
+        // No auditLogService.log() here — actorId is required/non-nullable
+        // on AuditLog and there's no human actor for a system-triggered
+        // decision; same reasoning LeavesService.autoApprovePendingLeaves
+        // already settled on (it skips an audit entry entirely too), and
+        // reviewRegularization's own human-review path doesn't log a
+        // timeline event either. regularization.reviewComments above still
+        // records what happened and why, right on the row itself.
+
+        const title = 'Regularization Request APPROVED';
+        const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat)} was automatically approved — no reviewer acted within the configured window.`;
+        await this.notificationsService.create({
+          organizationId,
+          userId: row.employeeId,
+          title,
+          message,
+          category: NotificationCategory.REGULARIZATION,
+        });
+        const { subject, html } =
+          await this.emailTemplatesService.renderOccasion(
+            organizationId,
+            'REGULARIZATION_DECISION',
+            {
+              employeeName: row.employee.name,
+              decision: 'APPROVED',
+              date: formatDateDisplay(row.date, '', dateFormat),
+              comments: AttendanceService.AUTO_APPROVE_COMMENT,
+            },
+            { subject: title, html: message },
+          );
+        void this.emailService.send({
+          to: row.employee.email,
+          subject,
+          html,
+          organizationId,
+        });
+      } catch (err) {
+        this.logger.error(
+          `Auto-approve regularization failed for attendance ${row.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
     }
   }
 }

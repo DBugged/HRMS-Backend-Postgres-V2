@@ -142,7 +142,13 @@ const SECTION_FIELDS: Record<string, string[]> = {
   policies: ['policies', 'orgPayrollAttendancePrefs'],
   documentNumbering: ['documentNumbering'],
   employeeTypes: ['customEmployeeTypes'],
-  workArrangement: ['enableWFH'],
+  workArrangement: [
+    'enableWFH',
+    'wfhAutoApproveIfNoAction',
+    'wfhAutoApproveHours',
+    'regularizationAutoApproveIfNoAction',
+    'regularizationAutoApproveHours',
+  ],
 };
 
 const REQUIRED_FOR_COMPLETION = [
@@ -236,6 +242,56 @@ export class OrganizationSettingsService {
     });
     if (!org) throw new NotFoundException('Organization not found.');
     return org;
+  }
+
+  // Own narrow ADMIN/HR-scoped read/write (rather than the broad
+  // ADMIN-only settings/:section route, or updateSection's full-org
+  // response) — same reasoning as Employee Types' own dedicated endpoints:
+  // HR should be able to see and set this without also getting the rest
+  // of Organization Settings (statutory numbers, email domain, etc.),
+  // which stays ADMIN-only.
+  async getAutoApprovalSettings(organizationId: string) {
+    const org = await this.findOrThrow(organizationId);
+    return {
+      wfhAutoApproveIfNoAction: org.wfhAutoApproveIfNoAction,
+      wfhAutoApproveHours: org.wfhAutoApproveHours,
+      regularizationAutoApproveIfNoAction:
+        org.regularizationAutoApproveIfNoAction,
+      regularizationAutoApproveHours: org.regularizationAutoApproveHours,
+    };
+  }
+
+  async updateAutoApprovalSettings(
+    organizationId: string,
+    body: Record<string, unknown>,
+    actorId: string,
+  ) {
+    const allowedFields = [
+      'wfhAutoApproveIfNoAction',
+      'wfhAutoApproveHours',
+      'regularizationAutoApproveIfNoAction',
+      'regularizationAutoApproveHours',
+    ];
+    const data: Record<string, unknown> = {};
+    for (const field of allowedFields) {
+      if (field in body) data[field] = body[field];
+    }
+    validateSectionData(data);
+
+    await this.prisma.organization.update({
+      where: { id: organizationId },
+      data: { ...data, updatedAt: new Date() },
+    });
+
+    await this.auditLogService.log({
+      actorId,
+      action: 'ORGANIZATION_SETTINGS_UPDATED',
+      module: AuditModule.ORGANIZATION,
+      organizationId,
+      details: { section: 'autoApproval', fields: Object.keys(data) },
+    });
+
+    return this.getAutoApprovalSettings(organizationId);
   }
 
   // Stored URL fields hold durable relativeKeys (never signed URLs — see

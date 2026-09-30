@@ -88,6 +88,39 @@ export class OrganizationsController {
     );
   }
 
+  // -- WFH / Regularization Auto-Approval --
+  // Own ADMIN/HR/MANAGER-scoped endpoints (same reasoning as Employee
+  // Types below) — lets a Manager (who actually reviews these day to day,
+  // same @Roles as reviewWorkArrangement/reviewRegularization) set the
+  // auto-approve-after-N-hours window too, not just Admin/HR, without
+  // needing the broad ADMIN-only settings/:section route. Declared before
+  // that route's `:section` wildcard so `settings/auto-approval` matches
+  // here first, not as section="auto-approval" on the generic ADMIN-only
+  // route.
+
+  @Get('settings/auto-approval')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  getAutoApprovalSettings(@CurrentUser() caller: Caller) {
+    return this.organizationSettingsService.getAutoApprovalSettings(
+      caller.organizationId,
+    );
+  }
+
+  @Patch('settings/auto-approval')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  updateAutoApprovalSettings(
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.organizationSettingsService.updateAutoApprovalSettings(
+      caller.organizationId,
+      body,
+      caller.id,
+    );
+  }
+
   // Body shape varies per section (flat strings for some, full JSON blobs
   // for others) — real whitelisting happens server-side in
   // OrganizationSettingsService against SECTION_FIELDS, same as the old

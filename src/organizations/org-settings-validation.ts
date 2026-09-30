@@ -18,6 +18,7 @@ type FieldKind =
   | 'requiredString' // non-nullable string column (null would 500 in Prisma)
   | 'fileUrl' // branding/seal URL — string or null, resolved separately
   | 'boolean'
+  | 'number' // plain Int column (not nested inside a JSON blob)
   | 'object' // JSON column holding a plain object — deep-merged on write
   | 'array'; // JSON column holding an array — replaced wholesale
 
@@ -63,6 +64,10 @@ export const FIELD_KINDS: Record<string, FieldKind> = {
   documentNumbering: 'object',
   customEmployeeTypes: 'array',
   enableWFH: 'boolean',
+  wfhAutoApproveIfNoAction: 'boolean',
+  wfhAutoApproveHours: 'number',
+  regularizationAutoApproveIfNoAction: 'boolean',
+  regularizationAutoApproveHours: 'number',
 };
 
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -263,7 +268,18 @@ export function validateSectionData(data: Record<string, unknown>) {
       case 'array':
         if (!Array.isArray(value)) bad(`${field} must be an array.`);
         break;
+      case 'number':
+        // Range-checked below via checkNumber, which also normalizes a
+        // numeric string in place — nothing to do here.
+        break;
     }
+  }
+
+  for (const field of [
+    'wfhAutoApproveHours',
+    'regularizationAutoApproveHours',
+  ]) {
+    checkNumber(data, field, field, { min: 1, max: 720, integer: true });
   }
 
   for (const field of ['primaryColor', 'secondaryColor']) {
