@@ -28,6 +28,12 @@ interface PayrollRunBody {
   netPay: number;
   earnings: { code: string; amount: number }[];
   deductions: { code: string; amount: number }[];
+  attendanceSummary: {
+    lopDays: number;
+    payableDays: number;
+    totalDaysInMonth: number;
+    unpaidLeaveDays: number;
+  };
 }
 interface CalculateResponseBody {
   count: number;
@@ -634,6 +640,48 @@ describe('Payroll (e2e)', () => {
       expect(body.totalDeductions).toBe(200);
       expect(body.netPay).toBe(49800);
       expect(body.status).toBe('CALCULATED');
+    });
+
+    it('adjust with lopDaysOverride corrects lopDays and recomputes payableDays, leaving earnings/deductions untouched', async () => {
+      const before = await request(app.getHttpServer())
+        .get(`/payroll/${runId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const beforeBody = before.body as PayrollRunBody;
+      const { totalDaysInMonth, unpaidLeaveDays } =
+        beforeBody.attendanceSummary;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/payroll/${runId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          lopDaysOverride: 2,
+          reason: 'Approved LOP never logged as a leave record',
+        })
+        .expect(200);
+      const body = res.body as PayrollRunBody;
+      expect(body.attendanceSummary.lopDays).toBe(2);
+      expect(body.attendanceSummary.payableDays).toBe(
+        totalDaysInMonth - 2 - unpaidLeaveDays,
+      );
+      // Earnings/deductions (and the totals derived from them) are exactly
+      // what the previous test's override left them at — lopDaysOverride
+      // corrects the recorded day count only, it never recalculates money.
+      expect(body.grossSalary).toBe(beforeBody.grossSalary);
+      expect(body.netPay).toBe(beforeBody.netPay);
+
+      const historyRes = await request(app.getHttpServer())
+        .get('/payroll/history')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const { history } = historyRes.body as {
+        history: { action: string; details: Record<string, unknown> }[];
+      };
+      const entry = history.find(
+        (h) =>
+          h.action === 'PAYROLL_ADJUSTED' && h.details?.lopDaysOverride === 2,
+      );
+      expect(entry).toBeTruthy();
     });
 
     it('verify moves CALCULATED -> VERIFIED; rejects from the wrong state', async () => {
@@ -1885,7 +1933,12 @@ describe('Payroll (e2e)', () => {
       expect(ids).not.toContain(otherEmployeeId);
 
       const run = await prisma.payrollRun.findFirst({
-        where: { organizationId, employeeId: otherEmployeeId, month: 8, year: YEAR },
+        where: {
+          organizationId,
+          employeeId: otherEmployeeId,
+          month: 8,
+          year: YEAR,
+        },
       });
       expect(run).toBeNull();
     });

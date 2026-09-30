@@ -1414,6 +1414,28 @@ export class PayrollService {
     if (run.status === PayrollRunStatus.VERIFIED) {
       data.status = PayrollRunStatus.CALCULATED;
     }
+    if (dto.lopDaysOverride !== undefined) {
+      const attendanceSummary =
+        run.attendanceSummary as unknown as AttendanceSummary;
+      const lopDays = roundTwo(dto.lopDaysOverride);
+      // Inverse of computeAttendanceSummary's own lopDays formula — payableDays
+      // moves opposite LOP so the two stay consistent with each other and with
+      // totalDaysInMonth, exactly as they would have if attendance/leave data
+      // itself had produced this LOP figure.
+      const payableDays = roundTwo(
+        Math.max(
+          0,
+          attendanceSummary.totalDaysInMonth -
+            lopDays -
+            attendanceSummary.unpaidLeaveDays,
+        ),
+      );
+      data.attendanceSummary = {
+        ...attendanceSummary,
+        lopDays,
+        payableDays,
+      };
+    }
 
     await this.scopedPrisma.payrollRun.updateMany({
       where: { id, organizationId },
@@ -1428,7 +1450,13 @@ export class PayrollService {
       module: 'PAYROLL',
       organizationId,
       targetId: id,
-      details: { netPay, reason: dto.reason ?? '' },
+      details: {
+        netPay,
+        reason: dto.reason ?? '',
+        ...(dto.lopDaysOverride !== undefined
+          ? { lopDaysOverride: dto.lopDaysOverride }
+          : {}),
+      },
     });
     return updated;
   }
