@@ -102,7 +102,7 @@ export class AttendanceController {
 
   // Literal path, so it must be registered before Patch('work-arrangement/:id/review').
   @Get('work-arrangement/pending')
-  @Roles(Role.HR, Role.MANAGER)
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   listPendingWfhRequests(@CurrentUser() caller: Caller) {
@@ -113,7 +113,7 @@ export class AttendanceController {
   }
 
   @Patch('work-arrangement/:id/review')
-  @Roles(Role.HR, Role.MANAGER)
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   reviewWorkArrangement(
@@ -156,7 +156,7 @@ export class AttendanceController {
   }
 
   @Patch('regularization/:id')
-  @Roles(Role.HR, Role.MANAGER)
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   reviewRegularization(
