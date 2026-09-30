@@ -926,13 +926,17 @@ export class PayslipPdfService {
     fonts: { regular: string; bold: string },
   ) {
     const colW = w / 2;
-    const rowH = 15;
+    // Label (6.3pt) + value (7.3pt) stacked within each row: an 8pt offset
+    // between them and a 20pt row pitch (was 7/15) leaves real air both
+    // between the label and its value and between one row and the next —
+    // at 15 the value's descenders butted straight into the next label.
+    const rowH = 20;
     let cy = y;
     const draw = ([label, value]: [string, string], px: number) => {
       doc.font(fonts.bold).fontSize(6.3).fillColor(INK_400);
       text(String(label).toUpperCase(), px, cy, { width: colW - 6 });
       doc.font(fonts.regular).fontSize(7.3).fillColor(INK_900);
-      text(this.fitText(doc, value, colW - 6), px, cy + 7, { width: colW - 6 });
+      text(this.fitText(doc, value, colW - 6), px, cy + 8, { width: colW - 6 });
     };
     for (let i = 0; i < pairs.length; i += 2) {
       draw(pairs[i], x);
