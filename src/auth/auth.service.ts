@@ -257,9 +257,11 @@ export class AuthService {
         <p><a href="${loginUrl}">Log in to your account →</a></p>
         <p>If you didn't create this account, you can safely ignore this email.</p>
       `;
-    // Note: the org's Email Templates were just seeded above in the same
-    // transaction, so this immediately has a real (default) template to
-    // render from rather than needing its own bootstrap special-case.
+    // Platform-level email (D'CoreHR welcoming the org's founder) — never
+    // seeded as an org-editable template (see EmailTemplatesService.
+    // seedDefaults), so this always renders the fallback below, shelled
+    // with D'CoreHR's own branding (see applyShell's FOUNDER_ACCOUNT_WELCOME
+    // special case), not the org's.
     const founderRendered = await this.emailTemplatesService.renderOccasion(
       organization.id,
       'FOUNDER_ACCOUNT_WELCOME',

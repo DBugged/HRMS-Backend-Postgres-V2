@@ -31,6 +31,7 @@ import { renderTemplate } from './render-template';
 import { sanitizeEmailHtml } from './email-html-sanitizer';
 import { wrapAll } from '../common/pagination';
 import { companyLogoImgTag } from './company-logo';
+import { frontendUrl } from '../common/frontend-url';
 
 // Variables whose value is server-built markup rather than text (see renderHtml).
 const TRUSTED_HTML_VARIABLES = new Set(['companyLogo']);
@@ -62,6 +63,10 @@ export class EmailTemplatesService {
     organizationId: string,
   ): Promise<void> {
     for (const def of EMAIL_TEMPLATE_DEFAULTS) {
+      // Platform-level (D'CoreHR welcoming the org's founder), not an
+      // org-to-employee occasion — never seeded as an editable per-org
+      // template. See the comment on this entry in email-template-defaults.ts.
+      if (def.occasionKey === 'FOUNDER_ACCOUNT_WELCOME') continue;
       await tx.emailTemplate.create({
         data: {
           organizationId,
@@ -474,6 +479,21 @@ export class EmailTemplatesService {
     variables: Record<string, string>,
     occasionKey: string | null,
   ): Promise<string> {
+    // Platform-level occasion — D'CoreHR welcoming a brand new org's
+    // founder, before that org has any branding (logo, name) of its own
+    // set up. Always shells with D'CoreHR's own identity, never the org's.
+    if (occasionKey === 'FOUNDER_ACCOUNT_WELCOME') {
+      return wrapEmailShell(finalizeEmailHtml(html), {
+        preheader: this.render(
+          EMAIL_PREHEADERS.FOUNDER_ACCOUNT_WELCOME,
+          variables,
+        ),
+        branding: {
+          companyName: "D'CoreHR",
+          logoImgTag: `<img src="${escapeHtml(`${frontendUrl()}/brand-mark.png`)}" alt="D'CoreHR" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`,
+        },
+      });
+    }
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
       select: {
