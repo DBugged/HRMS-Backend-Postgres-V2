@@ -290,6 +290,33 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     });
   });
 
+  it('a department created afterward inherits the org defaults, not the schema hardcoded ones', async () => {
+    // Department's shift/threshold columns carry Prisma @default()s
+    // (09:30/18:30/15/15/8/4) that are never actually "unset" once a row
+    // exists — DepartmentsService.create() must explicitly seed them from
+    // Organization.attendancePayrollPrefs (just set above) rather than
+    // letting those hardcoded defaults silently apply.
+    const res = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Org Defaults Dept', code: 'ODD' })
+      .expect(201);
+    const body = res.body as {
+      shiftStartTime: string;
+      shiftEndTime: string;
+      lateInThresholdMinutes: number;
+      earlyOutThresholdMinutes: number;
+      minHoursForPresent: number;
+      minHoursForHalfDay: number;
+    };
+    expect(body.shiftStartTime).toBe('10:00');
+    expect(body.shiftEndTime).toBe('19:00');
+    expect(body.lateInThresholdMinutes).toBe(20);
+    expect(body.earlyOutThresholdMinutes).toBe(20);
+    expect(body.minHoursForPresent).toBe(7);
+    expect(body.minHoursForHalfDay).toBe(3.5);
+  });
+
   it('a partial policies write (missing all 7 shift keys) merges against the existing prefs instead of wiping attendancePayrollPrefs', async () => {
     // Deliberately omits defaultShiftStartTime/etc. entirely — only a
     // frontend that always sends the full blob would mask the bug this

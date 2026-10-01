@@ -242,10 +242,14 @@ describe('Leaves (e2e)', () => {
     // the identical date range. The per-employee row lock in
     // createLeaveInternal's transaction now serializes these, and the
     // second re-checks overlap after acquiring the lock.
+    // A guaranteed working day (not offsetDate's raw "today + N", which can
+    // land on a weekly-off and make totalDays 0) — see offsetToWeekday's
+    // own comment above.
+    const day = offsetToWeekday(100, 1);
     const dto = {
       leaveType: elLeaveTypeId,
-      startDate: offsetDate(100),
-      endDate: offsetDate(100),
+      startDate: offsetDate(day),
+      endDate: offsetDate(day),
     };
     const [a, b] = await Promise.all([
       request(app.getHttpServer())

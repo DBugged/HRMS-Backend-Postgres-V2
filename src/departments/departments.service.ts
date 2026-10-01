@@ -20,6 +20,10 @@ import { BulkImportDepartmentsDto } from './dto/bulk-import-departments.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { computeWeeklyOffs } from '../work-schedules/work-schedules.service';
+import {
+  resolveShiftConfig,
+  type OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
 import type { AlternateWeeklyOffDto } from '../work-schedules/dto/create-work-schedule.dto';
 
 // Mirrors the frontend's own NON_DEMOTABLE_ROLES — these roles already
@@ -91,17 +95,56 @@ export class DepartmentsService {
       };
     }
 
+    // With no Work Schedule chosen, seed shift/threshold fields from the
+    // org's own configured defaults (Organization.attendancePayrollPrefs)
+    // instead of letting Prisma's column @default()s (09:30/18:30/15/15/
+    // 8/4) silently apply — those are never actually "unset" once a row
+    // exists (see resolveShiftConfig's comment), so a department created
+    // this way would otherwise permanently diverge from whatever the org
+    // configured in General Settings. dto fields, when explicitly passed,
+    // still win over the org default.
+    let orgDefaultFields:
+      | Pick<
+          Prisma.DepartmentUncheckedCreateInput,
+          | 'shiftStartTime'
+          | 'shiftEndTime'
+          | 'lateInThresholdMinutes'
+          | 'earlyOutThresholdMinutes'
+          | 'minHoursForPresent'
+          | 'minHoursForHalfDay'
+          | 'weeklyOffs'
+          | 'breakMinutes'
+        >
+      | undefined;
+    if (!scheduleFields) {
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { attendancePayrollPrefs: true },
+      });
+      const orgDefaults = resolveShiftConfig(
+        null,
+        org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      );
+      orgDefaultFields = {
+        shiftStartTime: dto.shiftStartTime || orgDefaults.shiftStartTime,
+        shiftEndTime: dto.shiftEndTime || orgDefaults.shiftEndTime,
+        lateInThresholdMinutes: orgDefaults.lateInThresholdMinutes,
+        earlyOutThresholdMinutes: orgDefaults.earlyOutThresholdMinutes,
+        minHoursForPresent: orgDefaults.minHoursForPresent,
+        minHoursForHalfDay: orgDefaults.minHoursForHalfDay,
+        weeklyOffs: (dto.weeklyOffs ??
+          orgDefaults.weeklyOffs) as unknown as Prisma.InputJsonValue,
+        breakMinutes: orgDefaults.breakMinutes,
+      };
+    }
+
     const department = await this.scopedPrisma.department.create({
       data: {
         organizationId,
         name: dto.name,
         code,
         description: dto.description ?? '',
-        ...(scheduleFields ?? {
-          ...(dto.shiftStartTime && { shiftStartTime: dto.shiftStartTime }),
-          ...(dto.shiftEndTime && { shiftEndTime: dto.shiftEndTime }),
-          ...(dto.weeklyOffs && { weeklyOffs: dto.weeklyOffs }),
-        }),
+        ...(scheduleFields ?? orgDefaultFields),
         ...(dto.crossesMidnight !== undefined && {
           crossesMidnight: dto.crossesMidnight,
         }),
