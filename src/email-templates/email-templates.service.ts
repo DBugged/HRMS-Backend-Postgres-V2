@@ -10,6 +10,7 @@
 // dependency-free {{key}} substitution — see render-template.ts.
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -86,6 +87,7 @@ export class EmailTemplatesService {
     const data = await this.scopedPrisma.emailTemplate.findMany({
       where: { organizationId },
       orderBy: { occasionKey: 'asc' },
+      include: { updatedBy: { select: { id: true, name: true } } },
     });
     return wrapAll(data);
   }
@@ -110,7 +112,24 @@ export class EmailTemplatesService {
     organizationId: string,
     actorId?: string,
   ) {
-    await this.findByOccasionOrThrow(occasionKey, organizationId);
+    const existing = await this.findByOccasionOrThrow(
+      occasionKey,
+      organizationId,
+    );
+
+    // Optimistic concurrency: every ADMIN/HR user in the org can edit every
+    // template (see email-templates.controller.ts), so two people editing
+    // the same occasion at once is a real scenario, not a hypothetical one.
+    // When the client sends back the updatedAt it loaded with, reject a
+    // stale save instead of silently overwriting whoever got there first.
+    if (
+      dto.expectedUpdatedAt !== undefined &&
+      new Date(dto.expectedUpdatedAt).getTime() !== existing.updatedAt.getTime()
+    ) {
+      throw new ConflictException(
+        `${existing.updatedBy?.name ?? 'Someone'} already changed this template. Reload to see their changes before saving yours.`,
+      );
+    }
 
     await this.scopedPrisma.emailTemplate.updateMany({
       where: { organizationId, occasionKey },
@@ -130,6 +149,7 @@ export class EmailTemplatesService {
         ...(dto.signatureId !== undefined && {
           signatureId: dto.signatureId || null,
         }),
+        ...(actorId && { updatedById: actorId }),
       },
     });
 
@@ -717,6 +737,7 @@ export class EmailTemplatesService {
   ) {
     const template = await this.scopedPrisma.emailTemplate.findFirst({
       where: { organizationId, occasionKey },
+      include: { updatedBy: { select: { id: true, name: true } } },
     });
     if (!template) {
       throw new NotFoundException(

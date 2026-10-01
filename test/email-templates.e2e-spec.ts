@@ -24,6 +24,8 @@ interface EmailTemplateBody {
   ccAllActive: boolean;
   isActive: boolean;
   category: string;
+  updatedAt: string;
+  updatedBy: { id: string; name: string } | null;
 }
 
 const PASSWORD = 'TestPass123!';
@@ -121,7 +123,9 @@ describe('EmailTemplates (e2e)', () => {
       'COMP_OFF_DECISION',
       'DOCUMENT_STATUS',
       'EXIT_COMPLETED',
-      'FOUNDER_ACCOUNT_WELCOME',
+      // FOUNDER_ACCOUNT_WELCOME deliberately not seeded — platform-level
+      // (D'CoreHR welcoming a brand new org's founder), not an org-editable
+      // template. See EmailTemplatesService.seedDefaults().
       'LEAVE_DECISION',
       'LEAVE_ENCASHMENT_STATUS',
       'LETTER_SENT',
@@ -224,6 +228,62 @@ describe('EmailTemplates (e2e)', () => {
       .put('/email-templates/WORK_ANNIVERSARY')
       .set('Authorization', `Bearer ${hrToken}`)
       .send({ isActive: false })
+      .expect(200);
+  });
+
+  it('records updatedById/updatedBy on save', async () => {
+    const res = await request(app.getHttpServer())
+      .put('/email-templates/BIRTHDAY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ subject: 'Happy Birthday!' })
+      .expect(200);
+    expect((res.body as EmailTemplateBody).updatedBy?.id).toBeTruthy();
+  });
+
+  it('rejects a save whose expectedUpdatedAt is stale (optimistic concurrency)', async () => {
+    const loaded = await request(app.getHttpServer())
+      .get('/email-templates/BIRTHDAY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const staleUpdatedAt = (loaded.body as EmailTemplateBody).updatedAt;
+
+    // Someone else saves in the meantime.
+    await request(app.getHttpServer())
+      .put('/email-templates/BIRTHDAY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ subject: 'Changed By Someone Else' })
+      .expect(200);
+
+    // The first editor's save, still carrying the old updatedAt, is rejected.
+    await request(app.getHttpServer())
+      .put('/email-templates/BIRTHDAY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ subject: 'Stale Save', expectedUpdatedAt: staleUpdatedAt })
+      .expect(409);
+
+    const after = await request(app.getHttpServer())
+      .get('/email-templates/BIRTHDAY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((after.body as EmailTemplateBody).subject).toBe(
+      'Changed By Someone Else',
+    );
+  });
+
+  it('accepts a save whose expectedUpdatedAt matches the current row', async () => {
+    const loaded = await request(app.getHttpServer())
+      .get('/email-templates/WORK_ANNIVERSARY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const currentUpdatedAt = (loaded.body as EmailTemplateBody).updatedAt;
+
+    await request(app.getHttpServer())
+      .put('/email-templates/WORK_ANNIVERSARY')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        subject: 'Fresh Save',
+        expectedUpdatedAt: currentUpdatedAt,
+      })
       .expect(200);
   });
 

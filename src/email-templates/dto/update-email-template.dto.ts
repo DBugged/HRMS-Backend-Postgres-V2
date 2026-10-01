@@ -2,6 +2,7 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsIn,
+  IsISO8601,
   IsNotEmpty,
   IsOptional,
   IsString,
@@ -51,4 +52,15 @@ export class UpdateEmailTemplateDto {
   @IsOptional()
   @IsIn(EMAIL_TEMPLATE_CATEGORIES)
   category?: string;
+
+  // The `updatedAt` the client last loaded this template with — optimistic
+  // concurrency check. When present and stale (someone else saved in the
+  // meantime), the update is rejected with 409 instead of silently
+  // overwriting their change. Omitted entirely skips the check (e.g. the
+  // isActive-only toggle from the table row, where a lost-update race is
+  // harmless).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsISO8601()
+  expectedUpdatedAt?: string;
 }

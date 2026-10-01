@@ -499,6 +499,7 @@ model User {
   leavesLevel1Approved             Leave[]                   @relation("LeaveLevel1ApprovedBy")
   compOffs                         CompOff[]                 @relation("CompOffEmployee")
   compOffsApproved                 CompOff[]                 @relation("CompOffApprovedBy")
+  emailTemplatesUpdated            EmailTemplate[]           @relation("EmailTemplateUpdatedBy")
   createdSalaryComponents          SalaryComponent[]
   updatedPayrollSettings           PayrollSettings[]
   employeeSalaryComponents         EmployeeSalaryComponent[] @relation("EmployeeSalaryComponentEmployee")
@@ -692,6 +693,14 @@ model EmailTemplate {
   // (emailSignatures is a JSON list, not its own table) — validated
   // against the org's current list at write time instead.
   signatureId String?
+
+  // Who last saved this row — surfaced next to updatedAt on the Email
+  // Templates table so a Founder/HR Admin can see who touched it before
+  // they open it, since every ADMIN/HR user in the org can edit every
+  // template (see email-templates.controller.ts). Null for a row no one
+  // has edited since it was seeded.
+  updatedById String?
+  updatedBy   User?   @relation("EmailTemplateUpdatedBy", fields: [updatedById], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
