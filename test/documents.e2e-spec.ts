@@ -50,6 +50,8 @@ describe('Documents (e2e)', () => {
   let hrToken: string;
   let managerToken: string;
   let deptId: string;
+  let organizationId: string;
+  let deptEmployeeId: string;
   let deptEmployeeToken: string;
   let outsideEmployeeToken: string;
   let outsideEmployeeId: string;
@@ -119,6 +121,7 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ name: 'Engineering', code: 'ENG' });
     deptId = (dept.body as { id: string }).id;
+    organizationId = (dept.body as { organizationId: string }).organizationId;
 
     const deptEmpCreate = await request(app.getHttpServer())
       .post('/employees')
@@ -129,6 +132,7 @@ describe('Documents (e2e)', () => {
         departmentId: deptId,
       });
     const deptEmpBody = deptEmpCreate.body as EmployeeCreateBody;
+    deptEmployeeId = deptEmpBody.employee.id;
     const deptEmpLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -480,7 +484,7 @@ describe('Documents (e2e)', () => {
     }
   });
 
-  it('built-in requirements: name locked, cannot be deleted, but can be marked mandatory or disabled', async () => {
+  it('built-in requirements: cannot be deleted, but can be renamed, marked mandatory, or disabled', async () => {
     const list = await request(app.getHttpServer())
       .get('/documents/requirements')
       .set('Authorization', `Bearer ${hrToken}`)
@@ -490,11 +494,6 @@ describe('Documents (e2e)', () => {
     )!;
     expect(pan.isSystemDefault).toBe(true);
 
-    await request(app.getHttpServer())
-      .patch(`/documents/requirements/${pan.id}`)
-      .set('Authorization', `Bearer ${hrToken}`)
-      .send({ name: 'PAN' })
-      .expect(409);
     await request(app.getHttpServer())
       .delete(`/documents/requirements/${pan.id}`)
       .set('Authorization', `Bearer ${hrToken}`)
@@ -509,6 +508,45 @@ describe('Documents (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .send({ isMandatory: false })
       .expect(200);
+
+    const renamed = await request(app.getHttpServer())
+      .patch(`/documents/requirements/${pan.id}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ name: 'PAN' })
+      .expect(200);
+    expect((renamed.body as RequirementBody).name).toBe('PAN');
+    expect((renamed.body as RequirementBody).isSystemDefault).toBe(true);
+  });
+
+  it('renaming a built-in requirement cascades onto already-uploaded EmployeeDocument rows so they stay matched', async () => {
+    const list = await request(app.getHttpServer())
+      .get('/documents/requirements')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const passport = (list.body as PaginatedBody<RequirementBody>).data.find(
+      (r) => r.name === 'Passport',
+    )!;
+
+    const doc = await prisma.employeeDocument.create({
+      data: {
+        organizationId,
+        employeeId: deptEmployeeId,
+        docType: 'Passport',
+        fileName: 'passport.pdf',
+        fileUrl: 'documents/passport.pdf',
+      },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/documents/requirements/${passport.id}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ name: 'Passport Copy' })
+      .expect(200);
+
+    const updatedDoc = await prisma.employeeDocument.findUniqueOrThrow({
+      where: { id: doc.id },
+    });
+    expect(updatedDoc.docType).toBe('Passport Copy');
   });
 
   it('bulk-import updates isMandatory on an existing (seeded) requirement instead of skipping it', async () => {
@@ -539,9 +577,9 @@ describe('Documents (e2e)', () => {
       .get('/documents/requirements')
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
-    const aadhaarAfter = (after.body as PaginatedBody<RequirementBody>).data.find(
-      (r) => r.name === 'Aadhaar Card',
-    )!;
+    const aadhaarAfter = (
+      after.body as PaginatedBody<RequirementBody>
+    ).data.find((r) => r.name === 'Aadhaar Card')!;
     expect(aadhaarAfter.isMandatory).toBe(true);
   });
 
@@ -621,8 +659,11 @@ describe('Documents (e2e)', () => {
         .get('/documents/policies')
         .set('Authorization', `Bearer ${outsideEmployeeToken}`)
         .expect(200);
-      const body = (res.body as PaginatedBody<PolicyBody & { acknowledgedAt: string | null }>)
-        .data;
+      const body = (
+        res.body as PaginatedBody<
+          PolicyBody & { acknowledgedAt: string | null }
+        >
+      ).data;
       const mine = body.find((p) => p.id === ackPolicyId);
       expect(mine?.acknowledgedAt).not.toBeNull();
     });

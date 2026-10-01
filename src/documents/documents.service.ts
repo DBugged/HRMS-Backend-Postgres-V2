@@ -487,26 +487,39 @@ export class DocumentsService {
     });
     if (!existing)
       throw new NotFoundException('Document requirement not found.');
-    if (
-      existing.isSystemDefault &&
-      dto.name !== undefined &&
-      dto.name.trim() !== existing.name
-    ) {
-      throw new ConflictException(
-        'This is a built-in document — its name cannot be changed.',
-      );
-    }
 
-    await this.scopedPrisma.documentRequirement.updateMany({
-      where: { id, organizationId },
-      data: {
-        ...(dto.name !== undefined && { name: dto.name }),
-        ...(dto.isMandatory !== undefined && { isMandatory: dto.isMandatory }),
-        ...(dto.isActive !== undefined && { isActive: dto.isActive }),
-        ...(dto.displayOrder !== undefined && {
-          displayOrder: dto.displayOrder,
-        }),
-      },
+    // Built-in requirements can still be renamed (e.g. clarifying "Bank
+    // Statement" to "Past 6 Months Bank Statement") — what's actually
+    // protected is isMandatory/isActive/displayOrder staying consistent
+    // across the Bulk Delete/import flows that key off isSystemDefault, not
+    // the display name itself. areMandatoryDocumentsUploaded() matches an
+    // uploaded EmployeeDocument to its requirement by exact docType ===
+    // name string (see personal-data.ts), so a rename must cascade onto
+    // every already-uploaded document's docType in the same transaction —
+    // otherwise an employee who already satisfied the old name would
+    // silently appear to be missing the (renamed) requirement.
+    const renamed = dto.name !== undefined && dto.name.trim() !== existing.name;
+
+    await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.documentRequirement.updateMany({
+        where: { id, organizationId },
+        data: {
+          ...(dto.name !== undefined && { name: dto.name.trim() }),
+          ...(dto.isMandatory !== undefined && {
+            isMandatory: dto.isMandatory,
+          }),
+          ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+          ...(dto.displayOrder !== undefined && {
+            displayOrder: dto.displayOrder,
+          }),
+        },
+      });
+      if (renamed) {
+        await tx.employeeDocument.updateMany({
+          where: { organizationId, docType: existing.name },
+          data: { docType: dto.name!.trim() },
+        });
+      }
     });
 
     if (actorId) {
