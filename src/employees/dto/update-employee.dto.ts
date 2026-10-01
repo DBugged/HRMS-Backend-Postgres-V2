@@ -63,6 +63,14 @@ export class UpdateEmployeeDto {
   @IsUUID()
   workLocationId?: string | null;
 
+  @ApiPropertyOptional({
+    description:
+      'Per-employee, not org-wide: when true, this employee must have an effective work location (own or department) to punch in/out — see AttendanceService.selfPunch. Off by default; turn on for an office-based employee, leave off for remote/field staff.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requireWorkLocationForPunch?: boolean;
+
   // Locked for self-update, AND locked for HR (Admin only) — mirrors the
   // old system exactly: even hr_admin couldn't change designation.
   @ApiPropertyOptional()

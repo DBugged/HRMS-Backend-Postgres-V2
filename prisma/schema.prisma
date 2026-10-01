@@ -465,6 +465,14 @@ model User {
   workLocationId String?
   workLocation   WorkLocation? @relation("EmployeeWorkLocation", fields: [workLocationId], references: [id], onDelete: SetNull)
 
+  // Per-employee, not org-wide: an office-based employee needs a work
+  // location (so the geo-fence actually applies); a remote/field employee
+  // genuinely has none, and that's fine for them specifically. Off by
+  // default — only flips an employee into "must have a location to punch"
+  // once HR explicitly marks them as office-based. See selfPunch in
+  // attendance.service.ts.
+  requireWorkLocationForPunch Boolean @default(false)
+
   reportingManagerId String?
   reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
   subordinates       User[]  @relation("ReportingManager")

@@ -1049,6 +1049,16 @@ export class AttendanceService {
     );
 
     const fence = employee ? effectiveWorkLocation(employee) : null;
+    if (!fence && employee?.requireWorkLocationForPunch) {
+      // Per-employee, not org-wide: an office-based employee is marked
+      // this way so a missing location is a real data gap that blocks
+      // them, not an implicit "exempt from geo-fencing" — a remote/field
+      // employee with this left off still punches from anywhere, same as
+      // before.
+      throw new ForbiddenException(
+        'No work location is assigned to you yet — contact HR before you can punch in/out.',
+      );
+    }
     if (fence && fence.isActive) {
       // WFH-only, and only once approved (see WfhApprovalStatus's comment
       // on the schema) — a self-declared-but-unreviewed WFH day, or any

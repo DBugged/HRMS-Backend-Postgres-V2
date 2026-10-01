@@ -210,6 +210,8 @@ export class EmployeesService {
             role: requestedRole,
             departmentId: dto.departmentId,
             workLocationId: dto.workLocationId ?? undefined,
+            requireWorkLocationForPunch:
+              dto.requireWorkLocationForPunch ?? undefined,
             designation: dto.designation ?? '',
             gradeLevel: dto.gradeLevel ?? '',
             employeeCategory: dto.employeeCategory ?? '',

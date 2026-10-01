@@ -802,6 +802,52 @@ describe('Attendance (e2e)', () => {
         .send({ latitude: FAR_LAT, longitude: FAR_LNG })
         .expect(201);
     });
+
+    it('requireWorkLocationForPunch is per-employee, not org-wide: blocks only the one flagged employee with no location', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${noDeptEmployeeId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ requireWorkLocationForPunch: true })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
+        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .expect(403);
+
+      // A different employee with no location flag set at all is
+      // unaffected — this is per-employee, not a global switch.
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${noDeptEmployeeId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ requireWorkLocationForPunch: false })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
+        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .expect(201);
+    });
+
+    it('a plain employee cannot set requireWorkLocationForPunch on themselves', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${noDeptEmployeeId}`)
+        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
+        .send({ requireWorkLocationForPunch: true })
+        .expect(200);
+      expect(
+        (res.body as { requireWorkLocationForPunch: boolean })
+          .requireWorkLocationForPunch,
+      ).toBe(false);
+    });
   });
 
   describe('GET /attendance/punch/today', () => {

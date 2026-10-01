@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsNotEmpty,
@@ -57,6 +58,14 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsUUID()
   workLocationId?: string | null;
+
+  @ApiPropertyOptional({
+    description:
+      'Per-employee, not org-wide: when true, this employee must have an effective work location (own or department) to punch in/out — see AttendanceService.selfPunch. Off by default; turn on for an office-based employee, leave off for remote/field staff.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requireWorkLocationForPunch?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()
