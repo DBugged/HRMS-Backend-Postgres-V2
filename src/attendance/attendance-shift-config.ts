@@ -64,13 +64,6 @@ export interface OrganizationAttendancePrefs {
   // just mirrors the same "org default, department can override" shape
   // every other attendance preference already has.
   defaultCrossesMidnight?: boolean;
-  // Off by default (existing behavior: no work location/department
-  // location assigned = no geo-fence enforced = punch from anywhere).
-  // When on, selfPunch refuses an employee with no effective work location
-  // at all, instead of silently letting them punch unrestricted — closes
-  // the gap where "forgetting" to assign a location doubles as "exempt
-  // this person from geo-fencing." See selfPunch in attendance.service.ts.
-  requireWorkLocationForPunch?: boolean;
 }
 
 const HARDCODED_FALLBACK: ShiftConfig = {

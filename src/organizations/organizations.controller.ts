@@ -121,21 +121,6 @@ export class OrganizationsController {
     );
   }
 
-  // Own narrow ADMIN/HR-scoped read (same reasoning as auto-approval above)
-  // — Add/Edit Employee needs to know whether Work Location is mandatory,
-  // without HR also getting the rest of Organization Settings via the
-  // broad ADMIN-only settings/:section route below. Declared before that
-  // route's `:section` wildcard so `settings/attendance-policy` matches
-  // here first.
-  @Get('settings/attendance-policy')
-  @Roles(Role.ADMIN, Role.HR)
-  @UseGuards(RolesGuard)
-  getAttendancePolicySettings(@CurrentUser() caller: Caller) {
-    return this.organizationSettingsService.getAttendancePolicySettings(
-      caller.organizationId,
-    );
-  }
-
   // Body shape varies per section (flat strings for some, full JSON blobs
   // for others) — real whitelisting happens server-side in
   // OrganizationSettingsService against SECTION_FIELDS, same as the old

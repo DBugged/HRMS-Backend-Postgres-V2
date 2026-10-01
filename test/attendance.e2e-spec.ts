@@ -802,46 +802,6 @@ describe('Attendance (e2e)', () => {
         .send({ latitude: FAR_LAT, longitude: FAR_LNG })
         .expect(201);
     });
-
-    it('requireWorkLocationForPunch blocks that same no-location employee once turned on, and un-blocks them once off again', async () => {
-      await request(app.getHttpServer())
-        .patch('/organizations/settings/policies')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          orgPayrollAttendancePrefs: { requireWorkLocationForPunch: true },
-        })
-        .expect(200);
-
-      await request(app.getHttpServer())
-        .post('/attendance/punch/self')
-        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
-        .expect(403);
-
-      // An employee who does have a department (and that department's own
-      // geo-fence) is unaffected either way — this setting only closes the
-      // "no location at all" gap, it doesn't change geo-fence enforcement
-      // itself.
-      await request(app.getHttpServer())
-        .post('/attendance/punch/self')
-        .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
-        .expect(201);
-
-      await request(app.getHttpServer())
-        .patch('/organizations/settings/policies')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          orgPayrollAttendancePrefs: { requireWorkLocationForPunch: false },
-        })
-        .expect(200);
-
-      await request(app.getHttpServer())
-        .post('/attendance/punch/self')
-        .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
-        .expect(201);
-    });
   });
 
   describe('GET /attendance/punch/today', () => {
@@ -2210,11 +2170,7 @@ describe('Attendance (e2e)', () => {
       // right at shift end — exercising recalculateAttendanceForDay again,
       // same as a regularization approval would.
       await prisma.punch.updateMany({
-        where: {
-          employeeId,
-          organizationId,
-          punchTime: new Date(`${date}T19:15:00.000Z`),
-        },
+        where: { employeeId, organizationId, punchTime: new Date(`${date}T19:15:00.000Z`) },
         data: { punchTime: new Date(`${date}T18:30:00.000Z`) },
       });
       await attendanceService.recalculateAttendanceForDay(
@@ -2319,10 +2275,7 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({
-          employeeId: remEmployeeId,
-          punchTime: new Date(now.getTime() - 60 * 60000).toISOString(),
-        })
+        .send({ employeeId: remEmployeeId, punchTime: new Date(now.getTime() - 60 * 60000).toISOString() })
         .expect(201);
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')

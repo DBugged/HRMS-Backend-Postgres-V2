@@ -85,7 +85,6 @@ const ATTENDANCE_PREFS_KEYS = [
   'defaultMinHoursForHalfDay',
   'weekendDays',
   'defaultBreakMinutes',
-  'requireWorkLocationForPunch',
 ] as const;
 
 const SECTION_FIELDS: Record<string, string[]> = {
@@ -293,21 +292,6 @@ export class OrganizationSettingsService {
     });
 
     return this.getAutoApprovalSettings(organizationId);
-  }
-
-  // Own narrow ADMIN/HR-scoped read (same reasoning as above) — Add/Edit
-  // Employee's Work Location field reads this to decide whether to require
-  // a selection. No dedicated update method: the existing ADMIN-only
-  // updateSection('policies', ...) already writes requireWorkLocationForPunch
-  // as part of orgPayrollAttendancePrefs (see PayrollAttendanceStep.tsx).
-  async getAttendancePolicySettings(organizationId: string) {
-    const org = await this.findOrThrow(organizationId);
-    const prefs = org.orgPayrollAttendancePrefs as {
-      requireWorkLocationForPunch?: boolean;
-    } | null;
-    return {
-      requireWorkLocationForPunch: !!prefs?.requireWorkLocationForPunch,
-    };
   }
 
   // Stored URL fields hold durable relativeKeys (never signed URLs — see

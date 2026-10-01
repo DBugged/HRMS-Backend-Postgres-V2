@@ -1049,25 +1049,6 @@ export class AttendanceService {
     );
 
     const fence = employee ? effectiveWorkLocation(employee) : null;
-    if (!fence) {
-      // No work location of their own, and no department-level default
-      // either — by default this just means "no geo-fence to check," so
-      // the punch goes through unrestricted (e.g. a genuinely remote org).
-      // An org that wants every employee's location assignment to be
-      // mandatory (not an implicit "exempt from geo-fencing") turns this
-      // on instead of leaving it to be discovered as a gap later.
-      const org = await this.prisma.organization.findUnique({
-        where: { id: organizationId },
-        select: { attendancePayrollPrefs: true },
-      });
-      const prefs =
-        org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
-      if (prefs?.requireWorkLocationForPunch) {
-        throw new ForbiddenException(
-          'No work location is assigned to you yet — contact HR before you can punch in/out.',
-        );
-      }
-    }
     if (fence && fence.isActive) {
       // WFH-only, and only once approved (see WfhApprovalStatus's comment
       // on the schema) — a self-declared-but-unreviewed WFH day, or any
