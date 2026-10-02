@@ -13,10 +13,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AllocationType, LeaveType, Prisma } from '@prisma/client';
+import {
+  AccrualFrequency,
+  AllocationType,
+  LeaveType,
+  Prisma,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
+import {
+  accruesPerCycle,
+  computeAccrualPerCycle,
+} from '../leave-balances/leave-balance-math';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
@@ -137,12 +146,45 @@ export class LeaveTypesService {
     }
   }
 
+  // Quota-based types: always annualQuota ÷ cycles per year — any
+  // client-sent per-cycle value is ignored. Credited by each Run Accrual when
+  // the frequency isn't Yearly; with Yearly the quota is granted upfront
+  // instead (see accruesPerCycle). Unlimited / None keep whatever was sent
+  // (unused for them).
+  private resolveAccrualAmountPerCycle(
+    allocationType: AllocationType,
+    annualQuota: number,
+    accrualFrequency: AccrualFrequency,
+    requested: number,
+  ): number {
+    if (
+      allocationType === AllocationType.FIXED_ANNUAL ||
+      allocationType === AllocationType.PRORATED_ON_JOINING
+    ) {
+      return computeAccrualPerCycle(annualQuota, accrualFrequency);
+    }
+    if (allocationType !== AllocationType.EARNED_MONTHLY) return requested;
+    if (!(annualQuota > 0)) {
+      throw new BadRequestException(
+        'Annual Quota is required for Earned (Accrued) leave types — the amount credited each cycle is calculated from it.',
+      );
+    }
+    return computeAccrualPerCycle(annualQuota, accrualFrequency);
+  }
+
   async create(
     dto: CreateLeaveTypeDto,
     organizationId: string,
     createdById: string,
   ) {
     await this.assertNoDuplicate(organizationId, dto.name, dto.code);
+    // Same fallbacks as the schema's own column defaults.
+    const accrualAmountPerCycle = this.resolveAccrualAmountPerCycle(
+      dto.allocationType ?? AllocationType.FIXED_ANNUAL,
+      dto.annualQuota ?? 0,
+      dto.accrualFrequency ?? AccrualFrequency.YEARLY,
+      dto.accrualAmountPerCycle ?? 0,
+    );
 
     return this.scopedPrisma.leaveType.create({
       data: {
@@ -156,7 +198,7 @@ export class LeaveTypesService {
         allocationType: dto.allocationType,
         annualQuota: dto.annualQuota ?? 0,
         accrualFrequency: dto.accrualFrequency,
-        accrualAmountPerCycle: dto.accrualAmountPerCycle ?? 0,
+        accrualAmountPerCycle,
         prorateOnJoining: dto.prorateOnJoining ?? true,
         applicableDepartments: dto.applicableDepartments ?? [],
         applicableEmployeeTypes: dto.applicableEmployeeTypes ?? [],
@@ -225,6 +267,23 @@ export class LeaveTypesService {
       id,
     );
 
+    // Recomputed whenever any of its inputs is part of this edit (the web
+    // form always sends all of them); an unrelated edit (e.g. rename) leaves
+    // the stored value alone.
+    const accrualInputsTouched =
+      dto.allocationType !== undefined ||
+      dto.annualQuota !== undefined ||
+      dto.accrualFrequency !== undefined ||
+      dto.accrualAmountPerCycle !== undefined;
+    const accrualAmountPerCycle = accrualInputsTouched
+      ? this.resolveAccrualAmountPerCycle(
+          dto.allocationType ?? existing.allocationType,
+          dto.annualQuota ?? existing.annualQuota,
+          dto.accrualFrequency ?? existing.accrualFrequency,
+          dto.accrualAmountPerCycle ?? existing.accrualAmountPerCycle,
+        )
+      : undefined;
+
     // Quota-affecting edits must reach existing balance rows too (they're
     // only computed at row-creation time) — done in the same transaction so
     // the quota change and the balance reconciliation are atomic.
@@ -234,7 +293,10 @@ export class LeaveTypesService {
       (dto.allocationType !== undefined &&
         dto.allocationType !== existing.allocationType) ||
       (dto.prorateOnJoining !== undefined &&
-        dto.prorateOnJoining !== existing.prorateOnJoining);
+        dto.prorateOnJoining !== existing.prorateOnJoining) ||
+      // Yearly ⇄ other frequencies switches between upfront and per-cycle.
+      (dto.accrualFrequency !== undefined &&
+        dto.accrualFrequency !== existing.accrualFrequency);
 
     await this.scopedPrisma.$transaction(async (tx) => {
       await tx.leaveType.updateMany({
@@ -260,9 +322,7 @@ export class LeaveTypesService {
           ...(dto.accrualFrequency !== undefined && {
             accrualFrequency: dto.accrualFrequency,
           }),
-          ...(dto.accrualAmountPerCycle !== undefined && {
-            accrualAmountPerCycle: dto.accrualAmountPerCycle,
-          }),
+          ...(accrualAmountPerCycle !== undefined && { accrualAmountPerCycle }),
           ...(dto.prorateOnJoining !== undefined && {
             prorateOnJoining: dto.prorateOnJoining,
           }),
@@ -378,6 +438,17 @@ export class LeaveTypesService {
 
   async runAccrual(id: string, actorId: string, organizationId: string) {
     const leaveType = await this.findByIdOrThrow(id, organizationId);
+    if (!accruesPerCycle(leaveType)) {
+      return {
+        message:
+          'This leave type is granted upfront (Accrual Frequency is Yearly) — there is nothing to accrue. Pick Quarterly, Monthly, etc. to credit it each cycle instead.',
+        matched: 0,
+        employeesProcessed: 0,
+        credited: 0,
+        alreadyAccrued: 0,
+        totalDaysCredited: 0,
+      };
+    }
     const { matched, credited, alreadyAccrued, totalDaysCredited } =
       await this.leaveBalanceService.creditAccrual(id, organizationId);
     await this.auditLogService.log({
@@ -423,20 +494,28 @@ export class LeaveTypesService {
   // skipped rather than aborting the rest, same resilience as the daily
   // cron sweep.
   async runAccrualAll(actorId: string, organizationId: string) {
-    const leaveTypes = await this.scopedPrisma.leaveType.findMany({
-      where: {
-        organizationId,
-        isActive: true,
-        allocationType: {
-          in: [
-            AllocationType.FIXED_ANNUAL,
-            AllocationType.PRORATED_ON_JOINING,
-            AllocationType.EARNED_MONTHLY,
-          ],
+    const leaveTypes = await this.scopedPrisma.leaveType
+      .findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          allocationType: {
+            in: [
+              AllocationType.FIXED_ANNUAL,
+              AllocationType.PRORATED_ON_JOINING,
+              AllocationType.EARNED_MONTHLY,
+            ],
+          },
         },
-      },
-      select: { id: true, code: true },
-    });
+        select: {
+          id: true,
+          code: true,
+          allocationType: true,
+          accrualFrequency: true,
+        },
+      })
+      // Yearly types are granted upfront, not accrued.
+      .then((types) => types.filter(accruesPerCycle));
 
     let totalCredited = 0;
     let totalAlreadyAccrued = 0;
@@ -456,7 +535,7 @@ export class LeaveTypesService {
 
     const message =
       leaveTypes.length === 0
-        ? 'No leave type is set up for accrual.'
+        ? 'No leave type to accrue — every active type has a Yearly Accrual Frequency, so it is granted upfront.'
         : failed.length > 0
           ? `Accrual run for ${leaveTypes.length - failed.length}/${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total. Failed: ${failed.join(', ')}.`
           : `Accrual run for ${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total${totalAlreadyAccrued > 0 ? `, ${totalAlreadyAccrued} already up to date` : ''}.`;

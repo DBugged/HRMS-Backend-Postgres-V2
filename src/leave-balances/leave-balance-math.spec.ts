@@ -1,5 +1,7 @@
 import { AccrualFrequency, AllocationType } from '@prisma/client';
 import {
+  accruesPerCycle,
+  computeAccrualPerCycle,
   computeAccrualPeriodKey,
   computeCarriedInExpiry,
   computeCarryOut,
@@ -253,5 +255,76 @@ describe('cyclesSinceJoining', () => {
         new Date(Date.UTC(2026, 0, 1)),
       ),
     ).toBe(1);
+  });
+});
+
+describe('computeAccrualPerCycle', () => {
+  it('splits the annual quota evenly across each frequency', () => {
+    expect(computeAccrualPerCycle(6, AccrualFrequency.QUARTERLY)).toBe(1.5);
+    expect(computeAccrualPerCycle(6, AccrualFrequency.MONTHLY)).toBe(0.5);
+    expect(computeAccrualPerCycle(6, AccrualFrequency.BI_MONTHLY)).toBe(1);
+    expect(computeAccrualPerCycle(6, AccrualFrequency.HALF_YEARLY)).toBe(3);
+    expect(computeAccrualPerCycle(6, AccrualFrequency.YEARLY)).toBe(6);
+    expect(computeAccrualPerCycle(15, AccrualFrequency.MONTHLY)).toBe(1.25);
+  });
+
+  it('rounds an uneven split to 2 decimals', () => {
+    expect(computeAccrualPerCycle(10, AccrualFrequency.MONTHLY)).toBe(0.83);
+  });
+});
+
+describe('accruesPerCycle', () => {
+  it('Fixed Annual / Prorated: upfront when Yearly, per cycle otherwise', () => {
+    for (const allocationType of [
+      AllocationType.FIXED_ANNUAL,
+      AllocationType.PRORATED_ON_JOINING,
+    ]) {
+      expect(
+        accruesPerCycle({
+          allocationType,
+          accrualFrequency: AccrualFrequency.YEARLY,
+        }),
+      ).toBe(false);
+      expect(
+        accruesPerCycle({
+          allocationType,
+          accrualFrequency: AccrualFrequency.QUARTERLY,
+        }),
+      ).toBe(true);
+    }
+  });
+
+  it('legacy Earned always accrues; Unlimited / None never do', () => {
+    expect(
+      accruesPerCycle({
+        allocationType: AllocationType.EARNED_MONTHLY,
+        accrualFrequency: AccrualFrequency.YEARLY,
+      }),
+    ).toBe(true);
+    expect(accruesPerCycle({ allocationType: AllocationType.UNLIMITED })).toBe(
+      false,
+    );
+    expect(accruesPerCycle({ allocationType: AllocationType.NONE })).toBe(
+      false,
+    );
+  });
+
+  it('a per-cycle Fixed Annual type gets nothing upfront (no double credit)', () => {
+    const quarterly = {
+      allocationType: AllocationType.FIXED_ANNUAL,
+      annualQuota: 6,
+      prorateOnJoining: false,
+      accrualFrequency: AccrualFrequency.QUARTERLY,
+    };
+    expect(computeUpfrontCredit(quarterly, new Date('2020-01-01'), 2026)).toBe(
+      0,
+    );
+    expect(
+      computeUpfrontCredit(
+        { ...quarterly, accrualFrequency: AccrualFrequency.YEARLY },
+        new Date('2020-01-01'),
+        2026,
+      ),
+    ).toBe(6);
   });
 });

@@ -10,14 +10,42 @@ export interface UpfrontCreditLeaveType {
   allocationType: AllocationType;
   annualQuota: number;
   prorateOnJoining: boolean;
+  // Omitted = YEARLY (upfront), for callers/tests that predate it.
+  accrualFrequency?: AccrualFrequency;
+}
+
+// Whether a leave type is credited cycle by cycle (by creditAccrual / Run
+// Accrual) rather than granted upfront. The rule HR sees on the form:
+//   - Accrual Frequency = Yearly → whole annual quota upfront.
+//   - Any other frequency → nothing upfront; each accrual run credits
+//     annualQuota ÷ cycles per year (6 quarterly → 1.5 per quarter).
+// EARNED_MONTHLY (legacy "Earned") always accrues; UNLIMITED / NONE never.
+// Exactly one of upfront / per-cycle applies, so a type can't be credited
+// twice (6 upfront + 4 × 1.5 = 12).
+export function accruesPerCycle(leaveType: {
+  allocationType: AllocationType;
+  accrualFrequency?: AccrualFrequency;
+}): boolean {
+  if (leaveType.allocationType === AllocationType.EARNED_MONTHLY) return true;
+  if (
+    leaveType.allocationType === AllocationType.FIXED_ANNUAL ||
+    leaveType.allocationType === AllocationType.PRORATED_ON_JOINING
+  ) {
+    return (
+      (leaveType.accrualFrequency ?? AccrualFrequency.YEARLY) !==
+      AccrualFrequency.YEARLY
+    );
+  }
+  return false;
 }
 
 // Mirrors ensureBalanceRow's credited calculation exactly:
-//   - EARNED_MONTHLY: starts at 0, only grows via creditAccrual runs.
-//   - FIXED_ANNUAL / PRORATED_ON_JOINING: grants annualQuota upfront,
-//     prorated if the employee joined in the same calendar year as the
-//     balance AND (allocationType is PRORATED_ON_JOINING OR the type's
-//     prorateOnJoining flag is set).
+//   - Types that accrue per cycle (see accruesPerCycle): starts at 0, only
+//     grows via creditAccrual runs.
+//   - FIXED_ANNUAL / PRORATED_ON_JOINING with Yearly frequency: grants
+//     annualQuota upfront, prorated if the employee joined in the same
+//     calendar year as the balance AND (allocationType is
+//     PRORATED_ON_JOINING OR the type's prorateOnJoining flag is set).
 //   - UNLIMITED / NONE: no balance-row credit (callers short-circuit
 //     before this is invoked at all, same as the old system).
 export function computeUpfrontCredit(
@@ -25,7 +53,7 @@ export function computeUpfrontCredit(
   joiningDate: Date,
   balanceYear: number,
 ): number {
-  if (leaveType.allocationType === AllocationType.EARNED_MONTHLY) return 0;
+  if (accruesPerCycle(leaveType)) return 0;
   if (
     leaveType.allocationType !== AllocationType.FIXED_ANNUAL &&
     leaveType.allocationType !== AllocationType.PRORATED_ON_JOINING
@@ -46,6 +74,44 @@ export function computeUpfrontCredit(
   return (
     Math.round(((leaveType.annualQuota * remainingMonths) / 12) * 100) / 100
   );
+}
+
+export const ACCRUAL_CYCLES_PER_YEAR: Record<AccrualFrequency, number> = {
+  [AccrualFrequency.YEARLY]: 1,
+  [AccrualFrequency.HALF_YEARLY]: 2,
+  [AccrualFrequency.QUARTERLY]: 4,
+  [AccrualFrequency.BI_MONTHLY]: 6,
+  [AccrualFrequency.MONTHLY]: 12,
+};
+
+// Per-cycle amount for every quota-based type, derived from the annual quota
+// instead of HR typing it separately — the two used to drift apart (quota 6 +
+// 2/quarter silently granted 8 a year). Only credited for types that accrue
+// per cycle (see accruesPerCycle). Rounded to 2 decimals, same as every
+// other credited amount; a quota that doesn't divide evenly (10 / 12) totals
+// slightly under the quota (9.96).
+export function computeAccrualPerCycle(
+  annualQuota: number,
+  frequency: AccrualFrequency,
+): number {
+  return (
+    Math.round((annualQuota / ACCRUAL_CYCLES_PER_YEAR[frequency]) * 100) / 100
+  );
+}
+
+// What each accrual cycle actually credits: quota ÷ cycles for Fixed Annual /
+// Prorated (computed, never a stored value an older form may have typed by
+// hand); legacy Earned types keep their stored per-cycle amount (some predate
+// annualQuota being used for them at all).
+export function accrualCreditPerCycle(leaveType: {
+  allocationType: AllocationType;
+  annualQuota: number;
+  accrualFrequency: AccrualFrequency;
+  accrualAmountPerCycle: number;
+}): number {
+  return leaveType.allocationType === AllocationType.EARNED_MONTHLY
+    ? leaveType.accrualAmountPerCycle
+    : computeAccrualPerCycle(leaveType.annualQuota, leaveType.accrualFrequency);
 }
 
 // Identifies "which accrual cycle does `asOf` fall in" for a given
