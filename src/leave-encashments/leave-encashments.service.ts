@@ -45,6 +45,7 @@ import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 
 type Actor = Omit<User, 'password'>;
 
@@ -121,6 +122,22 @@ export class LeaveEncashmentsService {
     );
   }
 
+  // Company-wide switch (Organization Settings → Policies) overrides every
+  // leave type's own Encashment setting while it's off. Blocks new requests
+  // and approvals; an already-approved request can still be marked
+  // Processed (paid), and pending ones wait until it's switched back on.
+  private async assertOrgAllowsEncashment(organizationId: string) {
+    const { allowLeaveEncashment } = await getOrgLeaveSwitches(
+      this.scopedPrisma,
+      organizationId,
+    );
+    if (!allowLeaveEncashment) {
+      throw new BadRequestException(
+        'Leave encashment is turned off for the whole organization.',
+      );
+    }
+  }
+
   async request(
     dto: RequestLeaveEncashmentDto,
     actor: Actor,
@@ -131,6 +148,7 @@ export class LeaveEncashmentsService {
     });
     if (!leaveType) throw new NotFoundException('Leave type not found.');
 
+    await this.assertOrgAllowsEncashment(organizationId);
     const rule = (leaveType.encashment ?? {}) as EncashmentRule;
     if (!rule.allowed) {
       throw new BadRequestException(
@@ -262,6 +280,10 @@ export class LeaveEncashmentsService {
     // this endpoint drives (see ReviewLeaveEncashmentDto). Required so the
     // guarded update below only matches a row that's actually eligible
     // for the requested transition.
+    if (dto.status === LeaveEncashmentStatus.APPROVED) {
+      await this.assertOrgAllowsEncashment(organizationId);
+    }
+
     const requiredCurrentStatus: LeaveEncashmentStatus =
       dto.status === LeaveEncashmentStatus.APPROVED
         ? LeaveEncashmentStatus.PENDING

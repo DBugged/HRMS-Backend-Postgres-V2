@@ -20,6 +20,7 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isEligible } from './leave-eligibility';
+import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 import {
   accrualCreditPerCycle,
   accruesPerCycle,
@@ -507,7 +508,15 @@ export class LeaveBalanceService {
   async runYearEndCarryForward(
     year: number,
     organizationId: string,
-  ): Promise<{ processed: number }> {
+  ): Promise<{ processed: number; disabledByOrg?: boolean }> {
+    // Company-wide switch (Organization Settings → Policies) overrides every
+    // leave type's own Carry Forward setting while it's off.
+    const { allowCarryForward } = await getOrgLeaveSwitches(
+      this.scopedPrisma,
+      organizationId,
+    );
+    if (!allowCarryForward) return { processed: 0, disabledByOrg: true };
+
     const leaveTypes = await this.scopedPrisma.leaveType.findMany({
       where: { organizationId, isActive: true },
     });

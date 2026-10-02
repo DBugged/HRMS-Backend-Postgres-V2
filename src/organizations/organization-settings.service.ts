@@ -46,6 +46,7 @@ import {
   previewDocumentNumber,
   type DocumentNumberingEntry,
 } from './document-numbering';
+import { readOrgLeaveSwitches } from './org-leave-switches';
 
 type Actor = Omit<User, 'password'>;
 
@@ -394,6 +395,10 @@ export class OrganizationSettingsService {
       // payload — same rationale as defaultNoticeDays/enableTaxDeclaration
       // above.
       autoCarryForwardEnabled: !!policies.autoCarryForwardEnabled,
+      // Company-wide leave switches (see org-leave-switches.ts) — the Leave
+      // Types form greys out each section when its switch is off, and the
+      // employee encashment screens (web + mobile) hide the request form.
+      ...readOrgLeaveSwitches(org.policies),
       // Org's configured IANA timezone (defaults to Asia/Kolkata — see the
       // Organization schema). Needed client-side wherever a user enters a
       // wall-clock time that must be converted to UTC before being sent to

@@ -554,10 +554,16 @@ export class LeaveTypesService {
     organizationId: string,
   ) {
     const year = dto.year ?? new Date().getFullYear();
-    const { processed } = await this.leaveBalanceService.runYearEndCarryForward(
-      year,
-      organizationId,
-    );
+    const { processed, disabledByOrg } =
+      await this.leaveBalanceService.runYearEndCarryForward(
+        year,
+        organizationId,
+      );
+    if (disabledByOrg) {
+      throw new BadRequestException(
+        'Carry forward is turned off for the whole organization (Organization Settings → Policies).',
+      );
+    }
     await this.auditLogService.log({
       actorId,
       action: 'LEAVE_CARRYFORWARD_RUN',

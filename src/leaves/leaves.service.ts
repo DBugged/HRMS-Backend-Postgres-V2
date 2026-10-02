@@ -64,6 +64,7 @@ import {
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
 import { todayInOrgTz } from '../common/org-date';
+import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 
 type Actor = Omit<User, 'password'>;
 
@@ -987,8 +988,15 @@ export class LeavesService {
 
       if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
         const year = deriveLeaveYear(dto.startDate);
-        const negativeBalance =
-          leaveType.negativeBalance as unknown as NegativeBalanceRule;
+        // Company-wide switch (Organization Settings → Policies) overrides
+        // the leave type's own Allow Negative Balance while it's off.
+        const { allowNegativeLeaveBalance } = await getOrgLeaveSwitches(
+          tx,
+          organizationId,
+        );
+        const negativeBalance: NegativeBalanceRule = allowNegativeLeaveBalance
+          ? (leaveType.negativeBalance as unknown as NegativeBalanceRule)
+          : { allowed: false, maxNegativeDays: 0 };
         const row = await this.leaveBalanceService.ensureBalanceRow(
           tx,
           actor.id,

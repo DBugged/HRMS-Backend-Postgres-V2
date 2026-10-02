@@ -184,11 +184,15 @@ function validatePolicies(p: Record<string, unknown>) {
       bad(`policies.${key} must be a string.`);
     }
   }
-  if (
-    p.autoCarryForwardEnabled !== undefined &&
-    typeof p.autoCarryForwardEnabled !== 'boolean'
-  ) {
-    bad('policies.autoCarryForwardEnabled must be true or false.');
+  for (const key of [
+    'autoCarryForwardEnabled',
+    'allowCarryForward',
+    'allowLeaveEncashment',
+    'allowNegativeLeaveBalance',
+  ]) {
+    if (p[key] !== undefined && typeof p[key] !== 'boolean') {
+      bad(`policies.${key} must be true or false.`);
+    }
   }
 }
 
