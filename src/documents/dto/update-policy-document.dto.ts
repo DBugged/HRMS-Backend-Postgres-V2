@@ -43,4 +43,9 @@ export class UpdatePolicyDocumentDto {
   @IsOptional()
   @IsBoolean()
   isPublished?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  requiresAcknowledgment?: boolean;
 }

@@ -43,6 +43,15 @@ export class CreatePolicyDocumentDto {
   @IsBoolean()
   isPublished?: boolean;
 
+  @ApiPropertyOptional({
+    default: false,
+    description:
+      'Whether employees must e-acknowledge this document. Inherited from the previous version when replacesId is set.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  requiresAcknowledgment?: boolean;
+
   @ApiPropertyOptional({ enum: PolicyVisibility })
   @IsOptional()
   @IsEnum(PolicyVisibility)

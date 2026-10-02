@@ -2432,6 +2432,11 @@ model PolicyDocument {
 
   isPublished Boolean @default(true)
 
+  // Only documents HR flags (compliance policies — Code of Conduct, POSH, IT
+  // Acceptable Use, ...) ask employees to e-acknowledge; everything else is
+  // view/download only. Carried over to each new version.
+  requiresAcknowledgment Boolean @default(false)
+
   uploadedById String?
   uploadedBy   User?   @relation("PolicyDocumentUploadedBy", fields: [uploadedById], references: [id])
 

@@ -165,10 +165,32 @@ export class DocumentsService {
       myAcks.map((a) => [a.policyDocumentId, a.acknowledgedAt]),
     );
 
+    // HR/Admin's compliance glance — how many people have signed each
+    // document, again one grouped query for the list. Returned for every
+    // document (not just acknowledgment-required ones): a document whose flag
+    // was later turned off can still hold signatures, which blocks deletion.
+    const ackCounts =
+      isHr && visible.length
+        ? await this.scopedPrisma.policyDocumentAcknowledgment.groupBy({
+            by: ['policyDocumentId'],
+            where: {
+              organizationId,
+              policyDocumentId: { in: visible.map((p) => p.id) },
+            },
+            _count: { _all: true },
+          })
+        : [];
+    const ackCountByPolicyId = new Map(
+      ackCounts.map((c) => [c.policyDocumentId, c._count._all]),
+    );
+
     return wrapAll(
       visible.map((p) => ({
         ...this.withSignedUrl(p),
         acknowledgedAt: ackByPolicyId.get(p.id) ?? null,
+        ...(isHr
+          ? { acknowledgmentCount: ackCountByPolicyId.get(p.id) ?? 0 }
+          : {}),
       })),
     );
   }
@@ -191,6 +213,11 @@ export class DocumentsService {
     if (!policy.isPublished) {
       throw new BadRequestException(
         'This document version has been retired and can no longer be acknowledged.',
+      );
+    }
+    if (!policy.requiresAcknowledgment) {
+      throw new BadRequestException(
+        'This document does not require acknowledgment.',
       );
     }
     if (!HR_ROLES.includes(actor.role) && !this.canView(policy, actor)) {
@@ -290,6 +317,10 @@ export class DocumentsService {
         fileUrl: dto.fileUrl,
         fileName: dto.fileName,
         isPublished: dto.isPublished ?? true,
+        requiresAcknowledgment:
+          dto.requiresAcknowledgment ??
+          previousVersion?.requiresAcknowledgment ??
+          false,
         uploadedById: actor.id,
         visibility:
           dto.visibility ??
@@ -379,6 +410,9 @@ export class DocumentsService {
           visibleEmployees: dto.visibleEmployees,
         }),
         ...(dto.isPublished !== undefined && { isPublished: dto.isPublished }),
+        ...(dto.requiresAcknowledgment !== undefined && {
+          requiresAcknowledgment: dto.requiresAcknowledgment,
+        }),
       },
     });
 
@@ -404,6 +438,19 @@ export class DocumentsService {
       where: { id, organizationId },
     });
     if (!policy) throw new NotFoundException('Policy not found.');
+
+    // Acknowledgments are compliance evidence (who signed which version,
+    // when, from where) — never silently cascade-delete them. Checked before
+    // the stored file is removed so a rejected delete leaves everything intact.
+    const acknowledgmentCount =
+      await this.scopedPrisma.policyDocumentAcknowledgment.count({
+        where: { organizationId, policyDocumentId: id },
+      });
+    if (acknowledgmentCount > 0) {
+      throw new ConflictException(
+        `This document has been acknowledged by ${acknowledgmentCount} ${acknowledgmentCount === 1 ? 'employee' : 'employees'} and can't be deleted — unpublish it instead.`,
+      );
+    }
 
     // Only remove the file if it's one we actually stored (a relative
     // storage key), never an external URL someone pasted in.
