@@ -580,7 +580,14 @@ export class DashboardService {
       this.scopedPrisma.leaveBalance.findMany({
         where: { organizationId, employeeId: actor.id, year: currentYear },
         include: {
-          leaveType: { select: { name: true, code: true, color: true } },
+          leaveType: {
+            select: {
+              name: true,
+              code: true,
+              color: true,
+              countInTotalBalance: true,
+            },
+          },
         },
       }),
       this.compOffService.available(actor.id, organizationId),

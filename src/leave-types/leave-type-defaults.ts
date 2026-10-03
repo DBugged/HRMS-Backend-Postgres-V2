@@ -22,6 +22,7 @@ export interface LeaveTypeDefault {
   applicableEmployeeTypes?: string[];
   minServiceMonths?: number;
   documentsRequired?: boolean;
+  countInTotalBalance?: boolean;
   documentRequiredAfterDays?: number;
   rules: Record<string, unknown>;
   carryForward?: {
@@ -143,6 +144,7 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   },
   {
     code: 'ML',
+    countInTotalBalance: false,
     name: 'Maternity Leave',
     description: 'Statutory maternity leave (Maternity Benefit Act).',
     color: '#ec4899',
@@ -158,6 +160,7 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   },
   {
     code: 'PTL',
+    countInTotalBalance: false,
     name: 'Paternity Leave',
     description: 'Leave for new fathers.',
     color: '#0ea5e9',
@@ -172,6 +175,7 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   },
   {
     code: 'ADL',
+    countInTotalBalance: false,
     name: 'Adoption Leave',
     description: 'Leave following the legal adoption of a child.',
     color: '#a855f7',
@@ -186,6 +190,7 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   },
   {
     code: 'BL',
+    countInTotalBalance: false,
     name: 'Bereavement Leave',
     description: 'Leave following the death of an immediate family member.',
     color: '#64748b',
@@ -204,6 +209,7 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   },
   {
     code: 'MRL',
+    countInTotalBalance: false,
     name: 'Marriage Leave',
     description: "Leave for the employee's own wedding.",
     color: '#f43f5e',
@@ -217,6 +223,7 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
   },
   {
     code: 'STL',
+    countInTotalBalance: false,
     name: 'Study Leave',
     description: 'Leave for academic/professional courses or exams.',
     color: '#14b8a6',

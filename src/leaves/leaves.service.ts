@@ -254,6 +254,8 @@ export class LeavesService {
           // employee (leaveType.encashment is on the Prisma row already in
           // scope below, just wasn't carried through).
           encashment: Prisma.JsonValue;
+          // Profiles/dashboards sum only types with this on.
+          countInTotalBalance: boolean;
         };
       })[] = [];
       for (const leaveType of balanceEligible) {
@@ -271,6 +273,7 @@ export class LeavesService {
             name: leaveType.name,
             code: leaveType.code,
             encashment: leaveType.encashment,
+            countInTotalBalance: leaveType.countInTotalBalance,
           },
         });
       }

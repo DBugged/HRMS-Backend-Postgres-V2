@@ -1006,6 +1006,11 @@ model LeaveType {
   rules Json @default("{\"minDurationDays\":0.5,\"maxDurationDays\":null,\"noticePeriodDays\":0,\"allowBackdated\":false,\"maxBackdateDays\":0,\"allowFutureDated\":true,\"maxAdvanceDays\":null,\"allowHalfDay\":true,\"sandwichLeaveApplies\":false,\"restrictPrefixSuffixHoliday\":false,\"maxConsecutiveDays\":null,\"minGapBetweenRequestsDays\":0}")
 
   documentsRequired         Boolean @default(false)
+  // Whether this type's balance counts toward the "Total Leave Balance" /
+  // dashboard "Leave Balance" figures. Off for one-off, event-based leave
+  // (Maternity, Paternity, Adoption, Bereavement, Marriage, Study) so the
+  // total reflects leave an employee can actually spend any time.
+  countInTotalBalance       Boolean @default(true)
   documentRequiredAfterDays Float?
 
   carryForward    Json @default("{\"allowed\":false,\"maxDays\":0,\"expiryMonths\":null}")

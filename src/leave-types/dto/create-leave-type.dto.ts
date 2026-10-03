@@ -165,6 +165,15 @@ export class CreateLeaveTypeDto {
   @IsBoolean()
   documentsRequired?: boolean;
 
+  @ApiPropertyOptional({
+    default: true,
+    description:
+      'Whether this balance counts toward the profile/dashboard total leave balance.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  countInTotalBalance?: boolean;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()

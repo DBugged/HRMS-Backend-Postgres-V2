@@ -215,6 +215,7 @@ export class LeaveTypesService {
           rules: dto.rules as unknown as Prisma.InputJsonValue,
         }),
         documentsRequired: dto.documentsRequired ?? false,
+        countInTotalBalance: dto.countInTotalBalance ?? true,
         documentRequiredAfterDays: dto.documentRequiredAfterDays,
         ...(dto.carryForward !== undefined && {
           carryForward: dto.carryForward as unknown as Prisma.InputJsonValue,
@@ -364,6 +365,9 @@ export class LeaveTypesService {
           }),
           ...(dto.documentsRequired !== undefined && {
             documentsRequired: dto.documentsRequired,
+          }),
+          ...(dto.countInTotalBalance !== undefined && {
+            countInTotalBalance: dto.countInTotalBalance,
           }),
           ...(dto.documentRequiredAfterDays !== undefined && {
             documentRequiredAfterDays: dto.documentRequiredAfterDays,
