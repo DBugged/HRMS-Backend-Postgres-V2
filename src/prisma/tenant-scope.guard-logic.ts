@@ -40,6 +40,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'AttendanceImportBatch',
   'OvertimeRecord',
   'PerformanceRating',
+  'CompanyPerformance',
   'LeaveEncashment',
   'PayrollRun',
   'Reimbursement',

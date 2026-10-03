@@ -178,4 +178,11 @@ export class UpdatePayrollSettingsDto {
   @Min(1)
   @Max(10)
   otNightRate?: number;
+
+  // Scale variable pay by the company's achievement % and hold it until that
+  // % is entered (Payroll Settings > Company Performance).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  companyPerformanceEnabled?: boolean;
 }

@@ -126,6 +126,9 @@ interface PayrollLine {
   name: string;
   amount: number;
   taxable?: boolean;
+  // Variable pay scaled by company performance: how the amount was worked
+  // out, printed in small type under the line.
+  note?: string;
 }
 
 interface YtdTotals {
@@ -1065,6 +1068,13 @@ export class PayslipPdfService {
         });
       }
       ry += rowH;
+      if (r.note) {
+        doc.font(fonts.regular).fontSize(5.6).fillColor(INK_400);
+        text(this.fitText(doc, r.note, nameColW + amtColW), x + 4, ry - 3, {
+          width: nameColW + amtColW,
+        });
+        ry += 6;
+      }
     }
 
     doc

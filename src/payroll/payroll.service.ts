@@ -70,6 +70,15 @@ import {
   type OverlaidSettings,
 } from './statutory-overlay';
 import {
+  cycleKeyOf,
+  describeVariablePay,
+  parseCycleKey,
+  pendingHolds,
+  pickCompanyPercent,
+  releasedKeys,
+  type HeldVariablePay,
+} from './variable-pay';
+import {
   computeAttendanceSummary,
   payableDaysInRange,
   type AttendanceSummary,
@@ -185,6 +194,11 @@ interface ResolvedLine {
   // loan id on LOAN_EMI). Persisted with the line so afterLock() settles
   // exactly what the locked payslip actually contains — see afterLock().
   sourceIds?: string[];
+  // Variable pay scaled by company performance: how the amount was worked
+  // out ("12000 × 80% company × 110% individual"), and — on a payout released
+  // after being held — the original payout month ("2027-03") it settles.
+  note?: string;
+  cycleKey?: string;
 }
 
 export interface CalculatedPayroll {
@@ -195,6 +209,8 @@ export interface CalculatedPayroll {
     amount: number;
     taxable?: boolean;
     sourceIds?: string[];
+    note?: string;
+    cycleKey?: string;
   }[];
   deductions: {
     code: string;
@@ -219,6 +235,9 @@ export interface CalculatedPayroll {
   netPay: number;
   ctcMonthly: number;
   financialYear: string;
+  // Variable pay not paid this run because the company performance % isn't
+  // entered yet — see variable-pay.ts.
+  heldVariablePay: HeldVariablePay[];
 }
 
 type StatutoryEnabledKey =
@@ -577,8 +596,10 @@ export class PayrollService {
     );
 
     // Variable Pay — a non-monthly earning is scaled by the employee's
-    // PerformanceRating.payoutPercentage for this financial year. No
-    // rating on file -> 100% (unscaled).
+    // PerformanceRating.payoutPercentage for this financial year (no rating
+    // on file -> 100%) and, when Company Performance is enabled, also by the
+    // company's achievement % — held until that % is entered. See
+    // applyVariablePay and variable-pay.ts.
     const variableEarningCodes = new Set(
       earningsResults
         .filter(
@@ -587,28 +608,24 @@ export class PayrollService {
         )
         .map((l) => l.code),
     );
-    if (variableEarningCodes.size > 0) {
-      const perfRating = await this.scopedPrisma.performanceRating.findFirst({
-        where: {
-          organizationId,
-          employeeId,
-          financialYear,
-          status: 'APPROVED',
-        },
+    const { held: heldVariablePay, released: releasedVariableLines } =
+      await this.applyVariablePay({
+        organizationId,
+        employeeId,
+        departmentId: employee.departmentId,
+        month,
+        year,
+        financialYear,
+        enabled: settingsRow.companyPerformanceEnabled,
+        roundingRule: settings.roundingRule,
+        roundingDecimals: settings.roundingDecimals,
+        earningsResults,
+        variableEarningCodes,
+        allComponents,
+        overrideRows,
+        baseContext,
+        roundAmount,
       });
-      const payoutFactor = perfRating ? perfRating.payoutPercentage / 100 : 1;
-      if (payoutFactor !== 1) {
-        for (const line of earningsResults) {
-          if (variableEarningCodes.has(line.code)) {
-            line.amount = round(
-              line.amount * payoutFactor,
-              settings.roundingRule,
-              settings.roundingDecimals,
-            );
-          }
-        }
-      }
-    }
 
     // Any approved-but-not-yet-processed leave encashment gets folded in
     // as an earning line — stays APPROVED (not PROCESSED) until the run
@@ -627,7 +644,10 @@ export class PayrollService {
       (s, r) => s + r.amount,
       0,
     );
-    const rawEarningsLines: ResolvedLine[] = [...earningsResults];
+    const rawEarningsLines: ResolvedLine[] = [
+      ...earningsResults,
+      ...releasedVariableLines,
+    ];
     if (encashmentAmount > 0) {
       rawEarningsLines.push({
         code: 'LEAVE_ENCASHMENT',
@@ -916,6 +936,8 @@ export class PayrollService {
         amount: e.amount,
         taxable: e.taxable,
         ...(e.sourceIds ? { sourceIds: e.sourceIds } : {}),
+        ...(e.note ? { note: e.note } : {}),
+        ...(e.cycleKey ? { cycleKey: e.cycleKey } : {}),
       })),
       deductions: includedDeductions.map((d) => ({
         code: d.code,
@@ -939,6 +961,7 @@ export class PayrollService {
       netPay,
       ctcMonthly,
       financialYear,
+      heldVariablePay,
     };
     // Last line of defence: never hand back a snapshot that would save (and
     // later pay) NaN/Infinity. Thrown as a per-employee error so it lands in
@@ -1129,6 +1152,8 @@ export class PayrollService {
           taxDetails: calc.taxDetails
             ? (calc.taxDetails as unknown as Prisma.InputJsonValue)
             : Prisma.JsonNull,
+          heldVariablePay:
+            calc.heldVariablePay as unknown as Prisma.InputJsonValue,
           grossSalary: calc.grossSalary,
           taxableGross: calc.taxableGross,
           totalDeductions: calc.totalDeductions,
@@ -1506,6 +1531,10 @@ export class PayrollService {
       data.taxDetails = recalculated.taxDetails
         ? (recalculated.taxDetails as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull;
+      // A manual LOP correction re-runs the whole engine, so which variable
+      // pay is on hold can change with it (see applyVariablePay).
+      data.heldVariablePay =
+        recalculated.heldVariablePay as unknown as Prisma.InputJsonValue;
     }
 
     await this.scopedPrisma.payrollRun.updateMany({
@@ -2435,6 +2464,183 @@ export class PayrollService {
     return recurringResults
       .filter((l) => l.taxable !== false)
       .reduce((s, l) => s + roundAmount(l.amount), 0);
+  }
+
+  // Scales variable (non-monthly) earnings and handles company-performance
+  // holds/releases. With Company Performance off this is exactly the old
+  // behaviour: scale by the approved individual payout % and nothing else.
+  // With it on:
+  //   Variable pay = Target x Company achievement % x Individual payout %
+  // The department's % wins over the company-wide one. If no % is entered for
+  // the financial year, the variable lines are removed from this run and
+  // recorded as held; a later run pays them (stamped with the cycle they
+  // settle, so a hold is never paid twice) once the % exists.
+  private async applyVariablePay(a: {
+    organizationId: string;
+    employeeId: string;
+    departmentId: string | null;
+    month: number;
+    year: number;
+    financialYear: string;
+    enabled: boolean;
+    roundingRule: string;
+    roundingDecimals: number;
+    earningsResults: ResolvedLine[];
+    variableEarningCodes: Set<string>;
+    allComponents: SalaryComponent[];
+    overrideRows: EmployeeSalaryComponent[];
+    baseContext: Record<string, number>;
+    roundAmount: (n: number) => number;
+  }): Promise<{ held: HeldVariablePay[]; released: ResolvedLine[] }> {
+    const held: HeldVariablePay[] = [];
+    const released: ResolvedLine[] = [];
+    const rate = (n: number) => round(n, a.roundingRule, a.roundingDecimals);
+
+    const individualPercentFor = async (fy: string): Promise<number> => {
+      const rating = await this.scopedPrisma.performanceRating.findFirst({
+        where: {
+          organizationId: a.organizationId,
+          employeeId: a.employeeId,
+          financialYear: fy,
+          status: 'APPROVED',
+        },
+      });
+      return rating ? rating.payoutPercentage : 100;
+    };
+
+    if (!a.enabled) {
+      if (a.variableEarningCodes.size === 0) return { held, released };
+      const factor = (await individualPercentFor(a.financialYear)) / 100;
+      if (factor !== 1) {
+        for (const line of a.earningsResults) {
+          if (a.variableEarningCodes.has(line.code)) {
+            line.amount = rate(line.amount * factor);
+          }
+        }
+      }
+      return { held, released };
+    }
+
+    const companyPercentFor = async (fy: string) => {
+      const rows = await this.scopedPrisma.companyPerformance.findMany({
+        where: {
+          organizationId: a.organizationId,
+          financialYear: fy,
+          OR: [
+            { departmentId: null },
+            ...(a.departmentId ? [{ departmentId: a.departmentId }] : []),
+          ],
+        },
+        select: { departmentId: true, achievementPercent: true },
+      });
+      return pickCompanyPercent(rows, a.departmentId);
+    };
+
+    // Other months' runs: what's already been paid out, and what's on hold.
+    // This month's own run is excluded so recalculating it never counts its
+    // own earlier lines as a release.
+    const otherRuns = (
+      await this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId: a.organizationId,
+          employeeId: a.employeeId,
+          year: { gte: a.year - 2 },
+        },
+        select: {
+          month: true,
+          year: true,
+          earnings: true,
+          heldVariablePay: true,
+        },
+      })
+    ).filter((r) => !(r.month === a.month && r.year === a.year));
+    const paidKeys = releasedKeys(otherRuns);
+    const thisCycle = cycleKeyOf(a.month, a.year);
+
+    // 1) This month's variable lines.
+    if (a.variableEarningCodes.size > 0) {
+      const picked = await companyPercentFor(a.financialYear);
+      const individualPercent = await individualPercentFor(a.financialYear);
+      for (let i = a.earningsResults.length - 1; i >= 0; i--) {
+        const line = a.earningsResults[i];
+        if (!a.variableEarningCodes.has(line.code)) continue;
+        if (paidKeys.has(`${line.code}|${thisCycle}`)) {
+          // Held earlier and already paid by a later run — not paid again
+          // here. The hold stays recorded on this run: it is what lets that
+          // later run keep (re)paying it when it is recalculated.
+          held.push({
+            code: line.code,
+            name: line.name,
+            cycleKey: thisCycle,
+            financialYear: a.financialYear,
+          });
+          a.earningsResults.splice(i, 1);
+        } else if (!picked) {
+          held.push({
+            code: line.code,
+            name: line.name,
+            cycleKey: thisCycle,
+            financialYear: a.financialYear,
+          });
+          a.earningsResults.splice(i, 1);
+        } else {
+          const target = line.amount;
+          line.amount = rate(
+            target * (picked.percent / 100) * (individualPercent / 100),
+          );
+          line.note = describeVariablePay(
+            target,
+            picked.percent,
+            individualPercent,
+            picked.scope,
+          );
+        }
+      }
+    }
+
+    // 2) Earlier holds that can now be paid.
+    for (const entry of pendingHolds(otherRuns, a.month, a.year, paidKeys)) {
+      const cycle = parseCycleKey(entry.cycleKey);
+      const component = a.allComponents.find(
+        (c) => c.code === entry.code && c.isActive,
+      );
+      if (!cycle || !component) continue;
+      const picked = await companyPercentFor(entry.financialYear);
+      if (!picked) continue;
+      // The component's amount as it stood at the end of the held month.
+      const atCycle = new Map<string, EmployeeSalaryComponent>(
+        resolveCurrentRows(
+          a.overrideRows,
+          lastDayOfMonth(cycle.month, cycle.year),
+        ).map((r) => [r.componentCode, r]),
+      );
+      const line = this.resolveGroup(
+        [component],
+        atCycle,
+        a.baseContext,
+        1,
+        a.roundAmount,
+      ).results[0];
+      if (!line || !(line.amount > 0)) continue;
+      const individualPercent = await individualPercentFor(entry.financialYear);
+      released.push({
+        code: entry.code,
+        name: `${entry.name} (FY ${entry.financialYear})`,
+        amount: rate(
+          line.amount * (picked.percent / 100) * (individualPercent / 100),
+        ),
+        taxable: line.taxable,
+        cycleKey: entry.cycleKey,
+        note: describeVariablePay(
+          line.amount,
+          picked.percent,
+          individualPercent,
+          picked.scope,
+        ),
+      });
+    }
+
+    return { held, released };
   }
 
   private isApplicable(

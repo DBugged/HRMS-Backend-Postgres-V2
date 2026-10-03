@@ -39,6 +39,7 @@ function baseSettings(
     otHolidayRate: 2,
     otWeekendRate: 2,
     otNightRate: 1.75,
+    companyPerformanceEnabled: false,
     updatedById: null,
     createdAt: new Date(),
     updatedAt: new Date(),

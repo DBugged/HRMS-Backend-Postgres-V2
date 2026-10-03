@@ -250,6 +250,7 @@ model Organization {
   attendanceImportBatches  AttendanceImportBatch[]
   overtimeRecords          OvertimeRecord[]
   performanceRatings       PerformanceRating[]
+  companyPerformance       CompanyPerformance[]
   leaveEncashments         LeaveEncashment[]
   payrollRuns              PayrollRun[]
   reimbursements           Reimbursement[]
@@ -342,6 +343,8 @@ model Department {
   // status/duration. See attendance-shift-config.ts and
   // AttendanceService.recalculateAttendanceForDay.
   crossesMidnight          Boolean @default(false)
+
+  companyPerformance CompanyPerformance[]
   // Defaults to 0 (not WorkSchedule's own 60) so existing departments'
   // attendance calculation is unaffected until a schedule is actually
   // assigned — see attendance-shift-config.ts's resolveShiftConfig and
@@ -1323,6 +1326,11 @@ model PayrollSettings {
   otWeekendRate Float @default(2)
   otNightRate   Float @default(1.75)
 
+  // When on, variable (non-monthly) pay is also scaled by the company's
+  // achievement % for the financial year (CompanyPerformance) and HELD until
+  // HR/Admin enters it. Off by default so existing orgs pay as before.
+  companyPerformanceEnabled Boolean @default(false)
+
   updatedById String?
   updatedBy   User?   @relation(fields: [updatedById], references: [id])
 
@@ -1946,6 +1954,11 @@ model PayrollRun {
   employerContributions Json  @default("[]")
   // Full taxDetails shape from taxEngine.calculateTax (see tax-engine.ts).
   taxDetails            Json?
+  // Variable-pay components not paid in this run because the company
+  // performance % for their financial year isn't entered yet:
+  // [{ code, name, cycleKey: "2027-03", financialYear }]. A later run pays
+  // them once it exists (see PayrollService.calculatePayroll).
+  heldVariablePay       Json  @default("[]")
 
   grossSalary                Float  @default(0)
   // Sum of the taxable earning lines — the month's income-tax base, summed
@@ -3338,4 +3351,32 @@ enum SelfieRequirement {
   DEFAULT
   REQUIRED
   NOT_REQUIRED
+}
+
+// Company-wide (departmentId null) or per-department achievement % for a
+// financial year — multiplies variable pay (Target x Company % x Individual
+// payout %). While PayrollSettings.companyPerformanceEnabled is on, variable
+// pay is held until a row exists. Department row wins over the company row.
+model CompanyPerformance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  financialYear String
+  departmentId  String?
+  department    Department? @relation(fields: [departmentId], references: [id])
+
+  achievementPercent Float
+  notes              String @default("")
+
+  createdById String?
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Postgres treats NULLs as distinct, so the company-wide row's uniqueness
+  // (departmentId null) is enforced in CompanyPerformanceService.
+  @@unique([organizationId, financialYear, departmentId])
+  @@index([organizationId, financialYear])
+  @@map("company_performance")
 }
