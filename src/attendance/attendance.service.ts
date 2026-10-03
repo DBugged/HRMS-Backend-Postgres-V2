@@ -90,6 +90,7 @@ import {
   yesterdayInOrgTz,
   dayRangeInOrgTz,
 } from '../common/org-date';
+import { isSelfieRequired } from '../common/selfie-requirement';
 
 type Actor = Omit<User, 'password'>;
 // Either the plain scoped client or a $transaction callback's tx client —
@@ -1047,6 +1048,26 @@ export class AttendanceService {
       punchTime,
       selfShiftConfig,
     );
+
+    // Selfie at check-in/out: the employee's own setting, else the org's
+    // (common/selfie-requirement.ts). Enforced here, not just in the app, so
+    // a punch can't skip it when it's required.
+    if (!dto.selfieUrl?.trim()) {
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { orgPayrollAttendancePrefs: true },
+      });
+      if (
+        isSelfieRequired(
+          employee?.selfieRequirement,
+          org?.orgPayrollAttendancePrefs,
+        )
+      ) {
+        throw new BadRequestException(
+          'A selfie is required to check in or out.',
+        );
+      }
+    }
 
     const fence = employee ? effectiveWorkLocation(employee) : null;
     if (!fence && employee?.requireWorkLocationForPunch) {

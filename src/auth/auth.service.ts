@@ -52,6 +52,7 @@ import {
   LOGIN_MAX_FAILED_ATTEMPTS,
   LOGIN_LOCKOUT_MINUTES,
 } from './auth.constants';
+import { isSelfieRequired } from '../common/selfie-requirement';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // 30 minutes — matches the old system's window exactly.
@@ -517,6 +518,16 @@ export class AuthService {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
     const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
       user;
+    // Whether this user must take a selfie to check in/out (their own
+    // setting, else the org's) — the mobile app uses it to skip the camera.
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { orgPayrollAttendancePrefs: true },
+    });
+    const selfieRequired = isSelfieRequired(
+      user.selfieRequirement,
+      org?.orgPayrollAttendancePrefs,
+    );
     // profileImage is a durable relativeKey (never a signed URL — see
     // file-token.ts), so it's signed fresh on every read. This is what
     // AuthContext's `user` (and so the header avatar) holds for the whole
@@ -531,7 +542,7 @@ export class AuthService {
         safe.organizationId,
       ) as unknown as typeof safe.personalData;
     }
-    return safe;
+    return { ...safe, selfieRequired };
   }
 
   // Never reveals whether the email exists — same response either way.

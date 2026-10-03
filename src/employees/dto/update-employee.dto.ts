@@ -10,7 +10,12 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-import { EmploymentStatus, Gender, Role } from '@prisma/client';
+import {
+  EmploymentStatus,
+  Gender,
+  Role,
+  SelfieRequirement,
+} from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 import { NormalizeEmail, Trim } from '../../common/normalize-input';
 
@@ -70,6 +75,12 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsBoolean()
   requireWorkLocationForPunch?: boolean;
+
+  // HR/Admin only (see employee-field-lock.ts).
+  @ApiPropertyOptional({ enum: SelfieRequirement })
+  @IsOptional()
+  @IsEnum(SelfieRequirement)
+  selfieRequirement?: SelfieRequirement;
 
   // Locked for self-update, AND locked for HR (Admin only) — mirrors the
   // old system exactly: even hr_admin couldn't change designation.

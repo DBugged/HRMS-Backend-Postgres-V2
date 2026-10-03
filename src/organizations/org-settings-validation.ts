@@ -230,6 +230,12 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       );
     }
   }
+  if (
+    p.requireSelfieForPunch !== undefined &&
+    typeof p.requireSelfieForPunch !== 'boolean'
+  ) {
+    bad(`${path('requireSelfieForPunch')} must be true or false.`);
+  }
 }
 
 function validateDocumentNumbering(n: Record<string, unknown>) {

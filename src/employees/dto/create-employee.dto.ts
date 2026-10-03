@@ -10,7 +10,7 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-import { Gender, Role } from '@prisma/client';
+import { Gender, Role, SelfieRequirement } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 import { NormalizeEmail, Trim } from '../../common/normalize-input';
 
@@ -66,6 +66,16 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsBoolean()
   requireWorkLocationForPunch?: boolean;
+
+  @ApiPropertyOptional({
+    enum: SelfieRequirement,
+    default: SelfieRequirement.DEFAULT,
+    description:
+      'Selfie at check-in/out: DEFAULT follows the org setting; REQUIRED / NOT_REQUIRED override it for this employee.',
+  })
+  @IsOptional()
+  @IsEnum(SelfieRequirement)
+  selfieRequirement?: SelfieRequirement;
 
   @ApiPropertyOptional()
   @IsOptional()

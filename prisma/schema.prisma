@@ -472,6 +472,11 @@ model User {
   // once HR explicitly marks them as office-based. See selfPunch in
   // attendance.service.ts.
   requireWorkLocationForPunch Boolean @default(false)
+  // Whether this employee must take a selfie to check in/out: DEFAULT
+  // follows the org's orgPayrollAttendancePrefs.requireSelfieForPunch;
+  // REQUIRED / NOT_REQUIRED override it either way (e.g. field staff).
+  // See common/selfie-requirement.ts.
+  selfieRequirement SelfieRequirement @default(DEFAULT)
 
   reportingManagerId String?
   reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
@@ -3325,4 +3330,12 @@ model AssetDocument {
 
   @@index([organizationId, assetId])
   @@map("asset_documents")
+}
+
+// Per-employee override of the org-wide "Require selfie at check-in /
+// check-out" setting (User.selfieRequirement).
+enum SelfieRequirement {
+  DEFAULT
+  REQUIRED
+  NOT_REQUIRED
 }

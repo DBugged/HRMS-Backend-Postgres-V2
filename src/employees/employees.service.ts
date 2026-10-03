@@ -28,6 +28,7 @@ import {
   OrgListType,
   Prisma,
   Role,
+  SelfieRequirement,
   User,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -73,6 +74,18 @@ const MAX_MANAGER_CHAIN_HOPS = 100;
 // bulkCreate()'s Excel rows carry Gender as a human-typed label (or the
 // raw enum value), same reasoning as role/employeeType's name-matching
 // below — this resolves either form case-insensitively.
+// Bulk import's optional "Selfie at Punch" column (blank = follow the org
+// setting). Accepts the label or the raw enum value.
+const SELFIE_LABELS = new Map<string, SelfieRequirement>([
+  ['company setting', SelfieRequirement.DEFAULT],
+  ['use company setting', SelfieRequirement.DEFAULT],
+  ['default', SelfieRequirement.DEFAULT],
+  ['required', SelfieRequirement.REQUIRED],
+  ['always required', SelfieRequirement.REQUIRED],
+  ['not required', SelfieRequirement.NOT_REQUIRED],
+  ['not_required', SelfieRequirement.NOT_REQUIRED],
+]);
+
 const GENDER_LABELS = new Map<string, Gender>([
   ['male', Gender.MALE],
   ['female', Gender.FEMALE],
@@ -212,6 +225,7 @@ export class EmployeesService {
             workLocationId: dto.workLocationId ?? undefined,
             requireWorkLocationForPunch:
               dto.requireWorkLocationForPunch ?? undefined,
+            selfieRequirement: dto.selfieRequirement ?? undefined,
             designation: dto.designation ?? '',
             gradeLevel: dto.gradeLevel ?? '',
             employeeCategory: dto.employeeCategory ?? '',
@@ -473,6 +487,7 @@ export class EmployeesService {
       contactNumber?: unknown;
       gender?: unknown;
       joiningDate?: unknown;
+      selfieAtPunch?: unknown;
       personalEmail?: unknown;
       department?: unknown;
       employeeCategory?: unknown;
@@ -580,6 +595,17 @@ export class EmployeesService {
         });
         return;
       }
+      const selfieInput = asString(row.selfieAtPunch).trim();
+      const selfieRequirement = selfieInput
+        ? SELFIE_LABELS.get(selfieInput.toLowerCase())
+        : SelfieRequirement.DEFAULT;
+      if (!selfieRequirement) {
+        failed.push({
+          row,
+          error: `Selfie at Punch "${selfieInput}" is not valid. Use one of: Company setting, Required, Not required (or leave blank).`,
+        });
+        return;
+      }
       // Mirrors the manual "Add Employee" form, which requires these same
       // five fields — personalEmail is also what makes the welcome email
       // actually go out for bulk-imported rows (it was previously never
@@ -659,6 +685,7 @@ export class EmployeesService {
             contactNumber: contactNumber || undefined,
             gender,
             joiningDate: joiningDate || undefined,
+            selfieRequirement,
             role,
             employeeType: employeeType.value,
           },
