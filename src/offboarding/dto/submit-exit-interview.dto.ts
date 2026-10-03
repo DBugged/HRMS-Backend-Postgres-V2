@@ -1,29 +1,22 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
-  IsIn,
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
   Min,
 } from 'class-validator';
 
-export const REASONS_FOR_LEAVING = [
-  'Better Opportunity',
-  'Compensation',
-  'Career Growth',
-  'Relocation',
-  'Personal Reasons',
-  'Work Environment',
-  'Health',
-  'Other',
-] as const;
-
 export class SubmitExitInterviewDto {
-  @ApiProperty({ enum: REASONS_FOR_LEAVING })
-  @IsIn(REASONS_FOR_LEAVING)
-  reasonForLeaving!: (typeof REASONS_FOR_LEAVING)[number];
+  // One of the org's active "Reason for Leaving" list items (OrgListItem,
+  // type REASON_FOR_LEAVING) — checked against that list in
+  // OffboardingService.submitExitInterview.
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  reasonForLeaving!: string;
 
   @ApiProperty({ minimum: 1, maximum: 5 })
   @IsInt()

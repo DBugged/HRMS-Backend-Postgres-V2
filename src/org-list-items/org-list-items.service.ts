@@ -35,6 +35,20 @@ export const BUILTIN_EMPLOYEE_CATEGORIES = [
 // "Specify Asset" field whenever the selected category is named exactly
 // this, so it must exist (and, being isSystemDefault, can't be renamed out
 // from under that check).
+// Offboarding exit interview's "Reason for Leaving" starting list (the
+// values that used to be hardcoded). Seeded as ordinary items — not
+// isSystemDefault — so HR can rename or delete any of them.
+export const DEFAULT_REASONS_FOR_LEAVING = [
+  'Better Opportunity',
+  'Compensation',
+  'Career Growth',
+  'Relocation',
+  'Personal Reasons',
+  'Work Environment',
+  'Health',
+  'Other',
+];
+
 export const BUILTIN_ASSET_CATEGORIES = [
   'Laptop',
   'Desktop',
@@ -87,6 +101,15 @@ export class OrgListItemsService {
           type: OrgListType.ASSET_CATEGORY,
           name,
           isSystemDefault: true,
+        },
+      });
+    }
+    for (const name of DEFAULT_REASONS_FOR_LEAVING) {
+      await tx.orgListItem.create({
+        data: {
+          organizationId,
+          type: OrgListType.REASON_FOR_LEAVING,
+          name,
         },
       });
     }

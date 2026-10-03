@@ -22,6 +22,7 @@ import {
   LeaveStatus,
   NotificationCategory,
   OffboardingStatus,
+  OrgListType,
   Prisma,
   SettlementStatus,
   User,
@@ -292,6 +293,22 @@ export class OffboardingService {
     organizationId: string,
   ) {
     const record = await this.assertOpenCase(id, organizationId);
+
+    // Reasons are org-configurable (Organization → Reasons for Leaving).
+    const reason = await this.scopedPrisma.orgListItem.findFirst({
+      where: {
+        organizationId,
+        type: OrgListType.REASON_FOR_LEAVING,
+        name: dto.reasonForLeaving,
+        isActive: true,
+      },
+      select: { id: true },
+    });
+    if (!reason) {
+      throw new BadRequestException(
+        'Select a reason from the Reasons for Leaving list.',
+      );
+    }
 
     const data: Prisma.OffboardingCaseUpdateManyMutationInput = {
       exitInterviewResponses: {

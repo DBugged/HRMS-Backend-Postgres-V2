@@ -2541,6 +2541,9 @@ enum OrgListType {
   // own. The one difference: Asset.categoryId is a real FK here, where the
   // other three types are copied onto the Employee row as plain strings.
   ASSET_CATEGORY
+  // Offboarding exit interview's "Reason for Leaving" options — seeded with
+  // the previously hardcoded list, then fully editable per org.
+  REASON_FOR_LEAVING
 }
 
 // Simple org-scoped named lists (Designations, Grades/Levels, Employee
