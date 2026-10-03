@@ -80,7 +80,7 @@ import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { RATE_MULTIPLIERS } from '../overtime/overtime.service';
+import { getOvertimeRates } from '../overtime/overtime.service';
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
@@ -700,7 +700,7 @@ export class AttendanceService {
           ? OvertimeType.WEEKEND
           : OvertimeType.REGULAR;
     const hours = Math.round((overshootMinutes / 60) * 100) / 100;
-    const rateMultiplier = RATE_MULTIPLIERS[type];
+    const rateMultiplier = (await getOvertimeRates(db, organizationId))[type];
 
     if (existingAuto) {
       if (existingAuto.status !== OvertimeStatus.PENDING) return;

@@ -149,4 +149,33 @@ export class UpdatePayrollSettingsDto {
   @Min(0)
   @Max(3650)
   compOffExpiryDays?: number;
+
+  // Overtime multipliers (1 = plain hourly rate, up to 10x).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(10)
+  otRegularRate?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(10)
+  otHolidayRate?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(10)
+  otWeekendRate?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  @Max(10)
+  otNightRate?: number;
 }

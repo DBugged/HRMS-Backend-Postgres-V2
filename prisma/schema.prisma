@@ -1305,6 +1305,14 @@ model PayrollSettings {
   gratuityRate      Float @default(4.81)
   compOffExpiryDays Int   @default(90)
 
+  // Overtime pay multipliers by type — applied when an overtime record is
+  // logged or auto-suggested (stored on the record, so changing these only
+  // affects new records). Defaults are the previously hardcoded rates.
+  otRegularRate Float @default(1.5)
+  otHolidayRate Float @default(2)
+  otWeekendRate Float @default(2)
+  otNightRate   Float @default(1.75)
+
   updatedById String?
   updatedBy   User?   @relation(fields: [updatedById], references: [id])
 

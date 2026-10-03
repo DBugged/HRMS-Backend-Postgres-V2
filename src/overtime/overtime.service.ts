@@ -45,15 +45,40 @@ import {
 
 type Actor = Omit<User, 'password'>;
 
-// Derived server-side from `type`, never client-supplied. Exported so
-// AttendanceService's punch-out auto-suggestion (recalculateAttendanceForDay)
-// can compute the same rate without injecting the whole OvertimeService.
+// Fallback multipliers, used only when the org has no PayrollSettings row yet
+// — same values as that table's column defaults.
 export const RATE_MULTIPLIERS: Record<OvertimeType, number> = {
   [OvertimeType.REGULAR]: 1.5,
   [OvertimeType.HOLIDAY]: 2,
   [OvertimeType.WEEKEND]: 2,
   [OvertimeType.NIGHT]: 1.75,
 };
+
+// The org's overtime multipliers from Payroll Settings. Derived server-side
+// from `type`, never client-supplied. Exported so AttendanceService's
+// punch-out auto-suggestion uses the same rates without injecting the whole
+// OvertimeService.
+export async function getOvertimeRates(
+  db: Pick<Prisma.TransactionClient, 'payrollSettings'>,
+  organizationId: string,
+): Promise<Record<OvertimeType, number>> {
+  const s = await db.payrollSettings.findFirst({
+    where: { organizationId },
+    select: {
+      otRegularRate: true,
+      otHolidayRate: true,
+      otWeekendRate: true,
+      otNightRate: true,
+    },
+  });
+  if (!s) return RATE_MULTIPLIERS;
+  return {
+    [OvertimeType.REGULAR]: s.otRegularRate,
+    [OvertimeType.HOLIDAY]: s.otHolidayRate,
+    [OvertimeType.WEEKEND]: s.otWeekendRate,
+    [OvertimeType.NIGHT]: s.otNightRate,
+  };
+}
 
 function monthRange(month: number, year: number): { from: string; to: string } {
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -125,7 +150,9 @@ export class OvertimeService {
         date: dto.date,
         hours: dto.hours,
         type,
-        rateMultiplier: RATE_MULTIPLIERS[type],
+        rateMultiplier: (
+          await getOvertimeRates(this.scopedPrisma, organizationId)
+        )[type],
       },
     });
 
@@ -150,6 +177,12 @@ export class OvertimeService {
     });
 
     return record;
+  }
+
+  // Current multipliers for each overtime type, so the log form can show
+  // them (e.g. "Holiday (2x)") instead of hardcoding them client-side.
+  getRates(organizationId: string) {
+    return getOvertimeRates(this.scopedPrisma, organizationId);
   }
 
   async findAll(query: QueryOvertimeDto, actor: Actor, organizationId: string) {

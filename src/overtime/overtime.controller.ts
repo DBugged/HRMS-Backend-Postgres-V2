@@ -29,6 +29,12 @@ type Caller = Omit<User, 'password'>;
 export class OvertimeController {
   constructor(private readonly overtimeService: OvertimeService) {}
 
+  // No @Roles() — the org's overtime multipliers, for the log form.
+  @Get('rates')
+  getRates(@CurrentUser() caller: Caller) {
+    return this.overtimeService.getRates(caller.organizationId);
+  }
+
   // No @Roles() — any authenticated caller can view (self-scoped for
   // EMPLOYEE, service-side).
   @Get()
