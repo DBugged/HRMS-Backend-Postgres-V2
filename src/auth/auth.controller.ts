@@ -30,6 +30,7 @@ import {
   REFRESH_COOKIE_PATH,
   REFRESH_TOKEN_TTL_DAYS,
 } from './auth.constants';
+import { publicPasswordPolicy } from '../common/password-policy';
 
 // Overridable per-environment — the e2e suite logs in far more than 5
 // times/minute against a single in-memory app instance as normal test
@@ -40,6 +41,15 @@ const AUTH_THROTTLE_LIMIT = Number(process.env.AUTH_THROTTLE_LIMIT ?? 5);
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  // Public: the password rules (length limits + common-password list) the
+  // server enforces, so the web and mobile checklists match it exactly —
+  // needed before login too (register, reset password).
+  @Public()
+  @Get('password-policy')
+  passwordPolicy() {
+    return publicPasswordPolicy();
+  }
 
   // 5/min per IP on every brute-force-able auth route — tighter than the
   // app-wide default (100/min, see app.module.ts), since these are the

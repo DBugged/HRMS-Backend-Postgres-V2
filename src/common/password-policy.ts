@@ -10,6 +10,9 @@ import {
 export const PASSWORD_MIN_LENGTH = 10;
 export const PASSWORD_MAX_LENGTH = 128;
 
+// Rejected when the password, or the password with trailing digits/symbols
+// stripped, matches one of these. Served to web/mobile via
+// GET /auth/password-policy so their checklists apply the exact same list.
 const COMMON_PASSWORDS = new Set([
   'password',
   'passw0rd',
@@ -24,6 +27,42 @@ const COMMON_PASSWORDS = new Set([
   'admin',
   'iloveyou',
   'changeme',
+  'password1',
+  'password12',
+  'password123',
+  'password1234',
+  'password123!',
+  'p@ssw0rd',
+  'p@ssword1',
+  'password@123',
+  'password#123',
+  'qwerty123',
+  'qwerty12345',
+  'welcome1',
+  'welcome123',
+  'admin123',
+  'admin1234',
+  'administrator',
+  'monkey',
+  'dragon',
+  'abcd1234',
+  '123456',
+  '1234567',
+  '12345678910',
+  '111111',
+  '000000',
+  'changeme123',
+  'football',
+  'baseball',
+  'master',
+  'login',
+  'princess',
+  'sunshine',
+  'trustno1',
+  'hrms',
+  'hrms123',
+  'india123',
+  'test1234',
 ]);
 
 /**
@@ -59,6 +98,16 @@ export function validatePasswordPolicy(
   if (name && name.length >= 4 && !/\s/.test(name) && lower.includes(name))
     problems.push('not contain your name');
   return problems;
+}
+
+// Public, non-secret description of the policy — the web and mobile apps
+// load it so their live checklists match what the server will enforce.
+export function publicPasswordPolicy() {
+  return {
+    minLength: PASSWORD_MIN_LENGTH,
+    maxLength: PASSWORD_MAX_LENGTH,
+    commonPasswords: [...COMMON_PASSWORDS],
+  };
 }
 
 export function passwordPolicyMessage(problems: string[]): string {
