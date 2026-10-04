@@ -1263,28 +1263,63 @@ export class AttendanceService {
     });
   }
 
-  // Same ported-against-reportingManagerId reasoning as
-  // notifyRegularizationRequested — no manager, no notification (HR still
-  // sees it via listPendingWfhRequests).
+  // Tells whoever has to review a request: the employee's reporting manager when there is one, otherwise every
+  // active HR and Admin user (never the requester) — same fallback as LeavesService.notifyNewLeaveApplication.
+  // Without it a request from someone with no manager reached nobody until HR happened to open the pending list.
+  private async notifyApprovers(
+    actor: Actor,
+    organizationId: string,
+    title: string,
+    message: string,
+    category: NotificationCategory,
+  ) {
+    if (actor.reportingManagerId && actor.reportingManagerId !== actor.id) {
+      await this.notificationsService.create({
+        organizationId,
+        userId: actor.reportingManagerId,
+        title,
+        message,
+        category,
+      });
+      return;
+    }
+    const reviewers = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        id: { not: actor.id },
+        role: { in: [Role.HR, Role.ADMIN] },
+      },
+      select: { id: true },
+    });
+    if (reviewers.length === 0) return;
+    await this.notificationsService.createMany(
+      reviewers.map((u) => ({
+        organizationId,
+        userId: u.id,
+        title,
+        message,
+        category,
+      })),
+    );
+  }
+
   private async notifyWfhRequested(
     actor: Actor,
     date: string,
     organizationId: string,
   ) {
-    if (!actor.reportingManagerId || actor.reportingManagerId === actor.id) {
-      return;
-    }
     const { dateFormat } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
-    await this.notificationsService.create({
+    await this.notifyApprovers(
+      actor,
       organizationId,
-      userId: actor.reportingManagerId,
-      title: 'Work From Home Requested',
-      message: `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat)}, pending your approval.`,
-      category: NotificationCategory.ATTENDANCE,
-    });
+      'Work From Home Requested',
+      `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat)}, pending your approval.`,
+      NotificationCategory.ATTENDANCE,
+    );
   }
 
   // HR/Admin sees every pending WFH request org-wide; a MANAGER sees only
@@ -1992,20 +2027,17 @@ export class AttendanceService {
     date: string,
     organizationId: string,
   ) {
-    if (!actor.reportingManagerId || actor.reportingManagerId === actor.id) {
-      return;
-    }
     const { dateFormat } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
-    await this.notificationsService.create({
+    await this.notifyApprovers(
+      actor,
       organizationId,
-      userId: actor.reportingManagerId,
-      title: 'Attendance Regularization Requested',
-      message: `${actor.name} requested attendance regularization for ${formatDateDisplay(date, '', dateFormat)}.`,
-      category: NotificationCategory.REGULARIZATION,
-    });
+      'Attendance Regularization Requested',
+      `${actor.name} requested attendance regularization for ${formatDateDisplay(date, '', dateFormat)}.`,
+      NotificationCategory.REGULARIZATION,
+    );
   }
 
   // Single-level review (HR or Manager, either decides) — `id` is the
