@@ -292,6 +292,14 @@ export class LettersService {
       select: {
         companyName: true,
         registeredAddress: true,
+        gstin: true,
+        pan: true,
+        tan: true,
+        cin: true,
+        registrationNumber: true,
+        lin: true,
+        msmeRegistrationNumber: true,
+        labourLicenseNumber: true,
         companyLogoUrl: true,
         signatories: true,
         policies: true,
@@ -331,6 +339,15 @@ export class LettersService {
       joiningDate: formatDateDisplay(employee.joiningDate),
       companyName,
       companyAddress: organization.registeredAddress || '',
+      // Organization Settings > Registration Details ('—' when not filled in).
+      companyGstin: organization.gstin?.trim() || '—',
+      companyPan: organization.pan?.trim() || '—',
+      companyTan: organization.tan?.trim() || '—',
+      companyCin: organization.cin?.trim() || '—',
+      companyRegistrationNumber: organization.registrationNumber?.trim() || '—',
+      companyLin: organization.lin?.trim() || '—',
+      companyMsmeNumber: organization.msmeRegistrationNumber?.trim() || '—',
+      companyLabourLicense: organization.labourLicenseNumber?.trim() || '—',
       issueDate: formatDateDisplay(new Date()),
       // Available on every dataProfile (not just BASIC) since it's a
       // plain employee-record field, same as designation/department above

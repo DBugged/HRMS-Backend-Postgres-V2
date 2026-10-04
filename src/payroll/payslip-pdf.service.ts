@@ -267,7 +267,7 @@ export class PayslipPdfService {
     });
     if (!run) throw new NotFoundException('Payslip not found.');
 
-    const [template, settings, ytd, watermarkEnabled] = await Promise.all([
+    const [template, settings, ytd, printInfo] = await Promise.all([
       this.getActiveTemplate(organizationId),
       this.payrollSettingsService.getOrCreate(organizationId),
       run.financialYear
@@ -279,7 +279,7 @@ export class PayslipPdfService {
             organizationId,
           )
         : Promise.resolve(null),
-      this.getWatermarkEnabled(organizationId),
+      this.getOrgPrintInfo(organizationId),
     ]);
 
     return this.renderPayslipPdf(
@@ -287,7 +287,7 @@ export class PayslipPdfService {
       template,
       settings,
       ytd,
-      watermarkEnabled,
+      printInfo,
     );
   }
 
@@ -298,12 +298,41 @@ export class PayslipPdfService {
   // The watermark image itself still comes from the template's own
   // companyLogoUrl (renderPayslipPdf's existing logoBuffer) so a payslip's
   // watermark always matches whatever logo its own header already shows.
-  private async getWatermarkEnabled(organizationId: string): Promise<boolean> {
+  private async getOrgPrintInfo(
+    organizationId: string,
+  ): Promise<{ watermark: boolean; registrationLine: string }> {
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
-      select: { watermarkLogo: true },
+      select: {
+        watermarkLogo: true,
+        gstin: true,
+        cin: true,
+        pan: true,
+        tan: true,
+        registrationNumber: true,
+        lin: true,
+        msmeRegistrationNumber: true,
+        labourLicenseNumber: true,
+      },
     });
-    return org?.watermarkLogo ?? false;
+    // Organization Settings > Registration Details, printed under the header contact line when filled in.
+    const registrationLine = [
+      ['GSTIN', org?.gstin],
+      ['CIN', org?.cin],
+      ['Reg. No', org?.registrationNumber],
+      ['PAN', org?.pan],
+      ['TAN', org?.tan],
+      ['LIN', org?.lin],
+      ['MSME', org?.msmeRegistrationNumber],
+      ['Labour Lic.', org?.labourLicenseNumber],
+    ]
+      .filter(([, v]) => typeof v === 'string' && v.trim())
+      .map(([k, v]) => `${k}: ${(v as string).trim()}`)
+      .join('   |   ');
+    return {
+      watermark: org?.watermarkLogo ?? false,
+      registrationLine,
+    };
   }
 
   // Renders a dummy, fixed-figure payslip through the exact same layout
@@ -316,16 +345,16 @@ export class PayslipPdfService {
     templateOverride: PayrollTemplate,
     organizationId: string,
   ): Promise<Buffer> {
-    const [settings, watermarkEnabled] = await Promise.all([
+    const [settings, printInfo] = await Promise.all([
       this.payrollSettingsService.getOrCreate(organizationId),
-      this.getWatermarkEnabled(organizationId),
+      this.getOrgPrintInfo(organizationId),
     ]);
     const { buffer } = await this.renderPayslipPdf(
       buildDummyRun(),
       templateOverride,
       settings,
       null,
-      watermarkEnabled,
+      printInfo,
     );
     return buffer;
   }
@@ -335,7 +364,7 @@ export class PayslipPdfService {
     template: PayrollTemplate,
     settings: Awaited<ReturnType<PayrollSettingsService['getOrCreate']>>,
     ytd: YtdTotals | null,
-    watermarkEnabled: boolean,
+    printInfo: { watermark: boolean; registrationLine: string },
   ): Promise<{ buffer: Buffer; filename: string }> {
     const rawSymbol = settings.currencySymbol || '₹';
     // pdfkit's standard 14 fonts only cover WinAnsi — the ₹ glyph isn't in
@@ -395,7 +424,7 @@ export class PayslipPdfService {
         bufferPages: true,
       });
       registerCustomFonts(doc);
-      if (watermarkEnabled) attachWatermark(doc, logoBuffer);
+      if (printInfo.watermark) attachWatermark(doc, logoBuffer);
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
@@ -462,7 +491,14 @@ export class PayslipPdfService {
             .fontSize(7.5)
             .heightOfString(contactBits, { width: infoWidth, lineBreak: true })
         : 0;
-      const leftColH = 15 + nameH + addressH + contactH;
+      const regLine = printInfo.registrationLine;
+      const regH = regLine
+        ? doc
+            .font(fonts.regular)
+            .fontSize(7)
+            .heightOfString(regLine, { width: infoWidth, lineBreak: true }) + 3
+        : 0;
+      const leftColH = 15 + nameH + addressH + contactH + regH;
       const rightColH = 16 + 22 + 16 + (run.payslipNumber ? 12 : 0) + 10;
       const headerH = Math.max(78, leftColH + 17, rightColH);
 
@@ -493,6 +529,11 @@ export class PayslipPdfService {
       if (contactBits) {
         doc.font(fonts.regular).fontSize(7.5).fillColor('#FFFFFF');
         text(contactBits, textX, infoY, { width: infoWidth, lineBreak: true });
+        infoY = doc.y + 3;
+      }
+      if (regLine) {
+        doc.font(fonts.regular).fontSize(7).fillColor('#FFFFFF');
+        text(regLine, textX, infoY, { width: infoWidth, lineBreak: true });
       }
 
       doc.font(fonts.bold).fontSize(18).fillColor('#FFFFFF');
