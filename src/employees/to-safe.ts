@@ -13,9 +13,26 @@ import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { signPersonalDataFileUrls } from './personal-data';
 import { maskPersonalData } from './personal-data-mask';
 
+const MASKED_INTERNAL_FIELDS = [
+  'lastLoginAt',
+  'failedLoginAttempts',
+  'lockedUntil',
+  'mustChangePassword',
+  'emailVerified',
+  'excludeFromPayroll',
+  'lwfExempt',
+  'notificationPreferences',
+] as const;
+
 export function toSafe(user: User, mask = false) {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
   const { password, resetPasswordToken, resetPasswordExpires, ...safe } = user;
+  if (mask) {
+    // Viewing someone else's row without HR/Admin rights: drop account-security and payroll-internal
+    // fields too, not just personalData — directory/org-chart views only need identity and placement.
+    const internal = safe as Record<string, unknown>;
+    for (const k of MASKED_INTERNAL_FIELDS) delete internal[k];
+  }
   if (safe.profileImage) {
     // Held in AuthContext for the whole session, not re-fetched on every
     // navigation — see SESSION_ASSET_TTL_SECONDS' comment.

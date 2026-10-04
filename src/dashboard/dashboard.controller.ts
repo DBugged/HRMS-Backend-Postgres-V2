@@ -52,10 +52,12 @@ export class DashboardController {
     );
   }
 
-  // No @Roles() — self-scoped to the caller's own department inline in the
-  // service (see the service method's comment for the no-department
-  // edge case, ported from the old system as-is).
+  // Self-scoped to the caller's own department inline in the service (see the
+  // service method's comment for the no-department edge case). Gated to
+  // reviewer roles — an EMPLOYEE has no team and shouldn't see team aggregates.
   @Get('department-head')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
   departmentHeadDashboard(@CurrentUser() caller: Caller) {
     return this.dashboardService.departmentHeadDashboard(
       caller,

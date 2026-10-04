@@ -324,6 +324,13 @@ describe('Dashboard (e2e)', () => {
     expect((res.body as { teamSize: number }).teamSize).toBe(noDeptCount);
   });
 
+  it('EMPLOYEE cannot read the department-head dashboard', async () => {
+    await request(app.getHttpServer())
+      .get('/dashboard/department-head')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(403);
+  });
+
   it("EMPLOYEE sees their own employee dashboard with today's attendance counted", async () => {
     const res = await request(app.getHttpServer())
       .get('/dashboard/employee')
