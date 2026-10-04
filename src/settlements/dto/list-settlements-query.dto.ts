@@ -8,6 +8,7 @@ export class ListSettlementsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page: number = 1;
 
   @ApiPropertyOptional({ default: 200, maximum: 2000 })

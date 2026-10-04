@@ -3,6 +3,7 @@
 // Important: Most routes have no @Roles() and self-scope in the service; team-calendar/credit-history/review are ADMIN/HR/MANAGER.
 import {
   Body,
+  BadRequestException,
   Controller,
   Get,
   Param,
@@ -48,9 +49,19 @@ export class LeavesController {
     @Query('year') year: string | undefined,
     @CurrentUser() caller: Caller,
   ) {
+    // Raw string query param (not a DTO): a non-numeric or absurd year used to reach Prisma and 500.
+    const parsedYear = year ? Number(year) : undefined;
+    if (
+      parsedYear !== undefined &&
+      (!Number.isInteger(parsedYear) || parsedYear < 2000 || parsedYear > 2100)
+    ) {
+      throw new BadRequestException(
+        'year must be an integer between 2000 and 2100',
+      );
+    }
     return this.leavesService.getBalance(
       employeeId,
-      year ? Number(year) : undefined,
+      parsedYear,
       caller,
       caller.organizationId,
     );

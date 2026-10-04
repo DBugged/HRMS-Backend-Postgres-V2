@@ -13,5 +13,7 @@ export class AttendanceGapsQueryDto {
   @ApiProperty()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year!: number;
 }

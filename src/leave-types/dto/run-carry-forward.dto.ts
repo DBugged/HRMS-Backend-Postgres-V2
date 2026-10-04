@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional } from 'class-validator';
+import { IsInt, IsOptional, Max, Min } from 'class-validator';
 
 export class RunCarryForwardDto {
   @ApiPropertyOptional({
@@ -9,5 +9,7 @@ export class RunCarryForwardDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year?: number;
 }

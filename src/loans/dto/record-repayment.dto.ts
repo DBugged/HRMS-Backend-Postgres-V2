@@ -18,6 +18,8 @@ export class RecordRepaymentDto {
 
   @ApiProperty()
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year!: number;
 
   @ApiProperty()

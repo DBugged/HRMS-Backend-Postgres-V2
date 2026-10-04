@@ -43,6 +43,7 @@ export class QueryAuditLogDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page?: number;
 
   @ApiPropertyOptional({ default: 50, maximum: 2000 })

@@ -17,6 +17,7 @@ export class ListAssetsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page: number = 1;
 
   // Capped at 2000 — same convention as every other paginated list DTO.

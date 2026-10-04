@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsUUID } from 'class-validator';
+import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { HolidayType } from '@prisma/client';
 
 export class ListHolidaysQueryDto {
@@ -8,6 +8,8 @@ export class ListHolidaysQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year?: number;
 
   @ApiPropertyOptional({

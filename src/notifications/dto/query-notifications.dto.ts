@@ -8,6 +8,7 @@ export class QueryNotificationsDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page: number = 1;
 
   @ApiPropertyOptional({ default: 50, maximum: 200 })

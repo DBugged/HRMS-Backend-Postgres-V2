@@ -1,6 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 import { LeaveStatus } from '@prisma/client';
 import type { ReportFormat } from '../report-export';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
@@ -43,6 +51,8 @@ export class LeaveBalanceReportQueryDto extends FormatQueryDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year?: number;
 }
 
@@ -70,12 +80,15 @@ export class PayrollReportQueryDto extends FormatQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(12)
   month?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year?: number;
 }
 
@@ -97,5 +110,6 @@ export class HeadcountReportQueryDto extends FormatQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(120)
   months?: number;
 }

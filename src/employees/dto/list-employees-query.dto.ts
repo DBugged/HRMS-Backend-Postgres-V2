@@ -27,6 +27,7 @@ export class ListEmployeesQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page: number = 1;
 
   // No cap previously — a client could pass an arbitrarily large limit and

@@ -60,6 +60,7 @@ export class ListDataRequestsQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page?: number;
   @ApiPropertyOptional()
   @IsOptional()

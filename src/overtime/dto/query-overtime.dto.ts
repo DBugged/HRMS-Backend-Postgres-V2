@@ -26,6 +26,8 @@ export class QueryOvertimeDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year?: number;
 
   @ApiPropertyOptional({ default: 1 })
@@ -33,6 +35,7 @@ export class QueryOvertimeDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page: number = 1;
 
   @ApiPropertyOptional({ default: 200, maximum: 2000 })

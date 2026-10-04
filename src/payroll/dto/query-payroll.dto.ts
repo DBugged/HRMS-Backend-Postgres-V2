@@ -13,6 +13,7 @@ export class QueryPayrollDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page: number = 1;
 
   @ApiPropertyOptional({ default: 1000, maximum: 2000 })
@@ -27,12 +28,16 @@ export class QueryPayrollDto {
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(1)
+  @Max(12)
   month?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @Type(() => Number)
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   year?: number;
 
   @ApiPropertyOptional()

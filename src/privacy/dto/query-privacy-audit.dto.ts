@@ -52,6 +52,7 @@ export class QueryPrivacyAuditDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(1000000)
   page?: number;
 
   @ApiPropertyOptional({ default: 50, maximum: 500 })
