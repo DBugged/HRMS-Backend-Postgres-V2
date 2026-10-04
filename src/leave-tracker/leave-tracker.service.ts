@@ -370,40 +370,38 @@ export class LeaveTrackerService {
       wfhDaysUsed: number;
     }[] = [];
 
+    // Eligibility is evaluated once per employee up front so every missing balance row (write-on-first-
+    // read for a new year/leave type) is created in one bulk insert rather than a transaction per employee.
+    const balanceEligibleByEmployee = new Map<
+      string,
+      typeof activeLeaveTypes
+    >();
+    const missingPairs: { employeeId: string; leaveTypeId: string }[] = [];
     for (const employee of employees) {
-      const eligible = activeLeaveTypes.filter((lt) =>
-        isEligible(lt, employee),
-      );
-      const balanceEligible = eligible.filter(
+      const balanceEligible = activeLeaveTypes.filter(
         (lt) =>
+          isEligible(lt, employee) &&
           lt.code !== LEAVE_TYPE_CODES.COMPOFF &&
           lt.allocationType !== AllocationType.NONE &&
           lt.allocationType !== AllocationType.UNLIMITED,
       );
-
-      const missing = balanceEligible.filter(
-        (lt) => !existingBalanceByKey.has(`${employee.id}:${lt.id}`),
-      );
-      const ensuredRows = new Map<
-        string,
-        Awaited<ReturnType<LeaveBalanceService['ensureBalanceRow']>>
-      >();
-      if (missing.length > 0) {
-        await this.scopedPrisma.$transaction(async (tx) => {
-          for (const leaveType of missing) {
-            ensuredRows.set(
-              leaveType.id,
-              await this.leaveBalanceService.ensureBalanceRow(
-                tx,
-                employee.id,
-                leaveType.id,
-                query.year,
-                organizationId,
-              ),
-            );
-          }
-        });
+      balanceEligibleByEmployee.set(employee.id, balanceEligible);
+      for (const lt of balanceEligible) {
+        if (!existingBalanceByKey.has(`${employee.id}:${lt.id}`)) {
+          missingPairs.push({ employeeId: employee.id, leaveTypeId: lt.id });
+        }
       }
+    }
+    const ensuredByKey = await this.leaveBalanceService.ensureBalanceRowsBulk(
+      missingPairs,
+      query.year,
+      organizationId,
+      employees,
+      activeLeaveTypes,
+    );
+
+    for (const employee of employees) {
+      const balanceEligible = balanceEligibleByEmployee.get(employee.id)!;
 
       // Balances are still created for every eligible type; only the tracker's view/export skips hidden ones.
       const leaveBalances = balanceEligible
@@ -411,7 +409,7 @@ export class LeaveTrackerService {
         .map((leaveType) => {
           const row =
             existingBalanceByKey.get(`${employee.id}:${leaveType.id}`) ??
-            ensuredRows.get(leaveType.id)!;
+            ensuredByKey.get(`${employee.id}:${leaveType.id}`)!;
           return {
             leaveTypeCode: leaveType.code,
             leaveTypeName: leaveType.name,

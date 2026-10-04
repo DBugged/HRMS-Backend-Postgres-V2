@@ -70,6 +70,115 @@ export class LeaveBalanceService {
   ) {}
 
   /**
+   * The opening/credited/lastAccrualPeriod a brand-new balance row starts with. Shared by
+   * ensureBalanceRow (one row) and ensureBalanceRowsBulk (many) so both always agree.
+   */
+  private initialBalanceFor(
+    joiningDate: Date,
+    leaveType: LeaveType,
+    year: number,
+    priorYearRow: { carriedForwardOut: number } | null | undefined,
+  ) {
+    const opening = priorYearRow?.carriedForwardOut ?? 0;
+    let credited = computeUpfrontCredit(leaveType, joiningDate, year);
+    let lastAccrualPeriod: string | null = null;
+
+    // Per-cycle types (Quarterly, Monthly, ...): credit every cycle due so
+    // far right away — from the joining cycle (or Jan 1) through the current
+    // one — so a new joiner sees their balance immediately instead of 0
+    // until the next Run Accrual. Stamping the current period means that run
+    // only adds cycles that start after today. Current year only, and not
+    // for someone whose joining date is still in the future.
+    const now = new Date();
+    if (
+      accruesPerCycle(leaveType) &&
+      year === now.getFullYear() &&
+      joiningDate <= now
+    ) {
+      const yearStart = new Date(Date.UTC(year, 0, 1));
+      const cycles = cyclesSinceJoining(
+        leaveType.accrualFrequency,
+        joiningDate > yearStart ? joiningDate : yearStart,
+        now,
+      );
+      credited =
+        Math.round(accrualCreditPerCycle(leaveType) * cycles * 100) / 100;
+      lastAccrualPeriod = computeAccrualPeriodKey(
+        leaveType.accrualFrequency,
+        now,
+      );
+    }
+
+    return { opening, credited, lastAccrualPeriod };
+  }
+
+  /**
+   * Bulk variant of ensureBalanceRow for read paths that need many employees' rows at once
+   * (the Leave Tracker balances view). Creates every missing (employee, leaveType, year) row with
+   * a handful of queries total — instead of ~5 queries + a transaction per employee, which took
+   * ~37s for 1,500 employees on first load of a year. Same ON CONFLICT DO NOTHING semantics, so
+   * it is safe against concurrent callers. Returns the rows keyed `${employeeId}:${leaveTypeId}`.
+   */
+  async ensureBalanceRowsBulk(
+    pairs: { employeeId: string; leaveTypeId: string }[],
+    year: number,
+    organizationId: string,
+    employees: { id: string; joiningDate: Date }[],
+    leaveTypes: LeaveType[],
+  ): Promise<Map<string, LeaveBalance>> {
+    const result = new Map<string, LeaveBalance>();
+    if (pairs.length === 0) return result;
+    const joiningById = new Map(employees.map((e) => [e.id, e.joiningDate]));
+    const typeById = new Map(leaveTypes.map((t) => [t.id, t]));
+    const employeeIds = [...new Set(pairs.map((p) => p.employeeId))];
+
+    const priorRows = await this.scopedPrisma.leaveBalance.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: employeeIds },
+        year: year - 1,
+      },
+    });
+    const priorByKey = new Map(
+      priorRows.map((r) => [`${r.employeeId}:${r.leaveTypeId}`, r]),
+    );
+
+    const values = pairs.flatMap((pair) => {
+      const joiningDate = joiningById.get(pair.employeeId);
+      const leaveType = typeById.get(pair.leaveTypeId);
+      if (!joiningDate || !leaveType) return [];
+      const { opening, credited, lastAccrualPeriod } = this.initialBalanceFor(
+        joiningDate,
+        leaveType,
+        year,
+        priorByKey.get(`${pair.employeeId}:${pair.leaveTypeId}`),
+      );
+      return [
+        Prisma.sql`(${randomUUID()}, ${organizationId}, ${pair.employeeId}, ${pair.leaveTypeId}, ${year}, ${opening}, ${credited}, ${opening + credited}, ${lastAccrualPeriod}, now(), now())`,
+      ];
+    });
+
+    const CHUNK = 500;
+    for (let i = 0; i < values.length; i += CHUNK) {
+      const chunk = values.slice(i, i + CHUNK);
+      await this.scopedPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`
+          INSERT INTO leave_balances
+            (id, "organizationId", "employeeId", "leaveTypeId", "year", "opening", "credited", "closing", "lastAccrualPeriod", "createdAt", "updatedAt")
+          VALUES ${Prisma.join(chunk)}
+          ON CONFLICT ("organizationId", "employeeId", "leaveTypeId", "year") DO NOTHING
+        `;
+      });
+    }
+
+    const rows = await this.scopedPrisma.leaveBalance.findMany({
+      where: { organizationId, employeeId: { in: employeeIds }, year },
+    });
+    for (const r of rows) result.set(`${r.employeeId}:${r.leaveTypeId}`, r);
+    return result;
+  }
+
+  /**
    * Get-or-create for (employee, leaveType, year). Must be called with a
    * transaction client so this is atomic under concurrent callers, same
    * reasoning as EmployeeIdService.generate.
@@ -120,35 +229,12 @@ export class LeaveBalanceService {
     if (!employee) throw new NotFoundException('Employee not found.');
     if (!leaveType) throw new NotFoundException('Leave type not found.');
 
-    const opening = priorYearRow?.carriedForwardOut ?? 0;
-    let credited = computeUpfrontCredit(leaveType, employee.joiningDate, year);
-    let lastAccrualPeriod: string | null = null;
-
-    // Per-cycle types (Quarterly, Monthly, ...): credit every cycle due so
-    // far right away — from the joining cycle (or Jan 1) through the current
-    // one — so a new joiner sees their balance immediately instead of 0
-    // until the next Run Accrual. Stamping the current period means that run
-    // only adds cycles that start after today. Current year only, and not
-    // for someone whose joining date is still in the future.
-    const now = new Date();
-    if (
-      accruesPerCycle(leaveType) &&
-      year === now.getFullYear() &&
-      employee.joiningDate <= now
-    ) {
-      const yearStart = new Date(Date.UTC(year, 0, 1));
-      const cycles = cyclesSinceJoining(
-        leaveType.accrualFrequency,
-        employee.joiningDate > yearStart ? employee.joiningDate : yearStart,
-        now,
-      );
-      credited =
-        Math.round(accrualCreditPerCycle(leaveType) * cycles * 100) / 100;
-      lastAccrualPeriod = computeAccrualPeriodKey(
-        leaveType.accrualFrequency,
-        now,
-      );
-    }
+    const { opening, credited, lastAccrualPeriod } = this.initialBalanceFor(
+      employee.joiningDate,
+      leaveType,
+      year,
+      priorYearRow,
+    );
 
     await tx.$executeRaw`
       INSERT INTO leave_balances
