@@ -15,6 +15,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, StatutoryModule, User } from '@prisma/client';
 import { StatutoryConfigService } from './statutory-config.service';
+import { StatutorySourceMonitorService } from './statutory-source-monitor.service';
 import { CreateStatutoryConfigVersionDto } from './dto/create-statutory-config-version.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -34,7 +35,15 @@ type Caller = Omit<User, 'password'>;
 export class StatutoryConfigController {
   constructor(
     private readonly statutoryConfigService: StatutoryConfigService,
+    private readonly sourceMonitor: StatutorySourceMonitorService,
   ) {}
+
+  // Latest automatic check of the official pages the statutory notes cite. Declared before ':module' so it is not
+  // read as a module name.
+  @Get('source-checks')
+  getSourceChecks() {
+    return this.sourceMonitor.getResults();
+  }
 
   @Get(':module')
   getHistory(@Param('module') module: string, @CurrentUser() caller: Caller) {
