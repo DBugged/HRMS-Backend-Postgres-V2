@@ -5,6 +5,8 @@ import { PayrollReportsController } from './payroll-reports.controller';
 import { PayrollReportsService } from './payroll-reports.service';
 import { CustomReportController } from './custom-report.controller';
 import { CustomReportService } from './custom-report.service';
+import { EcrController } from './ecr.controller';
+import { EcrService } from './ecr.service';
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { PrivacyModule } from '../privacy/privacy.module';
 
@@ -14,7 +16,13 @@ import { PrivacyModule } from '../privacy/privacy.module';
     ReportsController,
     PayrollReportsController,
     CustomReportController,
+    EcrController,
   ],
-  providers: [ReportsService, PayrollReportsService, CustomReportService],
+  providers: [
+    ReportsService,
+    PayrollReportsService,
+    CustomReportService,
+    EcrService,
+  ],
 })
 export class ReportsModule {}
