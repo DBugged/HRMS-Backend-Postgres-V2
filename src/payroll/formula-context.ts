@@ -6,6 +6,8 @@ import type { OverlaidSettings, PtSlab } from './statutory-overlay';
 export interface EmployeeStatutoryProfile {
   state?: string | null;
   gender?: string | null;
+  // Employee is outside the Labour Welfare Fund (managerial / supervisory above the wage limit): no LWF either side.
+  lwfExempt?: boolean;
 }
 
 /**
@@ -135,8 +137,7 @@ export function deriveStatutoryContext(
     NPS_WAGES: basicDa,
     ESI_APPLICABLE:
       (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) <=
-        settings.esiWageCeiling ||
-      hadEsiThisPeriod
+        settings.esiWageCeiling || hadEsiThisPeriod
         ? 1
         : 0,
   };
@@ -163,7 +164,9 @@ export function buildBaseContext(
   month: number,
   profile?: EmployeeStatutoryProfile,
 ): Record<string, number> {
-  const lwf = resolveLwfRate(settings, month, profile?.state);
+  const lwf = profile?.lwfExempt
+    ? { employeeAmount: 0, employerAmount: 0 }
+    : resolveLwfRate(settings, month, profile?.state);
   return {
     // Dearness Allowance is optional (seeded inactive) — 0 unless the org's DA component is applicable, in
     // which case the earnings pass overwrites this with the real amount.

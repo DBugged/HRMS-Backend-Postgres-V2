@@ -414,6 +414,12 @@ model User {
   // per-run excludeEmployeeIds, which is for a one-off skip instead.
   excludeFromPayroll Boolean @default(false)
 
+  // Exempt from the Labour Welfare Fund. The Maharashtra Labour Welfare Fund Act does not treat as an "employee" anyone
+  // employed mainly in a managerial capacity, or in a supervisory capacity on wages above Rs 3,500 a month (or doing
+  // mainly managerial work), so no contribution is due for them. Only HR can judge that, so it is a per-employee
+  // setting; payroll then skips both the employee and employer LWF amounts.
+  lwfExempt Boolean @default(false)
+
   // Per-account brute-force lockout. The @Throttle() on POST /auth/login is
   // per-IP only, so a distributed attempt against ONE account (credential
   // stuffing from a botnet) never trips it — each IP stays under its own

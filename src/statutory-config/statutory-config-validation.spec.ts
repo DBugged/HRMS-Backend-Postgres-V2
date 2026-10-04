@@ -169,7 +169,7 @@ describe('seeded PF defaults', () => {
 describe('LWF state rates', () => {
   const base = { employeeAmount: 25, employerAmount: 75, months: [6, 12] };
   const ka = {
-    state: 'Karnataka',
+    state: 'Maharashtra',
     employeeAmount: 50,
     employerAmount: 100,
     months: [12],
@@ -187,8 +187,8 @@ describe('LWF state rates', () => {
       expect(() =>
         validateModuleConfig(StatutoryModule.LWF, { ...base, stateRates }),
       ).toThrow();
-    bad('Karnataka');
-    bad([{ ...ka, state: 'Karnatka' }]);
+    bad('Maharashtra');
+    bad([{ ...ka, state: 'Maharashtr' }]);
     bad([ka, ka]);
     bad([{ ...ka, employeeAmount: -1 }]);
     bad([{ ...ka, months: [13] }]);
@@ -231,25 +231,72 @@ describe("PT default women's ladder", () => {
 describe('PT state ladders', () => {
   const slabs = [{ upTo: null, amount: 200, februaryAmount: 300 }];
   it('accepts valid state ladders and rejects bad ones', () => {
-    const ok = { slabs, stateRates: [{ state: 'Karnataka', slabs }] };
+    const ok = { slabs, stateRates: [{ state: 'Maharashtra', slabs }] };
     expect(() => validateModuleConfig(StatutoryModule.PT, ok)).not.toThrow();
     const bad = (stateRates: unknown) =>
       expect(() =>
         validateModuleConfig(StatutoryModule.PT, { slabs, stateRates }),
       ).toThrow();
-    bad('Karnataka');
+    bad('Maharashtra');
     bad([{ state: 'Atlantis', slabs }]);
     bad([
-      { state: 'Karnataka', slabs },
-      { state: 'Karnataka', slabs },
+      { state: 'Maharashtra', slabs },
+      { state: 'Maharashtra', slabs },
     ]);
-    bad([{ state: 'Karnataka', slabs: [] }]);
+    bad([{ state: 'Maharashtra', slabs: [] }]);
     bad([
       {
-        state: 'Karnataka',
+        state: 'Maharashtra',
         slabs: [{ upTo: null, amount: 200, februaryAmount: -1 }],
       },
     ]);
-    bad([{ state: 'Karnataka', slabs, womenSlabs: [] }]);
+    bad([{ state: 'Maharashtra', slabs, womenSlabs: [] }]);
+  });
+});
+
+describe('Maharashtra-only state rates (this phase)', () => {
+  it('refuses state-wise LWF and PT rates for any other state', () => {
+    expect(() =>
+      validateModuleConfig(StatutoryModule.LWF, {
+        employeeAmount: 25,
+        employerAmount: 75,
+        months: [6, 12],
+        stateRates: [
+          {
+            state: 'Karnataka',
+            employeeAmount: 50,
+            employerAmount: 100,
+            months: [12],
+          },
+        ],
+      }),
+    ).toThrow(/configured for Maharashtra only/);
+    expect(() =>
+      validateModuleConfig(StatutoryModule.PT, {
+        slabs: [{ upTo: null, amount: 200 }],
+        stateRates: [
+          { state: 'Karnataka', slabs: [{ upTo: null, amount: 200 }] },
+        ],
+      }),
+    ).toThrow(/configured for Maharashtra only/);
+  });
+});
+
+describe('bonus calculation ceiling', () => {
+  it('cannot be below the Act’s ₹7,000 floor', () => {
+    expect(() =>
+      validateModuleConfig(StatutoryModule.BONUS, {
+        rate: 8.33,
+        eligibilityCeiling: 21000,
+        calculationCeiling: 7000,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateModuleConfig(StatutoryModule.BONUS, {
+        rate: 8.33,
+        eligibilityCeiling: 21000,
+        calculationCeiling: 6000,
+      }),
+    ).toThrow(/cannot be below/);
   });
 });

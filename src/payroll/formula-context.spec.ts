@@ -105,6 +105,20 @@ describe('buildBaseContext', () => {
     expect(ctx.LWF_EMPLOYER_AMOUNT).toBe(75);
   });
 
+  it('charges no LWF, either side, to an employee exempt from the Labour Welfare Fund', () => {
+    const exempt = buildBaseContext(attendance(), settings(), 6, {
+      lwfExempt: true,
+    });
+    expect(exempt.LWF_EMPLOYEE_AMOUNT).toBe(0);
+    expect(exempt.LWF_EMPLOYER_AMOUNT).toBe(0);
+    // Everyone else in the same month is unchanged.
+    const normal = buildBaseContext(attendance(), settings(), 6, {
+      lwfExempt: false,
+    });
+    expect(normal.LWF_EMPLOYEE_AMOUNT).toBe(25);
+    expect(normal.LWF_EMPLOYER_AMOUNT).toBe(75);
+  });
+
   it('flattens ptSlabs into PT_SLAB{n}_UPTO/AMOUNT, giving the open-ended last slab a numeric ceiling', () => {
     const ctx = buildBaseContext(attendance(), settings(), 4);
     expect(ctx.PT_SLAB1_UPTO).toBe(7500);

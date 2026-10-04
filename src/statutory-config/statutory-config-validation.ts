@@ -1,5 +1,5 @@
 import { StatutoryModule } from '@prisma/client';
-import { isIndianState } from '../common/indian-states';
+import { isIndianState, isSupportedState } from '../common/indian-states';
 
 /**
  * Pure port of the old backend's `utils/statutoryValidation.js` — one
@@ -125,6 +125,10 @@ function validatePt(config: unknown): void {
       throw new Error('Each stateRates entry must be an object.');
     if (!isIndianState(entry.state))
       throw new Error('Each stateRates entry needs a valid Indian state name.');
+    if (!isSupportedState(entry.state))
+      throw new Error(
+        'The product is currently configured for Maharashtra only, so state-wise rates for other states cannot be added yet.',
+      );
     if (seen.has(entry.state))
       throw new Error(`stateRates has more than one entry for ${entry.state}.`);
     seen.add(entry.state);
@@ -176,6 +180,10 @@ function validateLwf(config: unknown): void {
       throw new Error('Each stateRates entry must be an object.');
     if (!isIndianState(entry.state))
       throw new Error('Each stateRates entry needs a valid Indian state name.');
+    if (!isSupportedState(entry.state))
+      throw new Error(
+        'The product is currently configured for Maharashtra only, so state-wise rates for other states cannot be added yet.',
+      );
     if (seen.has(entry.state))
       throw new Error(`stateRates has more than one entry for ${entry.state}.`);
     seen.add(entry.state);
@@ -209,6 +217,11 @@ function validateBonus(config: unknown): void {
     if (c[key] !== undefined && !isNonNegative(c[key]))
       throw new Error(`${key} must be a non-negative number.`);
   }
+  // The calculation base is the higher of ₹7,000 and the applicable minimum wage, so it can never be below ₹7,000.
+  if (c.calculationCeiling !== undefined && Number(c.calculationCeiling) < 7000)
+    throw new Error(
+      'calculationCeiling cannot be below ₹7,000 (the higher of ₹7,000 and the applicable minimum wage).',
+    );
 }
 
 function validateNps(config: unknown): void {

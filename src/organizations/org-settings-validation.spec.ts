@@ -43,4 +43,12 @@ describe('India-only organization settings', () => {
     );
     expect(() => validateSectionData({ phone: '+911234567890' })).not.toThrow();
   });
+
+  it('accepts Maharashtra or a blank state, rejects any other state', () => {
+    expect(() => validateSectionData({ state: 'Maharashtra' })).not.toThrow();
+    expect(() => validateSectionData({ state: '' })).not.toThrow();
+    expect(() => validateSectionData({ state: 'Karnataka' })).toThrow(
+      /configured for Maharashtra only/,
+    );
+  });
 });

@@ -42,6 +42,15 @@ export const INDIAN_STATES = [
 
 export type IndianState = (typeof INDIAN_STATES)[number];
 
+// This phase targets Maharashtra only: an organization's state, a Work Location's state and state-wise PT/LWF rates
+// must be one of these. To open the product to more states later, add them here (and to SUPPORTED_STATES in the
+// frontend's constants/indianStates.ts) — the state-wise engine itself already handles any state.
+export const SUPPORTED_STATES: readonly string[] = ['Maharashtra'];
+
+export function isSupportedState(value: unknown): value is string {
+  return typeof value === 'string' && SUPPORTED_STATES.includes(value);
+}
+
 export function isIndianState(value: unknown): value is IndianState {
   return (
     typeof value === 'string' &&

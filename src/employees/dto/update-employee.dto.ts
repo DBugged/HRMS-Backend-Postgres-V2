@@ -169,6 +169,13 @@ export class UpdateEmployeeDto {
   @IsBoolean()
   excludeFromPayroll?: boolean;
 
+  // Exempt from the Labour Welfare Fund (managerial, or supervisory above the wage limit) — see the User.lwfExempt
+  // schema comment. HR/Admin only, via the field lock below.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  lwfExempt?: boolean;
+
   // Durable relativeKey from POST /files/upload/profile-photos — never a
   // signed URL (see file-token.ts). Self-editable, not in the HR-only
   // locked-fields list.

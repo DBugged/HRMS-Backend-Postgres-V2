@@ -7,6 +7,7 @@
 // is never re-validated on an unrelated save.
 import { BadRequestException } from '@nestjs/common';
 import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
+import { SUPPORTED_STATES, isSupportedState } from '../common/indian-states';
 
 // Number of Setup Wizard steps (frontend/src/components/organization/
 // steps.js ORG_STEPS) — setupStep is 1-based and the wizard clamps it to
@@ -318,6 +319,16 @@ export function validateSectionData(data: Record<string, unknown>) {
   }
   for (const field of ['phone', 'mobile'])
     assertIndianPhone(field, data[field]);
+  // This phase serves Maharashtra only. Blank is allowed (not filled in yet); anything else must be supported.
+  if (
+    typeof data.state === 'string' &&
+    data.state.trim() !== '' &&
+    !isSupportedState(data.state.trim())
+  ) {
+    bad(
+      `state must be ${SUPPORTED_STATES.join(' / ')} — the product is currently configured for Maharashtra only.`,
+    );
+  }
 
   for (const field of [
     'wfhAutoApproveHours',

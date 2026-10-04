@@ -520,6 +520,7 @@ export class PayrollService {
     const baseContext = buildBaseContext(attendanceSummary, settings, month, {
       state,
       gender: employee.gender,
+      lwfExempt: employee.lwfExempt,
     });
 
     const [allComponents, overrideRows] = await Promise.all([
@@ -1089,7 +1090,10 @@ export class PayrollService {
             }
           : {}),
         ...(e.code === 'ESI_EMPLOYER'
-          ? { wages: afterEarnings.ESI_WAGES ?? afterEarnings.GROSS_EARNINGS ?? 0 }
+          ? {
+              wages:
+                afterEarnings.ESI_WAGES ?? afterEarnings.GROSS_EARNINGS ?? 0,
+            }
           : {}),
       })),
       taxDetails,
