@@ -6,7 +6,10 @@ import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 // any characters), unlike every other structured field in this codebase.
 // Each pattern is the standard published format for that document; a blank
 // value is always allowed since none of these fields are mandatory.
-const IDENTIFIER_PATTERNS: Record<string, { pattern: RegExp; label: string; example: string }> = {
+const IDENTIFIER_PATTERNS: Record<
+  string,
+  { pattern: RegExp; label: string; example: string }
+> = {
   panNumber: {
     pattern: /^[A-Z]{5}[0-9]{4}[A-Z]$/,
     label: 'PAN',
@@ -47,10 +50,26 @@ const IDENTIFIER_PATTERNS: Record<string, { pattern: RegExp; label: string; exam
   // instead), but these family/emergency contact numbers live in
   // personalData like the identifiers above, so they go through the same
   // validator.
-  fatherContact: { pattern: /^[0-9]{10}$/, label: "Father's contact number", example: '9876543210' },
-  motherContact: { pattern: /^[0-9]{10}$/, label: "Mother's contact number", example: '9876543210' },
-  emergencyContact1Number: { pattern: /^[0-9]{10}$/, label: 'Emergency contact 1 number', example: '9876543210' },
-  emergencyContact2Number: { pattern: /^[0-9]{10}$/, label: 'Emergency contact 2 number', example: '9876543210' },
+  fatherContact: {
+    pattern: /^[0-9]{10}$/,
+    label: "Father's contact number",
+    example: '9876543210',
+  },
+  motherContact: {
+    pattern: /^[0-9]{10}$/,
+    label: "Mother's contact number",
+    example: '9876543210',
+  },
+  emergencyContact1Number: {
+    pattern: /^[0-9]{10}$/,
+    label: 'Emergency contact 1 number',
+    example: '9876543210',
+  },
+  emergencyContact2Number: {
+    pattern: /^[0-9]{10}$/,
+    label: 'Emergency contact 2 number',
+    example: '9876543210',
+  },
 };
 
 const PHONE_KEYS = new Set([
@@ -65,11 +84,14 @@ const PHONE_KEYS = new Set([
 // actually present in this patch (a partial edit that doesn't touch PAN
 // isn't re-validated against a possibly-already-invalid stored value).
 export function assertValidIdentifiers(patch: Record<string, unknown>): void {
-  for (const [key, { pattern, label, example }] of Object.entries(IDENTIFIER_PATTERNS)) {
+  for (const [key, { pattern, label, example }] of Object.entries(
+    IDENTIFIER_PATTERNS,
+  )) {
     if (!(key in patch)) continue;
     const value = patch[key];
     if (typeof value !== 'string') continue;
-    const normalized = key === 'aadharNumber' ? value.replace(/\s+/g, '') : value.trim();
+    const normalized =
+      key === 'aadharNumber' ? value.replace(/\s+/g, '') : value.trim();
     if (normalized === '') continue;
     // The phone-type fields accept an existing "+<dialcode> <national>"
     // value without complaint (same leniency as the frontend's phoneError)
@@ -77,7 +99,18 @@ export function assertValidIdentifiers(patch: Record<string, unknown>): void {
     // deliberately-formatted international number from elsewhere, not a
     // stray format this check should reject. Only a purely numeric value
     // gets held to the exact-10-digits rule.
-    if (PHONE_KEYS.has(key) && !/^[0-9]+$/.test(normalized)) continue;
+    if (PHONE_KEYS.has(key) && !/^[0-9]+$/.test(normalized)) {
+      // India only: a number that carries a country code must carry +91.
+      if (
+        normalized.startsWith('+') &&
+        !/^\+91/.test(normalized.replace(/[\s-]/g, ''))
+      ) {
+        throw new BadRequestException(
+          `Invalid ${label} — only Indian (+91) numbers are supported.`,
+        );
+      }
+      continue;
+    }
     if (!pattern.test(normalized)) {
       throw new BadRequestException(
         `Invalid ${label} format — expected something like ${example}.`,

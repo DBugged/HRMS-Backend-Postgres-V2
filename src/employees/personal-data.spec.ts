@@ -1,5 +1,6 @@
 import {
   areMandatoryDocumentsUploaded,
+  assertValidIdentifiers,
   isProfileComplete,
   mergePersonalData,
 } from './personal-data';
@@ -166,5 +167,19 @@ describe('mergePersonalData', () => {
     expect((merged.previousEmployment as any[])[0].documentUrl).toBe(
       'documents/org1/acme.pdf',
     );
+  });
+});
+
+describe('India-only phone numbers in personal data', () => {
+  it('accepts +91 and plain numbers, rejects another country code', () => {
+    expect(() =>
+      assertValidIdentifiers({ fatherContact: '+91 98765 43210' }),
+    ).not.toThrow();
+    expect(() =>
+      assertValidIdentifiers({ fatherContact: '9876543210' }),
+    ).not.toThrow();
+    expect(() =>
+      assertValidIdentifiers({ emergencyContact1Number: '+44 20 7946 0958' }),
+    ).toThrow(/Indian \(\+91\)/);
   });
 });

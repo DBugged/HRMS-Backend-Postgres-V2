@@ -154,6 +154,20 @@ function checkTime(obj: Record<string, unknown>, key: string, path: string) {
   }
 }
 
+// The product is for India only: one country, one time zone, one currency, +91 phone numbers.
+export const INDIA_COUNTRY = 'India';
+export const INDIA_TIMEZONE = 'Asia/Kolkata';
+export const INDIA_CURRENCY = 'INR';
+
+// A phone number that carries a country code must carry India's (+91); plain national numbers are left as they are.
+export function assertIndianPhone(field: string, value: unknown): void {
+  if (typeof value !== 'string') return;
+  const v = value.trim();
+  if (v.startsWith('+') && !/^\+91/.test(v.replace(/[\s-]/g, ''))) {
+    bad(`${field} must be an Indian number (+91) — only India is supported.`);
+  }
+}
+
 function validatePolicies(p: Record<string, unknown>) {
   checkNumber(
     p,
@@ -171,6 +185,17 @@ function validatePolicies(p: Record<string, unknown>) {
   });
   if (p.timezone !== undefined && !isIanaTimeZone(p.timezone)) {
     bad('timezone must be a valid IANA timezone (e.g. Asia/Kolkata).');
+  }
+  // India only: one time zone (IST) and one currency.
+  if (p.timezone !== undefined && p.timezone !== INDIA_TIMEZONE) {
+    bad(`timezone must be ${INDIA_TIMEZONE} — only India is supported.`);
+  }
+  if (
+    p.currency !== undefined &&
+    p.currency !== null &&
+    p.currency !== INDIA_CURRENCY
+  ) {
+    bad(`currency must be ${INDIA_CURRENCY} — only India is supported.`);
   }
   for (const key of [
     'currency',
@@ -284,6 +309,15 @@ export function validateSectionData(data: Record<string, unknown>) {
         break;
     }
   }
+
+  if (
+    typeof data.country === 'string' &&
+    data.country.trim() !== INDIA_COUNTRY
+  ) {
+    bad(`country must be ${INDIA_COUNTRY} — only India is supported.`);
+  }
+  for (const field of ['phone', 'mobile'])
+    assertIndianPhone(field, data[field]);
 
   for (const field of [
     'wfhAutoApproveHours',

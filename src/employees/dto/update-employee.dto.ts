@@ -9,6 +9,7 @@ import {
   IsUUID,
   MaxLength,
   ValidateIf,
+  Matches,
 } from 'class-validator';
 import {
   EmploymentStatus,
@@ -110,6 +111,11 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  // India only: a number that carries a country code must carry +91.
+  @Matches(/^(?!\+(?!\s*91))/, {
+    message:
+      'contactNumber must be an Indian number (+91) — only India is supported.',
+  })
   contactNumber?: string;
 
   // Self-editable — feeds LeaveType.applicableGenders eligibility filtering
