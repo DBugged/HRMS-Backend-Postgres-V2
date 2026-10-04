@@ -269,6 +269,7 @@ model Organization {
   policyDocumentAcknowledgments PolicyDocumentAcknowledgment[]
   documentRequirements          DocumentRequirement[]
   notifications                 Notification[]
+  pushDevices                   PushDevice[]
   employeeDocuments             EmployeeDocument[]
   employeeAssets                EmployeeAsset[]
   employeeRoleHistory           EmployeeRoleHistory[]
@@ -558,6 +559,7 @@ model User {
   policyDocumentAcknowledgments    PolicyDocumentAcknowledgment[]
   documentRequirementsCreated      DocumentRequirement[]          @relation("DocumentRequirementCreatedBy")
   notifications                    Notification[]
+  pushDevices                      PushDevice[]
   organizationsInitialized         Organization[]                 @relation("OrganizationInitializedBy")
   employeeDocuments                EmployeeDocument[]             @relation("EmployeeDocumentEmployee")
   employeeDocumentsReviewed        EmployeeDocument[]             @relation("EmployeeDocumentReviewedBy")
@@ -3458,4 +3460,28 @@ model TdsStatement {
 
   @@unique([organizationId, financialYear, quarter])
   @@map("tds_statements")
+}
+
+// A phone that receives push notifications for one user (Expo push token). One token = one app install; it is
+// re-assigned (never duplicated) when a different account signs in on the same phone, and removed on sign-out or
+// when Expo reports it is no longer valid.
+model PushDevice {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  token      String
+  platform   String @default("")
+  deviceName String @default("")
+
+  lastSeenAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([token])
+  @@index([organizationId, userId])
+  @@map("push_devices")
 }

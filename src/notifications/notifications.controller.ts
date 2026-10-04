@@ -14,6 +14,11 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
+import { PushService } from './push.service';
+import {
+  RegisterPushDeviceDto,
+  UnregisterPushDeviceDto,
+} from './dto/push-device.dto';
 import { NotificationsService } from './notifications.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
@@ -28,7 +33,10 @@ type Caller = Omit<User, 'password'>;
 @ApiBearerAuth('access-token')
 @Controller('notifications')
 export class NotificationsController {
-  constructor(private readonly notificationsService: NotificationsService) {}
+  constructor(
+    private readonly notificationsService: NotificationsService,
+    private readonly pushService: PushService,
+  ) {}
 
   @Get()
   findMine(
@@ -61,6 +69,27 @@ export class NotificationsController {
       dto,
       caller,
       caller.organizationId,
+    );
+  }
+
+  // Phone registration for push notifications (the app calls these after sign-in / on sign-out).
+  @Post('devices')
+  registerDevice(
+    @Body() dto: RegisterPushDeviceDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.pushService.register(caller, caller.organizationId, dto);
+  }
+
+  @Post('devices/unregister')
+  unregisterDevice(
+    @Body() dto: UnregisterPushDeviceDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.pushService.unregister(
+      caller,
+      caller.organizationId,
+      dto.token,
     );
   }
 

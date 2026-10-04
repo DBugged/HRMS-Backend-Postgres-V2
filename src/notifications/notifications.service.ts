@@ -22,6 +22,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from './email.service';
+import { PushService } from './push.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-notification-preferences.dto';
 import { SendNotificationDto } from './dto/send-notification.dto';
 import { QueryNotificationsDto } from './dto/query-notifications.dto';
@@ -34,11 +35,14 @@ type Actor = Omit<User, 'password'>;
 export interface NotificationPreferences {
   mutedCategories: NotificationCategory[];
   emailEnabled: boolean;
+  // Push notifications to the user's phone(s).
+  pushEnabled: boolean;
 }
 
 const DEFAULT_PREFERENCES: NotificationPreferences = {
   mutedCategories: [],
   emailEnabled: true,
+  pushEnabled: true,
 };
 
 // Every other module in the app calls this to create a Notification row —
@@ -59,6 +63,7 @@ function readPreferences(raw: unknown): NotificationPreferences {
     mutedCategories:
       prefs?.mutedCategories ?? DEFAULT_PREFERENCES.mutedCategories,
     emailEnabled: prefs?.emailEnabled ?? DEFAULT_PREFERENCES.emailEnabled,
+    pushEnabled: prefs?.pushEnabled ?? DEFAULT_PREFERENCES.pushEnabled,
   };
 }
 
@@ -68,6 +73,7 @@ export class NotificationsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
+    private readonly pushService: PushService,
   ) {}
 
   // Called by other modules' trigger sites — fire-and-forget-ish (errors
@@ -75,7 +81,7 @@ export class NotificationsService {
   // expected to be the reason a business action itself fails since it's
   // always called after the primary write already succeeded).
   async create(input: CreateNotificationInput) {
-    return this.scopedPrisma.notification.create({
+    const row = await this.scopedPrisma.notification.create({
       data: {
         organizationId: input.organizationId,
         userId: input.userId,
@@ -84,6 +90,9 @@ export class NotificationsService {
         category: input.category,
       },
     });
+    // The same event also goes to the user's phone(s); never allowed to fail the caller.
+    this.pushService.notify([{ ...input, notificationId: row.id }]);
+    return row;
   }
 
   async createMany(inputs: CreateNotificationInput[]) {
@@ -97,6 +106,7 @@ export class NotificationsService {
         category: input.category,
       })),
     });
+    this.pushService.notify(inputs);
   }
 
   async findMine(
@@ -164,6 +174,7 @@ export class NotificationsService {
     const merged: NotificationPreferences = {
       mutedCategories: dto.mutedCategories ?? current.mutedCategories,
       emailEnabled: dto.emailEnabled ?? current.emailEnabled,
+      pushEnabled: dto.pushEnabled ?? current.pushEnabled,
     };
 
     await this.scopedPrisma.user.updateMany({
