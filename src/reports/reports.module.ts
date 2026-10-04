@@ -7,6 +7,8 @@ import { CustomReportController } from './custom-report.controller';
 import { CustomReportService } from './custom-report.service';
 import { EcrController } from './ecr.controller';
 import { EcrService } from './ecr.service';
+import { StatutoryReturnsController } from './statutory-returns.controller';
+import { StatutoryReturnsService } from './statutory-returns.service';
 import { DashboardModule } from '../dashboard/dashboard.module';
 import { PrivacyModule } from '../privacy/privacy.module';
 
@@ -17,12 +19,14 @@ import { PrivacyModule } from '../privacy/privacy.module';
     PayrollReportsController,
     CustomReportController,
     EcrController,
+    StatutoryReturnsController,
   ],
   providers: [
     ReportsService,
     PayrollReportsService,
     CustomReportService,
     EcrService,
+    StatutoryReturnsService,
   ],
 })
 export class ReportsModule {}
