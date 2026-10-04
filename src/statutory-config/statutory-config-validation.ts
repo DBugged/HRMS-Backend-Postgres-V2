@@ -46,7 +46,7 @@ function validatePfOrEsi(config: unknown): void {
   }
 }
 
-// Statutory cap on the monthly EDLI contribution (₹75 today); editable because it moves with the PF wage ceiling.
+// Statutory cap on the monthly EDLI contribution: 0.5% of the PF wage ceiling (₹125 at ₹25,000; it was ₹75 at ₹15,000); editable because it moves with the PF wage ceiling.
 function validateEdliMax(v: unknown): void {
   if (v !== undefined && !isNonNegative(v))
     throw new Error('edliMaxAmount must be a non-negative number.');
@@ -297,7 +297,8 @@ export const SEED_DEFAULTS: Record<
       edliRate: 0.5,
       adminChargeRate: 0.5,
       epsRate: 8.33,
-      edliMaxAmount: 75,
+      // 0.5% of the ₹25,000 ceiling. (₹75 was the figure at the old ₹15,000 ceiling.)
+      edliMaxAmount: 125,
     },
     isEnabled: false,
   },

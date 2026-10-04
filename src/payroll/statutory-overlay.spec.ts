@@ -72,6 +72,35 @@ describe('applyStatutoryOverrides', () => {
     expect(result.pfEnabled).toBe(true);
   });
 
+  it('caps EDLI at 0.5% of the ceiling unless the version stores its own cap', () => {
+    const derived = applyStatutoryOverrides(baseSettings(), {
+      [StatutoryModule.PF]: {
+        config: { employeeRate: 12, employerRate: 12, wageCeiling: 25000 },
+        isEnabled: true,
+      },
+    });
+    expect(derived.pfEdliMax).toBe(125); // not the old 15,000-ceiling cap of 75
+    const old = applyStatutoryOverrides(baseSettings(), {
+      [StatutoryModule.PF]: {
+        config: { employeeRate: 12, employerRate: 12, wageCeiling: 15000 },
+        isEnabled: true,
+      },
+    });
+    expect(old.pfEdliMax).toBe(75);
+    const explicit = applyStatutoryOverrides(baseSettings(), {
+      [StatutoryModule.PF]: {
+        config: {
+          employeeRate: 12,
+          employerRate: 12,
+          wageCeiling: 25000,
+          edliMaxAmount: 100,
+        },
+        isEnabled: true,
+      },
+    });
+    expect(explicit.pfEdliMax).toBe(100);
+  });
+
   it('overlays LWF months from the version instead of the [6,12] default', () => {
     const result = applyStatutoryOverrides(baseSettings(), {
       [StatutoryModule.LWF]: {

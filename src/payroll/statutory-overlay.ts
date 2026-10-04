@@ -168,10 +168,14 @@ export function applyStatutoryOverrides(
     resolved.pfEdliRate = c.edliRate ?? resolved.pfEdliRate;
     resolved.pfAdminRate = c.adminChargeRate ?? resolved.pfAdminRate;
     resolved.pfEpsRate = c.epsRate ?? resolved.pfEpsRate;
-    resolved.pfEdliMax = c.edliMaxAmount ?? resolved.pfEdliMax;
     resolved.pfEmployeeRate = c.employeeRate;
     resolved.pfEmployerRate = c.employerRate;
     resolved.pfWageCeiling = c.wageCeiling;
+    // The EDLI cap is the EDLI rate on the wage ceiling, so a version that raised the ceiling without storing a cap
+    // (₹25,000 from 17-Sep-2026) is capped at ₹125, not the old ₹75.
+    resolved.pfEdliMax =
+      c.edliMaxAmount ??
+      Math.round((resolved.pfEdliRate * resolved.pfWageCeiling) / 100);
     resolved.pfEnabled = pf.isEnabled;
   }
 

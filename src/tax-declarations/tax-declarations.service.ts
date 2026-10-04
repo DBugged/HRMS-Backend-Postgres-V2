@@ -231,7 +231,10 @@ export class TaxDeclarationsService {
       }),
       // A chosen city decides "metro"; the bare flag is only honoured from older clients that do not send a city.
       ...(dto.hraCity !== undefined
-        ? { hraCity: dto.hraCity, isMetroCity: isMetroCity(dto.hraCity) }
+        ? {
+            hraCity: dto.hraCity,
+            isMetroCity: isMetroCity(dto.hraCity, dto.financialYear),
+          }
         : dto.isMetroCity !== undefined
           ? // A bare flag says nothing about which city, so a previously chosen city is cleared rather than left
             // contradicting it.
