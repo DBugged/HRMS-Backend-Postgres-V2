@@ -17,6 +17,8 @@ export interface PushInput {
   message: string;
   category: string;
   notificationId?: string;
+  // 'APPROVAL' = a request waiting for the recipient's decision; the phone opens its approvals list on tap.
+  pushKind?: 'APPROVAL';
 }
 
 export interface ExpoMessage {
@@ -26,7 +28,7 @@ export interface ExpoMessage {
   sound: 'default';
   channelId: 'default';
   priority: 'high';
-  data: { category: string; notificationId?: string };
+  data: { category: string; notificationId?: string; kind?: 'APPROVAL' };
 }
 
 export function pushBody(category: string, message: string): string {
@@ -51,6 +53,7 @@ export function buildExpoMessages(
     data: {
       category: input.category,
       ...(input.notificationId ? { notificationId: input.notificationId } : {}),
+      ...(input.pushKind ? { kind: input.pushKind } : {}),
     },
   }));
 }

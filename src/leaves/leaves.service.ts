@@ -1121,6 +1121,7 @@ export class LeavesService {
         title,
         message,
         category: NotificationCategory.LEAVE,
+        pushKind: 'APPROVAL',
       });
       return;
     }
@@ -1136,6 +1137,7 @@ export class LeavesService {
         title,
         message,
         category: NotificationCategory.LEAVE,
+        pushKind: 'APPROVAL',
       })),
     );
   }

@@ -47,6 +47,22 @@ describe('push-messages', () => {
     });
   });
 
+  it('carries the approval kind so the phone opens its approvals list', () => {
+    const [m] = buildExpoMessages(['ExpoPushToken[a]'], {
+      title: 'Overtime Requested',
+      message: 'pending',
+      category: 'ATTENDANCE',
+      pushKind: 'APPROVAL',
+    });
+    expect(m.data).toMatchObject({ category: 'ATTENDANCE', kind: 'APPROVAL' });
+    const [plain] = buildExpoMessages(['ExpoPushToken[a]'], {
+      title: 'x',
+      message: 'y',
+      category: 'LEAVE',
+    });
+    expect(plain.data).not.toHaveProperty('kind');
+  });
+
   it('chunks into groups of 100', () => {
     expect(
       chunk(Array.from({ length: 250 }, (_, i) => i)).map((c) => c.length),

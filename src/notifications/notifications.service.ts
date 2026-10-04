@@ -56,6 +56,8 @@ export interface CreateNotificationInput {
   title: string;
   message: string;
   category: NotificationCategory;
+  // Marks a notification that asks the recipient to decide on something (see push-messages.ts).
+  pushKind?: 'APPROVAL';
 }
 
 function readPreferences(raw: unknown): NotificationPreferences {
@@ -121,6 +123,7 @@ export class NotificationsService {
           title,
           message,
           category,
+          pushKind: 'APPROVAL',
         });
         return;
       }
@@ -140,6 +143,7 @@ export class NotificationsService {
           title,
           message,
           category,
+          pushKind: 'APPROVAL',
         })),
       );
     } catch {
