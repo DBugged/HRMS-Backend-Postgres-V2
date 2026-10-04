@@ -193,4 +193,24 @@ export class UpdatePayrollSettingsDto {
   @IsOptional()
   @IsBoolean()
   taxDeclarationRequiresVerification?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Section 206AA: withhold at the higher of normal TDS and 20% for an employee without a valid PAN.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  higherTdsWithoutPan?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'SBI benchmark rate (%) used to value the perquisite of a concessional employer loan; 0 = off.',
+    minimum: 0,
+    maximum: 30,
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(30)
+  perquisiteLoanBenchmarkRate?: number;
 }

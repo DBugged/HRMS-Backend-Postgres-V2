@@ -753,6 +753,40 @@ export class PayrollService {
         roundAmount,
       );
 
+    // Perquisite of a concessional employer loan (below the SBI benchmark rate): taxable, but not paid out. Added to the
+    // income base each month (and kept in the run's taxableGross so year-to-date and Form 130 carry it).
+    let perquisiteMonthly = 0;
+    if (settingsRow.perquisiteLoanBenchmarkRate > 0) {
+      const loans = await this.scopedPrisma.loan.findMany({
+        where: {
+          organizationId,
+          employeeId,
+          status: LoanStatus.ACTIVE,
+          loanType: LoanType.LOAN,
+        },
+        select: { outstandingBalance: true, interestRate: true },
+      });
+      // No perquisite while the total outstanding stays within 20,000.
+      const total = loans.reduce((s, l) => s + l.outstandingBalance, 0);
+      if (total > 20000) {
+        perquisiteMonthly = Math.round(
+          loans.reduce(
+            (s, l) =>
+              s +
+              (l.outstandingBalance *
+                Math.max(
+                  0,
+                  settingsRow.perquisiteLoanBenchmarkRate - l.interestRate,
+                )) /
+                100 /
+                12,
+            0,
+          ),
+        );
+      }
+    }
+    const taxableForTax = taxableGross + perquisiteMonthly;
+
     let taxDetails: TaxDetails | null = null;
     const incomeTaxComponent = applicable.find(
       (c) => c.statutoryKey === StatutoryKey.INCOME_TAX,
@@ -793,7 +827,10 @@ export class PayrollService {
       const fs = options?.finalSettlement;
       // When the LWD month is already paid by a locked run, that run is part of the year-to-date.
       const ytdBefore = fs?.monthAlreadyPaid
-        ? { month: month === 12 ? 1 : month + 1, year: month === 12 ? year + 1 : year }
+        ? {
+            month: month === 12 ? 1 : month + 1,
+            year: month === 12 ? year + 1 : year,
+          }
         : { month, year };
       const { ytdGross, ytdTDS, ytdMonths } = await this.getYtdFigures(
         employeeId,
@@ -844,17 +881,20 @@ export class PayrollService {
         month,
         year,
         currentMonthGross: fs
-          ? (fs.monthAlreadyPaid ? 0 : taxableGross) + fs.extraTaxableEarnings
-          : taxableGross,
+          ? (fs.monthAlreadyPaid ? 0 : taxableForTax) + fs.extraTaxableEarnings
+          : taxableForTax,
         finalMonth: !!fs,
         employmentMonthsInFY: employmentMonths,
         // Remaining months are projected from the regular monthly structure,
         // not from this month's actual (possibly prorated / one-off-inflated)
         // taxable gross.
-        recurringMonthlyGross: this.recurringMonthlyTaxableGross(
-          recurringResults,
-          roundAmount,
-        ),
+        recurringMonthlyGross: (() => {
+          const r = this.recurringMonthlyTaxableGross(
+            recurringResults,
+            roundAmount,
+          );
+          return r === undefined ? undefined : r + perquisiteMonthly;
+        })(),
         ytdGross,
         ytdTDS,
         basicAnnual: basicMonthly * employmentMonths,
@@ -880,10 +920,22 @@ export class PayrollService {
       // net pay for no real income. Skipping it here doesn't lose the tax
       // due — the annualized calc naturally recovers it across the
       // remaining months once ytdGross/ytdTDS reflect this month as a gap.
-      const incomeTaxAmount =
+      let incomeTaxAmount =
         taxableGross > 0 || (fs && fs.extraTaxableEarnings > 0)
           ? Math.max(0, taxDetails.monthlyTDS || 0)
           : 0;
+      // Section 206AA (switch in Payroll Settings): no valid PAN -> at least 20% of the month's taxable pay.
+      const panRaw = (employee.personalData as Record<string, unknown> | null)
+        ?.panNumber;
+      const validPan =
+        typeof panRaw === 'string' &&
+        /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(panRaw.trim().toUpperCase());
+      if (settingsRow.higherTdsWithoutPan && !validPan && taxableGross > 0) {
+        incomeTaxAmount = Math.max(
+          incomeTaxAmount,
+          Math.round(taxableGross * 0.2),
+        );
+      }
       deductionsResults.push({
         code: SALARY_COMPONENT_CODES.INCOME_TAX,
         name: incomeTaxComponent.name,
@@ -1022,7 +1074,7 @@ export class PayrollService {
       })),
       taxDetails,
       grossSalary,
-      taxableGross,
+      taxableGross: taxableForTax,
       totalDeductions,
       totalEmployerContributions,
       netPay,
@@ -1529,8 +1581,7 @@ export class PayrollService {
         organizationId,
       );
     const roundingConfig = roundingVersion?.config as
-      | { rule: string; decimals: number }
-      | undefined;
+      { rule: string; decimals: number } | undefined;
     const roundingRule = roundingConfig?.rule ?? settingsRow.roundingRule;
     const roundingDecimals =
       roundingConfig?.decimals ?? settingsRow.roundingDecimals;

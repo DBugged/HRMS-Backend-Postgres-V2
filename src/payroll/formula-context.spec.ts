@@ -392,7 +392,13 @@ describe('splitEmployerPf', () => {
 
 describe('flat LWF with no wages (audit B5)', () => {
   it('is not deducted in a month with zero gross earnings', () => {
-    const ctx = { GROSS_EARNINGS: 0, BASIC: 0, DA: 0, LWF_EMPLOYEE_AMOUNT: 25, LWF_EMPLOYER_AMOUNT: 75 };
+    const ctx = {
+      GROSS_EARNINGS: 0,
+      BASIC: 0,
+      DA: 0,
+      LWF_EMPLOYEE_AMOUNT: 25,
+      LWF_EMPLOYER_AMOUNT: 75,
+    };
     const d = deriveStatutoryContext(ctx, settings(), false);
     expect(d.LWF_EMPLOYEE_AMOUNT).toBe(0);
     expect(d.LWF_EMPLOYER_AMOUNT).toBe(0);
@@ -408,8 +414,8 @@ describe('flat LWF with no wages (audit B5)', () => {
     const ctx = { GROSS_EARNINGS: 30000, BASIC: 10000, DA: 0, ARREARS: 5000 };
     expect(deriveStatutoryContext(ctx, settings(), false).PF_WAGES).toBe(10000);
     expect(
-      deriveStatutoryContext(ctx, settings({ pfIncludeArrears: true }), false).PF_WAGES,
+      deriveStatutoryContext(ctx, settings({ pfIncludeArrears: true }), false)
+        .PF_WAGES,
     ).toBe(15000);
   });
 });
-

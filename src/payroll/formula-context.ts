@@ -119,7 +119,8 @@ export function deriveStatutoryContext(
   hadEsiThisPeriod: boolean,
 ): Record<string, number> {
   const basicDa = (context.BASIC ?? 0) + (context.DA ?? 0);
-  const pfBase = basicDa + (settings.pfIncludeArrears ? (context.ARREARS ?? 0) : 0);
+  const pfBase =
+    basicDa + (settings.pfIncludeArrears ? (context.ARREARS ?? 0) : 0);
   const floor = (context.GROSS_EARNINGS ?? 0) * 0.5;
   const wages = (useRule: boolean, base: number) =>
     useRule ? Math.max(base, floor) : base;

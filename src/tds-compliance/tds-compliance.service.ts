@@ -64,6 +64,7 @@ interface TaxDetailsShape {
   surcharge?: number;
   cess?: number;
   totalAnnualTax?: number;
+  relief89?: number;
   ytdTDS?: number;
   previousEmployerTDS?: number;
 }
@@ -990,6 +991,7 @@ export class TdsComplianceService {
         rebate: d?.rebate ?? 0,
         surcharge: d?.surcharge ?? 0,
         cess: d?.cess ?? 0,
+        relief89: d?.relief89 ?? 0,
         netTaxPayable: d?.totalAnnualTax ?? 0,
         previousEmployerTds: d?.previousEmployerTDS ?? 0,
         tdsDeducted: person.tds,

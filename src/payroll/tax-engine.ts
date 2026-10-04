@@ -116,6 +116,9 @@ export interface DeclarationLike {
   section80E?: number | null;
   section80G?: number | null;
   otherDeductions?: number | null;
+  homeLoanInterest?: number | null;
+  section80TTA?: number | null;
+  section89Relief?: number | null;
 }
 
 export interface TaxSlabConfigLike {
@@ -167,6 +170,8 @@ export interface TaxDetails {
     section80D: number;
     section80E: number;
     section80G: number;
+    section80TTA: number;
+    homeLoanInterest: number;
     other: number;
   };
   taxableIncome: number;
@@ -174,6 +179,8 @@ export interface TaxDetails {
   rebate: number;
   surcharge: number;
   cess: number;
+  // Section 89 relief applied (already deducted from totalAnnualTax).
+  relief89: number;
   totalAnnualTax: number;
   ytdTDS: number;
   // TDS the previous employer already deducted this financial year, credited
@@ -237,6 +244,8 @@ export function calculateTax({
     section80D: 0,
     section80E: 0,
     section80G: 0,
+    section80TTA: 0,
+    homeLoanInterest: 0,
     other: 0,
   };
 
@@ -270,6 +279,14 @@ export function calculateTax({
     deductions.section80D = Math.min(declaration.section80D || 0, 75000);
     deductions.section80E = declaration.section80E || 0;
     deductions.section80G = declaration.section80G || 0;
+    // 24(b): interest on a self-occupied home loan — set off against income, at most 2,00,000 a year (old regime
+    // only; the new regime allows no such deduction).
+    deductions.homeLoanInterest = Math.min(
+      declaration.homeLoanInterest || 0,
+      200000,
+    );
+    // 80TTA: savings-account interest, at most 10,000.
+    deductions.section80TTA = Math.min(declaration.section80TTA || 0, 10000);
     deductions.other = declaration.otherDeductions || 0;
   }
 
@@ -320,7 +337,13 @@ export function calculateTax({
   const cess =
     ((taxAfterRebate + surcharge) * (taxSlabConfig.cessRate || 0)) / 100;
 
-  const totalAnnualTax = Math.round(taxAfterRebate + surcharge + cess);
+  // Section 89 relief (HR-entered from Form 10E) comes off the tax after cess, in either regime.
+  const taxBeforeRelief = Math.round(taxAfterRebate + surcharge + cess);
+  const relief89 = Math.min(
+    taxBeforeRelief,
+    Math.max(0, Math.round(declaration?.section89Relief || 0)),
+  );
+  const totalAnnualTax = taxBeforeRelief - relief89;
   // Credit everything already withheld this year — this employer's YTD TDS
   // and whatever the previous employer deducted.
   const remainingTax = Math.max(
@@ -340,6 +363,7 @@ export function calculateTax({
     rebate: Math.round(rebate),
     surcharge: Math.round(surcharge),
     cess: Math.round(cess),
+    relief89,
     totalAnnualTax,
     ytdTDS,
     previousEmployerTDS,

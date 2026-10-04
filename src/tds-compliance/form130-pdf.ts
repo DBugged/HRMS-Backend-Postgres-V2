@@ -13,6 +13,18 @@ const INK = '#14161d';
 const MUTED = '#4c5262';
 const LINE = '#cfd4de';
 
+const SECTION_LABEL: Record<string, string> = {
+  section80C: 'section 80C',
+  section80CCD1B: 'section 80CCD(1B)',
+  section80CCD2: 'section 80CCD(2)',
+  section80D: 'section 80D',
+  section80E: 'section 80E',
+  section80G: 'section 80G',
+  section80TTA: 'section 80TTA',
+  homeLoanInterest: 'section 24(b) home-loan interest',
+  other: 'other deductions',
+};
+
 const rs = (n: number) => `Rs. ${Math.round(n).toLocaleString('en-IN')}`;
 const dmy = (iso: string) => {
   const [y, m, d] = iso.split('-');
@@ -196,7 +208,7 @@ export function renderForm130(data: Form130Data): Promise<Buffer> {
       ['Less: exemption — leave travel concession', rs(a.exemptionLta)],
       ['Less: standard deduction', rs(a.standardDeduction)],
       ...a.chapter6a.map((c): string[] => [
-        `Less: deduction — ${c.section}`,
+        `Less: deduction — ${SECTION_LABEL[c.section] ?? c.section}`,
         rs(c.amount),
       ]),
       ['Total income (taxable)', rs(a.totalIncome)],
@@ -204,6 +216,9 @@ export function renderForm130(data: Form130Data): Promise<Buffer> {
       ['Less: rebate u/s 87A', rs(a.rebate)],
       ['Add: surcharge', rs(a.surcharge)],
       ['Add: health and education cess', rs(a.cess)],
+      ...(a.relief89 > 0
+        ? [['Less: relief u/s 89 (Form 10E)', rs(a.relief89)]]
+        : []),
       ['Net tax payable', rs(a.netTaxPayable)],
       ['Less: tax deducted by previous employer', rs(a.previousEmployerTds)],
       ['Less: tax deducted by this employer', rs(a.tdsDeducted)],

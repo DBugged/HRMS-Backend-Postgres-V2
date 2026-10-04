@@ -174,7 +174,11 @@ describe('payable days are per calendar day (audit B1)', () => {
     status,
     isLate: false,
   });
-  const paidLeave = (startDate: string, endDate: string, isHalfDay = false) => ({
+  const paidLeave = (
+    startDate: string,
+    endDate: string,
+    isHalfDay = false,
+  ) => ({
     startDate,
     endDate,
     isHalfDay,
@@ -197,7 +201,10 @@ describe('payable days are per calendar day (audit B1)', () => {
 
   it('payable days never exceed the days in the month', () => {
     const rows = Array.from({ length: 30 }, (_, i) =>
-      row(`2026-11-${String(i + 1).padStart(2, '0')}`, AttendanceStatus.PRESENT),
+      row(
+        `2026-11-${String(i + 1).padStart(2, '0')}`,
+        AttendanceStatus.PRESENT,
+      ),
     );
     const s = computeAttendanceSummary(
       rows,

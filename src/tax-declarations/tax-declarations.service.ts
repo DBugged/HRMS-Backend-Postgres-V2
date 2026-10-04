@@ -7,6 +7,7 @@
 // even though they could set it freely when editing someone else's.
 import {
   BadRequestException,
+  NotFoundException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -106,6 +107,7 @@ export class TaxDeclarationsService {
         'employeeId and financialYear are required.',
       );
     }
+    await this.assertEmployeeInOrg(employeeId, organizationId);
     if (employeeId !== actor.id) {
       await assertManagerDeptScope(
         this.scopedPrisma,
@@ -120,6 +122,17 @@ export class TaxDeclarationsService {
         where: { organizationId, employeeId, financialYear },
       });
     return { declaration };
+  }
+
+  private async assertEmployeeInOrg(
+    employeeId: string,
+    organizationId: string,
+  ) {
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { id: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
   }
 
   async upsert(
@@ -148,6 +161,10 @@ export class TaxDeclarationsService {
         employeeId,
       );
     }
+
+    // The target must be an employee of THIS organisation — without it an Admin of another tenant could create a
+    // declaration (and timeline entries) pointing at someone else's employee id.
+    await this.assertEmployeeInOrg(employeeId, organizationId);
 
     const existing = await this.scopedPrisma.employeeTaxDeclaration.findFirst({
       where: { organizationId, employeeId, financialYear: dto.financialYear },
@@ -220,6 +237,16 @@ export class TaxDeclarationsService {
         previousEmployerTDS: dto.previousEmployerTDS,
       }),
       ...(dto.otherIncome !== undefined && { otherIncome: dto.otherIncome }),
+      ...(dto.homeLoanInterest !== undefined && {
+        homeLoanInterest: dto.homeLoanInterest,
+      }),
+      ...(dto.section80TTA !== undefined && { section80TTA: dto.section80TTA }),
+      // Relief u/s 89 reduces the employee's tax — only HR/Admin (acting on someone else's declaration, from the
+      // Form 10E they computed) may set it.
+      ...(!isOwnDeclaration &&
+        dto.section89Relief !== undefined && {
+          section89Relief: dto.section89Relief,
+        }),
       ...(status !== undefined && { status }),
     };
 

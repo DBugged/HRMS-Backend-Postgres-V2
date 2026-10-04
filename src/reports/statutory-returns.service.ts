@@ -291,6 +291,125 @@ export class StatutoryReturnsService {
     };
   }
 
+  // ── Labour Welfare Fund ─────────────────────────────────────────────────
+
+  // Members with an LWF contribution this month, grouped by work-location state. LWF is deducted only in the
+  // months a state's schedule says (e.g. June and December), so most months are empty.
+  async lwf(month: number, year: number, organizationId: string) {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: { organizationId, month, year, status: { in: PAID_OUT } },
+    });
+    const lwfRuns = runs.filter(
+      (r) =>
+        amountOf(r.deductions, SALARY_COMPONENT_CODES.LWF) > 0 ||
+        amountOf(r.employerContributions, 'LWF_EMPLOYER') > 0,
+    );
+    const ids = [...new Set(lwfRuns.map((r) => r.employeeId))];
+    const users = await this.scopedPrisma.user.findMany({
+      where: { organizationId, id: { in: ids } },
+      select: {
+        id: true,
+        name: true,
+        employeeId: true,
+        workLocation: { select: { state: true } },
+        department: { select: { workLocation: { select: { state: true } } } },
+      },
+    });
+    const userById = new Map(users.map((u) => [u.id, u]));
+    const merged = new Map<
+      string,
+      {
+        state: string;
+        employeeCode: string;
+        name: string;
+        wages: number;
+        employee: number;
+        employer: number;
+      }
+    >();
+    for (const r of lwfRuns) {
+      const u = userById.get(r.employeeId);
+      const cur = merged.get(r.employeeId) ?? {
+        state: (u && effectiveWorkLocation(u)?.state) || NO_STATE,
+        employeeCode: u?.employeeId ?? '',
+        name: u?.name ?? '',
+        wages: 0,
+        employee: 0,
+        employer: 0,
+      };
+      cur.wages += r.grossSalary;
+      cur.employee += amountOf(r.deductions, SALARY_COMPONENT_CODES.LWF);
+      cur.employer += amountOf(r.employerContributions, 'LWF_EMPLOYER');
+      merged.set(r.employeeId, cur);
+    }
+    const members = [...merged.values()].sort(
+      (a, b) =>
+        a.state.localeCompare(b.state) ||
+        a.employeeCode.localeCompare(b.employeeCode),
+    );
+    const states = [...new Set(members.map((m) => m.state))].map((state) => {
+      const list = members.filter((m) => m.state === state);
+      const employee = list.reduce((s, m) => s + m.employee, 0);
+      const employer = list.reduce((s, m) => s + m.employer, 0);
+      return {
+        state,
+        employees: list.length,
+        employeeContribution: employee,
+        employerContribution: employer,
+        total: employee + employer,
+        dueNote:
+          state === 'Maharashtra'
+            ? 'Half-yearly: 15 July (period to 30 June) and 15 January (period to 31 December) — confirm with the state.'
+            : "Due date follows this state's own LWF schedule — confirm on the state portal.",
+      };
+    });
+    return {
+      month,
+      year,
+      monthLabel: `${MONTH_NAMES[month]} ${year}`,
+      members,
+      states,
+      totals: {
+        employees: members.length,
+        employeeContribution: members.reduce((s, m) => s + m.employee, 0),
+        employerContribution: members.reduce((s, m) => s + m.employer, 0),
+      },
+      warnings: members.some((m) => m.state === NO_STATE)
+        ? [
+            'Some employees have no work-location state, so their LWF cannot be placed in a state return.',
+          ]
+        : [],
+    };
+  }
+
+  async lwfReport(
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    const r = await this.lwf(month, year, organizationId);
+    return {
+      title: `Labour Welfare Fund — Employee-wise (${r.monthLabel})`,
+      subtitle:
+        r.states
+          .map(
+            (s) =>
+              `${s.state}: employee ${s.employeeContribution} + employer ${s.employerContribution} = ${s.total}`,
+          )
+          .join(' | ') || 'No LWF contribution this month',
+      columns: [
+        { header: 'State', key: 'state', width: 18 },
+        { header: 'Employee ID', key: 'employeeCode', width: 14 },
+        { header: 'Name', key: 'name', width: 24 },
+        { header: 'Wages', key: 'wages', width: 14 },
+        { header: 'Employee Contribution', key: 'employee', width: 18 },
+        { header: 'Employer Contribution', key: 'employer', width: 18 },
+      ],
+      rows: r.members,
+      filename: `lwf_return_${year}_${pad(month)}`,
+    };
+  }
+
   async ptMemberReport(
     month: number,
     year: number,

@@ -1,8 +1,5 @@
 import { AttendanceStatus, OvertimeType } from '@prisma/client';
-import {
-  clampLeaveDaysToMonth,
-  daysInMonth,
-} from './payroll-date-math';
+import { clampLeaveDaysToMonth, daysInMonth } from './payroll-date-math';
 
 /**
  * Pure port of the old backend's payrollEngine.js computeAttendanceSummary
@@ -200,7 +197,10 @@ export function resolveDayPay(
   for (const r of attendanceRows) {
     if (r.date < from || r.date > to) continue;
     // Duplicate rows for one date must not add up.
-    rowByDate.set(r.date, Math.max(rowByDate.get(r.date) ?? 0, rowPay(r.status)));
+    rowByDate.set(
+      r.date,
+      Math.max(rowByDate.get(r.date) ?? 0, rowPay(r.status)),
+    );
   }
   const paid = new Map<string, number>();
   const unpaid = new Map<string, number>();

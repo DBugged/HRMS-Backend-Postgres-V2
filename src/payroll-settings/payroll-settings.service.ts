@@ -55,11 +55,21 @@ export class PayrollSettingsService {
             select: { policies: true },
           }),
         ]);
-        const base =
-          existing ??
-          (await this.scopedPrisma.payrollSettings.create({
-            data: { organizationId },
-          }));
+        // Parallel callers (a bulk payroll run calculates employees concurrently) can all find no row on a new
+        // organisation's first run; the unique constraint lets exactly one create win, the rest re-read it.
+        let base = existing;
+        if (!base) {
+          try {
+            base = await this.scopedPrisma.payrollSettings.create({
+              data: { organizationId },
+            });
+          } catch (err) {
+            if ((err as { code?: string }).code !== 'P2002') throw err;
+            base = await this.scopedPrisma.payrollSettings.findFirstOrThrow({
+              where: { organizationId },
+            });
+          }
+        }
         const policies = (org?.policies as Record<string, unknown>) || {};
         return {
           ...base,

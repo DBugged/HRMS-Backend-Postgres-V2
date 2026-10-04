@@ -1338,6 +1338,14 @@ model PayrollSettings {
   // employee is taxed under the default regime with no declared deductions.
   taxDeclarationRequiresVerification Boolean @default(false)
 
+  // Section 206AA: when on, an employee with no valid PAN is withheld at the higher of the normal TDS and 20% of
+  // the month's taxable pay. Off by default — whether it applies to salary is the employer's CA's call.
+  higherTdsWithoutPan Boolean @default(false)
+
+  // SBI benchmark lending rate (%) used to value the perquisite of a concessional employer loan: outstanding balance
+  // x (benchmark - loan rate) / 12 each month is added to taxable income (not to pay). 0 = off.
+  perquisiteLoanBenchmarkRate Float @default(0)
+
   updatedById String?
   updatedBy   User?   @relation(fields: [updatedById], references: [id])
 
@@ -1554,6 +1562,13 @@ model EmployeeTaxDeclaration {
   // over-deduction for mid-year joiners.
   previousEmployerTDS    Float   @default(0)
   otherIncome            Float   @default(0)
+  // Section 24(b): interest on a home loan (self-occupied property, old regime, capped at 2,00,000).
+  homeLoanInterest       Float   @default(0)
+  // Section 80TTA: interest on savings accounts (old regime, capped at 10,000).
+  section80TTA           Float   @default(0)
+  // Section 89 relief for arrears/advance salary — computed by HR from the employee's Form 10E and entered by
+  // HR/Admin only (an employee cannot set it). Reduces the annual tax in either regime.
+  section89Relief        Float   @default(0)
 
   status TaxDeclarationStatus @default(DRAFT)
 

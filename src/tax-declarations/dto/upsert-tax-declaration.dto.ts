@@ -84,6 +84,36 @@ export class UpsertTaxDeclarationDto {
   @Min(0)
   @Max(100000000)
   otherDeductions?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Section 24(b) home-loan interest (old regime, capped at 2,00,000)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  homeLoanInterest?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Section 80TTA savings-account interest (old regime, capped at 10,000)',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  section80TTA?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Section 89 relief from Form 10E — HR/Admin only; ignored for an employee',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000000)
+  section89Relief?: number;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()

@@ -41,6 +41,8 @@ function baseSettings(
     otNightRate: 1.75,
     companyPerformanceEnabled: false,
     taxDeclarationRequiresVerification: false,
+    higherTdsWithoutPan: false,
+    perquisiteLoanBenchmarkRate: 0,
     updatedById: null,
     createdAt: new Date(),
     updatedAt: new Date(),

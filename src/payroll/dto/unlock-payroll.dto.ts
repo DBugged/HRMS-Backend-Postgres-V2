@@ -6,7 +6,9 @@ export class UnlockPayrollDto {
   @ApiProperty({ minLength: 5, maxLength: 500 })
   @IsString()
   @IsNotEmpty()
-  @MinLength(5, { message: 'Give a reason of at least 5 characters for unlocking payroll.' })
+  @MinLength(5, {
+    message: 'Give a reason of at least 5 characters for unlocking payroll.',
+  })
   @MaxLength(500)
   reason!: string;
 }

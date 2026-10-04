@@ -157,4 +157,32 @@ export class StatutoryReturnsController {
       format: q.format ?? 'xlsx',
     });
   }
+
+  @Get('lwf-return/preview')
+  lwfPreview(@Query() q: ReturnQueryDto, @CurrentUser() c: Caller) {
+    return this.service
+      .lwf(q.month, q.year, c.organizationId)
+      .then(({ members, ...rest }) => ({
+        ...rest,
+        employees: members.length,
+      }));
+  }
+
+  @Get('lwf-return')
+  @UseInterceptors(ExportAuditInterceptor)
+  async lwfDownload(
+    @Query() q: ReturnQueryDto,
+    @CurrentUser() c: Caller,
+    @Res() res: Response,
+  ) {
+    const report = await this.service.lwfReport(
+      q.month,
+      q.year,
+      c.organizationId,
+    );
+    await sendReportBranded(res, this.scopedPrisma, c.organizationId, {
+      ...report,
+      format: q.format ?? 'xlsx',
+    });
+  }
 }

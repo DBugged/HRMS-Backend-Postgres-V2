@@ -486,3 +486,42 @@ describe('exit-aware and part-year tax (audit B3/B8)', () => {
     expect(half.exemptions.hra).toBe(90000);
   });
 });
+
+describe('home-loan interest, 80TTA and section 89 relief (audit gaps)', () => {
+  const mk = (regime: TaxRegime) => {
+    const c: any = getDefaultTaxSlabConfig(regime);
+    return {
+      regime,
+      standardDeduction: c.standardDeduction,
+      slabs: c.slabs,
+      surchargeSlabs: c.surchargeSlabs,
+      cessRate: c.cessRate,
+      rebate87ALimit: c.rebate87ALimit,
+      rebate87AAmount: c.rebate87AAmount,
+    };
+  };
+  const base = { month: 4, year: 2026, currentMonthGross: 2400000, recurringMonthlyGross: 0 };
+
+  it('24(b) is capped at 2,00,000 and 80TTA at 10,000 — old regime only', () => {
+    const decl = { homeLoanInterest: 350000, section80TTA: 25000 };
+    const old = calculateTax({ ...base, declaration: decl, taxSlabConfig: mk(TaxRegime.OLD) });
+    expect(old.deductions.homeLoanInterest).toBe(200000);
+    expect(old.deductions.section80TTA).toBe(10000);
+    const plain = calculateTax({ ...base, declaration: null, taxSlabConfig: mk(TaxRegime.OLD) });
+    expect(plain.taxableIncome - old.taxableIncome).toBe(210000);
+    const neu = calculateTax({ ...base, declaration: decl, taxSlabConfig: mk(TaxRegime.NEW) });
+    expect(neu.deductions.homeLoanInterest).toBe(0);
+    expect(neu.deductions.section80TTA).toBe(0);
+  });
+
+  it('section 89 relief reduces the tax after cess in either regime, never below zero', () => {
+    for (const regime of [TaxRegime.OLD, TaxRegime.NEW]) {
+      const without = calculateTax({ ...base, declaration: null, taxSlabConfig: mk(regime) });
+      const withRelief = calculateTax({ ...base, declaration: { section89Relief: 12000 }, taxSlabConfig: mk(regime) });
+      expect(withRelief.relief89).toBe(12000);
+      expect(withRelief.totalAnnualTax).toBe(without.totalAnnualTax - 12000);
+    }
+    const huge = calculateTax({ ...base, declaration: { section89Relief: 99999999 }, taxSlabConfig: mk(TaxRegime.NEW) });
+    expect(huge.totalAnnualTax).toBe(0);
+  });
+});
