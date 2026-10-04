@@ -46,9 +46,9 @@ export class PublicBrandingController {
   ) {
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
-      select: { emailLogoUrl: true },
+      select: { emailLogoUrl: true, companyLogoUrl: true },
     });
-    const key = org?.emailLogoUrl;
+    const key = org?.emailLogoUrl || org?.companyLogoUrl;
     if (!key || !isKeyAllowedForOrg(organizationId, key)) {
       throw new NotFoundException();
     }

@@ -1,4 +1,4 @@
-// Purpose: Wires Organization Settings > Branding > Email Logo into outgoing emails ({{companyLogo}} and the
+// Purpose: Wires the organisation's Email Logo (falling back to the Company Logo) into outgoing emails ({{companyLogo}} and the
 //   shell header logo).
 // Important: the URL is DURABLE — GET /public/branding/:organizationId/email-logo (see
 //   files/public-branding.controller.ts) never expires. It used to be a 24h signed /files/<token> URL, which
@@ -53,7 +53,9 @@ export function companyLogoImgTag(
   storedEmailLogoKey: string | null | undefined,
   companyName?: string | null,
 ): string {
-  if (!storedEmailLogoKey) return '';
+  // The public endpoint only serves raster images; an SVG company logo would render as a broken image in mail clients.
+  if (!storedEmailLogoKey || !/\.(png|jpe?g|gif)$/i.test(storedEmailLogoKey))
+    return '';
   const url = emailLogoUrl(organizationId, storedEmailLogoKey);
   const alt = escAttr((companyName ?? '').trim());
   return `<img src="${escAttr(url)}" alt="${alt}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`;

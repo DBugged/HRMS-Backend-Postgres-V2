@@ -111,6 +111,7 @@ export class HrEventsService {
         contactEmail: true,
         registeredAddress: true,
         emailLogoUrl: true,
+        companyLogoUrl: true,
       },
     });
     const departments = await this.scopedPrisma.department.findMany({
@@ -218,6 +219,7 @@ export class HrEventsService {
       contactEmail: string | null;
       registeredAddress: string | null;
       emailLogoUrl: string | null;
+      companyLogoUrl?: string | null;
     } | null,
   ): Record<string, string> {
     return {
@@ -228,7 +230,7 @@ export class HrEventsService {
       companyAddress: organization?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(
         organizationId,
-        organization?.emailLogoUrl,
+        (organization?.emailLogoUrl || organization?.companyLogoUrl),
         organization?.companyName,
       ),
     };
@@ -250,6 +252,7 @@ export class HrEventsService {
       contactEmail: string | null;
       registeredAddress: string | null;
       emailLogoUrl: string | null;
+      companyLogoUrl?: string | null;
     } | null,
     activeEmails: string[],
   ) {
@@ -307,6 +310,7 @@ export class HrEventsService {
       contactEmail: string | null;
       registeredAddress: string | null;
       emailLogoUrl: string | null;
+      companyLogoUrl?: string | null;
     } | null,
     activeEmails: string[],
   ) {
@@ -355,6 +359,7 @@ export class HrEventsService {
       contactEmail: string | null;
       registeredAddress: string | null;
       emailLogoUrl: string | null;
+      companyLogoUrl?: string | null;
     } | null,
     activeEmails: string[],
   ) {

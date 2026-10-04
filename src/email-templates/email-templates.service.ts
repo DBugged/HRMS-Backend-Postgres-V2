@@ -316,6 +316,7 @@ export class EmailTemplatesService {
           contactEmail: true,
           registeredAddress: true,
           emailLogoUrl: true,
+          companyLogoUrl: true,
         },
       }),
       this.scopedPrisma.user.findMany({
@@ -337,7 +338,7 @@ export class EmailTemplatesService {
       companyAddress: organization?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(
         organizationId,
-        organization?.emailLogoUrl,
+        (organization?.emailLogoUrl || organization?.companyLogoUrl),
         organization?.companyName,
       ),
     };
@@ -524,6 +525,7 @@ export class EmailTemplatesService {
         contactEmail: true,
         registeredAddress: true,
         emailLogoUrl: true,
+        companyLogoUrl: true,
         primaryColor: true,
       },
     });
@@ -542,7 +544,7 @@ export class EmailTemplatesService {
         website: org?.website,
         contactEmail: org?.contactEmail,
         registeredAddress: org?.registeredAddress,
-        logoImgTag: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+        logoImgTag: companyLogoImgTag(organizationId, (org?.emailLogoUrl || org?.companyLogoUrl)),
         primaryColor: org?.primaryColor,
       },
     });
@@ -577,6 +579,7 @@ export class EmailTemplatesService {
         contactEmail: true,
         registeredAddress: true,
         emailLogoUrl: true,
+        companyLogoUrl: true,
       },
     });
     const signatures = (org?.emailSignatures ??
@@ -595,7 +598,7 @@ export class EmailTemplatesService {
       companyAddress: org?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(
         organizationId,
-        org?.emailLogoUrl,
+        (org?.emailLogoUrl || org?.companyLogoUrl),
         org?.companyName,
       ),
     };

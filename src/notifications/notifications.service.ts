@@ -261,6 +261,7 @@ export class NotificationsService {
           contactEmail: true,
           registeredAddress: true,
           emailLogoUrl: true,
+          companyLogoUrl: true,
         },
       });
       // Same branded shell as every template email; the admin's own title/message stay the content.
@@ -279,7 +280,7 @@ export class NotificationsService {
             website: org?.website,
             contactEmail: org?.contactEmail,
             registeredAddress: org?.registeredAddress,
-            logoImgTag: companyLogoImgTag(organizationId, org?.emailLogoUrl),
+            logoImgTag: companyLogoImgTag(organizationId, (org?.emailLogoUrl || org?.companyLogoUrl)),
           },
         },
       );
