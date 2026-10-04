@@ -32,6 +32,12 @@ import {
   monthsForRange,
 } from './dashboard-date-math';
 import { todayInOrgTz } from '../common/org-date';
+import {
+  enumerateDateStrings,
+  isWeeklyOff,
+  resolveShiftConfig,
+  type OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
 
 type Actor = Omit<User, 'password'>;
 
@@ -511,6 +517,60 @@ export class DashboardService {
 
   // 11.3 Employee Dashboard: attendance summary, leave balance, payroll
   // snapshot, upcoming holidays.
+  // Working days = every date of the month that is neither one of the employee's weekly offs (department schedule,
+  // else the org default) nor a holiday that applies to them, and not before their joining date.
+  private async workingDaysThisMonth(
+    employeeId: string,
+    organizationId: string,
+    monthPrefix: string,
+    today: string,
+  ): Promise<{ total: number; elapsed: number }> {
+    const [employee, org] = await Promise.all([
+      this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        include: { department: true },
+      }),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { attendancePayrollPrefs: true },
+      }),
+    ]);
+    const [year, month] = monthPrefix.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const dates = enumerateDateStrings(
+      `${monthPrefix}-01`,
+      `${monthPrefix}-${String(lastDay).padStart(2, '0')}`,
+    );
+    const holidays = await this.scopedPrisma.holiday.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        date: { startsWith: monthPrefix },
+        OR: employee?.departmentId
+          ? [{ departmentId: null }, { departmentId: employee.departmentId }]
+          : [{ departmentId: null }],
+      },
+      select: { date: true },
+    });
+    const holidayDates = new Set(holidays.map((h) => h.date));
+    const shiftConfig = resolveShiftConfig(
+      employee?.department,
+      (org?.attendancePayrollPrefs ??
+        null) as OrganizationAttendancePrefs | null,
+    );
+    const joined = employee?.joiningDate?.toISOString().slice(0, 10) ?? '';
+    const working = dates.filter(
+      (d) =>
+        d >= joined &&
+        !holidayDates.has(d) &&
+        !isWeeklyOff(d, shiftConfig.weeklyOffs),
+    );
+    return {
+      total: working.length,
+      elapsed: working.filter((d) => d <= today).length,
+    };
+  }
+
   async employeeDashboard(actor: Actor, organizationId: string) {
     const now = new Date();
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -671,6 +731,14 @@ export class DashboardService {
 
     return {
       attendanceSummary: summary,
+      // Working days in this month for the employee's own schedule (weekly offs + holidays excluded), and how many
+      // of them have passed — the "x / working days" figure on the attendance card.
+      attendanceWorkingDays: await this.workingDaysThisMonth(
+        actor.id,
+        organizationId,
+        monthPrefix,
+        today,
+      ),
       leaveBalances,
       compOffAvailable,
       payrollSnapshot: latestPayroll,
