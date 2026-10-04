@@ -216,6 +216,18 @@ export class CompOffService {
       performedById: actor.id,
       description: `Comp-off earned for ${formatDateDisplay(dto.earnedForDate, '', dateFormat)}.`,
     });
+    // Only a request the employee raised for themselves is waiting on someone; one a reviewer logged on their behalf
+    // is not.
+    if (targetEmployeeId === actor.id && compOff.status === 'PENDING') {
+      await this.notificationsService.notifyReviewers({
+        organizationId,
+        requester: actor,
+        title: 'Comp-Off Requested',
+        message: `${actor.name} requested comp-off for ${formatDateDisplay(dto.earnedForDate, '', dateFormat)}, pending your approval.`,
+        category: NotificationCategory.ATTENDANCE,
+        managerFirst: true,
+      });
+    }
 
     return compOff;
   }
@@ -358,6 +370,12 @@ export class CompOffService {
       organizationId,
       compOff.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'LEAVE',
+      targetId: id,
+      employeeId: compOff.employeeId,
+      request: 'Comp-off',
+    });
     if (compOff.status !== CompOffStatus.PENDING) {
       throw new BadRequestException(
         'This comp-off request has already been reviewed.',

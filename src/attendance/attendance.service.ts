@@ -1263,47 +1263,6 @@ export class AttendanceService {
     });
   }
 
-  // Tells whoever has to review a request: the employee's reporting manager when there is one, otherwise every
-  // active HR and Admin user (never the requester) — same fallback as LeavesService.notifyNewLeaveApplication.
-  // Without it a request from someone with no manager reached nobody until HR happened to open the pending list.
-  private async notifyApprovers(
-    actor: Actor,
-    organizationId: string,
-    title: string,
-    message: string,
-    category: NotificationCategory,
-  ) {
-    if (actor.reportingManagerId && actor.reportingManagerId !== actor.id) {
-      await this.notificationsService.create({
-        organizationId,
-        userId: actor.reportingManagerId,
-        title,
-        message,
-        category,
-      });
-      return;
-    }
-    const reviewers = await this.scopedPrisma.user.findMany({
-      where: {
-        organizationId,
-        isActive: true,
-        id: { not: actor.id },
-        role: { in: [Role.HR, Role.ADMIN] },
-      },
-      select: { id: true },
-    });
-    if (reviewers.length === 0) return;
-    await this.notificationsService.createMany(
-      reviewers.map((u) => ({
-        organizationId,
-        userId: u.id,
-        title,
-        message,
-        category,
-      })),
-    );
-  }
-
   private async notifyWfhRequested(
     actor: Actor,
     date: string,
@@ -1313,13 +1272,14 @@ export class AttendanceService {
       this.scopedPrisma,
       organizationId,
     );
-    await this.notifyApprovers(
-      actor,
+    await this.notificationsService.notifyReviewers({
       organizationId,
-      'Work From Home Requested',
-      `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat)}, pending your approval.`,
-      NotificationCategory.ATTENDANCE,
-    );
+      requester: actor,
+      title: 'Work From Home Requested',
+      message: `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat)}, pending your approval.`,
+      category: NotificationCategory.ATTENDANCE,
+      managerFirst: true,
+    });
   }
 
   // HR/Admin sees every pending WFH request org-wide; a MANAGER sees only
@@ -1392,6 +1352,12 @@ export class AttendanceService {
       organizationId,
       row.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'ATTENDANCE',
+      targetId: id,
+      employeeId: row.employeeId,
+      request: 'Work From Home',
+    });
 
     const status =
       dto.decision === 'APPROVED'
@@ -2031,13 +1997,14 @@ export class AttendanceService {
       this.scopedPrisma,
       organizationId,
     );
-    await this.notifyApprovers(
-      actor,
+    await this.notificationsService.notifyReviewers({
       organizationId,
-      'Attendance Regularization Requested',
-      `${actor.name} requested attendance regularization for ${formatDateDisplay(date, '', dateFormat)}.`,
-      NotificationCategory.REGULARIZATION,
-    );
+      requester: actor,
+      title: 'Attendance Regularization Requested',
+      message: `${actor.name} requested attendance regularization for ${formatDateDisplay(date, '', dateFormat)}.`,
+      category: NotificationCategory.REGULARIZATION,
+      managerFirst: true,
+    });
   }
 
   // Single-level review (HR or Manager, either decides) — `id` is the
@@ -2065,6 +2032,12 @@ export class AttendanceService {
       organizationId,
       row.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'ATTENDANCE',
+      targetId: id,
+      employeeId: row.employeeId,
+      request: 'Attendance regularization',
+    });
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       organizationId,

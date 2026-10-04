@@ -287,6 +287,12 @@ export class LoansService {
     // gate as document/probation reviews elsewhere; ADMIN is exempt since
     // there's no one above an Admin to approve it instead.
     assertNotSelfApproval(actor, loan.employeeId);
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'PAYROLL',
+      targetId: id,
+      employeeId: loan.employeeId,
+      request: 'Loan / advance',
+    });
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: loan.employeeId, organizationId },
@@ -393,6 +399,12 @@ export class LoansService {
       throw new BadRequestException('Only a pending request can be rejected.');
     }
     assertNotSelfApproval(actor, loan.employeeId);
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'PAYROLL',
+      targetId: id,
+      employeeId: loan.employeeId,
+      request: 'Loan / advance',
+    });
 
     // Guarded compare-and-swap — see approve()'s comment for why.
     const { count } = await this.scopedPrisma.loan.updateMany({

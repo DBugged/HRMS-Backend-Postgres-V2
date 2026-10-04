@@ -204,6 +204,14 @@ export class ReimbursementsService {
       performedById: actor.id,
       description: `Submitted a reimbursement claim of ${dto.amount} for ${dto.category}.`,
     });
+    // Reimbursements are reviewed by HR/Admin only, so they are told directly (no manager step).
+    await this.notificationsService.notifyReviewers({
+      organizationId,
+      requester: actor,
+      title: 'Reimbursement Claim Submitted',
+      message: `${actor.name} submitted a reimbursement claim of ${dto.amount} for ${dto.category}, pending review.`,
+      category: NotificationCategory.PAYROLL,
+    });
 
     return this.withSignedReceipt(claim);
   }
@@ -224,6 +232,12 @@ export class ReimbursementsService {
       organizationId,
       claim.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'PAYROLL',
+      targetId: id,
+      employeeId: claim.employeeId,
+      request: 'Reimbursement',
+    });
 
     // Forward-only state machine: PAID and REJECTED are both terminal —
     // once money has actually gone out (PAID) or a claim has been turned

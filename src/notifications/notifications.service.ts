@@ -16,6 +16,7 @@ import {
   AuditModule,
   NotificationCategory,
   Prisma,
+  Role,
   User,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -93,6 +94,57 @@ export class NotificationsService {
     // The same event also goes to the user's phone(s); never allowed to fail the caller.
     this.pushService.notify([{ ...input, notificationId: row.id }]);
     return row;
+  }
+
+  // Tells whoever has to decide on a request that it is waiting: the requester's reporting manager when managerFirst
+  // is set and they have one, otherwise every active HR and Admin user (never the requester). Used for request types
+  // that otherwise reach no one until a reviewer happens to open the pending list (overtime, comp-off, leave
+  // encashment, reimbursement). Best-effort — a notification problem must never fail the request itself.
+  async notifyReviewers(input: {
+    organizationId: string;
+    requester: Pick<User, 'id' | 'reportingManagerId'>;
+    title: string;
+    message: string;
+    category: NotificationCategory;
+    managerFirst?: boolean;
+  }) {
+    try {
+      const { organizationId, requester, title, message, category } = input;
+      if (
+        input.managerFirst &&
+        requester.reportingManagerId &&
+        requester.reportingManagerId !== requester.id
+      ) {
+        await this.create({
+          organizationId,
+          userId: requester.reportingManagerId,
+          title,
+          message,
+          category,
+        });
+        return;
+      }
+      const reviewers = await this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          id: { not: requester.id },
+          role: { in: [Role.HR, Role.ADMIN] },
+        },
+        select: { id: true },
+      });
+      await this.createMany(
+        reviewers.map((u) => ({
+          organizationId,
+          userId: u.id,
+          title,
+          message,
+          category,
+        })),
+      );
+    } catch {
+      // Intentionally swallowed — see above.
+    }
   }
 
   async createMany(inputs: CreateNotificationInput[]) {
@@ -280,7 +332,10 @@ export class NotificationsService {
             website: org?.website,
             contactEmail: org?.contactEmail,
             registeredAddress: org?.registeredAddress,
-            logoImgTag: companyLogoImgTag(organizationId, (org?.emailLogoUrl || org?.companyLogoUrl)),
+            logoImgTag: companyLogoImgTag(
+              organizationId,
+              org?.emailLogoUrl || org?.companyLogoUrl,
+            ),
           },
         },
       );

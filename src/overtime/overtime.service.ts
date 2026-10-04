@@ -175,6 +175,14 @@ export class OvertimeService {
       performedById: actor.id,
       description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat)}.`,
     });
+    await this.notificationsService.notifyReviewers({
+      organizationId,
+      requester: actor,
+      title: 'Overtime Requested',
+      message: `${actor.name} logged ${dto.hours} hour(s) of overtime for ${formatDateDisplay(dto.date, '', dateFormat)}, pending your approval.`,
+      category: NotificationCategory.ATTENDANCE,
+      managerFirst: true,
+    });
 
     return record;
   }
@@ -254,6 +262,12 @@ export class OvertimeService {
       organizationId,
       record.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'ATTENDANCE',
+      targetId: id,
+      employeeId: record.employeeId,
+      request: 'Overtime',
+    });
     if (record.status !== OvertimeStatus.PENDING) {
       throw new BadRequestException(
         'This overtime record has already been reviewed.',

@@ -165,7 +165,7 @@ export class LeaveEncashmentsService {
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
 
-    return this.scopedPrisma
+    const created = await this.scopedPrisma
       .$transaction(async (tx) => {
         // Row-lock the requester's own User row so two concurrent request()
         // calls for the same employee serialize instead of both reading the
@@ -253,6 +253,16 @@ export class LeaveEncashmentsService {
         });
         return encashment;
       });
+    // After the transaction commits: tell the reviewer (the requester's manager, else HR/Admin).
+    await this.notificationsService.notifyReviewers({
+      organizationId,
+      requester: actor,
+      title: 'Leave Encashment Requested',
+      message: `${actor.name} requested encashment of ${dto.days} day(s), pending your approval.`,
+      category: NotificationCategory.LEAVE,
+      managerFirst: true,
+    });
+    return created;
   }
 
   // Single-level review, matching Overtime — no "already reviewed" guard,
@@ -275,6 +285,12 @@ export class LeaveEncashmentsService {
       organizationId,
       row.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'LEAVE',
+      targetId: id,
+      employeeId: row.employeeId,
+      request: 'Leave encashment',
+    });
 
     // PENDING -> APPROVED -> PROCESSED — the only two legal transitions
     // this endpoint drives (see ReviewLeaveEncashmentDto). Required so the

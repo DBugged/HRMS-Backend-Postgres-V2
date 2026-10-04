@@ -420,6 +420,12 @@ export class LeavesService {
       organizationId,
       leave.employeeId,
     );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'LEAVE',
+      targetId: id,
+      employeeId: leave.employeeId,
+      request: 'Leave',
+    });
 
     const leaveType = await this.scopedPrisma.leaveType.findFirstOrThrow({
       where: { id: leave.leaveTypeId, organizationId },
@@ -562,7 +568,11 @@ export class LeavesService {
       }
     });
 
-    await this.notifyLeaveDecision(leave, { decision, comments }, organizationId);
+    await this.notifyLeaveDecision(
+      leave,
+      { decision, comments },
+      organizationId,
+    );
     return this.findByIdOrThrow(leave.id, organizationId);
   }
 
@@ -603,7 +613,8 @@ export class LeavesService {
     });
     for (const leave of candidates) {
       const deadline = new Date(
-        leave.createdAt.getTime() + leave.leaveType.autoApproveHours * 60 * 60000,
+        leave.createdAt.getTime() +
+          leave.leaveType.autoApproveHours * 60 * 60000,
       );
       if (now < deadline) continue;
       try {

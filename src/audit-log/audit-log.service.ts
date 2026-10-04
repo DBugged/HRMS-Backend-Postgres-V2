@@ -40,6 +40,33 @@ export class AuditLogService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
 
+  // An Admin is the one role allowed to review their own request (HR/Manager are blocked by assertNotSelfApproval);
+  // that is only safe if it is visible, so every such review is written to the trail as SELF_APPROVAL. A no-op for
+  // anyone else and for requests that belong to someone else. Never fails the review it documents.
+  async logSelfApproval(
+    actor: Actor,
+    input: {
+      module: AuditModule;
+      targetId: string;
+      employeeId: string;
+      request: string;
+    },
+  ): Promise<void> {
+    if (actor.role !== Role.ADMIN || actor.id !== input.employeeId) return;
+    await this.log({
+      actorId: actor.id,
+      action: 'SELF_APPROVAL',
+      module: input.module,
+      organizationId: actor.organizationId,
+      targetId: input.targetId,
+      details: {
+        request: input.request,
+        employeeId: input.employeeId,
+        note: 'Admin reviewed their own request',
+      },
+    });
+  }
+
   // Fire-and-forget — a broken audit write must never fail the action it's
   // documenting, same as the old system's logAudit util.
   async log(input: LogAuditInput): Promise<void> {
