@@ -470,7 +470,7 @@ export class DashboardService {
         where: { organizationId, employeeId: { in: ids }, year: currentYear },
         include: {
           employee: { select: { name: true, employeeId: true } },
-          leaveType: { select: { name: true } },
+          leaveType: { select: { name: true, code: true, displayOrder: true } },
         },
         orderBy: { closing: 'asc' },
       }),
@@ -500,6 +500,8 @@ export class DashboardService {
       employee: b.employee.name,
       employeeId: b.employee.employeeId,
       leaveType: b.leaveType.name,
+      leaveTypeCode: b.leaveType.code,
+      leaveTypeOrder: b.leaveType.displayOrder,
       closing: b.closing,
     }));
 
@@ -515,8 +517,6 @@ export class DashboardService {
     };
   }
 
-  // 11.3 Employee Dashboard: attendance summary, leave balance, payroll
-  // snapshot, upcoming holidays.
   // Working days = every date of the month that is neither one of the employee's weekly offs (department schedule,
   // else the org default) nor a holiday that applies to them, and not before their joining date.
   private async workingDaysThisMonth(
@@ -571,6 +571,8 @@ export class DashboardService {
     };
   }
 
+  // 11.3 Employee Dashboard: attendance summary, leave balance, payroll
+  // snapshot, upcoming holidays.
   async employeeDashboard(actor: Actor, organizationId: string) {
     const now = new Date();
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
