@@ -405,18 +405,21 @@ export class LeaveTrackerService {
         });
       }
 
-      const leaveBalances = balanceEligible.map((leaveType) => {
-        const row =
-          existingBalanceByKey.get(`${employee.id}:${leaveType.id}`) ??
-          ensuredRows.get(leaveType.id)!;
-        return {
-          leaveTypeCode: leaveType.code,
-          leaveTypeName: leaveType.name,
-          credited: row.credited,
-          availed: row.availed,
-          closing: row.closing,
-        };
-      });
+      // Balances are still created for every eligible type; only the tracker's view/export skips hidden ones.
+      const leaveBalances = balanceEligible
+        .filter((leaveType) => leaveType.showInLeaveTracker)
+        .map((leaveType) => {
+          const row =
+            existingBalanceByKey.get(`${employee.id}:${leaveType.id}`) ??
+            ensuredRows.get(leaveType.id)!;
+          return {
+            leaveTypeCode: leaveType.code,
+            leaveTypeName: leaveType.name,
+            credited: row.credited,
+            availed: row.availed,
+            closing: row.closing,
+          };
+        });
 
       const compOffAvailable = compOffAvailableByEmployee.get(employee.id) ?? 0;
 

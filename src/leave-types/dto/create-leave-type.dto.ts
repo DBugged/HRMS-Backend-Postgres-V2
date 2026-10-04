@@ -134,6 +134,11 @@ export class CreateLeaveTypeDto {
   @ApiPropertyOptional({ default: true })
   @IsOptional()
   @IsBoolean()
+  showInLeaveTracker?: boolean;
+
+  @ApiPropertyOptional({ default: true })
+  @IsOptional()
+  @IsBoolean()
   requiresApproval?: boolean;
 
   @ApiPropertyOptional({ default: 2 })

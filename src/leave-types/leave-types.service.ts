@@ -207,6 +207,7 @@ export class LeaveTypesService {
         maxServiceMonths: dto.maxServiceMonths,
         salaryImpactPercent: dto.salaryImpactPercent ?? 100,
         affectsLopCalculation: dto.affectsLopCalculation ?? true,
+        showInLeaveTracker: dto.showInLeaveTracker ?? true,
         requiresApproval: dto.requiresApproval ?? true,
         approvalLevels: dto.approvalLevels ?? 2,
         autoApproveIfNoAction: dto.autoApproveIfNoAction ?? false,
@@ -344,6 +345,9 @@ export class LeaveTypesService {
           }),
           ...(dto.salaryImpactPercent !== undefined && {
             salaryImpactPercent: dto.salaryImpactPercent,
+          }),
+          ...(dto.showInLeaveTracker !== undefined && {
+            showInLeaveTracker: dto.showInLeaveTracker,
           }),
           ...(dto.affectsLopCalculation !== undefined && {
             affectsLopCalculation: dto.affectsLopCalculation,

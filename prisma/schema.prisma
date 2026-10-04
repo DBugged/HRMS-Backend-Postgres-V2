@@ -979,6 +979,9 @@ model LeaveType {
   isActive     Boolean @default(true)
   isPaid       Boolean @default(true)
   displayOrder Int     @default(0)
+  // Hides this leave type's column from the Leave Tracker balances view and export. Display only: balances,
+  // applying for leave and eligibility are unaffected.
+  showInLeaveTracker Boolean @default(true)
 
   // True only for the rows seedDefaults() creates at registration (Earned
   // Leave, Comp-Off, etc.) — several modules (leaves/leave-tracker via
