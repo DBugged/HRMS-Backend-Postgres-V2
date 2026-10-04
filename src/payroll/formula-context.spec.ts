@@ -317,6 +317,14 @@ describe('deriveStatutoryContext', () => {
     expect(
       deriveStatutoryContext({ GROSS_EARNINGS: 22000 }, s, true).ESI_APPLICABLE,
     ).toBe(1);
+    // Non-monthly pay (ESI_WAGES excludes it) does not push an employee over the ceiling.
+    expect(
+      deriveStatutoryContext(
+        { GROSS_EARNINGS: 30000, ESI_WAGES: 20000 },
+        s,
+        false,
+      ).ESI_APPLICABLE,
+    ).toBe(1);
   });
 });
 

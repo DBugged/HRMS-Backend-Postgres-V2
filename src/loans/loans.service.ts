@@ -156,7 +156,7 @@ export class LoansService {
     const employee = employeeRow;
     if (employee) {
       const title = 'Loan Sanctioned';
-      const message = `A ${loan.loanType} loan of ${dto.principal} has been sanctioned for you, repayable as ${emiAmount}/month over ${dto.tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
+      const message = `${cap(article(loan.loanType))} ${loanKind(loan.loanType)} of ${dto.principal} has been sanctioned for you, repayable as ${emiAmount}/month over ${dto.tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -203,7 +203,7 @@ export class LoansService {
       employeeId: dto.employeeId,
       eventKey: 'LOAN_ISSUED',
       performedById: actor.id,
-      description: `${loan.loanType} loan of ${dto.principal} sanctioned.`,
+      description: `${cap(loanKind(loan.loanType))} of ${dto.principal} sanctioned.`,
     });
 
     return loan;
@@ -246,7 +246,7 @@ export class LoansService {
         organizationId,
         userId: u.id,
         title: 'Loan/Advance Request Pending Review',
-        message: `${actor.name} requested a ${loan.loanType.toLowerCase()} of ${dto.principal} over ${dto.tenureMonths} month(s).`,
+        message: `${actor.name} requested a ${loanKind(loan.loanType)} of ${dto.principal} over ${dto.tenureMonths} month(s).`,
         category: NotificationCategory.GENERAL,
       })),
     );
@@ -264,7 +264,7 @@ export class LoansService {
       employeeId: actor.id,
       eventKey: 'LOAN_REQUESTED',
       performedById: actor.id,
-      description: `${loan.loanType} of ${dto.principal} requested.`,
+      description: `${cap(loanKind(loan.loanType))} of ${dto.principal} requested.`,
     });
 
     return loan;
@@ -330,7 +330,7 @@ export class LoansService {
 
     if (employee) {
       const title = 'Loan Request Approved';
-      const message = `Your ${loan.loanType} request of ${loan.principal} has been approved, repayable as ${emiAmount}/month over ${tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
+      const message = `Your ${loanKind(loan.loanType)} request of ${loan.principal} has been approved, repayable as ${emiAmount}/month over ${tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -373,7 +373,7 @@ export class LoansService {
       employeeId: loan.employeeId,
       eventKey: 'LOAN_APPROVED',
       performedById: actor.id,
-      description: `${loan.loanType} of ${loan.principal} approved.`,
+      description: `${cap(loanKind(loan.loanType))} of ${loan.principal} approved.`,
     });
 
     return updated;
@@ -412,8 +412,8 @@ export class LoansService {
     if (employee) {
       const title = 'Loan Request Rejected';
       const message = dto.reason
-        ? `Your ${loan.loanType} request of ${loan.principal} was rejected: ${dto.reason}`
-        : `Your ${loan.loanType} request of ${loan.principal} was rejected.`;
+        ? `Your ${loanKind(loan.loanType)} request of ${loan.principal} was rejected: ${dto.reason}`
+        : `Your ${loanKind(loan.loanType)} request of ${loan.principal} was rejected.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -453,7 +453,7 @@ export class LoansService {
       employeeId: loan.employeeId,
       eventKey: 'LOAN_REJECTED',
       performedById: actor.id,
-      description: `${loan.loanType} request rejected.`,
+      description: `${cap(loanKind(loan.loanType))} request rejected.`,
     });
 
     return updated;
@@ -555,11 +555,11 @@ export class LoansService {
         const message =
           dto.status === LoanStatus.CLOSED
             ? loan.outstandingBalance === 0
-              ? `Your ${loan.loanType} loan has been fully repaid and is now closed.`
-              : `Your ${loan.loanType} loan has been closed with an outstanding balance of ₹${loan.outstandingBalance}. Reason: ${dto.reason}.`
+              ? `Your ${loanKind(loan.loanType)} has been fully repaid and is now closed.`
+              : `Your ${loanKind(loan.loanType)} has been closed with an outstanding balance of ₹${loan.outstandingBalance}. Reason: ${dto.reason}.`
             : dto.status === LoanStatus.CANCELLED
-              ? `Your ${loan.loanType} loan has been cancelled. Reason: ${dto.reason}.`
-              : `Your ${loan.loanType} loan status is now ${dto.status}.`;
+              ? `Your ${loanKind(loan.loanType)} has been cancelled. Reason: ${dto.reason}.`
+              : `Your ${loanKind(loan.loanType)} status is now ${dto.status}.`;
         await this.notificationsService.create({
           organizationId,
           userId: employee.id,
@@ -729,4 +729,15 @@ export class LoansService {
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
     });
   }
+}
+
+// "LOAN" -> "loan", "ADVANCE" -> "advance" for user-facing sentences (the enum value read "A LOAN loan").
+function loanKind(type: string): string {
+  return type.toLowerCase();
+}
+function article(type: string): string {
+  return /^[aeiou]/i.test(type) ? 'an' : 'a';
+}
+function cap(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }

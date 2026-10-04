@@ -722,6 +722,17 @@ export class PayrollService {
       if (line.component) afterEarnings[line.code] = line.amount;
     }
     afterEarnings.GROSS_EARNINGS = grossSalary;
+    // ESIC wages exclude non-monthly pay (annual bonus, variable payouts).
+    afterEarnings.ESI_WAGES = Math.max(
+      0,
+      grossSalary -
+        earningsLines
+          .filter(
+            (l) =>
+              l.component && l.component.payFrequency !== PayFrequency.MONTHLY,
+          )
+          .reduce((s, l) => s + l.amount, 0),
+    );
     // Wage bases and the ESI coverage flag — all depend on this month's gross, so they're derived here.
     Object.assign(
       afterEarnings,
@@ -887,6 +898,10 @@ export class PayrollService {
         finalMonth: !!fs,
         refundExcess: !!fs && settingsRow.refundExcessTdsOnExit,
         employmentMonthsInFY: employmentMonths,
+        ageAtFYEnd: ageOnFYEnd(
+          (employee.personalData as Record<string, unknown> | null)?.dob,
+          financialYear,
+        ),
         // Remaining months are projected from the regular monthly structure,
         // not from this month's actual (possibly prorated / one-off-inflated)
         // taxable gross.
@@ -1074,7 +1089,7 @@ export class PayrollService {
             }
           : {}),
         ...(e.code === 'ESI_EMPLOYER'
-          ? { wages: afterEarnings.GROSS_EARNINGS ?? 0 }
+          ? { wages: afterEarnings.ESI_WAGES ?? afterEarnings.GROSS_EARNINGS ?? 0 }
           : {}),
       })),
       taxDetails,
@@ -1775,9 +1790,16 @@ export class PayrollService {
         where: { id: run.employeeId, organizationId },
       });
       if (!employee) return;
+      // Already delivered for this version of the payslip (unlocking clears the marker) — don't notify twice.
+      if (run.payslipEmailSentAt) return;
 
-      const title = `Payslip for ${run.month}/${run.year}`;
-      const message = `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.`;
+      const revised = !!run.unlockedAt;
+      const title = revised
+        ? `Revised payslip for ${run.month}/${run.year}`
+        : `Payslip for ${run.month}/${run.year}`;
+      const message = revised
+        ? `Your payslip for ${run.month}/${run.year} was corrected and re-issued. Net pay: ${run.netPay}.`
+        : `Your salary for ${run.month}/${run.year} has been paid. Net pay: ${run.netPay}.`;
 
       // In-app notification is a fast DB write — always synchronous, the
       // employee should see it immediately regardless of queue state.
@@ -2975,4 +2997,20 @@ export class PayrollService {
       .filter((row) => row.unmarkedDays > 0)
       .sort((a, b) => b.unmarkedDays - a.unmarkedDays);
   }
+}
+
+// Age (whole years) on 31 March ending the financial year ("2026-27" -> 31 Mar 2027); null when no valid DOB.
+function ageOnFYEnd(dob: unknown, financialYear: string): number | null {
+  if (typeof dob !== 'string') return null;
+  const born = new Date(dob);
+  const startYear = Number(financialYear.slice(0, 4));
+  if (Number.isNaN(born.getTime()) || !Number.isFinite(startYear)) return null;
+  const end = new Date(Date.UTC(startYear + 1, 2, 31));
+  let age = end.getUTCFullYear() - born.getUTCFullYear();
+  const beforeBirthday =
+    end.getUTCMonth() < born.getUTCMonth() ||
+    (end.getUTCMonth() === born.getUTCMonth() &&
+      end.getUTCDate() < born.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age;
 }

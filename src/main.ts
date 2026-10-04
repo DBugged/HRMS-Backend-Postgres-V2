@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
@@ -31,8 +32,10 @@ async function bootstrap() {
   // registration, etc.) until app.useLogger() below installs pino as the
   // sink, instead of emitting them through Nest's default plain-text
   // console logger first.
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
   app.useLogger(app.get(Logger));
+  // Bulk payroll transitions send one UUID per employee; Express's 100kb default rejects ~2,600+ ids.
+  app.useBodyParser('json', { limit: '5mb' });
 
   // Unset (default): req.ip is the direct TCP peer address — correct as
   // long as this app is reached directly, and unchanged from today's

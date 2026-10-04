@@ -568,3 +568,25 @@ describe('refund of excess TDS on exit (audit)', () => {
     expect(calculateTax({ ...base, finalMonth: false, refundExcess: true }).monthlyTDS).toBeGreaterThanOrEqual(0);
   });
 });
+
+describe('old regime senior citizen exemption', () => {
+  const run = (ageAtFYEnd: number | null) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: 100000, // 12L annual
+      declaration: null,
+      taxSlabConfig: {
+        regime: TaxRegime.OLD,
+        ...getDefaultTaxSlabConfig(TaxRegime.OLD),
+      },
+      financialYearStartMonth: 4,
+      ageAtFYEnd,
+    }).taxBeforeCess;
+  it('60+ pays 2,500 less and 80+ pays 12,500 less than a non-senior', () => {
+    const base = run(40);
+    expect(run(null)).toBe(base);
+    expect(base - run(65)).toBe(2500);
+    expect(base - run(82)).toBe(12500);
+  });
+});

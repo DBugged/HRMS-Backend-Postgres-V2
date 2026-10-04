@@ -181,7 +181,7 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     calcType: CalcType.FORMULA,
     formula:
       // ESI_APPLICABLE: within the ceiling, or still covered from earlier in the ESI contribution period.
-      'IF(ESI_APPLICABLE == 1, ROUND(GROSS_EARNINGS * ESI_EMPLOYEE_RATE / 100, 0), 0)',
+      'IF(ESI_APPLICABLE == 1, ROUND(ESI_WAGES * ESI_EMPLOYEE_RATE / 100, 0), 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.ESI,
     displayOrder: 31,
@@ -241,7 +241,7 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
     formula:
-      'IF(ESI_APPLICABLE == 1, ROUND(GROSS_EARNINGS * ESI_EMPLOYER_RATE / 100, 0), 0)',
+      'IF(ESI_APPLICABLE == 1, ROUND(ESI_WAGES * ESI_EMPLOYER_RATE / 100, 0), 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.ESI,
     isEmployerContribution: true,

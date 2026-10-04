@@ -158,6 +158,15 @@ export interface CalculateTaxInput {
   // still to come). basicAnnual / hraReceivedAnnual are expected to span the same months, and the declared annual
   // rent is scaled to them — a part-year employee must not get a 12-month HRA exemption against 6 months of pay.
   employmentMonthsInFY?: number;
+  // Employee's age on the last day of the financial year. Old regime only: 60+ is exempt up to 3,00,000 and 80+
+  // up to 5,00,000 (instead of 2,50,000). Unknown age = treated as under 60.
+  ageAtFYEnd?: number | null;
+}
+
+// Basic-exemption limit of the old regime for an age (senior / super-senior citizen).
+export function oldRegimeExemptionLimit(age?: number | null): number {
+  if (age == null) return 250000;
+  return age >= 80 ? 500000 : age >= 60 ? 300000 : 250000;
 }
 
 export interface TaxDetails {
@@ -208,6 +217,7 @@ export function calculateTax({
   finalMonth = false,
   refundExcess = false,
   employmentMonthsInFY = 12,
+  ageAtFYEnd = null,
 }: CalculateTaxInput): TaxDetails {
   if (!taxSlabConfig) {
     throw new Error(
@@ -313,7 +323,18 @@ export function calculateTax({
     grossAnnualIncome - totalExemptions - totalDeductions,
   );
 
-  const taxBeforeCess = applySlabs(taxableIncome, taxSlabConfig.slabs);
+  let taxBeforeCess = applySlabs(taxableIncome, taxSlabConfig.slabs);
+  if (regime === TaxRegime.OLD) {
+    // Senior / super-senior: the higher exemption removes the tax on the extra band the standard slabs charge.
+    const limit = oldRegimeExemptionLimit(ageAtFYEnd);
+    if (limit > 250000) {
+      taxBeforeCess = Math.max(
+        0,
+        taxBeforeCess -
+          applySlabs(Math.min(taxableIncome, limit), taxSlabConfig.slabs),
+      );
+    }
+  }
 
   let rebate = 0;
   const rebateLimit = taxSlabConfig.rebate87ALimit || 0;

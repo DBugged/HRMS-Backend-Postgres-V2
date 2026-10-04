@@ -111,7 +111,7 @@ export function resolvePtSlabs(
 
 // Wage bases that depend on this month's earnings, so they can only be computed once GROSS_EARNINGS is known.
 // PF_WAGES / GRATUITY_WAGES are Basic + DA, lifted to 50% of gross where the org has switched the Labour Codes
-// "50% wages" rule on for that module. ESI_APPLICABLE keeps an employee covered for the rest of an ESI
+// "50% wages" rule on for that module. ESI_WAGES (set by the caller) is gross minus non-monthly pay (bonus/variable), which ESIC excludes. ESI_APPLICABLE keeps an employee covered for the rest of an ESI
 // contribution period (Apr-Sep / Oct-Mar) once they were covered, even if wages cross the ceiling mid-period.
 export function deriveStatutoryContext(
   context: Record<string, number>,
@@ -134,7 +134,8 @@ export function deriveStatutoryContext(
     GRATUITY_WAGES: wages(settings.gratuityUseWagesRule, basicDa),
     NPS_WAGES: basicDa,
     ESI_APPLICABLE:
-      (context.GROSS_EARNINGS ?? 0) <= settings.esiWageCeiling ||
+      (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) <=
+        settings.esiWageCeiling ||
       hadEsiThisPeriod
         ? 1
         : 0,

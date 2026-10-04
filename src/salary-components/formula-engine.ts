@@ -71,6 +71,7 @@ export const SYSTEM_VARS = [
   'GRATUITY_WAGES',
   'NPS_WAGES',
   'ESI_APPLICABLE',
+  'ESI_WAGES',
   'PF_EDLI_RATE',
   'PF_ADMIN_RATE',
   'PF_EDLI_MAX',
