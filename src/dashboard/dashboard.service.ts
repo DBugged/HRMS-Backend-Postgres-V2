@@ -464,7 +464,13 @@ export class DashboardService {
         select: { id: true, name: true, code: true },
       }),
       this.scopedPrisma.leaveBalance.findMany({
-        where: { organizationId, employeeId: { in: ids }, year: currentYear },
+        where: {
+          organizationId,
+          employeeId: { in: ids },
+          year: currentYear,
+          // Leave types switched off for the Leave Tracker stay hidden here too.
+          leaveType: { showInLeaveTracker: true },
+        },
         include: {
           employee: { select: { name: true, employeeId: true } },
           leaveType: { select: { name: true, code: true, displayOrder: true } },

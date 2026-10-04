@@ -2826,7 +2826,10 @@ export class AttendanceService {
       where: {
         organizationId,
         isActive: true,
-        role: { in: [Role.EMPLOYEE, Role.MANAGER] },
+        // Same roles payroll pays (see PayrollService): an HR user left out here never got the weekly-off / holiday /
+        // absent rows the nightly sweep writes, and payroll counts a day with no row as LOP — so their weekends and
+        // holidays went unpaid. Admin is not on payroll, so is not swept.
+        role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR] },
       },
       select: { id: true },
     });
