@@ -14,10 +14,14 @@ import {
   LeaveStatus,
   LoanStatus,
   OffboardingStatus,
+  LeaveEncashmentStatus,
+  OvertimeStatus,
   PayrollRunStatus,
   ReimbursementStatus,
+  ResignationStatus,
   Role,
   User,
+  WfhApprovalStatus,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -386,6 +390,7 @@ export class DashboardService {
     return {
       totalEmployees,
       attendanceSummary: { presentToday, absentToday, onLeaveToday },
+      pendingItems: await this.pendingItems(organizationId, null, true),
       pendingApprovals: {
         leaves: pendingLeaves,
         regularizations: pendingRegularizationCount,
@@ -415,7 +420,6 @@ export class DashboardService {
   // elsewhere), but worth knowing before wiring a frontend "my team" widget
   // to this endpoint for a non-manager caller.
   async departmentHeadDashboard(actor: Actor, organizationId: string) {
-    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
     const currentYear = new Date().getFullYear();
 
     // A department-less MANAGER has no team: scope to nobody rather than to every unassigned user.
@@ -430,19 +434,12 @@ export class DashboardService {
     const ids = deptEmployees.map((e) => e.id);
 
     const [
-      teamAttendanceToday,
       pendingLeaves,
       pendingRegularizations,
       leaveTrendsGrouped,
       leaveTypesForTrends,
       teamLeaveBalancesRaw,
     ] = await Promise.all([
-      this.scopedPrisma.attendance.findMany({
-        where: { organizationId, employeeId: { in: ids }, date: today },
-        include: {
-          employee: { select: { id: true, name: true, employeeId: true } },
-        },
-      }),
       this.scopedPrisma.leave.count({
         where: {
           organizationId,
@@ -507,14 +504,201 @@ export class DashboardService {
 
     return {
       teamSize: ids.length,
-      teamAttendanceToday,
       pendingApprovals: {
         leaves: pendingLeaves,
         regularizations: pendingRegularizations,
       },
+      pendingItems: await this.pendingItems(organizationId, ids, false),
       leaveTrends: [...leaveTrendsByType.values()],
       teamLeaveBalances,
     };
+  }
+
+  // The quick-check list of what is waiting for a decision, oldest first (at most 10).
+  // Leave, attendance regularization, Work From Home, overtime and comp-off — the request types a manager can
+  // review. Each row carries what the dashboard needs to show it and link to the page where it is actioned.
+  // employeeIds = null means the whole organisation (HR/Admin); includeHrQueues adds the request types only HR/Admin
+  // review (reimbursement, loan/advance, leave encashment, resignation).
+  private async pendingItems(
+    organizationId: string,
+    employeeIds: string[] | null,
+    includeHrQueues: boolean,
+  ) {
+    const LIMIT = 10;
+    const scope = employeeIds
+      ? { organizationId, employeeId: { in: employeeIds } }
+      : { organizationId };
+    const employeeSelect = { select: { name: true, employeeId: true } };
+    const [leaves, regularizations, wfh, overtime, compOffs] =
+      await Promise.all([
+        this.scopedPrisma.leave.findMany({
+          where: { ...scope, status: LeaveStatus.PENDING },
+          include: {
+            employee: employeeSelect,
+            leaveType: { select: { name: true } },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        }),
+        this.scopedPrisma.attendance.findMany({
+          where: {
+            ...scope,
+            regularization: { path: ['status'], equals: 'pending' },
+          },
+          include: { employee: employeeSelect },
+          orderBy: { updatedAt: 'asc' },
+          take: LIMIT,
+        }),
+        this.scopedPrisma.attendance.findMany({
+          where: { ...scope, workArrangementStatus: WfhApprovalStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { updatedAt: 'asc' },
+          take: LIMIT,
+        }),
+        this.scopedPrisma.overtimeRecord.findMany({
+          where: { ...scope, status: OvertimeStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        }),
+        this.scopedPrisma.compOff.findMany({
+          where: { ...scope, status: CompOffStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        }),
+      ]);
+    const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+    const reimbursements = includeHrQueues
+      ? await this.scopedPrisma.reimbursement.findMany({
+          where: { ...scope, status: ReimbursementStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        })
+      : [];
+    const loans = includeHrQueues
+      ? await this.scopedPrisma.loan.findMany({
+          where: { ...scope, status: LoanStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        })
+      : [];
+    const encashments = includeHrQueues
+      ? await this.scopedPrisma.leaveEncashment.findMany({
+          where: { ...scope, status: LeaveEncashmentStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        })
+      : [];
+    const resignations = includeHrQueues
+      ? await this.scopedPrisma.resignation.findMany({
+          where: { ...scope, status: ResignationStatus.PENDING },
+          include: { employee: employeeSelect },
+          orderBy: { createdAt: 'asc' },
+          take: LIMIT,
+        })
+      : [];
+    const hrItems = [
+      ...reimbursements.map((r) => ({
+        type: 'REIMBURSEMENT' as const,
+        id: r.id,
+        employee: r.employee.name,
+        employeeId: r.employee.employeeId,
+        summary: `Reimbursement (${r.amount})`,
+        date: r.claimDate,
+        endDate: null as string | null,
+        requestedAt: r.createdAt,
+      })),
+      ...loans.map((l) => ({
+        type: 'LOAN' as const,
+        id: l.id,
+        employee: l.employee.name,
+        employeeId: l.employee.employeeId,
+        summary: `${l.loanType === 'ADVANCE' ? 'Advance' : 'Loan'} (${l.principal})`,
+        date: l.createdAt.toISOString().slice(0, 10),
+        endDate: null as string | null,
+        requestedAt: l.createdAt,
+      })),
+      ...encashments.map((e) => ({
+        type: 'ENCASHMENT' as const,
+        id: e.id,
+        employee: e.employee.name,
+        employeeId: e.employee.employeeId,
+        summary: `Leave encashment (${days(e.days)})`,
+        date: e.createdAt.toISOString().slice(0, 10),
+        endDate: null as string | null,
+        requestedAt: e.createdAt,
+      })),
+      ...resignations.map((r) => ({
+        type: 'RESIGNATION' as const,
+        id: r.id,
+        employee: r.employee.name,
+        employeeId: r.employee.employeeId,
+        summary: 'Resignation, last working day',
+        date: r.requestedLwd,
+        endDate: null as string | null,
+        requestedAt: r.createdAt,
+      })),
+    ];
+    const items = [
+      ...hrItems,
+      ...leaves.map((l) => ({
+        type: 'LEAVE' as const,
+        id: l.id,
+        employee: l.employee.name,
+        employeeId: l.employee.employeeId,
+        summary: `${l.leaveType.name} (${days(l.totalDays)})`,
+        date: l.startDate,
+        endDate: l.endDate === l.startDate ? null : l.endDate,
+        requestedAt: l.createdAt,
+      })),
+      ...regularizations.map((a) => ({
+        type: 'REGULARIZATION' as const,
+        id: a.id,
+        employee: a.employee.name,
+        employeeId: a.employee.employeeId,
+        summary: 'Attendance regularization',
+        date: a.date,
+        endDate: null,
+        requestedAt: a.updatedAt,
+      })),
+      ...wfh.map((a) => ({
+        type: 'WFH' as const,
+        id: a.id,
+        employee: a.employee.name,
+        employeeId: a.employee.employeeId,
+        summary: 'Work From Home',
+        date: a.date,
+        endDate: null,
+        requestedAt: a.updatedAt,
+      })),
+      ...overtime.map((o) => ({
+        type: 'OVERTIME' as const,
+        id: o.id,
+        employee: o.employee.name,
+        employeeId: o.employee.employeeId,
+        summary: `Overtime (${o.hours}h)`,
+        date: o.date,
+        endDate: null,
+        requestedAt: o.createdAt,
+      })),
+      ...compOffs.map((c) => ({
+        type: 'COMP_OFF' as const,
+        id: c.id,
+        employee: c.employee.name,
+        employeeId: c.employee.employeeId,
+        summary: `Comp-off (${days(c.daysEarned)})`,
+        date: c.earnedForDate,
+        endDate: null,
+        requestedAt: c.createdAt,
+      })),
+    ];
+    return items
+      .sort((a, b) => a.requestedAt.getTime() - b.requestedAt.getTime())
+      .slice(0, LIMIT);
   }
 
   // Working days = every date of the month that is neither one of the employee's weekly offs (department schedule,
