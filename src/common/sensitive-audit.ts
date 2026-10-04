@@ -72,9 +72,14 @@ const SHARING_BY_ROUTE: Record<
     purpose: 'Income tax export file',
   },
   form16: {
-    recipient: 'Income tax department (Form 16)',
+    recipient: 'Income tax department (Form 130 / Form 16)',
     dataCategory: 'STATUTORY',
-    purpose: 'Form 16 export file',
+    purpose: 'Form 130 / Form 16 summary export file',
+  },
+  form130: {
+    recipient: 'Income tax department (Form 130)',
+    dataCategory: 'STATUTORY',
+    purpose: 'Form 130 summary export file',
   },
   'bank-transfer': {
     recipient: 'Bank (salary transfer)',

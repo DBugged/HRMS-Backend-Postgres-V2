@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsIn,
   IsEnum,
   IsNotEmpty,
   IsNumber,
@@ -10,6 +11,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { HRA_CITY_OPTIONS } from '../../common/hra-cities';
 import { TaxDeclarationStatus, TaxRegime } from '@prisma/client';
 
 // Mirrors the exact caps tax-engine.ts already applies at payroll-compute
@@ -121,6 +123,15 @@ export class UpsertTaxDeclarationDto {
   @Max(100000000)
   hraRentPaidAnnual?: number;
   @ApiPropertyOptional() @IsOptional() @IsBoolean() isMetroCity?: boolean;
+
+  @ApiPropertyOptional({
+    enum: HRA_CITY_OPTIONS,
+    description:
+      'City of residence for the HRA limit. A metro city (8 from 1-Apr-2026) gives 50% of Basic, OTHER gives 40%; when sent it decides isMetroCity.',
+  })
+  @IsOptional()
+  @IsIn(HRA_CITY_OPTIONS)
+  hraCity?: string;
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()

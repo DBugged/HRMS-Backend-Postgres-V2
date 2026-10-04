@@ -291,6 +291,9 @@ export const SEED_DEFAULTS: Record<
       employeeRate: 12,
       employerRate: 12,
       wageCeiling: 25000,
+      // Labour Codes (in force 21-Nov-2025): wages are at least 50% of remuneration. On for new organisations;
+      // existing ones are prompted in the Statutory Compliance Center and decide with their CA.
+      applyFiftyPercentRule: true,
       edliRate: 0.5,
       adminChargeRate: 0.5,
       epsRate: 8.33,
@@ -323,7 +326,7 @@ export const SEED_DEFAULTS: Record<
     isEnabled: false,
   },
   [StatutoryModule.GRATUITY]: {
-    config: { rate: 4.81 },
+    config: { rate: 4.81, applyFiftyPercentRule: true },
     isEnabled: false,
   },
   [StatutoryModule.BONUS]: {

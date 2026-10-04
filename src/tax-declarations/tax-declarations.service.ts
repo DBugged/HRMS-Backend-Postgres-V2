@@ -5,6 +5,7 @@
 // Important: upsert()'s isOwnDeclaration check is identity-based, not role-based — an HR/Admin caller
 // editing their OWN declaration can never set `status` themselves (closing a self-verification loophole),
 // even though they could set it freely when editing someone else's.
+import { isMetroCity } from '../common/hra-cities';
 import {
   BadRequestException,
   NotFoundException,
@@ -228,7 +229,14 @@ export class TaxDeclarationsService {
       ...(dto.hraRentPaidAnnual !== undefined && {
         hraRentPaidAnnual: dto.hraRentPaidAnnual,
       }),
-      ...(dto.isMetroCity !== undefined && { isMetroCity: dto.isMetroCity }),
+      // A chosen city decides "metro"; the bare flag is only honoured from older clients that do not send a city.
+      ...(dto.hraCity !== undefined
+        ? { hraCity: dto.hraCity, isMetroCity: isMetroCity(dto.hraCity) }
+        : dto.isMetroCity !== undefined
+          ? // A bare flag says nothing about which city, so a previously chosen city is cleared rather than left
+            // contradicting it.
+            { isMetroCity: dto.isMetroCity, hraCity: '' }
+          : {}),
       ...(dto.ltaClaimed !== undefined && { ltaClaimed: dto.ltaClaimed }),
       ...(dto.previousEmployerIncome !== undefined && {
         previousEmployerIncome: dto.previousEmployerIncome,

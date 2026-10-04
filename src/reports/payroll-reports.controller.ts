@@ -190,7 +190,8 @@ export class PayrollReportsController {
     });
   }
 
-  @Get('form16')
+  // 'form16' kept for older clients; Form 130 replaces Form 16 from 1-Apr-2026.
+  @Get(['form130', 'form16'])
   async form16(
     @Query() query: Form16ReportQueryDto,
     @CurrentUser() caller: Caller,

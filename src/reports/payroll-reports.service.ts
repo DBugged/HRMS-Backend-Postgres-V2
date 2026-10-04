@@ -729,11 +729,17 @@ export class PayrollReportsService {
     ];
 
     return {
-      title: `Form 16 (Form 130) Summary — FY ${query.financialYear}`,
+      title:
+        Number(query.financialYear.slice(0, 4)) >= 2026
+          ? `Form 130 Summary — Tax Year ${query.financialYear}`
+          : `Form 16 Summary — FY ${query.financialYear}`,
       subtitle,
       columns,
       rows,
-      filename: 'form16_summary',
+      filename:
+        Number(query.financialYear.slice(0, 4)) >= 2026
+          ? 'form130_summary'
+          : 'form16_summary',
     };
   }
 

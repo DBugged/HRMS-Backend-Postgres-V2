@@ -1555,6 +1555,9 @@ model EmployeeTaxDeclaration {
   otherDeductions        Float   @default(0)
   hraRentPaidAnnual      Float   @default(0)
   isMetroCity            Boolean @default(false)
+  // City of residence for the HRA limit; isMetroCity is derived from it (see common/hra-cities.ts). Empty on
+  // declarations saved before the city was asked for.
+  hraCity                String  @default("")
   ltaClaimed             Float   @default(0)
   previousEmployerIncome Float   @default(0)
   // Credited against the annual liability in tax-engine.ts alongside this
