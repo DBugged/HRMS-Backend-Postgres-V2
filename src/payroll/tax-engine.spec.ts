@@ -525,3 +525,46 @@ describe('home-loan interest, 80TTA and section 89 relief (audit gaps)', () => {
     expect(huge.totalAnnualTax).toBe(0);
   });
 });
+
+describe('refund of excess TDS on exit (audit)', () => {
+  const cfg: any = getDefaultTaxSlabConfig(TaxRegime.NEW);
+  const slab = {
+    regime: TaxRegime.NEW,
+    standardDeduction: cfg.standardDeduction,
+    slabs: cfg.slabs,
+    surchargeSlabs: cfg.surchargeSlabs,
+    cessRate: cfg.cessRate,
+    rebate87ALimit: cfg.rebate87ALimit,
+    rebate87AAmount: cfg.rebate87AAmount,
+  };
+  const base = {
+    month: 10,
+    year: 2026,
+    currentMonthGross: 200000,
+    ytdGross: 1860000,
+    ytdTDS: 350220,
+    declaration: null,
+    taxSlabConfig: slab,
+    finalMonth: true,
+  };
+
+  it('returns the excess as a negative amount when asked to', () => {
+    const r = calculateTax({ ...base, refundExcess: true });
+    expect(r.totalAnnualTax).toBeLessThan(350220);
+    expect(r.monthlyTDS).toBe(r.totalAnnualTax - 350220);
+    expect(r.monthlyTDS).toBeLessThan(0);
+  });
+
+  it('stops at zero without the option (previous behaviour)', () => {
+    expect(calculateTax({ ...base, refundExcess: false }).monthlyTDS).toBe(0);
+  });
+
+  it('never refunds more than this employer withheld', () => {
+    const r = calculateTax({ ...base, ytdTDS: 1000, declaration: { previousEmployerTDS: 500000 }, refundExcess: true });
+    expect(r.monthlyTDS).toBe(-1000);
+  });
+
+  it('is ignored outside a final month', () => {
+    expect(calculateTax({ ...base, finalMonth: false, refundExcess: true }).monthlyTDS).toBeGreaterThanOrEqual(0);
+  });
+});

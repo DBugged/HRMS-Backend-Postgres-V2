@@ -213,6 +213,9 @@ export class EmployeeTypesService {
     }
     const custom = await this.getCustomTypes(organizationId);
     const next = custom.filter((t) => t.value !== value);
+    if (next.length === custom.length) {
+      throw new NotFoundException('Employee type not found.');
+    }
     await this.prisma.organization.update({
       where: { id: organizationId },
       data: { customEmployeeTypes: next as unknown as Prisma.InputJsonValue },

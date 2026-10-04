@@ -184,7 +184,8 @@ export class TdsComplianceService {
     );
     return runs
       .filter(
-        (r) => (r.taxableGross ?? r.grossSalary) > 0 || tdsOf(r.deductions) > 0,
+        (r) =>
+          (r.taxableGross ?? r.grossSalary) > 0 || tdsOf(r.deductions) !== 0,
       )
       .map((r) => {
         const pd = pdById.get(r.employeeId) ?? {};
@@ -502,7 +503,13 @@ export class TdsComplianceService {
           },
         },
       },
-      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+      // A final settlement is the employee's last word for its month: it sorts after the regular run so its
+      // tax computation (income actually earned to the exit) is the one Form 130 reports.
+      orderBy: [
+        { year: 'asc' },
+        { month: 'asc' },
+        { isFinalSettlement: 'asc' },
+      ],
     });
   }
 

@@ -87,6 +87,9 @@ interface PendingSalaryBreakdown {
   // Set when the LWD month was already paid by a locked regular run: the breakdown then carries only the TDS
   // withheld on the settlement's own taxable payments (leave encashment, bonus), not a second month of salary.
   extrasOnly?: boolean;
+  // The tax computation behind the settlement's TDS (actual income to the exit, not a full-year projection) —
+  // copied onto the final-settlement run so Form 130 reports what was really earned and taxed.
+  taxDetails?: unknown;
 }
 
 // A regular run in one of these states has not paid anything yet and can still change.
@@ -312,29 +315,35 @@ export class SettlementsService {
     // The real lines behind that figure, carried onto the final-settlement payroll run by process() so its
     // payslip (and statutory reports) show the actual earnings, PF/ESI/PT/TDS and employer contributions. The
     // EMI line is left out for the same reason it is added back above.
+    // Negative when excess withholding is given back on exit.
     const settlementTds = monthAlreadyPaid
-      ? Math.max(
-          0,
-          calc.deductions.find((d) => d.code === 'INCOME_TAX')?.amount ?? 0,
-        )
+      ? (calc.deductions.find((d) => d.code === 'INCOME_TAX')?.amount ?? 0)
       : 0;
     const pendingSalaryBreakdown: PendingSalaryBreakdown | null =
       monthAlreadyPaid
-        ? settlementTds > 0
+        ? calc.taxDetails
           ? {
               extrasOnly: true,
+              taxDetails: calc.taxDetails,
               earnings: [],
-              deductions: [
-                {
-                  code: 'INCOME_TAX',
-                  name: 'Income Tax (TDS) on settlement',
-                  amount: settlementTds,
-                },
-              ],
+              deductions:
+                settlementTds !== 0
+                  ? [
+                      {
+                        code: 'INCOME_TAX',
+                        name:
+                          settlementTds < 0
+                            ? 'Income Tax (TDS) refund on exit'
+                            : 'Income Tax (TDS) on settlement',
+                        amount: settlementTds,
+                      },
+                    ]
+                  : [],
               employerContributions: [],
             }
           : null
         : {
+            ...(calc.taxDetails ? { taxDetails: calc.taxDetails } : {}),
             earnings: calc.earnings.map((e) => ({
               code: e.code,
               name: e.name,
@@ -352,7 +361,6 @@ export class SettlementsService {
               ...(e.wages !== undefined ? { wages: e.wages } : {}),
             })),
           };
-
 
     // Same source of truth as monthly payroll (applyStatutoryOverrides): the GRATUITY statutory version in
     // force on the last working day decides, and only an org with no version for that date falls back to the
@@ -781,6 +789,9 @@ export class SettlementsService {
           totalDeductions,
           totalEmployerContributions,
           ctcMonthly: grossSalary + totalEmployerContributions,
+          ...(breakdown?.taxDetails
+            ? { taxDetails: breakdown.taxDetails }
+            : {}),
           netPay: settlement.netSettlementAmount,
           netPayInWords: amountInWords(settlement.netSettlementAmount),
           calculatedById: actor.id,

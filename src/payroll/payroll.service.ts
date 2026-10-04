@@ -16,6 +16,7 @@ import {
 import {
   BadRequestException,
   ForbiddenException,
+  Logger,
   Inject,
   Injectable,
   NotFoundException,
@@ -884,6 +885,7 @@ export class PayrollService {
           ? (fs.monthAlreadyPaid ? 0 : taxableForTax) + fs.extraTaxableEarnings
           : taxableForTax,
         finalMonth: !!fs,
+        refundExcess: !!fs && settingsRow.refundExcessTdsOnExit,
         employmentMonthsInFY: employmentMonths,
         // Remaining months are projected from the regular monthly structure,
         // not from this month's actual (possibly prorated / one-off-inflated)
@@ -920,8 +922,11 @@ export class PayrollService {
       // net pay for no real income. Skipping it here doesn't lose the tax
       // due — the annualized calc naturally recovers it across the
       // remaining months once ytdGross/ytdTDS reflect this month as a gap.
-      let incomeTaxAmount =
-        taxableGross > 0 || (fs && fs.extraTaxableEarnings > 0)
+      // A settlement always settles the year's tax (which may be a refund of excess withholding, a negative amount);
+      // a regular month with no taxable pay withholds nothing.
+      let incomeTaxAmount = fs
+        ? taxDetails.monthlyTDS || 0
+        : taxableGross > 0
           ? Math.max(0, taxDetails.monthlyTDS || 0)
           : 0;
       // Section 206AA (switch in Payroll Settings): no valid PAN -> at least 20% of the month's taxable pay.
@@ -1818,9 +1823,17 @@ export class PayrollService {
           html: rendered.html,
           attachments: [{ filename, content: buffer }],
         });
+        // Same idempotency marker the queue worker sets, so both delivery modes record that it was sent.
+        await this.scopedPrisma.payrollRun.updateMany({
+          where: { id: run.id, organizationId },
+          data: { payslipEmailSentAt: new Date() },
+        });
       }
-    } catch {
-      // Swallowed deliberately — see method doc.
+    } catch (err) {
+      // Never fails the payment (it has already committed) — but a failed payslip e-mail must not vanish silently.
+      new Logger(PayrollService.name).warn(
+        `Payslip notification/e-mail for run ${run.id} failed: ${(err as Error).message}`,
+      );
     }
   }
 
@@ -1880,6 +1893,8 @@ export class PayrollService {
         unlockedById: actor.id,
         unlockedAt: new Date(),
         unlockReason: dto.reason.trim(),
+        // A corrected payslip is a new payslip: allow the e-mail to go out again when it is re-paid.
+        payslipEmailSentAt: null,
       },
     });
     const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({

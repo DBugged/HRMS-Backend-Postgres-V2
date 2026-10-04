@@ -1344,6 +1344,11 @@ model PayrollSettings {
   // the month's taxable pay. Off by default — whether it applies to salary is the employer's CA's call.
   higherTdsWithoutPan Boolean @default(false)
 
+  // Final settlement: when the tax withheld through the year (on a full-year projection) exceeds the tax on the income
+  // actually earned, give the excess back in the settlement (section 192(3) lets the employer adjust within the year)
+  // instead of leaving the employee to claim it through the income-tax return. On by default.
+  refundExcessTdsOnExit Boolean @default(true)
+
   // SBI benchmark lending rate (%) used to value the perquisite of a concessional employer loan: outstanding balance
   // x (benchmark - loan rate) / 12 each month is added to taxable income (not to pay). 0 = off.
   perquisiteLoanBenchmarkRate Float @default(0)

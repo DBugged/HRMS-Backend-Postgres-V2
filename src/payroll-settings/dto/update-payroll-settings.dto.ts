@@ -204,6 +204,14 @@ export class UpdatePayrollSettingsDto {
 
   @ApiPropertyOptional({
     description:
+      'Give back TDS withheld in excess of the tax on income actually earned when an employee leaves.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  refundExcessTdsOnExit?: boolean;
+
+  @ApiPropertyOptional({
+    description:
       'SBI benchmark rate (%) used to value the perquisite of a concessional employer loan; 0 = off.',
     minimum: 0,
     maximum: 30,

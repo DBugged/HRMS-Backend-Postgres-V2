@@ -151,6 +151,9 @@ export interface CalculateTaxInput {
   // year is NOT projected forward — the tax is trued up on the income actually earned and the whole balance is
   // withheld now. Projecting the remaining months over-deducted every leaver.
   finalMonth?: boolean;
+  // With finalMonth: when the tax already withheld exceeds the tax due, return the excess (a negative monthlyTDS,
+  // limited to what this employer actually withheld) instead of stopping at zero.
+  refundExcess?: boolean;
   // Months of this FY the income base covers (months already paid by this employer + this month and the months
   // still to come). basicAnnual / hraReceivedAnnual are expected to span the same months, and the declared annual
   // rent is scaled to them — a part-year employee must not get a 12-month HRA exemption against 6 months of pay.
@@ -203,6 +206,7 @@ export function calculateTax({
   taxSlabConfig,
   financialYearStartMonth = 4,
   finalMonth = false,
+  refundExcess = false,
   employmentMonthsInFY = 12,
 }: CalculateTaxInput): TaxDetails {
   if (!taxSlabConfig) {
@@ -346,11 +350,15 @@ export function calculateTax({
   const totalAnnualTax = taxBeforeRelief - relief89;
   // Credit everything already withheld this year — this employer's YTD TDS
   // and whatever the previous employer deducted.
-  const remainingTax = Math.max(
-    0,
-    totalAnnualTax - ytdTDS - previousEmployerTDS,
-  );
-  const monthlyTDS = Math.round(remainingTax / remainingMonths);
+  const owed = totalAnnualTax - ytdTDS - previousEmployerTDS;
+  const remainingTax = Math.max(0, owed);
+  // A leaver's excess comes back (only this employer's own withholding can be returned by this employer).
+  const refund =
+    finalMonth && refundExcess && owed < 0 ? -Math.min(-owed, ytdTDS) : 0;
+  const monthlyTDS =
+    refund < 0
+      ? Math.round(refund)
+      : Math.round(remainingTax / remainingMonths);
 
   return {
     regime,

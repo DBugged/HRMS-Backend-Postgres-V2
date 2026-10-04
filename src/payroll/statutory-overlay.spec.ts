@@ -42,6 +42,7 @@ function baseSettings(
     companyPerformanceEnabled: false,
     taxDeclarationRequiresVerification: false,
     higherTdsWithoutPan: false,
+    refundExcessTdsOnExit: true,
     perquisiteLoanBenchmarkRate: 0,
     updatedById: null,
     createdAt: new Date(),

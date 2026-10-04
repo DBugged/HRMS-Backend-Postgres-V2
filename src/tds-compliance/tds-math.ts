@@ -65,8 +65,9 @@ export function splitMonthlyTds(
   tdsDeducted: number,
   annual: { taxAfterRebate: number; surcharge: number; cess: number } | null,
 ): { tax: number; surcharge: number; cess: number } {
+  // A negative amount is excess tax given back on exit — it stays a plain negative tax adjustment.
   if (!annual || tdsDeducted <= 0) {
-    return { tax: Math.max(0, tdsDeducted), surcharge: 0, cess: 0 };
+    return { tax: tdsDeducted, surcharge: 0, cess: 0 };
   }
   const total = annual.taxAfterRebate + annual.surcharge + annual.cess;
   if (total <= 0) return { tax: tdsDeducted, surcharge: 0, cess: 0 };

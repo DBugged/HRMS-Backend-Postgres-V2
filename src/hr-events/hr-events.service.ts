@@ -61,10 +61,8 @@ export class HrEventsService {
     private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
-  // Once a day is enough granularity for a calendar-date match. Not
-  // deduped against a re-run mid-day (e.g. after a restart) — same
-  // accepted precedent as the existing Marked Absent email, which also
-  // resends every run rather than tracking "already sent today".
+  // Once a day is enough granularity for a calendar-date match. A re-run on the same day (e.g. after a restart)
+  // is deduped per person and occasion by alreadySentToday().
   @Cron('0 8 * * *')
   async sendDailyWishes() {
     const organizations = await this.scopedPrisma.organization.findMany({
@@ -169,6 +167,19 @@ export class HrEventsService {
   // predating email-templates seeding, or one that's disabled the
   // template) — so a missing/disabled template degrades gracefully rather
   // than silently dropping the wish email.
+  private async alreadySentToday(
+    organizationId: string,
+    userId: string,
+    title: string,
+  ): Promise<boolean> {
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+    const count = await this.scopedPrisma.notification.count({
+      where: { organizationId, userId, title, createdAt: { gte: startOfDay } },
+    });
+    return count > 0;
+  }
+
   private async renderOccasionEmail(
     organizationId: string,
     occasionKey: string,
@@ -247,6 +258,8 @@ export class HrEventsService {
     const intro = `${employee.name} joins us today as ${designation}${
       departmentName ? ` in ${departmentName}` : ''
     } — please give them a warm welcome.`;
+    // A restart or manual re-run on the same day must not wish (and e-mail, and push) the same person twice.
+    if (await this.alreadySentToday(organizationId, employee.id, title)) return;
     await this.notificationsService.create({
       organizationId,
       userId: employee.id,
@@ -299,6 +312,8 @@ export class HrEventsService {
   ) {
     const title = 'Happy Birthday!';
     const message = `Happy Birthday, ${employee.name}! Wishing you a wonderful year ahead, from everyone here.`;
+    // A restart or manual re-run on the same day must not wish (and e-mail, and push) the same person twice.
+    if (await this.alreadySentToday(organizationId, employee.id, title)) return;
     await this.notificationsService.create({
       organizationId,
       userId: employee.id,
@@ -345,6 +360,8 @@ export class HrEventsService {
   ) {
     const title = `Happy Work Anniversary!`;
     const message = `Congratulations on your ${years}${ORDINAL_SUFFIX(years)} work anniversary, ${employee.name}! Thank you for everything you've contributed.`;
+    // A restart or manual re-run on the same day must not wish (and e-mail, and push) the same person twice.
+    if (await this.alreadySentToday(organizationId, employee.id, title)) return;
     await this.notificationsService.create({
       organizationId,
       userId: employee.id,
