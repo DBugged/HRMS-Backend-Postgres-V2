@@ -373,7 +373,11 @@ export class PayrollReportsService {
       const employerLine = linesOf(r.employerContributions).find(
         (e) => e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER,
       ) as
-        | { amount: number; wages?: number; breakup?: { eps: number; epf: number } }
+        | {
+            amount: number;
+            wages?: number;
+            breakup?: { eps: number; epf: number };
+          }
         | undefined;
       const employeePf = lineAmount(r.deductions, SALARY_COMPONENT_CODES.PF);
       // Runs saved before wages were recorded: back out the wage base from the 12% employee share.
@@ -410,8 +414,16 @@ export class PayrollReportsService {
       { header: 'EDLI Wages', key: 'edliWages', width: 14 },
       { header: 'EPF Contribution (Employee)', key: 'epfEmployee', width: 18 },
       { header: 'EPS Contribution (Employer)', key: 'eps', width: 18 },
-      { header: 'EPF-EPS Difference (Employer)', key: 'epfDifference', width: 18 },
-      { header: 'Employer Contribution (Total)', key: 'employerContribution', width: 18 },
+      {
+        header: 'EPF-EPS Difference (Employer)',
+        key: 'epfDifference',
+        width: 18,
+      },
+      {
+        header: 'Employer Contribution (Total)',
+        key: 'employerContribution',
+        width: 18,
+      },
       { header: 'EDLI', key: 'edli', width: 10 },
       { header: 'Admin Charges', key: 'adminCharges', width: 14 },
       { header: 'NCP Days', key: 'ncpDays', width: 10 },
@@ -453,7 +465,10 @@ export class PayrollReportsService {
         year: r.year,
         daysWorked: att.payableDays ?? 0,
         totalWages: employerLine?.wages ?? r.grossSalary,
-        employeeContribution: lineAmount(r.deductions, SALARY_COMPONENT_CODES.ESI),
+        employeeContribution: lineAmount(
+          r.deductions,
+          SALARY_COMPONENT_CODES.ESI,
+        ),
         employerContribution: employerLine?.amount ?? 0,
       };
     });
@@ -465,8 +480,16 @@ export class PayrollReportsService {
       { header: 'Year', key: 'year', width: 8 },
       { header: 'Days Worked', key: 'daysWorked', width: 12 },
       { header: 'Total Wages', key: 'totalWages', width: 14 },
-      { header: 'Employee Contribution', key: 'employeeContribution', width: 18 },
-      { header: 'Employer Contribution', key: 'employerContribution', width: 18 },
+      {
+        header: 'Employee Contribution',
+        key: 'employeeContribution',
+        width: 18,
+      },
+      {
+        header: 'Employer Contribution',
+        key: 'employerContribution',
+        width: 18,
+      },
     ];
     return {
       title: 'ESI Report',
@@ -620,7 +643,7 @@ export class PayrollReportsService {
         },
         include: {
           employee: {
-            select: { name: true, employeeId: true, personalData: true },
+            select: { name: true, employeeId: true },
           },
         },
         orderBy: [{ year: 'asc' }, { month: 'asc' }],
@@ -637,6 +660,11 @@ export class PayrollReportsService {
     const subtitle =
       deductorBits.length > 0 ? deductorBits.join('  |  ') : undefined;
 
+    // Identifiers are encrypted at rest; only a top-level read decrypts them (a nested include returns ciphertext).
+    const ident = await this.identifiersFor(
+      runs.map((r) => r.employeeId),
+      organizationId,
+    );
     const byEmployee = new Map<
       string,
       {
@@ -654,11 +682,10 @@ export class PayrollReportsService {
     >();
     for (const r of runs) {
       const taxDetails = r.taxDetails as TaxDetailsShape | null;
-      const pd = (r.employee.personalData ?? {}) as Record<string, unknown>;
       const existing = byEmployee.get(r.employeeId) ?? {
         employeeId: r.employee.employeeId,
         name: r.employee.name,
-        pan: typeof pd.panNumber === 'string' && pd.panNumber ? pd.panNumber : '-',
+        pan: ident(r.employeeId, 'panNumber'),
         financialYear: query.financialYear,
         grossSalary: 0,
         taxableSalary: 0,
@@ -676,7 +703,8 @@ export class PayrollReportsService {
       // Runs arrive oldest-first, so the last one with a computation wins.
       if (taxDetails) {
         existing.regime = taxDetails.regime ?? existing.regime;
-        existing.taxableIncome = taxDetails.taxableIncome ?? existing.taxableIncome;
+        existing.taxableIncome =
+          taxDetails.taxableIncome ?? existing.taxableIncome;
         existing.annualTax =
           (taxDetails as { totalAnnualTax?: number }).totalAnnualTax ??
           existing.annualTax;

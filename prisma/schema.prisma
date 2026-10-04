@@ -85,7 +85,7 @@ model Organization {
   // Admin toggle for whether WFH is offered as a work-arrangement option on
   // Attendance — the column on Attendance always accepts WFH regardless, so
   // disabling this later doesn't orphan history.
-  enableWFH              Boolean @default(true)
+  enableWFH                           Boolean @default(true)
   // Same "auto-approve after N hours with no reviewer action" idea
   // LeaveType.autoApproveIfNoAction/autoApproveHours already gives HR per
   // leave type — WFH and Regularization requests have no "type" of their
@@ -103,7 +103,7 @@ model Organization {
   // narrow AttendanceService consumer built in the Attendance batch. Kept
   // separate deliberately so extending the wizard's JSON shape can never
   // break the attendance-calculation consumer of this field.
-  attendancePayrollPrefs Json    @default("{\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"weekendDays\":[0,6]}")
+  attendancePayrollPrefs              Json    @default("{\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"weekendDays\":[0,6]}")
 
   // --- Setup Wizard / Organization Settings — ported from the old
   // system's Organization model verbatim (field-for-field), which is the
@@ -228,65 +228,67 @@ model Organization {
   // so nothing breaks until real billing exists.
   maxEmployees Int @default(999999)
 
-  users                    User[]
-  departments              Department[]
-  refreshTokens            RefreshToken[]
-  holidays                 Holiday[]
-  workLocations            WorkLocation[]
-  workSchedules            WorkSchedule[]
-  leaveTypes               LeaveType[]
-  leaveBalances            LeaveBalance[]
-  leaves                   Leave[]
-  compOffs                 CompOff[]
-  salaryComponents         SalaryComponent[]
-  payrollSettings          PayrollSettings?
-  employeeSalaryComponents EmployeeSalaryComponent[]
-  payrollTemplates         PayrollTemplate[]
-  statutoryConfigVersions  StatutoryConfigVersion[]
-  employeeTaxDeclarations  EmployeeTaxDeclaration[]
-  taxSlabConfigs           TaxSlabConfig[]
-  punches                  Punch[]
-  attendances              Attendance[]
-  attendanceImportBatches  AttendanceImportBatch[]
-  overtimeRecords          OvertimeRecord[]
-  performanceRatings       PerformanceRating[]
-  companyPerformance       CompanyPerformance[]
-  leaveEncashments         LeaveEncashment[]
-  payrollRuns              PayrollRun[]
-  reimbursements           Reimbursement[]
-  loans                    Loan[]
-  loanRepayments           LoanRepayment[]
-  settlements              Settlement[]
-  offboardingCases         OffboardingCase[]
-  resignations             Resignation[]
-  employeeMovements        EmployeeMovement[]
-  auditLogs                AuditLog[]
-  timelineEvents           EmployeeTimeline[]
-  approvalDelegations      ApprovalDelegation[]
-  policyDocuments          PolicyDocument[]
+  users                         User[]
+  departments                   Department[]
+  refreshTokens                 RefreshToken[]
+  holidays                      Holiday[]
+  workLocations                 WorkLocation[]
+  workSchedules                 WorkSchedule[]
+  leaveTypes                    LeaveType[]
+  leaveBalances                 LeaveBalance[]
+  leaves                        Leave[]
+  compOffs                      CompOff[]
+  salaryComponents              SalaryComponent[]
+  payrollSettings               PayrollSettings?
+  employeeSalaryComponents      EmployeeSalaryComponent[]
+  payrollTemplates              PayrollTemplate[]
+  statutoryConfigVersions       StatutoryConfigVersion[]
+  employeeTaxDeclarations       EmployeeTaxDeclaration[]
+  taxSlabConfigs                TaxSlabConfig[]
+  punches                       Punch[]
+  attendances                   Attendance[]
+  attendanceImportBatches       AttendanceImportBatch[]
+  overtimeRecords               OvertimeRecord[]
+  performanceRatings            PerformanceRating[]
+  companyPerformance            CompanyPerformance[]
+  tdsChallans                   TdsChallan[]
+  tdsStatements                 TdsStatement[]
+  leaveEncashments              LeaveEncashment[]
+  payrollRuns                   PayrollRun[]
+  reimbursements                Reimbursement[]
+  loans                         Loan[]
+  loanRepayments                LoanRepayment[]
+  settlements                   Settlement[]
+  offboardingCases              OffboardingCase[]
+  resignations                  Resignation[]
+  employeeMovements             EmployeeMovement[]
+  auditLogs                     AuditLog[]
+  timelineEvents                EmployeeTimeline[]
+  approvalDelegations           ApprovalDelegation[]
+  policyDocuments               PolicyDocument[]
   policyDocumentAcknowledgments PolicyDocumentAcknowledgment[]
-  documentRequirements     DocumentRequirement[]
-  notifications            Notification[]
-  employeeDocuments        EmployeeDocument[]
-  employeeAssets           EmployeeAsset[]
-  employeeRoleHistory      EmployeeRoleHistory[]
-  employmentStatusHistory  EmploymentStatusHistory[]
-  emailTemplates           EmailTemplate[]
-  letterTemplates          LetterTemplate[]
-  letterOverrides          LetterOverride[]
-  employeeLetterAccess     EmployeeLetterAccess[]
-  orgListItems             OrgListItem[]
-  assets                   Asset[]
-  assetMaintenances        AssetMaintenance[]
-  assetDocuments           AssetDocument[]
-  privacySettings          PrivacySettings?
-  privacyNoticeVersions    PrivacyNoticeVersion[]
-  consentRecords           ConsentRecord[]
-  dataRequests             DataRequest[]
-  dataProcessors           DataProcessor[]
-  dataSharingRecords       DataSharingRecord[]
-  breachIncidents          BreachIncident[]
-  privacyAuditLogs         PrivacyAuditLog[]
+  documentRequirements          DocumentRequirement[]
+  notifications                 Notification[]
+  employeeDocuments             EmployeeDocument[]
+  employeeAssets                EmployeeAsset[]
+  employeeRoleHistory           EmployeeRoleHistory[]
+  employmentStatusHistory       EmploymentStatusHistory[]
+  emailTemplates                EmailTemplate[]
+  letterTemplates               LetterTemplate[]
+  letterOverrides               LetterOverride[]
+  employeeLetterAccess          EmployeeLetterAccess[]
+  orgListItems                  OrgListItem[]
+  assets                        Asset[]
+  assetMaintenances             AssetMaintenance[]
+  assetDocuments                AssetDocument[]
+  privacySettings               PrivacySettings?
+  privacyNoticeVersions         PrivacyNoticeVersion[]
+  consentRecords                ConsentRecord[]
+  dataRequests                  DataRequest[]
+  dataProcessors                DataProcessor[]
+  dataSharingRecords            DataSharingRecord[]
+  breachIncidents               BreachIncident[]
+  privacyAuditLogs              PrivacyAuditLog[]
 
   @@map("organizations")
 }
@@ -351,7 +353,7 @@ model Department {
   // AttendanceService.recalculateAttendanceForDay, which subtracts this
   // from punch-in-to-punch-out duration before comparing against
   // minHoursForPresent/minHoursForHalfDay.
-  breakMinutes             Int     @default(0)
+  breakMinutes       Int                  @default(0)
 
   employees User[]    @relation("EmployeeDepartment")
   holidays  Holiday[]
@@ -474,12 +476,12 @@ model User {
   // default — only flips an employee into "must have a location to punch"
   // once HR explicitly marks them as office-based. See selfPunch in
   // attendance.service.ts.
-  requireWorkLocationForPunch Boolean @default(false)
+  requireWorkLocationForPunch Boolean           @default(false)
   // Whether this employee must take a selfie to check in/out: DEFAULT
   // follows the org's orgPayrollAttendancePrefs.requireSelfieForPunch;
   // REQUIRED / NOT_REQUIRED override it either way (e.g. field staff).
   // See common/selfie-requirement.ts.
-  selfieRequirement SelfieRequirement @default(DEFAULT)
+  selfieRequirement           SelfieRequirement @default(DEFAULT)
 
   reportingManagerId String?
   reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
@@ -502,73 +504,73 @@ model User {
   createdWorkLocations             WorkLocation[]
   createdLeaveTypes                LeaveType[]
   leaveBalances                    LeaveBalance[]
-  leaves                           Leave[]                   @relation("LeaveEmployee")
-  leavesReviewed                   Leave[]                   @relation("LeaveReviewedBy")
-  leavesLevel1Approved             Leave[]                   @relation("LeaveLevel1ApprovedBy")
-  compOffs                         CompOff[]                 @relation("CompOffEmployee")
-  compOffsApproved                 CompOff[]                 @relation("CompOffApprovedBy")
-  emailTemplatesUpdated            EmailTemplate[]           @relation("EmailTemplateUpdatedBy")
+  leaves                           Leave[]                        @relation("LeaveEmployee")
+  leavesReviewed                   Leave[]                        @relation("LeaveReviewedBy")
+  leavesLevel1Approved             Leave[]                        @relation("LeaveLevel1ApprovedBy")
+  compOffs                         CompOff[]                      @relation("CompOffEmployee")
+  compOffsApproved                 CompOff[]                      @relation("CompOffApprovedBy")
+  emailTemplatesUpdated            EmailTemplate[]                @relation("EmailTemplateUpdatedBy")
   createdSalaryComponents          SalaryComponent[]
   updatedPayrollSettings           PayrollSettings[]
-  employeeSalaryComponents         EmployeeSalaryComponent[] @relation("EmployeeSalaryComponentEmployee")
-  createdEmployeeSalaryComponents  EmployeeSalaryComponent[] @relation("EmployeeSalaryComponentCreatedBy")
+  employeeSalaryComponents         EmployeeSalaryComponent[]      @relation("EmployeeSalaryComponentEmployee")
+  createdEmployeeSalaryComponents  EmployeeSalaryComponent[]      @relation("EmployeeSalaryComponentCreatedBy")
   createdPayrollTemplates          PayrollTemplate[]
   createdStatutoryConfigVersions   StatutoryConfigVersion[]
   taxDeclarations                  EmployeeTaxDeclaration[]
   punches                          Punch[]
   attendances                      Attendance[]
-  uploadedAttendanceImportBatches  AttendanceImportBatch[]   @relation("AttendanceImportUploadedBy")
-  validatedAttendanceImportBatches AttendanceImportBatch[]   @relation("AttendanceImportValidatedBy")
-  executedAttendanceImportBatches  AttendanceImportBatch[]   @relation("AttendanceImportExecutedBy")
-  overtimeRecords                  OvertimeRecord[]          @relation("OvertimeEmployee")
-  overtimeRecordsApproved          OvertimeRecord[]          @relation("OvertimeApprovedBy")
-  performanceRatings               PerformanceRating[]       @relation("PerformanceRatingEmployee")
-  performanceRatingsGiven          PerformanceRating[]       @relation("PerformanceRatingRatedBy")
-  performanceRatingsApproved       PerformanceRating[]       @relation("PerformanceRatingApprovedBy")
-  leaveEncashments                 LeaveEncashment[]         @relation("LeaveEncashmentEmployee")
-  leaveEncashmentsApproved         LeaveEncashment[]         @relation("LeaveEncashmentApprovedBy")
-  payrollRuns                      PayrollRun[]              @relation("PayrollRunEmployee")
-  payrollRunsCalculated            PayrollRun[]              @relation("PayrollRunCalculatedBy")
-  reimbursements                   Reimbursement[]           @relation("ReimbursementEmployee")
-  reimbursementsApproved           Reimbursement[]           @relation("ReimbursementApprovedBy")
-  reimbursementsPaid               Reimbursement[]           @relation("ReimbursementPaidBy")
-  loans                            Loan[]                    @relation("LoanEmployee")
-  loansApproved                    Loan[]                    @relation("LoanApprovedBy")
-  loansClosed                      Loan[]                    @relation("LoanClosedBy")
-  letterOverrides                  LetterOverride[]          @relation("LetterOverrideEmployee")
-  letterOverridesUpdated           LetterOverride[]          @relation("LetterOverrideUpdatedBy")
-  letterAccess                     EmployeeLetterAccess[]    @relation("EmployeeLetterAccessEmployee")
-  letterAccessGranted              EmployeeLetterAccess[]    @relation("EmployeeLetterAccessGrantedBy")
-  settlements                      Settlement[]              @relation("SettlementEmployee")
-  settlementsProcessed             Settlement[]              @relation("SettlementProcessedBy")
-  offboardingCases                 OffboardingCase[]         @relation("OffboardingCaseEmployee")
-  offboardingCasesInitiated        OffboardingCase[]         @relation("OffboardingCaseInitiatedBy")
-  offboardingCasesCompleted        OffboardingCase[]         @relation("OffboardingCaseCompletedBy")
-  resignations                     Resignation[]             @relation("ResignationEmployee")
-  employeeMovements                EmployeeMovement[]        @relation("EmployeeMovementEmployee")
+  uploadedAttendanceImportBatches  AttendanceImportBatch[]        @relation("AttendanceImportUploadedBy")
+  validatedAttendanceImportBatches AttendanceImportBatch[]        @relation("AttendanceImportValidatedBy")
+  executedAttendanceImportBatches  AttendanceImportBatch[]        @relation("AttendanceImportExecutedBy")
+  overtimeRecords                  OvertimeRecord[]               @relation("OvertimeEmployee")
+  overtimeRecordsApproved          OvertimeRecord[]               @relation("OvertimeApprovedBy")
+  performanceRatings               PerformanceRating[]            @relation("PerformanceRatingEmployee")
+  performanceRatingsGiven          PerformanceRating[]            @relation("PerformanceRatingRatedBy")
+  performanceRatingsApproved       PerformanceRating[]            @relation("PerformanceRatingApprovedBy")
+  leaveEncashments                 LeaveEncashment[]              @relation("LeaveEncashmentEmployee")
+  leaveEncashmentsApproved         LeaveEncashment[]              @relation("LeaveEncashmentApprovedBy")
+  payrollRuns                      PayrollRun[]                   @relation("PayrollRunEmployee")
+  payrollRunsCalculated            PayrollRun[]                   @relation("PayrollRunCalculatedBy")
+  reimbursements                   Reimbursement[]                @relation("ReimbursementEmployee")
+  reimbursementsApproved           Reimbursement[]                @relation("ReimbursementApprovedBy")
+  reimbursementsPaid               Reimbursement[]                @relation("ReimbursementPaidBy")
+  loans                            Loan[]                         @relation("LoanEmployee")
+  loansApproved                    Loan[]                         @relation("LoanApprovedBy")
+  loansClosed                      Loan[]                         @relation("LoanClosedBy")
+  letterOverrides                  LetterOverride[]               @relation("LetterOverrideEmployee")
+  letterOverridesUpdated           LetterOverride[]               @relation("LetterOverrideUpdatedBy")
+  letterAccess                     EmployeeLetterAccess[]         @relation("EmployeeLetterAccessEmployee")
+  letterAccessGranted              EmployeeLetterAccess[]         @relation("EmployeeLetterAccessGrantedBy")
+  settlements                      Settlement[]                   @relation("SettlementEmployee")
+  settlementsProcessed             Settlement[]                   @relation("SettlementProcessedBy")
+  offboardingCases                 OffboardingCase[]              @relation("OffboardingCaseEmployee")
+  offboardingCasesInitiated        OffboardingCase[]              @relation("OffboardingCaseInitiatedBy")
+  offboardingCasesCompleted        OffboardingCase[]              @relation("OffboardingCaseCompletedBy")
+  resignations                     Resignation[]                  @relation("ResignationEmployee")
+  employeeMovements                EmployeeMovement[]             @relation("EmployeeMovementEmployee")
   auditLogs                        AuditLog[]
-  timelineEvents                   EmployeeTimeline[]        @relation("TimelineEmployee")
-  timelineEventsPerformed          EmployeeTimeline[]        @relation("TimelinePerformedBy")
-  delegationsGiven                 ApprovalDelegation[]      @relation("DelegationDelegator")
-  delegationsReceived              ApprovalDelegation[]      @relation("DelegationDelegate")
-  delegationsCreated               ApprovalDelegation[]      @relation("DelegationCreatedBy")
-  policyDocumentsUploaded          PolicyDocument[]          @relation("PolicyDocumentUploadedBy")
+  timelineEvents                   EmployeeTimeline[]             @relation("TimelineEmployee")
+  timelineEventsPerformed          EmployeeTimeline[]             @relation("TimelinePerformedBy")
+  delegationsGiven                 ApprovalDelegation[]           @relation("DelegationDelegator")
+  delegationsReceived              ApprovalDelegation[]           @relation("DelegationDelegate")
+  delegationsCreated               ApprovalDelegation[]           @relation("DelegationCreatedBy")
+  policyDocumentsUploaded          PolicyDocument[]               @relation("PolicyDocumentUploadedBy")
   policyDocumentAcknowledgments    PolicyDocumentAcknowledgment[]
-  documentRequirementsCreated      DocumentRequirement[]     @relation("DocumentRequirementCreatedBy")
+  documentRequirementsCreated      DocumentRequirement[]          @relation("DocumentRequirementCreatedBy")
   notifications                    Notification[]
-  organizationsInitialized         Organization[]            @relation("OrganizationInitializedBy")
-  employeeDocuments                EmployeeDocument[]        @relation("EmployeeDocumentEmployee")
-  employeeDocumentsReviewed        EmployeeDocument[]        @relation("EmployeeDocumentReviewedBy")
-  assets                           EmployeeAsset[]           @relation("EmployeeAssetEmployee")
-  assetsAllocated                  EmployeeAsset[]           @relation("EmployeeAssetAllocatedBy")
-  assetsReturned                   EmployeeAsset[]           @relation("EmployeeAssetReturnedBy")
-  roleHistoryEntries               EmployeeRoleHistory[]     @relation("RoleHistoryEmployee")
-  roleHistoryChangedBy             EmployeeRoleHistory[]     @relation("RoleHistoryChangedBy")
-  employmentStatusHistoryEntries   EmploymentStatusHistory[] @relation("StatusHistoryEmployee")
-  employmentStatusHistoryChangedBy EmploymentStatusHistory[] @relation("StatusHistoryChangedBy")
-  inventoryAssetsCreated           Asset[]                   @relation("AssetCreatedBy")
-  assetMaintenancesCreated         AssetMaintenance[]        @relation("AssetMaintenanceCreatedBy")
-  assetDocumentsUploaded           AssetDocument[]           @relation("AssetDocumentUploadedBy")
+  organizationsInitialized         Organization[]                 @relation("OrganizationInitializedBy")
+  employeeDocuments                EmployeeDocument[]             @relation("EmployeeDocumentEmployee")
+  employeeDocumentsReviewed        EmployeeDocument[]             @relation("EmployeeDocumentReviewedBy")
+  assets                           EmployeeAsset[]                @relation("EmployeeAssetEmployee")
+  assetsAllocated                  EmployeeAsset[]                @relation("EmployeeAssetAllocatedBy")
+  assetsReturned                   EmployeeAsset[]                @relation("EmployeeAssetReturnedBy")
+  roleHistoryEntries               EmployeeRoleHistory[]          @relation("RoleHistoryEmployee")
+  roleHistoryChangedBy             EmployeeRoleHistory[]          @relation("RoleHistoryChangedBy")
+  employmentStatusHistoryEntries   EmploymentStatusHistory[]      @relation("StatusHistoryEmployee")
+  employmentStatusHistoryChangedBy EmploymentStatusHistory[]      @relation("StatusHistoryChangedBy")
+  inventoryAssetsCreated           Asset[]                        @relation("AssetCreatedBy")
+  assetMaintenancesCreated         AssetMaintenance[]             @relation("AssetMaintenanceCreatedBy")
+  assetDocumentsUploaded           AssetDocument[]                @relation("AssetDocumentUploadedBy")
 
   @@unique([organizationId, employeeId])
   @@index([organizationId])
@@ -2200,7 +2202,7 @@ model Settlement {
   // YYYY-MM-DD, same plain-string convention as Leave.startDate.
   lastWorkingDay String
 
-  pendingSalaryAmount   Float @default(0)
+  pendingSalaryAmount    Float @default(0)
   // The LWD-month payroll snapshot pendingSalaryAmount was derived from —
   // {earnings, deductions, employerContributions} as calculated (LOAN_EMI
   // excluded, since the loan balance is recovered separately). process()
@@ -2216,15 +2218,15 @@ model Settlement {
   // table the leave-encashments module already relies on. No
   // minBalanceToRetain cap here — the employee is leaving, so the full
   // balance is paid out.
-  leaveEncashmentAmount Float @default(0)
-  bonusAmount           Float @default(0)
-  recoveriesAmount      Float @default(0)
-  loanBalanceRecovered  Float @default(0)
-  noticePeriodRecovery  Float @default(0)
-  gratuityAmount        Float @default(0)
+  leaveEncashmentAmount  Float @default(0)
+  bonusAmount            Float @default(0)
+  recoveriesAmount       Float @default(0)
+  loanBalanceRecovered   Float @default(0)
+  noticePeriodRecovery   Float @default(0)
+  gratuityAmount         Float @default(0)
   // APPROVED-but-unpaid reimbursement claims settled with the final payout (marked PAID by process()).
-  reimbursementAmount   Float @default(0)
-  netSettlementAmount   Float @default(0)
+  reimbursementAmount    Float @default(0)
+  netSettlementAmount    Float @default(0)
 
   status SettlementStatus @default(DRAFT)
 
@@ -2517,9 +2519,9 @@ model PolicyDocumentAcknowledgment {
   // What the employee typed as their signature at acknowledgment time —
   // captured verbatim (not necessarily identical to their profile name),
   // same as a wet-ink signature not always matching a printed name exactly.
-  signatureName String
-  ipAddress     String?
-  userAgent     String?
+  signatureName  String
+  ipAddress      String?
+  userAgent      String?
   acknowledgedAt DateTime @default(now())
 
   @@unique([organizationId, policyDocumentId, employeeId])
@@ -3384,4 +3386,58 @@ model CompanyPerformance {
   @@unique([organizationId, financialYear, departmentId])
   @@index([organizationId, financialYear])
   @@map("company_performance")
+}
+
+// TDS (salary) challan the employer deposited with the government for one deduction month. HR records the BSR code
+// and challan serial from the bank receipt; the quarterly return and Form 130 map deductions to these.
+model TdsChallan {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // The month the tax was DEDUCTED in (not the month it was deposited).
+  month         Int
+  year          Int
+  financialYear String
+  // TDS quarter within the financial year (Apr-Jun = 1 ... Jan-Mar = 4).
+  quarter       Int
+
+  bsrCode         String
+  challanSerialNo String
+  // YYYY-MM-DD
+  depositDate     String
+  tdsAmount       Float
+  interest        Float  @default(0)
+  fee             Float  @default(0)
+  notes           String @default("")
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([organizationId, financialYear, quarter])
+  @@index([organizationId, year, month])
+  @@map("tds_challans")
+}
+
+// The acknowledgement (receipt) number of a filed quarterly salary TDS statement (Form 138; Form 24Q before
+// 1-Apr-2026). Form 130 / Form 16 Part B quotes it per quarter.
+model TdsStatement {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  financialYear String
+  quarter       Int
+  formType      String  @default("138")
+  receiptNumber String
+  // YYYY-MM-DD
+  filedOn       String?
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([organizationId, financialYear, quarter])
+  @@map("tds_statements")
 }
