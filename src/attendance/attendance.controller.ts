@@ -27,6 +27,7 @@ import { ReviewRegularizationDto } from './dto/review-regularization.dto';
 import { ReviewWfhDto } from './dto/review-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
+import { BackfillAttendanceDto } from './dto/backfill-attendance.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -245,5 +246,22 @@ export class AttendanceController {
     @CurrentUser() caller: Caller,
   ) {
     return this.attendanceService.notifyAbsentees(dto, caller.organizationId);
+  }
+
+  // One-off repair of HR users' missing weekend/holiday/absent rows (see AttendanceService.backfillMissingAttendance).
+  // Admin only: it writes attendance that payroll then pays against. Dry run unless dryRun is false.
+  @Post('backfill-missing')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  backfillMissing(
+    @Body() dto: BackfillAttendanceDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.backfillMissingAttendance(
+      dto,
+      caller,
+      caller.organizationId,
+    );
   }
 }

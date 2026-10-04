@@ -75,6 +75,7 @@ import { ReviewRegularizationDto } from './dto/review-regularization.dto';
 import { ReviewWfhDto } from './dto/review-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
+import { BackfillAttendanceDto } from './dto/backfill-attendance.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -2826,6 +2827,143 @@ export class AttendanceService {
     });
 
     return { date, notifiedCount: employeeIds.length, employeeIds };
+  }
+
+  // One-off repair for the gap the nightly sweep used to leave: HR users were never swept, so on any day they did not
+  // punch in there is no attendance row, and payroll counts a day with no row as unpaid (weekends and holidays
+  // included). This creates the rows that are MISSING for active HR users between startDate and endDate, using the
+  // same day derivation as the nightly sweep (punches, approved leave, holidays, weekly offs), so the result is
+  // what the sweep would have written.
+  // Safety: it never touches a day that already has a row; skips dates before the person joined; only runs for past
+  // days (up to yesterday); and is a dry run unless dryRun is explicitly false. It does NOT recalculate payroll —
+  // recalculate the affected, still-open months afterwards. Inactive users are skipped (no exit date is stored).
+  async backfillMissingAttendance(
+    dto: BackfillAttendanceDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const dryRun = dto.dryRun !== false;
+    const yesterday = yesterdayInOrgTz(
+      await this.getOrgTimezone(organizationId),
+      new Date(),
+    );
+    if (dto.startDate > dto.endDate) {
+      throw new BadRequestException('startDate must not be after endDate.');
+    }
+    if (dto.endDate > yesterday) {
+      throw new BadRequestException(
+        `endDate cannot be later than yesterday (${yesterday}).`,
+      );
+    }
+    const dates = enumerateDateStrings(dto.startDate, dto.endDate);
+    if (dates.length > 100) {
+      throw new BadRequestException(
+        'Backfill at most 100 days at a time; run it in smaller ranges.',
+      );
+    }
+
+    const [users, org] = await Promise.all([
+      this.scopedPrisma.user.findMany({
+        where: { organizationId, isActive: true, role: Role.HR },
+        include: { department: true },
+        orderBy: { employeeId: 'asc' },
+      }),
+      this.prisma.organization.findUnique({ where: { id: organizationId } }),
+    ]);
+    const holidays = await this.scopedPrisma.holiday.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        date: { gte: dto.startDate, lte: dto.endDate },
+      },
+      select: { date: true, departmentId: true },
+    });
+    const orgPrefs = (org?.attendancePayrollPrefs ??
+      null) as OrganizationAttendancePrefs | null;
+
+    const report: {
+      employeeId: string;
+      name: string;
+      missingDays: number;
+      wouldBe: { weeklyOff: number; holiday: number; other: number };
+      created: Record<string, number>;
+    }[] = [];
+
+    for (const user of users) {
+      const joined = user.joiningDate.toISOString().slice(0, 10);
+      const existing = new Set(
+        (
+          await this.scopedPrisma.attendance.findMany({
+            where: {
+              organizationId,
+              employeeId: user.id,
+              date: { gte: dto.startDate, lte: dto.endDate },
+            },
+            select: { date: true },
+          })
+        ).map((r) => r.date),
+      );
+      const missing = dates.filter((d) => d >= joined && !existing.has(d));
+      const shiftConfig = resolveShiftConfig(user.department, orgPrefs);
+      const wouldBe = { weeklyOff: 0, holiday: 0, other: 0 };
+      for (const d of missing) {
+        const isHoliday = holidays.some(
+          (h) =>
+            h.date === d &&
+            (h.departmentId === null || h.departmentId === user.departmentId),
+        );
+        if (isHoliday) wouldBe.holiday += 1;
+        else if (isWeeklyOff(d, shiftConfig.weeklyOffs)) wouldBe.weeklyOff += 1;
+        else wouldBe.other += 1;
+      }
+      const created: Record<string, number> = {};
+      if (!dryRun) {
+        await mapWithConcurrency(missing, 4, async (d) => {
+          const row = await this.recalculateAttendanceForDay(
+            this.scopedPrisma,
+            user.id,
+            d,
+            organizationId,
+          );
+          created[row.status] = (created[row.status] ?? 0) + 1;
+        });
+      }
+      if (missing.length > 0 || !dryRun) {
+        report.push({
+          employeeId: user.employeeId,
+          name: user.name,
+          missingDays: missing.length,
+          wouldBe,
+          created,
+        });
+      }
+    }
+
+    const totalMissing = report.reduce((s, r) => s + r.missingDays, 0);
+    if (!dryRun && totalMissing > 0) {
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'ATTENDANCE_BACKFILL_HR',
+        module: 'ATTENDANCE',
+        organizationId,
+        details: {
+          startDate: dto.startDate,
+          endDate: dto.endDate,
+          users: report.length,
+          recordsCreated: totalMissing,
+        },
+      });
+    }
+    return {
+      dryRun,
+      startDate: dto.startDate,
+      endDate: dto.endDate,
+      users: report,
+      totalMissingDays: totalMissing,
+      note: dryRun
+        ? 'Nothing was changed. Send dryRun: false to create these records, then recalculate payroll for the open months.'
+        : 'Records created. Recalculate payroll for the affected months that are still open.',
+    };
   }
 
   // Runs notifyAbsentees automatically for every active org, once a day,
