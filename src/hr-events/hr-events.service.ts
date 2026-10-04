@@ -230,7 +230,7 @@ export class HrEventsService {
       companyAddress: organization?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(
         organizationId,
-        (organization?.emailLogoUrl || organization?.companyLogoUrl),
+        organization?.emailLogoUrl || organization?.companyLogoUrl,
         organization?.companyName,
       ),
     };

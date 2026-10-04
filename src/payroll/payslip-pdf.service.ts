@@ -282,13 +282,7 @@ export class PayslipPdfService {
       this.getOrgPrintInfo(organizationId),
     ]);
 
-    return this.renderPayslipPdf(
-      run,
-      template,
-      settings,
-      ytd,
-      printInfo,
-    );
+    return this.renderPayslipPdf(run, template, settings, ytd, printInfo);
   }
 
   // Organization Settings > Branding > "Watermark this logo on generated

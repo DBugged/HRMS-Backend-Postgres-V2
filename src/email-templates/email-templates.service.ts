@@ -338,7 +338,7 @@ export class EmailTemplatesService {
       companyAddress: organization?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(
         organizationId,
-        (organization?.emailLogoUrl || organization?.companyLogoUrl),
+        organization?.emailLogoUrl || organization?.companyLogoUrl,
         organization?.companyName,
       ),
     };
@@ -544,7 +544,10 @@ export class EmailTemplatesService {
         website: org?.website,
         contactEmail: org?.contactEmail,
         registeredAddress: org?.registeredAddress,
-        logoImgTag: companyLogoImgTag(organizationId, (org?.emailLogoUrl || org?.companyLogoUrl)),
+        logoImgTag: companyLogoImgTag(
+          organizationId,
+          org?.emailLogoUrl || org?.companyLogoUrl,
+        ),
         primaryColor: org?.primaryColor,
       },
     });
@@ -598,7 +601,7 @@ export class EmailTemplatesService {
       companyAddress: org?.registeredAddress ?? '',
       companyLogo: companyLogoImgTag(
         organizationId,
-        (org?.emailLogoUrl || org?.companyLogoUrl),
+        org?.emailLogoUrl || org?.companyLogoUrl,
         org?.companyName,
       ),
     };

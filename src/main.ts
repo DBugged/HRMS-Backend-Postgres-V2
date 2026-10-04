@@ -32,7 +32,9 @@ async function bootstrap() {
   // registration, etc.) until app.useLogger() below installs pino as the
   // sink, instead of emitting them through Nest's default plain-text
   // console logger first.
-  const app = await NestFactory.create<NestExpressApplication>(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
   app.useLogger(app.get(Logger));
   // Bulk payroll transitions send one UUID per employee; Express's 100kb default rejects ~2,600+ ids.
   app.useBodyParser('json', { limit: '5mb' });
@@ -51,10 +53,8 @@ async function bootstrap() {
   const trustProxyHops = process.env.TRUST_PROXY;
   if (trustProxyHops) {
     const hops = Number(trustProxyHops);
-    (app.getHttpAdapter().getInstance() as import('express').Express).set(
-      'trust proxy',
-      Number.isFinite(hops) ? hops : trustProxyHops,
-    );
+    // app is a NestExpressApplication, so this is already the Express instance.
+    app.set('trust proxy', Number.isFinite(hops) ? hops : trustProxyHops);
   }
 
   app.use(
