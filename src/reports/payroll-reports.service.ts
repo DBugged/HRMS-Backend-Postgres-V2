@@ -332,36 +332,153 @@ export class PayrollReportsService {
     return { title, subtitle, columns, rows, filename };
   }
 
+  // Personal identifiers (UAN, ESIC IP number) for the employees in a report — stored encrypted inside
+  // personalData, so they are read through the tenant-scoped client (which decrypts) rather than joined in SQL.
+  private async identifiersFor(
+    employeeIds: string[],
+    organizationId: string,
+  ): Promise<(employeeId: string, key: string) => string> {
+    const ids = [...new Set(employeeIds)];
+    const byId = new Map(
+      ids.length
+        ? (
+            await this.scopedPrisma.user.findMany({
+              where: { organizationId, id: { in: ids } },
+              select: { id: true, personalData: true },
+            })
+          ).map((e) => [e.id, e.personalData as Record<string, unknown> | null])
+        : [],
+    );
+    return (employeeId, key) => {
+      const v = byId.get(employeeId)?.[key];
+      return typeof v === 'string' && v.trim() ? v.trim() : '-';
+    };
+  }
+
+  // PF contribution report laid out in the order of the EPFO ECR (Electronic Challan cum Return): UAN, wages
+  // (gross, EPF, EPS, EDLI), the employee's EPF share, the employer's EPS and EPF-difference shares, non-
+  // contributing days — plus the employer-only EDLI and administration charges. Every figure comes from the
+  // run's own snapshot.
   async pfReport(query: PayrollReportQueryDto, organizationId: string) {
-    return this.statutoryContributionReport(
-      query,
+    const runs = (await this.fetchRuns(query, organizationId)).filter(
+      (r) =>
+        findLine(r.deductions, SALARY_COMPONENT_CODES.PF) ||
+        findLine(r.employerContributions, SALARY_COMPONENT_CODES.PF_EMPLOYER),
+    );
+    const ident = await this.identifiersFor(
+      runs.map((r) => r.employeeId),
       organizationId,
-      SALARY_COMPONENT_CODES.PF,
-      SALARY_COMPONENT_CODES.PF_EMPLOYER,
-      'PF Report',
-      'pf_report',
-      await this.registrationSubtitle(
+    );
+    const rows = runs.map((r) => {
+      const employerLine = linesOf(r.employerContributions).find(
+        (e) => e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER,
+      ) as
+        | { amount: number; wages?: number; breakup?: { eps: number; epf: number } }
+        | undefined;
+      const employeePf = lineAmount(r.deductions, SALARY_COMPONENT_CODES.PF);
+      // Runs saved before wages were recorded: back out the wage base from the 12% employee share.
+      const wages = employerLine?.wages ?? Math.round(employeePf / 0.12);
+      const att = (r.attendanceSummary ?? {}) as { lopDays?: number };
+      return {
+        uan: ident(r.employeeId, 'uanNumber'),
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        month: r.month,
+        year: r.year,
+        grossWages: r.grossSalary,
+        epfWages: wages,
+        epsWages: wages,
+        edliWages: wages,
+        epfEmployee: employeePf,
+        eps: employerLine?.breakup?.eps ?? 0,
+        epfDifference: employerLine?.breakup?.epf ?? 0,
+        employerContribution: employerLine?.amount ?? 0,
+        edli: lineAmount(r.employerContributions, 'EDLI_EMPLOYER'),
+        adminCharges: lineAmount(r.employerContributions, 'EPF_ADMIN_EMPLOYER'),
+        ncpDays: att.lopDays ?? 0,
+      };
+    });
+    const columns: ReportColumn[] = [
+      { header: 'UAN', key: 'uan', width: 16 },
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      { header: 'Gross Wages', key: 'grossWages', width: 14 },
+      { header: 'EPF Wages', key: 'epfWages', width: 14 },
+      { header: 'EPS Wages', key: 'epsWages', width: 14 },
+      { header: 'EDLI Wages', key: 'edliWages', width: 14 },
+      { header: 'EPF Contribution (Employee)', key: 'epfEmployee', width: 18 },
+      { header: 'EPS Contribution (Employer)', key: 'eps', width: 18 },
+      { header: 'EPF-EPS Difference (Employer)', key: 'epfDifference', width: 18 },
+      { header: 'Employer Contribution (Total)', key: 'employerContribution', width: 18 },
+      { header: 'EDLI', key: 'edli', width: 10 },
+      { header: 'Admin Charges', key: 'adminCharges', width: 14 },
+      { header: 'NCP Days', key: 'ncpDays', width: 10 },
+    ];
+    return {
+      title: 'PF Report - ECR layout',
+      subtitle: await this.registrationSubtitle(
         organizationId,
         'EPFO Establishment Code',
         'epfoEstablishmentCode',
       ),
-    );
+      columns,
+      rows,
+      filename: 'pf_report',
+    };
   }
 
+  // ESIC contribution report: IP number, days worked, total wages and both contributions per employee.
   async esiReport(query: PayrollReportQueryDto, organizationId: string) {
-    return this.statutoryContributionReport(
-      query,
+    const runs = (await this.fetchRuns(query, organizationId)).filter(
+      (r) =>
+        findLine(r.deductions, SALARY_COMPONENT_CODES.ESI) ||
+        findLine(r.employerContributions, SALARY_COMPONENT_CODES.ESI_EMPLOYER),
+    );
+    const ident = await this.identifiersFor(
+      runs.map((r) => r.employeeId),
       organizationId,
-      SALARY_COMPONENT_CODES.ESI,
-      SALARY_COMPONENT_CODES.ESI_EMPLOYER,
-      'ESI Report',
-      'esi_report',
-      await this.registrationSubtitle(
+    );
+    const rows = runs.map((r) => {
+      const employerLine = linesOf(r.employerContributions).find(
+        (e) => e.code === SALARY_COMPONENT_CODES.ESI_EMPLOYER,
+      ) as { amount: number; wages?: number } | undefined;
+      const att = (r.attendanceSummary ?? {}) as { payableDays?: number };
+      return {
+        ipNumber: ident(r.employeeId, 'esicNumber'),
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        month: r.month,
+        year: r.year,
+        daysWorked: att.payableDays ?? 0,
+        totalWages: employerLine?.wages ?? r.grossSalary,
+        employeeContribution: lineAmount(r.deductions, SALARY_COMPONENT_CODES.ESI),
+        employerContribution: employerLine?.amount ?? 0,
+      };
+    });
+    const columns: ReportColumn[] = [
+      { header: 'ESIC IP Number', key: 'ipNumber', width: 16 },
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 22 },
+      { header: 'Month', key: 'month', width: 8 },
+      { header: 'Year', key: 'year', width: 8 },
+      { header: 'Days Worked', key: 'daysWorked', width: 12 },
+      { header: 'Total Wages', key: 'totalWages', width: 14 },
+      { header: 'Employee Contribution', key: 'employeeContribution', width: 18 },
+      { header: 'Employer Contribution', key: 'employerContribution', width: 18 },
+    ];
+    return {
+      title: 'ESI Report',
+      subtitle: await this.registrationSubtitle(
         organizationId,
         'ESIC Employer Code',
         'esicEmployerCode',
       ),
-    );
+      columns,
+      rows,
+      filename: 'esi_report',
+    };
   }
 
   async ptReport(query: PayrollReportQueryDto, organizationId: string) {
@@ -484,27 +601,29 @@ export class PayrollReportsService {
     return { title: 'CTC Report', columns, rows, filename: 'ctc_report' };
   }
 
-  // Simplified annual tax-summary report in the spirit of Form 16 (Part B)
-  // — not the official e-filing XML format, but the same figures HR needs
-  // to hand an employee: gross pay and total tax deducted across the
-  // financial year.
+  // Annual tax-summary per employee for the financial year — the figures a Form 16 (Form 130 from 1-Apr-2026)
+  // is built from: PAN, taxable salary, the regime and the final annual tax position, and the total TDS
+  // withheld. Final-settlement runs are included (their income and TDS belong to the year); regime / taxable
+  // income / annual tax come from the employee's LATEST run of the year, not whichever row happened to sort
+  // first. Not the official e-filing format.
   async form16Report(
     query: Form16ReportQueryDto,
     organizationId: string,
   ): Promise<ReportPayload> {
-    // Form 16 requires the deductor's TAN and PAN printed alongside the
-    // figures — without them there's no way to verify which employer
-    // deducted the tax being summarized here.
+    // The certificate must name the deductor (TAN and PAN) next to the figures.
     const [runs, deductor] = await Promise.all([
       this.scopedPrisma.payrollRun.findMany({
         where: {
           organizationId,
           financialYear: query.financialYear,
-          isFinalSettlement: false,
           status: { in: PAID_OUT_STATUSES },
         },
-        include: { employee: { select: { name: true, employeeId: true } } },
-        orderBy: EMPLOYEE_RELATION_ORDER_BY,
+        include: {
+          employee: {
+            select: { name: true, employeeId: true, personalData: true },
+          },
+        },
+        orderBy: [{ year: 'asc' }, { month: 'asc' }],
       }),
       this.scopedPrisma.organization.findFirst({
         where: { id: organizationId },
@@ -523,45 +642,66 @@ export class PayrollReportsService {
       {
         employeeId: string;
         name: string;
+        pan: string;
         financialYear: string;
         grossSalary: number;
+        taxableSalary: number;
         totalTaxDeducted: number;
         regime: string;
         taxableIncome: number;
+        annualTax: number;
       }
     >();
     for (const r of runs) {
       const taxDetails = r.taxDetails as TaxDetailsShape | null;
+      const pd = (r.employee.personalData ?? {}) as Record<string, unknown>;
       const existing = byEmployee.get(r.employeeId) ?? {
         employeeId: r.employee.employeeId,
         name: r.employee.name,
+        pan: typeof pd.panNumber === 'string' && pd.panNumber ? pd.panNumber : '-',
         financialYear: query.financialYear,
         grossSalary: 0,
+        taxableSalary: 0,
         totalTaxDeducted: 0,
-        regime: taxDetails?.regime ?? '-',
-        taxableIncome: taxDetails?.taxableIncome ?? 0,
+        regime: '-',
+        taxableIncome: 0,
+        annualTax: 0,
       };
       existing.grossSalary += r.grossSalary;
+      existing.taxableSalary += r.taxableGross ?? r.grossSalary;
       existing.totalTaxDeducted += lineAmount(
         r.deductions,
         SALARY_COMPONENT_CODES.INCOME_TAX,
       );
+      // Runs arrive oldest-first, so the last one with a computation wins.
+      if (taxDetails) {
+        existing.regime = taxDetails.regime ?? existing.regime;
+        existing.taxableIncome = taxDetails.taxableIncome ?? existing.taxableIncome;
+        existing.annualTax =
+          (taxDetails as { totalAnnualTax?: number }).totalAnnualTax ??
+          existing.annualTax;
+      }
       byEmployee.set(r.employeeId, existing);
     }
 
-    const rows = [...byEmployee.values()];
+    const rows = [...byEmployee.values()].sort((a, b) =>
+      a.employeeId.localeCompare(b.employeeId),
+    );
     const columns: ReportColumn[] = [
       { header: 'Employee ID', key: 'employeeId', width: 14 },
       { header: 'Name', key: 'name', width: 22 },
+      { header: 'PAN', key: 'pan', width: 14 },
       { header: 'Financial Year', key: 'financialYear', width: 14 },
       { header: 'Regime', key: 'regime', width: 10 },
       { header: 'Gross Salary (Annual)', key: 'grossSalary', width: 18 },
-      { header: 'Taxable Income', key: 'taxableIncome', width: 16 },
+      { header: 'Taxable Salary', key: 'taxableSalary', width: 16 },
+      { header: 'Taxable Income (final)', key: 'taxableIncome', width: 18 },
+      { header: 'Annual Tax (final)', key: 'annualTax', width: 16 },
       { header: 'Total Tax Deducted', key: 'totalTaxDeducted', width: 18 },
     ];
 
     return {
-      title: `Form 16 Summary — FY ${query.financialYear}`,
+      title: `Form 16 (Form 130) Summary — FY ${query.financialYear}`,
       subtitle,
       columns,
       rows,

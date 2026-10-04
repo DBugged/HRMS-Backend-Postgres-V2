@@ -23,7 +23,7 @@ import { TaxDeclarationStatus, TaxRegime } from '@prisma/client';
 // 80CCD(1B)/80D do.
 const SECTION_80C_CAP = 150000;
 const SECTION_80CCD1B_CAP = 50000;
-const SECTION_80D_CAP = 100000;
+const SECTION_80D_CAP = 75000;
 
 export class UpsertTaxDeclarationDto {
   @ApiPropertyOptional({

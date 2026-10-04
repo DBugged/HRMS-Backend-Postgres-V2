@@ -96,9 +96,9 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
     // OT_WEIGHTED_HOURS = Σ approved hours × the record's rateMultiplier (1.5x regular, 2x holiday/weekend,
-    // 1.75x night). The old default used the raw OT_HOURS, so every OT hour was paid at 1x. Existing orgs still
+    // 1.75x night). Hourly rate = monthly Basic / (26 days x 8 hours = 208), the Minimum Wages convention. The old default used the raw OT_HOURS, so every OT hour was paid at 1x. Existing orgs still
     // on the old default text are migrated by 20260924030000_payroll_correctness_fixes.
-    formula: 'ROUND(OT_WEIGHTED_HOURS * (BASIC / 200), 0)',
+    formula: 'ROUND(OT_WEIGHTED_HOURS * (BASIC / 208), 0)',
     displayOrder: 9,
   },
   {

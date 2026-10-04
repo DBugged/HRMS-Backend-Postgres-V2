@@ -185,4 +185,12 @@ export class UpdatePayrollSettingsDto {
   @IsOptional()
   @IsBoolean()
   companyPerformanceEnabled?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Only HR-verified tax declarations affect TDS (a SUBMITTED one is otherwise used as declared).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  taxDeclarationRequiresVerification?: boolean;
 }

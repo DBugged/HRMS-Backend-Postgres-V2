@@ -199,6 +199,28 @@ export class EmployeeProfileService {
       delete patch.personalEmail;
     }
     assertValidIdentifiers(patch);
+    // One PAN / UAN belongs to one person. Compared after decryption (the values are encrypted at rest, so SQL
+    // cannot do it) within this organisation only.
+    for (const [key, label] of [
+      ['panNumber', 'PAN'],
+      ['uanNumber', 'UAN'],
+    ] as const) {
+      const value = patch[key];
+      if (typeof value !== 'string' || value.trim() === '') continue;
+      const others = await this.scopedPrisma.user.findMany({
+        where: { organizationId, id: { not: id } },
+        select: { personalData: true },
+      });
+      const clash = others.some((o) => {
+        const v = (o.personalData as Record<string, unknown> | null)?.[key];
+        return typeof v === 'string' && v.trim().toUpperCase() === value.trim().toUpperCase();
+      });
+      if (clash) {
+        throw new BadRequestException(
+          `This ${label} is already recorded for another employee.`,
+        );
+      }
+    }
     const merged = mergePersonalData(
       before,
       patch,

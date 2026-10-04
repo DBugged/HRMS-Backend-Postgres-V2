@@ -25,6 +25,7 @@ function validatePfOrEsi(config: unknown): void {
     employerRate?: unknown;
     wageCeiling?: unknown;
     applyFiftyPercentRule?: unknown;
+    includeArrearsInWages?: unknown;
     edliRate?: unknown;
     adminChargeRate?: unknown;
     epsRate?: unknown;
@@ -37,6 +38,7 @@ function validatePfOrEsi(config: unknown): void {
   if (!isNonNegative(c.wageCeiling))
     throw new Error('wageCeiling must be a non-negative number.');
   validateOptionalBoolean(c.applyFiftyPercentRule, 'applyFiftyPercentRule');
+  validateOptionalBoolean(c.includeArrearsInWages, 'includeArrearsInWages');
   validateEdliMax(c.edliMaxAmount);
   for (const key of ['edliRate', 'adminChargeRate', 'epsRate'] as const) {
     if (c[key] !== undefined && !isPercent(c[key]))

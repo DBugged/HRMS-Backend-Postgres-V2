@@ -414,3 +414,75 @@ describe('calculateTax — projection from the recurring structure', () => {
     expect(result.grossAnnualIncome).toBe(80000);
   });
 });
+
+describe('exit-aware and part-year tax (audit B3/B8)', () => {
+  const cfg: any = getDefaultTaxSlabConfig(TaxRegime.NEW);
+  const slabConfig = {
+    regime: TaxRegime.NEW,
+    standardDeduction: cfg.standardDeduction,
+    slabs: cfg.slabs,
+    surchargeSlabs: cfg.surchargeSlabs,
+    cessRate: cfg.cessRate,
+    rebate87ALimit: cfg.rebate87ALimit,
+    rebate87AAmount: cfg.rebate87AAmount,
+  };
+
+  it('a leaver is taxed on income actually earned, not a projected full year', () => {
+    // 6 months paid at 300,000 (ytd 1.8M, TDS 150,800 withheld so far on a full-year projection), leaving in Oct.
+    const projected = calculateTax({
+      month: 10,
+      year: 2026,
+      currentMonthGross: 300000,
+      recurringMonthlyGross: 300000,
+      ytdGross: 1800000,
+      ytdTDS: 150000,
+      declaration: null,
+      taxSlabConfig: slabConfig,
+    });
+    const exit = calculateTax({
+      month: 10,
+      year: 2026,
+      currentMonthGross: 300000,
+      ytdGross: 1800000,
+      ytdTDS: 150000,
+      declaration: null,
+      taxSlabConfig: slabConfig,
+      finalMonth: true,
+    });
+    expect(exit.remainingMonths).toBe(1);
+    // Income 2.1M, not 3.6M.
+    expect(exit.grossAnnualIncome).toBe(2100000);
+    expect(exit.totalAnnualTax).toBeLessThan(projected.totalAnnualTax);
+    expect(exit.monthlyTDS).toBe(exit.totalAnnualTax - 150000);
+  });
+
+  it('declared annual rent is scaled to the months employed', () => {
+    const base = {
+      month: 10,
+      year: 2026,
+      currentMonthGross: 150000,
+      recurringMonthlyGross: 150000,
+      basicAnnual: 900000,
+      hraReceivedAnnual: 360000,
+      declaration: { hraRentPaidAnnual: 360000, isMetroCity: true },
+      taxSlabConfig: { ...getOld() },
+    };
+    function getOld() {
+      const o: any = getDefaultTaxSlabConfig(TaxRegime.OLD);
+      return {
+        regime: TaxRegime.OLD,
+        standardDeduction: o.standardDeduction,
+        slabs: o.slabs,
+        surchargeSlabs: o.surchargeSlabs,
+        cessRate: o.cessRate,
+        rebate87ALimit: o.rebate87ALimit,
+        rebate87AAmount: o.rebate87AAmount,
+      };
+    }
+    const full = calculateTax({ ...base, employmentMonthsInFY: 12 });
+    const half = calculateTax({ ...base, employmentMonthsInFY: 6 });
+    // rent 360,000 - 10% of 900,000 = 270,000 for 12 months; 6 months: 180,000 - 90,000 = 90,000.
+    expect(full.exemptions.hra).toBe(270000);
+    expect(half.exemptions.hra).toBe(90000);
+  });
+});

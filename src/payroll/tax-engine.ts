@@ -144,6 +144,14 @@ export interface CalculateTaxInput {
   declaration: DeclarationLike | null;
   taxSlabConfig: TaxSlabConfigLike;
   financialYearStartMonth?: number;
+  // Last pay of an employee who is leaving (final settlement): nothing more will be earned this year, so the
+  // year is NOT projected forward — the tax is trued up on the income actually earned and the whole balance is
+  // withheld now. Projecting the remaining months over-deducted every leaver.
+  finalMonth?: boolean;
+  // Months of this FY the income base covers (months already paid by this employer + this month and the months
+  // still to come). basicAnnual / hraReceivedAnnual are expected to span the same months, and the declared annual
+  // rent is scaled to them — a part-year employee must not get a 12-month HRA exemption against 6 months of pay.
+  employmentMonthsInFY?: number;
 }
 
 export interface TaxDetails {
@@ -187,6 +195,8 @@ export function calculateTax({
   declaration,
   taxSlabConfig,
   financialYearStartMonth = 4,
+  finalMonth = false,
+  employmentMonthsInFY = 12,
 }: CalculateTaxInput): TaxDetails {
   if (!taxSlabConfig) {
     throw new Error(
@@ -195,17 +205,16 @@ export function calculateTax({
   }
 
   const regime = taxSlabConfig.regime;
-  const remainingMonths = monthsRemainingInFY(
-    month,
-    year,
-    financialYearStartMonth,
-  );
+  const remainingMonths = finalMonth
+    ? 1
+    : monthsRemainingInFY(month, year, financialYearStartMonth);
   // Multiplying this month's actual gross by every remaining month projected a one-off (an overtime/bonus/
   // encashment month) as if it recurred all year, and a prorated joining/LOP month as if the whole year were
   // prorated. With the recurring figure, this month counts once at its actual amount and only the regular
   // structure is projected forward.
-  const projectedRemainingGross =
-    recurringMonthlyGross === undefined
+  const projectedRemainingGross = finalMonth
+    ? currentMonthGross
+    : recurringMonthlyGross === undefined
       ? currentMonthGross * remainingMonths
       : currentMonthGross + recurringMonthlyGross * (remainingMonths - 1);
   const previousEmployerIncome = declaration?.previousEmployerIncome || 0;
@@ -235,7 +244,10 @@ export function calculateTax({
     exemptions.hra = computeHraExemption({
       hraReceivedAnnual,
       basicAnnual,
-      rentPaidAnnual: declaration.hraRentPaidAnnual || 0,
+      rentPaidAnnual:
+        ((declaration.hraRentPaidAnnual || 0) *
+          Math.min(12, Math.max(0, employmentMonthsInFY))) /
+        12,
       isMetroCity: !!declaration.isMetroCity,
     });
     exemptions.lta = declaration.ltaClaimed || 0;

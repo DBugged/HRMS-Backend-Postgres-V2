@@ -39,6 +39,7 @@ import {
   SalaryComponentType,
   StatutoryKey,
   StatutoryModule,
+  TaxDeclarationStatus,
   TaxRegime,
   User,
 } from '@prisma/client';
@@ -90,7 +91,12 @@ import {
   deriveStatutoryContext,
   splitEmployerPf,
 } from './formula-context';
-import { calculateTax, type TaxDetails, type TaxSlab } from './tax-engine';
+import {
+  calculateTax,
+  monthsRemainingInFY,
+  type TaxDetails,
+  type TaxSlab,
+} from './tax-engine';
 import { amountInWords } from './number-to-words';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
@@ -224,6 +230,9 @@ export interface CalculatedPayroll {
     amount: number;
     // Employer PF only: how the amount splits between EPS (pension) and EPF, for ECR filing.
     breakup?: { eps: number; epf: number };
+    // The statutory wage base this contribution was calculated on (PF: capped at the ceiling; ESI: gross) — kept
+    // on the run so statutory returns (ECR / ESIC) reproduce it without re-deriving it later.
+    wages?: number;
   }[];
   taxDetails: TaxDetails | null;
   grossSalary: number;
@@ -381,7 +390,17 @@ export class PayrollService {
     // attendance/leave records alone would have produced. Every other
     // input (attendance rows, leave rows, overtime, salary structure) is
     // still read fresh, exactly as a normal calculate() would.
-    options?: { lopDaysOverride?: number },
+    options?: {
+      lopDaysOverride?: number;
+      // Final settlement: the pending-salary preview is allowed to be negative (the settlement nets it against
+      // recoveries), tax is trued up on actual income (no projection of months that will not be worked), and
+      // one-off taxable settlement payments (leave encashment, bonus) are taxed with it.
+      finalSettlement?: {
+        extraTaxableEarnings: number;
+        // The LWD month was already paid (and taxed) by a locked regular run — only the extras are taxed now.
+        monthAlreadyPaid: boolean;
+      };
+    },
   ): Promise<CalculatedPayroll> {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: employeeId, organizationId },
@@ -739,10 +758,19 @@ export class PayrollService {
       (c) => c.statutoryKey === StatutoryKey.INCOME_TAX,
     );
     if (incomeTaxComponent && settings.incomeTaxEnabled) {
-      const declaration =
+      const storedDeclaration =
         await this.scopedPrisma.employeeTaxDeclaration.findFirst({
           where: { organizationId, employeeId, financialYear },
         });
+      // A DRAFT is work in progress and never drives TDS. With "require verification" on, only a VERIFIED
+      // declaration does; until then the employee is taxed under the default regime with no declared deductions.
+      const declaration =
+        storedDeclaration &&
+        (storedDeclaration.status === TaxDeclarationStatus.VERIFIED ||
+          (storedDeclaration.status === TaxDeclarationStatus.SUBMITTED &&
+            !settingsRow.taxDeclarationRequiresVerification))
+          ? storedDeclaration
+          : null;
       const regime = declaration?.regimeChosen ?? TaxRegime.NEW;
       const taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
         where: { organizationId, financialYear, regime, isActive: true },
@@ -762,12 +790,28 @@ export class PayrollService {
             : `No income tax slabs configured for FY ${financialYear} — add them under Statutory Compliance before running payroll`,
         );
       }
-      const { ytdGross, ytdTDS } = await this.getYtdFigures(
+      const fs = options?.finalSettlement;
+      // When the LWD month is already paid by a locked run, that run is part of the year-to-date.
+      const ytdBefore = fs?.monthAlreadyPaid
+        ? { month: month === 12 ? 1 : month + 1, year: month === 12 ? year + 1 : year }
+        : { month, year };
+      const { ytdGross, ytdTDS, ytdMonths } = await this.getYtdFigures(
         employeeId,
         financialYear,
+        ytdBefore.month,
+        ytdBefore.year,
+        organizationId,
+      );
+      const remainingMonthsInFY = monthsRemainingInFY(
         month,
         year,
-        organizationId,
+        settings.financialYearStartMonth,
+      );
+      // Months of this FY the income base spans: what this employer already paid + this month onwards (just this
+      // month for a leaver). HRA / Basic annualisation below uses the same span.
+      const employmentMonths = Math.min(
+        12,
+        ytdMonths + (fs ? (fs.monthAlreadyPaid ? 0 : 1) : remainingMonthsInFY),
       );
       const recurringResults = this.recurringMonthlyEarnings(
         earningComponents,
@@ -799,7 +843,11 @@ export class PayrollService {
       taxDetails = calculateTax({
         month,
         year,
-        currentMonthGross: taxableGross,
+        currentMonthGross: fs
+          ? (fs.monthAlreadyPaid ? 0 : taxableGross) + fs.extraTaxableEarnings
+          : taxableGross,
+        finalMonth: !!fs,
+        employmentMonthsInFY: employmentMonths,
         // Remaining months are projected from the regular monthly structure,
         // not from this month's actual (possibly prorated / one-off-inflated)
         // taxable gross.
@@ -809,8 +857,8 @@ export class PayrollService {
         ),
         ytdGross,
         ytdTDS,
-        basicAnnual: basicMonthly * 12,
-        hraReceivedAnnual: hraMonthly * 12,
+        basicAnnual: basicMonthly * employmentMonths,
+        hraReceivedAnnual: hraMonthly * employmentMonths,
         declaration,
         taxSlabConfig: {
           regime: taxSlabConfig.regime,
@@ -833,7 +881,9 @@ export class PayrollService {
       // due — the annualized calc naturally recovers it across the
       // remaining months once ytdGross/ytdTDS reflect this month as a gap.
       const incomeTaxAmount =
-        taxableGross > 0 ? Math.max(0, taxDetails.monthlyTDS || 0) : 0;
+        taxableGross > 0 || (fs && fs.extraTaxableEarnings > 0)
+          ? Math.max(0, taxDetails.monthlyTDS || 0)
+          : 0;
       deductionsResults.push({
         code: SALARY_COMPONENT_CODES.INCOME_TAX,
         name: incomeTaxComponent.name,
@@ -913,6 +963,14 @@ export class PayrollService {
       settings.roundingRule,
       settings.roundingDecimals,
     );
+    // Fail safe rather than save (and later pay out) a negative net: the run's failures[] names the employee and
+    // the amounts so HR can fix the cause (LOP correction, loan EMI, manual deduction) instead of finding a
+    // negative payslip.
+    if (netPay < 0 && !options?.finalSettlement) {
+      throw new Error(
+        `Net pay would be negative (gross ${grossSalary}, deductions ${totalDeductions}) — review this employee's deductions (loan EMI, manual deductions) or attendance before running payroll.`,
+      );
+    }
     const ctcMonthly = round(
       grossSalary + totalEmployerContributions,
       settings.roundingRule,
@@ -950,7 +1008,16 @@ export class PayrollService {
         name: e.name,
         amount: e.amount,
         ...(e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER
-          ? { breakup: splitEmployerPf(e.amount, afterEarnings, settings) }
+          ? {
+              breakup: splitEmployerPf(e.amount, afterEarnings, settings),
+              wages: Math.min(
+                afterEarnings.PF_WAGES ?? 0,
+                settings.pfWageCeiling,
+              ),
+            }
+          : {}),
+        ...(e.code === 'ESI_EMPLOYER'
+          ? { wages: afterEarnings.GROSS_EARNINGS ?? 0 }
           : {}),
       })),
       taxDetails,
@@ -1748,6 +1815,12 @@ export class PayrollService {
         'Only locked or paid payroll can be unlocked.',
       );
     }
+    // Salary already marked PAID has left the building — only an Admin may reopen it.
+    if (run.status === PayrollRunStatus.PAID && actor.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Only an Admin can unlock payroll that is already marked as paid.',
+      );
+    }
 
     await this.scopedPrisma.payrollRun.updateMany({
       where: { id, organizationId },
@@ -1755,7 +1828,7 @@ export class PayrollService {
         status: PayrollRunStatus.CALCULATED,
         unlockedById: actor.id,
         unlockedAt: new Date(),
-        unlockReason: dto.reason ?? '',
+        unlockReason: dto.reason.trim(),
       },
     });
     const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
@@ -1769,7 +1842,8 @@ export class PayrollService {
       organizationId,
       targetId: id,
       details: {
-        reason: dto.reason ?? '',
+        reason: dto.reason.trim(),
+        previousStatus: run.status,
         reversedLoanRepayments: reversal.reversedLoanRepaymentIds,
         revertedLeaveEncashments: reversal.revertedEncashmentIds,
       },
@@ -2659,7 +2733,14 @@ export class PayrollService {
       return false;
     }
 
-    if (component.isStatutory) {
+    // A manually assigned payout (Bonus, ...) is HR's explicit instruction for this employee. The statutory
+    // switch controls the statutory *accrual/contribution* components; applying it here silently paid a
+    // manually entered Bonus as zero whenever the Bonus module was off.
+    const isManualPayout =
+      component.type === SalaryComponentType.EARNING &&
+      !component.isEmployerContribution &&
+      (override?.valueType ?? component.calcType) === CalcType.MANUAL;
+    if (component.isStatutory && !isManualPayout) {
       const key = component.statutoryKey
         ? STATUTORY_ENABLED_KEY[component.statutoryKey]
         : undefined;
@@ -2693,7 +2774,7 @@ export class PayrollService {
     beforeMonth: number,
     beforeYear: number,
     organizationId: string,
-  ): Promise<{ ytdGross: number; ytdTDS: number }> {
+  ): Promise<{ ytdGross: number; ytdTDS: number; ytdMonths: number }> {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where: {
         organizationId,
@@ -2714,12 +2795,15 @@ export class PayrollService {
 
     let ytdGross = 0;
     let ytdTDS = 0;
+    let ytdMonths = 0;
     for (const run of runs) {
       const isBefore =
         run.year < beforeYear ||
         (run.year === beforeYear && run.month < beforeMonth);
       if (!isBefore) continue;
-      ytdGross += this.runTaxableGross(run);
+      const runGross = this.runTaxableGross(run);
+      if (runGross > 0) ytdMonths += 1;
+      ytdGross += runGross;
       const deductions = run.deductions as unknown as {
         code: string;
         amount: number;
@@ -2729,7 +2813,7 @@ export class PayrollService {
       );
       ytdTDS += incomeTaxLine ? incomeTaxLine.amount : 0;
     }
-    return { ytdGross, ytdTDS };
+    return { ytdGross, ytdTDS, ytdMonths };
   }
 
   private runTaxableGross(run: PayrollRun): number {

@@ -167,3 +167,74 @@ describe('payableDaysInRange', () => {
     expect(first + second).toBeCloseTo(month.payableDays, 10);
   });
 });
+
+describe('payable days are per calendar day (audit B1)', () => {
+  const row = (date: string, status: AttendanceStatus) => ({
+    date,
+    status,
+    isLate: false,
+  });
+  const paidLeave = (startDate: string, endDate: string, isHalfDay = false) => ({
+    startDate,
+    endDate,
+    isHalfDay,
+    leaveType: { isPaid: true, salaryImpactPercent: 100 },
+  });
+
+  it('a paid-leave day that also has a PRESENT row is paid once', () => {
+    const rows = ['2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22'].map(
+      (d) => row(d, AttendanceStatus.PRESENT),
+    );
+    const s = computeAttendanceSummary(
+      rows,
+      [paidLeave('2026-11-20', '2026-11-21')],
+      [],
+      11,
+      2026,
+    );
+    expect(s.payableDays).toBe(4);
+  });
+
+  it('payable days never exceed the days in the month', () => {
+    const rows = Array.from({ length: 30 }, (_, i) =>
+      row(`2026-11-${String(i + 1).padStart(2, '0')}`, AttendanceStatus.PRESENT),
+    );
+    const s = computeAttendanceSummary(
+      rows,
+      [paidLeave('2026-11-05', '2026-11-25')],
+      [],
+      11,
+      2026,
+    );
+    expect(s.payableDays).toBe(30);
+    expect(s.lopDays).toBe(0);
+  });
+
+  it('overlapping leaves and duplicate rows on one date still count one day', () => {
+    const s = computeAttendanceSummary(
+      [
+        row('2026-11-03', AttendanceStatus.PRESENT),
+        row('2026-11-03', AttendanceStatus.PRESENT),
+      ],
+      [
+        paidLeave('2026-11-03', '2026-11-03'),
+        paidLeave('2026-11-03', '2026-11-03'),
+      ],
+      [],
+      11,
+      2026,
+    );
+    expect(s.payableDays).toBe(1);
+  });
+
+  it('a half-day leave plus a half-day row is one full day', () => {
+    const s = computeAttendanceSummary(
+      [row('2026-11-10', AttendanceStatus.HALF_DAY)],
+      [paidLeave('2026-11-10', '2026-11-10', true)],
+      [],
+      11,
+      2026,
+    );
+    expect(s.payableDays).toBe(1);
+  });
+});

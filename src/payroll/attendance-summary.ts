@@ -1,7 +1,6 @@
 import { AttendanceStatus, OvertimeType } from '@prisma/client';
 import {
   clampLeaveDaysToMonth,
-  clampLeaveDaysToRange,
   daysInMonth,
 } from './payroll-date-math';
 
@@ -21,6 +20,9 @@ import {
 export interface AttendanceRowLike {
   status: AttendanceStatus;
   isLate: boolean;
+  // YYYY-MM-DD. When every row carries it, payable days are resolved per calendar day so a day can never be
+  // paid twice (attendance row + approved leave) — see resolveDayPay. Rows without it fall back to the plain sum.
+  date?: string;
 }
 
 export interface LeaveRowWithType {
@@ -113,8 +115,28 @@ export function computeAttendanceSummary(
   const halfDays = counts[AttendanceStatus.HALF_DAY];
   const holidays = counts[AttendanceStatus.HOLIDAY];
   const weeklyOffs = counts[AttendanceStatus.WEEKLY_OFF];
-  const payableDays =
-    presentDays + halfDays * 0.5 + holidays + weeklyOffs + paidLeaveDays;
+  const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
+  const dated =
+    attendanceRows.length > 0 && attendanceRows.every((r) => r.date);
+  let payableDays: number;
+  if (dated || attendanceRows.length === 0) {
+    // Per-day resolution: an attendance row and an approved leave on the same date are ONE day, and the
+    // total can never exceed the calendar days of the month.
+    payableDays = Math.min(
+      totalDaysInMonth,
+      sumDayPay(
+        attendanceRows as DatedAttendanceRowLike[],
+        leaveRows,
+        `${monthPrefix}-01`,
+        `${monthPrefix}-${String(totalDaysInMonth).padStart(2, '0')}`,
+      ),
+    );
+  } else {
+    payableDays = Math.min(
+      totalDaysInMonth,
+      presentDays + halfDays * 0.5 + holidays + weeklyOffs + paidLeaveDays,
+    );
+  }
   const lopDays = Math.max(0, totalDaysInMonth - payableDays - unpaidLeaveDays);
   const workingDays = totalDaysInMonth - holidays - weeklyOffs;
 
@@ -142,13 +164,84 @@ export interface DatedAttendanceRowLike {
   status: AttendanceStatus;
 }
 
+const rowPay = (status: AttendanceStatus): number =>
+  status === AttendanceStatus.PRESENT ||
+  status === AttendanceStatus.HOLIDAY ||
+  status === AttendanceStatus.WEEKLY_OFF
+    ? 1
+    : status === AttendanceStatus.HALF_DAY
+      ? 0.5
+      : 0;
+
+function* datesBetween(from: string, to: string): Generator<string> {
+  const end = new Date(`${to}T00:00:00.000Z`).getTime();
+  for (
+    let t = new Date(`${from}T00:00:00.000Z`).getTime();
+    t <= end;
+    t += 86400000
+  ) {
+    yield new Date(t).toISOString().slice(0, 10);
+  }
+}
+
 /**
- * Payable days (same definition as computeAttendanceSummary's payableDays:
- * present + half-days x 0.5 + holidays + weekly offs + the paid share of
- * leave) that fall within [from, to] — one YYYY-MM-DD range inside a single
- * payroll month. Used to prorate each segment of a month split at a
- * mid-month salary revision; summed over a partition of the month it equals
- * the month's payableDays exactly.
+ * Pay fraction (0..1) of every calendar day in [from, to] (one YYYY-MM-DD window): the attendance row's pay plus
+ * the paid share of any approved leave on that date, capped at one day, and reduced by the unpaid share of leave on
+ * it. A day is one day however many rows/leaves touch it — the old plain sum paid a day twice when a punch (or an
+ * import) re-marked an approved-leave day as PRESENT, and could pay more days than the month has.
+ */
+export function resolveDayPay(
+  attendanceRows: DatedAttendanceRowLike[],
+  leaveRows: LeaveRowWithType[],
+  from: string,
+  to: string,
+): Map<string, number> {
+  const rowByDate = new Map<string, number>();
+  for (const r of attendanceRows) {
+    if (r.date < from || r.date > to) continue;
+    // Duplicate rows for one date must not add up.
+    rowByDate.set(r.date, Math.max(rowByDate.get(r.date) ?? 0, rowPay(r.status)));
+  }
+  const paid = new Map<string, number>();
+  const unpaid = new Map<string, number>();
+  for (const leave of leaveRows) {
+    const lo = leave.startDate > from ? leave.startDate : from;
+    const hi = leave.endDate < to ? leave.endDate : to;
+    if (lo > hi) continue;
+    const perDay = leave.isHalfDay ? 0.5 : 1;
+    const pct = leave.leaveType.isPaid
+      ? (leave.leaveType.salaryImpactPercent ?? 100) / 100
+      : 0;
+    for (const d of datesBetween(lo, hi)) {
+      paid.set(d, Math.min(1, (paid.get(d) ?? 0) + perDay * pct));
+      unpaid.set(d, Math.min(1, (unpaid.get(d) ?? 0) + perDay * (1 - pct)));
+    }
+  }
+  const out = new Map<string, number>();
+  for (const d of new Set([...rowByDate.keys(), ...paid.keys()])) {
+    const u = Math.min(1, unpaid.get(d) ?? 0);
+    const pay = Math.min(1 - u, (rowByDate.get(d) ?? 0) + (paid.get(d) ?? 0));
+    out.set(d, Math.max(0, pay));
+  }
+  return out;
+}
+
+function sumDayPay(
+  attendanceRows: DatedAttendanceRowLike[],
+  leaveRows: LeaveRowWithType[],
+  from: string,
+  to: string,
+): number {
+  let total = 0;
+  for (const v of resolveDayPay(attendanceRows, leaveRows, from, to).values())
+    total += v;
+  return total;
+}
+
+/**
+ * Payable days within [from, to] — one YYYY-MM-DD range inside a single payroll month, using the same per-day
+ * resolution as the month summary. Used to prorate each segment of a month split at a mid-month salary revision;
+ * summed over a partition of the month it equals the month's payableDays.
  */
 export function payableDaysInRange(
   attendanceRows: DatedAttendanceRowLike[],
@@ -156,23 +249,5 @@ export function payableDaysInRange(
   from: string,
   to: string,
 ): number {
-  let days = 0;
-  for (const row of attendanceRows) {
-    if (row.date < from || row.date > to) continue;
-    if (
-      row.status === AttendanceStatus.PRESENT ||
-      row.status === AttendanceStatus.HOLIDAY ||
-      row.status === AttendanceStatus.WEEKLY_OFF
-    ) {
-      days += 1;
-    } else if (row.status === AttendanceStatus.HALF_DAY) {
-      days += 0.5;
-    }
-  }
-  for (const leave of leaveRows) {
-    if (!leave.leaveType.isPaid) continue;
-    const pct = (leave.leaveType.salaryImpactPercent ?? 100) / 100;
-    days += clampLeaveDaysToRange(leave, from, to) * pct;
-  }
-  return days;
+  return sumDayPay(attendanceRows, leaveRows, from, to);
 }

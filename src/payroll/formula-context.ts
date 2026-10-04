@@ -119,13 +119,18 @@ export function deriveStatutoryContext(
   hadEsiThisPeriod: boolean,
 ): Record<string, number> {
   const basicDa = (context.BASIC ?? 0) + (context.DA ?? 0);
+  const pfBase = basicDa + (settings.pfIncludeArrears ? (context.ARREARS ?? 0) : 0);
   const floor = (context.GROSS_EARNINGS ?? 0) * 0.5;
-  const wages = (useRule: boolean) =>
-    useRule ? Math.max(basicDa, floor) : basicDa;
+  const wages = (useRule: boolean, base: number) =>
+    useRule ? Math.max(base, floor) : base;
+  // LWF is a flat per-period amount, not a % of wages. With no wages for the period (a month of full LOP) there is
+  // nothing to deduct from, and charging it produced a negative net pay.
+  const noWages = (context.GROSS_EARNINGS ?? 0) <= 0;
   return {
+    ...(noWages ? { LWF_EMPLOYEE_AMOUNT: 0, LWF_EMPLOYER_AMOUNT: 0 } : {}),
     BASIC_DA: basicDa,
-    PF_WAGES: wages(settings.pfUseWagesRule),
-    GRATUITY_WAGES: wages(settings.gratuityUseWagesRule),
+    PF_WAGES: wages(settings.pfUseWagesRule, pfBase),
+    GRATUITY_WAGES: wages(settings.gratuityUseWagesRule, basicDa),
     NPS_WAGES: basicDa,
     ESI_APPLICABLE:
       (context.GROSS_EARNINGS ?? 0) <= settings.esiWageCeiling ||

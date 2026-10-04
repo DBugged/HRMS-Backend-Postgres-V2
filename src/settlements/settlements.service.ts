@@ -42,6 +42,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollService } from '../payroll/payroll.service';
+import { getFinancialYear } from '../payroll-settings/financial-year';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { paginate, skip } from '../common/pagination';
 import { deptScopedEmployeeIds } from '../common/dept-scope';
@@ -81,7 +82,11 @@ interface PendingSalaryBreakdown {
   deductions: SettlementPayrollLine[];
   employerContributions: (SettlementPayrollLine & {
     breakup?: { eps: number; epf: number };
+    wages?: number;
   })[];
+  // Set when the LWD month was already paid by a locked regular run: the breakdown then carries only the TDS
+  // withheld on the settlement's own taxable payments (leave encashment, bonus), not a second month of salary.
+  extrasOnly?: boolean;
 }
 
 // A regular run in one of these states has not paid anything yet and can still change.
@@ -202,71 +207,6 @@ export class SettlementsService {
       organizationId,
     );
 
-    let calc: Awaited<ReturnType<PayrollService['calculatePayroll']>>;
-    try {
-      calc = await this.payrollService.calculatePayroll(
-        dto.employeeId,
-        month,
-        year,
-        organizationId,
-      );
-    } catch (err) {
-      // A payroll misconfiguration (missing tax slabs, a broken formula) is
-      // the caller's to fix, not a server error.
-      if (err instanceof HttpException) throw err;
-      throw new BadRequestException(
-        `Could not calculate the ${month}/${year} pending salary: ${(err as Error).message}`,
-      );
-    }
-    // calculatePayroll() (a plain preview — it never calls
-    // LoansService.recordRepayment, that only happens when a normal
-    // payroll run is actually locked) includes a LOAN_EMI deduction line
-    // for this month if the employee has a due EMI, since that's what a
-    // regular month's payslip would show. A settlement recovers the
-    // loan's full outstandingBalance separately below (loanBalanceRecovered),
-    // so if this month's EMI deduction were left inside pendingSalaryAmount
-    // too, the employee would be charged for it twice — once via reduced
-    // pending salary, once via the full balance recovery. Add it back.
-    const loanEmiDeduction = calc.deductions
-      .filter((d) => d.code === 'LOAN_EMI')
-      .reduce((sum, d) => sum + d.amount, 0);
-    // A LOCKED/PAID regular (non-final) payroll run for the LWD month has paid that salary — paying it again
-    // through the settlement would double-pay. Only a locked/paid run counts: a CALCULATED one used to count
-    // too, so the settlement dropped the salary AND (since the loan is recovered in full below) the regular run,
-    // once locked, deducted that month's EMI a second time. Open runs are refused above instead.
-    const monthAlreadyPaid = await this.hasSettledRegularRun(
-      dto.employeeId,
-      month,
-      year,
-      organizationId,
-    );
-    const pendingSalaryAmount = monthAlreadyPaid
-      ? 0
-      : calc.netPay + loanEmiDeduction;
-    // The real lines behind that figure, carried onto the final-settlement payroll run by process() so its
-    // payslip (and statutory reports) show the actual earnings, PF/ESI/PT/TDS and employer contributions. The
-    // EMI line is left out for the same reason it is added back above.
-    const pendingSalaryBreakdown: PendingSalaryBreakdown | null =
-      monthAlreadyPaid
-        ? null
-        : {
-            earnings: calc.earnings.map((e) => ({
-              code: e.code,
-              name: e.name,
-              amount: e.amount,
-              ...(e.taxable !== undefined ? { taxable: e.taxable } : {}),
-            })),
-            deductions: calc.deductions
-              .filter((d) => d.code !== 'LOAN_EMI')
-              .map((d) => ({ code: d.code, name: d.name, amount: d.amount })),
-            employerContributions: calc.employerContributions.map((e) => ({
-              code: e.code,
-              name: e.name,
-              amount: e.amount,
-              ...(e.breakup ? { breakup: e.breakup } : {}),
-            })),
-          };
-
     const activeLoans = await this.scopedPrisma.loan.findMany({
       where: {
         employeeId: dto.employeeId,
@@ -313,6 +253,107 @@ export class SettlementsService {
     });
     const leaveEncashmentAmount = Math.round(leaveDaysEncashed * ratePerDay);
 
+    const bonusForTax = dto.bonusAmount ?? 0;
+    const monthAlreadyPaidForTax = await this.hasSettledRegularRun(
+      dto.employeeId,
+      month,
+      year,
+      organizationId,
+    );
+    let calc: Awaited<ReturnType<PayrollService['calculatePayroll']>>;
+    try {
+      calc = await this.payrollService.calculatePayroll(
+        dto.employeeId,
+        month,
+        year,
+        organizationId,
+        {
+          finalSettlement: {
+            // Leave encashment and bonus paid in the settlement are taxable salary — TDS is worked out on them
+            // together with the last month's pay, on income actually earned (no projection past the exit).
+            extraTaxableEarnings: leaveEncashmentAmount + bonusForTax,
+            monthAlreadyPaid: monthAlreadyPaidForTax,
+          },
+        },
+      );
+    } catch (err) {
+      // A payroll misconfiguration (missing tax slabs, a broken formula) is
+      // the caller's to fix, not a server error.
+      if (err instanceof HttpException) throw err;
+      throw new BadRequestException(
+        `Could not calculate the ${month}/${year} pending salary: ${(err as Error).message}`,
+      );
+    }
+    // calculatePayroll() (a plain preview — it never calls
+    // LoansService.recordRepayment, that only happens when a normal
+    // payroll run is actually locked) includes a LOAN_EMI deduction line
+    // for this month if the employee has a due EMI, since that's what a
+    // regular month's payslip would show. A settlement recovers the
+    // loan's full outstandingBalance separately below (loanBalanceRecovered),
+    // so if this month's EMI deduction were left inside pendingSalaryAmount
+    // too, the employee would be charged for it twice — once via reduced
+    // pending salary, once via the full balance recovery. Add it back.
+    const loanEmiDeduction = calc.deductions
+      .filter((d) => d.code === 'LOAN_EMI')
+      .reduce((sum, d) => sum + d.amount, 0);
+    // A LOCKED/PAID regular (non-final) payroll run for the LWD month has paid that salary — paying it again
+    // through the settlement would double-pay. Only a locked/paid run counts: a CALCULATED one used to count
+    // too, so the settlement dropped the salary AND (since the loan is recovered in full below) the regular run,
+    // once locked, deducted that month's EMI a second time. Open runs are refused above instead.
+    const monthAlreadyPaid = await this.hasSettledRegularRun(
+      dto.employeeId,
+      month,
+      year,
+      organizationId,
+    );
+    const pendingSalaryAmount = monthAlreadyPaid
+      ? 0
+      : calc.netPay + loanEmiDeduction;
+    // The real lines behind that figure, carried onto the final-settlement payroll run by process() so its
+    // payslip (and statutory reports) show the actual earnings, PF/ESI/PT/TDS and employer contributions. The
+    // EMI line is left out for the same reason it is added back above.
+    const settlementTds = monthAlreadyPaid
+      ? Math.max(
+          0,
+          calc.deductions.find((d) => d.code === 'INCOME_TAX')?.amount ?? 0,
+        )
+      : 0;
+    const pendingSalaryBreakdown: PendingSalaryBreakdown | null =
+      monthAlreadyPaid
+        ? settlementTds > 0
+          ? {
+              extrasOnly: true,
+              earnings: [],
+              deductions: [
+                {
+                  code: 'INCOME_TAX',
+                  name: 'Income Tax (TDS) on settlement',
+                  amount: settlementTds,
+                },
+              ],
+              employerContributions: [],
+            }
+          : null
+        : {
+            earnings: calc.earnings.map((e) => ({
+              code: e.code,
+              name: e.name,
+              amount: e.amount,
+              ...(e.taxable !== undefined ? { taxable: e.taxable } : {}),
+            })),
+            deductions: calc.deductions
+              .filter((d) => d.code !== 'LOAN_EMI')
+              .map((d) => ({ code: d.code, name: d.name, amount: d.amount })),
+            employerContributions: calc.employerContributions.map((e) => ({
+              code: e.code,
+              name: e.name,
+              amount: e.amount,
+              ...(e.breakup ? { breakup: e.breakup } : {}),
+              ...(e.wages !== undefined ? { wages: e.wages } : {}),
+            })),
+          };
+
+
     // Same source of truth as monthly payroll (applyStatutoryOverrides): the GRATUITY statutory version in
     // force on the last working day decides, and only an org with no version for that date falls back to the
     // legacy payroll-settings flag. Reading only the legacy flag made gratuity 0 for every org that switched it
@@ -357,7 +398,8 @@ export class SettlementsService {
         reimbursementAmount -
         recoveriesAmount -
         loanBalanceRecovered -
-        noticePeriodRecovery,
+        noticePeriodRecovery -
+        settlementTds,
     );
 
     const data = {
@@ -580,9 +622,11 @@ export class SettlementsService {
     }
     const salaryAlreadyPaid =
       settlement.pendingSalaryAmount === 0 && regularRunSettled;
+    const storedBreakdown =
+      settlement.pendingSalaryBreakdown as unknown as PendingSalaryBreakdown | null;
     const breakdown =
-      settlement.pendingSalaryAmount > 0
-        ? (settlement.pendingSalaryBreakdown as unknown as PendingSalaryBreakdown | null)
+      settlement.pendingSalaryAmount > 0 || storedBreakdown?.extrasOnly
+        ? storedBreakdown
         : null;
     // The pending salary goes onto the final payslip as the LWD month's real
     // lines (Basic, HRA, ..., PF/ESI/PT/TDS and the employer contributions)
@@ -590,7 +634,7 @@ export class SettlementsService {
     // to the single net PENDING_SALARY line it always had. Either way the
     // pending-salary portion nets to settlement.pendingSalaryAmount.
     const earnings: SettlementPayrollLine[] = [
-      ...(breakdown
+      ...(breakdown && !breakdown.extrasOnly
         ? breakdown.earnings
         : [
             {
@@ -717,6 +761,14 @@ export class SettlementsService {
           month,
           year,
           isFinalSettlement: true,
+          // Without it the settlement was invisible to every financial-year report (Form 16 summary, statutory
+          // reports) — its income and TDS were silently missing from the year.
+          financialYear: getFinancialYear(
+            month,
+            year,
+            (await this.payrollSettingsService.getOrCreate(organizationId))
+              .financialYearStartMonth,
+          ),
           // Settlements go straight to APPROVED so they can be paid
           // promptly, same as the old system.
           status: PayrollRunStatus.APPROVED,
@@ -728,6 +780,7 @@ export class SettlementsService {
           taxableGross,
           totalDeductions,
           totalEmployerContributions,
+          ctcMonthly: grossSalary + totalEmployerContributions,
           netPay: settlement.netSettlementAmount,
           netPayInWords: amountInWords(settlement.netSettlementAmount),
           calculatedById: actor.id,

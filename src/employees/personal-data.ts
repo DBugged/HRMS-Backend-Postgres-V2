@@ -26,6 +26,17 @@ const IDENTIFIER_PATTERNS: Record<string, { pattern: RegExp; label: string; exam
     label: 'UAN',
     example: '123456789012',
   },
+  // Salary is transferred to these — a typo here sends pay to the wrong place, so the standard formats apply.
+  bankIFSC: {
+    pattern: /^[A-Z]{4}0[A-Z0-9]{6}$/,
+    label: 'IFSC code',
+    example: 'HDFC0001234',
+  },
+  bankAccountNo: {
+    pattern: /^[0-9]{9,18}$/,
+    label: 'bank account number',
+    example: '123456789012',
+  },
   esicNumber: {
     pattern: /^[0-9]{10}$/,
     label: 'ESIC number',

@@ -221,6 +221,14 @@ export class EmployeeSalaryComponentsService {
       }
     }
 
+    // Every line refused: say so as an error (the caller used to get HTTP 201 and show "saved" for a change that
+    // never happened). A partial success still returns the per-row `failed` report.
+    if (created.length === 0 && failed.length > 0) {
+      throw new BadRequestException(
+        failed.map((f) => `${f.componentCode ?? 'row ' + f.row}: ${f.error}`).join(' | '),
+      );
+    }
+
     return { count: created.length, rows: created, failed };
   }
 

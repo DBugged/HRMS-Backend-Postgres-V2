@@ -702,19 +702,20 @@ export class PayslipPdfService {
         doc.font(fonts.bold).fontSize(9).fillColor(INK_900);
         text('EMPLOYER CONTRIBUTIONS', MARGIN, y);
         y += 14;
-        const ecColW = Math.min(
-          140,
-          CONTENT_W / Math.min(employerContributions.length, 4),
-        );
-        employerContributions.slice(0, 4).forEach((c, i) => {
-          doc.font(fonts.regular).fontSize(7.2).fillColor(INK_600);
-          text(c.name, MARGIN + i * ecColW, y, { width: ecColW - 8 });
-          doc.font(fonts.bold).fontSize(9).fillColor(INK_900);
-          text(money(c.amount), MARGIN + i * ecColW, y + 10, {
-            width: ecColW - 8,
+        // Every contribution is listed, four to a row — only the first four used to print while the CTC total
+        // below summed them all, so the printed lines did not add up to the printed total.
+        const ecColW = Math.min(140, CONTENT_W / 4);
+        for (let rowStart = 0; rowStart < employerContributions.length; rowStart += 4) {
+          employerContributions.slice(rowStart, rowStart + 4).forEach((c, i) => {
+            doc.font(fonts.regular).fontSize(7.2).fillColor(INK_600);
+            text(c.name, MARGIN + i * ecColW, y, { width: ecColW - 8 });
+            doc.font(fonts.bold).fontSize(9).fillColor(INK_900);
+            text(money(c.amount), MARGIN + i * ecColW, y + 10, {
+              width: ecColW - 8,
+            });
           });
-        });
-        y += 26;
+          y += 26;
+        }
         doc.font(fonts.oblique).fontSize(6.6).fillColor(INK_400);
         text(
           'Employer Contributions are not deducted from employee salary.',

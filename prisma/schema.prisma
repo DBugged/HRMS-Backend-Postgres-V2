@@ -1331,6 +1331,11 @@ model PayrollSettings {
   // HR/Admin enters it. Off by default so existing orgs pay as before.
   companyPerformanceEnabled Boolean @default(false)
 
+  // Which tax declarations drive TDS. Off: a SUBMITTED declaration is used as declared (proofs reviewed later) and a
+  // DRAFT is ignored. On: only VERIFIED declarations (HR has checked the proofs) change the tax — until then the
+  // employee is taxed under the default regime with no declared deductions.
+  taxDeclarationRequiresVerification Boolean @default(false)
+
   updatedById String?
   updatedBy   User?   @relation(fields: [updatedById], references: [id])
 

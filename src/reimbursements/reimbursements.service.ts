@@ -140,6 +140,13 @@ export class ReimbursementsService {
     actor: Actor,
     organizationId: string,
   ) {
+    // A claim is for an expense that has already happened. One day of slack covers timezones ahead of UTC.
+    const latestAllowed = new Date(Date.now() + 86400000)
+      .toISOString()
+      .slice(0, 10);
+    if (dto.claimDate > latestAllowed) {
+      throw new BadRequestException('The claim date cannot be in the future.');
+    }
     // Application-level duplicate-submission guard — this had none at all
     // (reproduced live: firing the identical claim twice at once created 2
     // fully independent, each individually approvable/payable rows — a

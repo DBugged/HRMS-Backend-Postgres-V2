@@ -40,6 +40,7 @@ function baseSettings(
     otWeekendRate: 2,
     otNightRate: 1.75,
     companyPerformanceEnabled: false,
+    taxDeclarationRequiresVerification: false,
     updatedById: null,
     createdAt: new Date(),
     updatedAt: new Date(),

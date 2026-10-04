@@ -250,7 +250,30 @@ export class TaxDeclarationsService {
       module: 'PAYROLL',
       organizationId,
       targetId: declaration.id,
-      details: { employeeId, financialYear: dto.financialYear, status },
+      details: {
+        employeeId,
+        financialYear: dto.financialYear,
+        status,
+        // What actually changed (old -> new): regime, amounts and status all move TDS, so an auditor must be able
+        // to see who changed which figure.
+        changes: existing
+          ? Object.fromEntries(
+              Object.keys(data)
+                .filter(
+                  (k) =>
+                    (existing as Record<string, unknown>)[k] !==
+                    (declaration as Record<string, unknown>)[k],
+                )
+                .map((k) => [
+                  k,
+                  {
+                    from: (existing as Record<string, unknown>)[k],
+                    to: (declaration as Record<string, unknown>)[k],
+                  },
+                ]),
+            )
+          : undefined,
+      },
     });
     await this.timelineService.logEvent({
       organizationId,

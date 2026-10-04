@@ -83,6 +83,8 @@ export interface OverlaidSettings {
   // Labour Codes "50% wages" rule (in force 21-Nov-2025): where enabled on the module's version, the PF /
   // gratuity wage base is at least 50% of gross earnings. Off by default — opt-in per module.
   pfUseWagesRule: boolean;
+  // Arrears of Basic/DA attract PF in the month they are paid: when on, the ARREARS line is added to the PF wage base.
+  pfIncludeArrears: boolean;
   gratuityUseWagesRule: boolean;
   // Employer-only PF costs on top of the 12%: EDLI and administration charges, % of PF wages.
   pfEdliRate: number;
@@ -137,6 +139,7 @@ export function applyStatutoryOverrides(
     npsEmployerRate: settings.npsEmployerRate,
     gratuityRate: settings.gratuityRate,
     pfUseWagesRule: false,
+    pfIncludeArrears: false,
     gratuityUseWagesRule: false,
     pfEdliRate: 0.5,
     pfAdminRate: 0.5,
@@ -154,12 +157,14 @@ export function applyStatutoryOverrides(
       employerRate: number;
       wageCeiling: number;
       applyFiftyPercentRule?: boolean;
+      includeArrearsInWages?: boolean;
       edliRate?: number;
       adminChargeRate?: number;
       epsRate?: number;
       edliMaxAmount?: number;
     };
     resolved.pfUseWagesRule = c.applyFiftyPercentRule === true;
+    resolved.pfIncludeArrears = c.includeArrearsInWages === true;
     resolved.pfEdliRate = c.edliRate ?? resolved.pfEdliRate;
     resolved.pfAdminRate = c.adminChargeRate ?? resolved.pfAdminRate;
     resolved.pfEpsRate = c.epsRate ?? resolved.pfEpsRate;
