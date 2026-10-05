@@ -4,11 +4,11 @@
 // Responsibilities: Letterhead (logo/company name/address), Ref No + Date, title, addressee block, body
 //   paragraphs, and a signature block (from the org's primary Authorized Signatory, if set).
 import { Injectable } from '@nestjs/common';
-import * as fs from 'fs';
 import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import { formatDateDisplay } from '../payroll/format-date';
 import { attachWatermark } from '../common/pdf-watermark';
+import { FONTS_DIR, ROBOTO_FILES } from '../common/fonts-dir';
 
 // A rendered LetterTemplate — title/paragraphs are already {{placeholder}}-
 // substituted by the time they get here (see LettersService). Each
@@ -78,35 +78,16 @@ const PAGE_W = 595.28; // A4 portrait, points
 const MARGIN = 56;
 const CONTENT_W = PAGE_W - MARGIN * 2;
 
-// backend-v2/assets/fonts lives outside src/, so it isn't copied into
-// dist/ by the Nest build the way in-src files are — __dirname's usual
-// "two levels up" from a compiled src/<module>/*.js file lands on
-// dist/assets/fonts, which doesn't exist (same gap payslip-pdf.service.ts's
-// FONTS_DIR has, just never hit there because its default payslip font is
-// plain Helvetica). Resolved against a few real candidate roots instead of
-// assuming one fixed __dirname depth, so this works the same whether
-// running compiled (dist/src/letters) or via ts-node directly (src/letters).
-function resolveFontsDir(): string {
-  const candidates = [
-    path.join(__dirname, '..', '..', 'assets', 'fonts'),
-    path.join(__dirname, '..', '..', '..', 'assets', 'fonts'),
-    path.join(process.cwd(), 'assets', 'fonts'),
-  ];
-  return candidates.find((dir) => fs.existsSync(dir)) ?? candidates[0];
-}
-const FONTS_DIR = resolveFontsDir();
-
-// Roboto, not pdfkit's standard Helvetica — Helvetica's WinAnsi encoding
-// has no ₹ (Indian Rupee) glyph at all (Salary Certificate/Full & Final
-// Settlement both print currency amounts), same reasoning and same
-// bundled font files payslip-pdf.service.ts already uses.
+// Roboto, not pdfkit's standard Helvetica — Helvetica's WinAnsi encoding has no ₹ (Indian Rupee) glyph at all
+// (Salary Certificate/Full & Final Settlement both print currency amounts). The bundled Roboto is the full font
+// (the earlier .woff files were a subset with no ₹, so amounts still lost the symbol); see common/fonts-dir.ts.
 function registerFonts(doc: PDFKit.PDFDocument): void {
   doc.registerFont(
     'Letter-Regular',
-    path.join(FONTS_DIR, 'Roboto-Regular.woff'),
+    path.join(FONTS_DIR, ROBOTO_FILES.regular),
   );
-  doc.registerFont('Letter-Bold', path.join(FONTS_DIR, 'Roboto-Bold.woff'));
-  doc.registerFont('Letter-Italic', path.join(FONTS_DIR, 'Roboto-Italic.woff'));
+  doc.registerFont('Letter-Bold', path.join(FONTS_DIR, ROBOTO_FILES.bold));
+  doc.registerFont('Letter-Italic', path.join(FONTS_DIR, ROBOTO_FILES.italic));
 }
 
 const INK_900 = '#14161d';

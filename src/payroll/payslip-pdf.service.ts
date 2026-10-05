@@ -10,6 +10,7 @@ import { formatDateDisplay, formatDateTimeDisplay } from './format-date';
 import { lastDayOfMonth } from './payroll-date-math';
 import { readStoredFile } from '../files/file-storage.config';
 import { attachWatermark } from '../common/pdf-watermark';
+import { FONTS_DIR, ROBOTO_FILES } from '../common/fonts-dir';
 
 /**
  * Pure port of the old backend's payslipPdfController.js — THE universal
@@ -95,17 +96,15 @@ const FONT_MAP: Record<
   },
 };
 
-const FONTS_DIR = path.join(__dirname, '..', '..', 'assets', 'fonts');
-
 // Registers every bundled custom font onto one PDFDocument instance, under
 // the exact names FONT_MAP's ROBOTO/MERRIWEATHER/ROBOTO_MONO entries
 // reference — cheap (a handful of small .woff files), so registered
 // unconditionally rather than only for the template's chosen family.
 function registerCustomFonts(doc: PDFKit.PDFDocument): void {
   const files: Record<string, string> = {
-    Roboto: 'Roboto-Regular.woff',
-    'Roboto-Bold': 'Roboto-Bold.woff',
-    'Roboto-Italic': 'Roboto-Italic.woff',
+    Roboto: ROBOTO_FILES.regular,
+    'Roboto-Bold': ROBOTO_FILES.bold,
+    'Roboto-Italic': ROBOTO_FILES.italic,
     Merriweather: 'Merriweather-Regular.woff',
     'Merriweather-Bold': 'Merriweather-Bold.woff',
     'Merriweather-Italic': 'Merriweather-Italic.woff',
@@ -117,6 +116,17 @@ function registerCustomFonts(doc: PDFKit.PDFDocument): void {
     doc.registerFont(name, path.join(FONTS_DIR, file));
   }
 }
+
+// Currency symbols the bundled Roboto can draw (plain ASCII symbols work in every font).
+const ROBOTO_CURRENCY_SYMBOLS = new Set(['₹', '€', '£', '¥']);
+// eslint-disable-next-line no-control-regex -- ASCII-only check, not a stray control char
+const ASCII_ONLY = /^[\x00-\x7F]+$/;
+const isPrintableCurrencySymbol = (symbol: string) =>
+  ASCII_ONLY.test(symbol) || ROBOTO_CURRENCY_SYMBOLS.has(symbol);
+
+// True when `value` contains a symbol that only Roboto can draw and the current font is not already Roboto.
+const needsRupeeFont = (value: string, currentFont: string) =>
+  /[₹€£¥]/.test(value) && !currentFont.startsWith('Roboto');
 
 const safeHex = (hex: string | null | undefined, fallback: string) =>
   /^#[0-9a-fA-F]{6}$/.test(hex || '') ? (hex as string) : fallback;
@@ -361,12 +371,11 @@ export class PayslipPdfService {
     printInfo: { watermark: boolean; registrationLine: string },
   ): Promise<{ buffer: Buffer; filename: string }> {
     const rawSymbol = settings.currencySymbol || '₹';
-    // pdfkit's standard 14 fonts only cover WinAnsi — the ₹ glyph isn't in
-    // that set and renders as a broken glyph, so the PDF always falls back
-    // to an ASCII-safe "Rs." regardless of the configured symbol (the web
-    // UI elsewhere still renders ₹ fine via the browser's own font).
-
-    const currencySymbol = /^[\x00-\x7F]+$/.test(rawSymbol) // eslint-disable-line no-control-regex -- ASCII-only check, not a stray control char
+    // pdfkit's standard 14 fonts only cover WinAnsi, which has no ₹ — it printed as a stray glyph (a "1" in jsPDF's
+    // equivalent), so the payslip used to fall back to "Rs." for any non-ASCII symbol. The bundled full Roboto has ₹
+    // (and € £ ¥), so those symbols are now printed as themselves: any amount containing one is drawn in Roboto by
+    // text() below while everything else keeps the template's font. Other symbols still fall back to "Rs.".
+    const currencySymbol = isPrintableCurrencySymbol(rawSymbol)
       ? rawSymbol
       : 'Rs.';
     const money = (n: number | null | undefined) =>
@@ -424,12 +433,53 @@ export class PayslipPdfService {
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
 
+      // Remembers the font the template last selected, so a ₹ amount can borrow Roboto for one call and hand the
+      // template font back. (PDFKit does not expose the name a font was registered under.)
+      let currentFont: string = fonts.regular;
+      /* eslint-disable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion --
+         PDFKit's font() is overloaded, which its typings can't express through call()/bind(); this wrapper only
+         records the name passed in and forwards every argument untouched. */
+      type FontFn = (
+        src: string | Buffer,
+        family?: string | number,
+        size?: number,
+      ) => PDFKit.PDFDocument;
+      const originalFont = doc.font as unknown as FontFn;
+      const selectFont = (src: string): PDFKit.PDFDocument =>
+        originalFont.call(doc, src);
+      doc.font = ((
+        src: string | Buffer,
+        family?: string | number,
+        size?: number,
+      ): PDFKit.PDFDocument => {
+        if (typeof src === 'string') currentFont = src;
+        return originalFont.call(doc, src, family, size);
+      }) as unknown as typeof doc.font;
+      /* eslint-enable @typescript-eslint/unbound-method, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unnecessary-type-assertion */
+
       const text = (
         str: string | number | null | undefined,
         x: number,
         y: number,
         opts: PDFKit.Mixins.TextOptions = {},
-      ) => doc.text(String(str ?? ''), x, y, { lineBreak: false, ...opts });
+      ) => {
+        const value = String(str ?? '');
+        // Standard fonts and the other bundled families have no ₹ glyph; Roboto does.
+        if (!needsRupeeFont(value, currentFont)) {
+          return doc.text(value, x, y, { lineBreak: false, ...opts });
+        }
+        const keep = currentFont;
+        selectFont(
+          /bold/i.test(keep)
+            ? 'Roboto-Bold'
+            : /italic|oblique/i.test(keep)
+              ? 'Roboto-Italic'
+              : 'Roboto',
+        );
+        doc.text(value, x, y, { lineBreak: false, ...opts });
+        selectFont(keep);
+        return doc;
+      };
 
       if (template.watermarkText) {
         doc.save();

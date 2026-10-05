@@ -70,10 +70,10 @@ describe('attachWatermark', () => {
     // between font registration and the watermark's save/restore calls.
     const fontsDir = path.join(__dirname, '..', '..', 'assets', 'fonts');
     const buffer = await renderToBuffer((doc) => {
-      if (fs.existsSync(path.join(fontsDir, 'Roboto-Regular.woff'))) {
+      if (fs.existsSync(path.join(fontsDir, 'Roboto-Regular.ttf'))) {
         doc.registerFont(
           'Letter-Regular',
-          path.join(fontsDir, 'Roboto-Regular.woff'),
+          path.join(fontsDir, 'Roboto-Regular.ttf'),
         );
         doc.font('Letter-Regular');
       }
