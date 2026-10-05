@@ -92,6 +92,46 @@ describe('computeUpfrontCredit', () => {
     ).toBe(1);
   });
 
+  it('the 15th rule: joined on the 15th counts that month, joined on the 16th starts from the next', () => {
+    const type = {
+      allocationType: AllocationType.FIXED_ANNUAL,
+      annualQuota: 24,
+      prorateOnJoining: true,
+    };
+    // March: on the 15th -> 10 months (20), on the 16th -> 9 months (18).
+    expect(
+      computeUpfrontCredit(type, new Date(Date.UTC(2026, 2, 15)), 2026),
+    ).toBe(20);
+    expect(
+      computeUpfrontCredit(type, new Date(Date.UTC(2026, 2, 16)), 2026),
+    ).toBe(18);
+  });
+
+  it('joining after the 15th of December leaves no month to credit', () => {
+    const type = {
+      allocationType: AllocationType.PRORATED_ON_JOINING,
+      annualQuota: 12,
+      prorateOnJoining: true,
+    };
+    expect(
+      computeUpfrontCredit(type, new Date(Date.UTC(2026, 11, 20)), 2026),
+    ).toBe(0);
+  });
+
+  it('gives the same yearly total as a per-cycle type for the same joining date', () => {
+    // Quota 6, joined 7 Feb: upfront 6 x 11/12 = 5.5 = the quarterly figure (1.0 + 3 x 1.5).
+    const upfront = computeUpfrontCredit(
+      {
+        allocationType: AllocationType.FIXED_ANNUAL,
+        annualQuota: 6,
+        prorateOnJoining: true,
+      },
+      new Date(Date.UTC(2026, 1, 7)),
+      2026,
+    );
+    expect(upfront).toBe(5.5);
+  });
+
   it('joining in January credits the full annual quota via proration (13-1=12 remaining months)', () => {
     const type = {
       allocationType: AllocationType.PRORATED_ON_JOINING,

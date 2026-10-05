@@ -69,8 +69,9 @@ export function computeUpfrontCredit(
 
   if (!shouldProrate) return leaveType.annualQuota;
 
-  const joiningMonth = joiningDate.getUTCMonth() + 1; // 1-indexed, Jan=1
-  const remainingMonths = 13 - joiningMonth; // inclusive of the joining month
+  // The 15th rule (see firstCountedMonthIndex): the joining month counts when they joined on or before the 15th,
+  // otherwise counting starts the month after.
+  const remainingMonths = Math.max(0, 12 - firstCountedMonthIndex(joiningDate));
   return (
     Math.round(((leaveType.annualQuota * remainingMonths) / 12) * 100) / 100
   );
