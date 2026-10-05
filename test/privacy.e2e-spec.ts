@@ -197,6 +197,30 @@ describe('Data Privacy & Protection (e2e)', () => {
         .expect(400);
     });
 
+    it('rejects a malformed officer email or phone, and accepts blanks and valid values', async () => {
+      for (const body of [
+        { privacyOfficerEmail: 'not-an-email' },
+        { privacyOfficerPhone: '12345' },
+        { privacyOfficerPhone: 'abcdefghij' },
+      ]) {
+        await http()
+          .put('/privacy/settings')
+          .set(auth(adminToken))
+          .send(body)
+          .expect(400);
+      }
+      await http()
+        .put('/privacy/settings')
+        .set(auth(adminToken))
+        .send({ privacyOfficerEmail: '', privacyOfficerPhone: '' })
+        .expect(200);
+      await http()
+        .put('/privacy/settings')
+        .set(auth(adminToken))
+        .send({ privacyOfficerPhone: '+91 98765 43210' })
+        .expect(200);
+    });
+
     it('ADMIN updates officer contact and SLA', async () => {
       const res = await http()
         .put('/privacy/settings')

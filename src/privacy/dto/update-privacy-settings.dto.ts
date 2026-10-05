@@ -1,13 +1,16 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
+  IsEmail,
   IsInt,
   IsObject,
   IsOptional,
   IsString,
   Max,
   MaxLength,
+  Matches,
   Min,
+  ValidateIf,
 } from 'class-validator';
 
 // processingPurposes / dataCategories / retentionRules are validated structurally in PrivacyService
@@ -20,14 +23,20 @@ export class UpdatePrivacySettingsDto {
   privacyOfficerName?: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  @ValidateIf((o: UpdatePrivacySettingsDto) => !!o.privacyOfficerEmail)
+  @IsEmail(
+    {},
+    { message: 'Privacy officer email must be a valid email address' },
+  )
   @MaxLength(200)
   privacyOfficerEmail?: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  @ValidateIf((o: UpdatePrivacySettingsDto) => !!o.privacyOfficerPhone)
+  @Matches(/^\+?[0-9][0-9\s()-]{8,18}[0-9]$/, {
+    message:
+      'Privacy officer phone must be a valid phone number (10–15 digits)',
+  })
   @MaxLength(50)
   privacyOfficerPhone?: string;
 
