@@ -504,4 +504,100 @@ describe('Leave accrual engine (e2e)', () => {
       ).toBe(0);
     });
   });
+
+  describe('automatic year-end carry-forward catch-up', () => {
+    const closingYear = 2024;
+    let typeId: string;
+    let employeeId: string;
+    const setAuto = (enabled: boolean) =>
+      prisma.organization.update({
+        where: { id: organizationId },
+        data: { policies: { autoCarryForwardEnabled: enabled } },
+      });
+
+    beforeAll(async () => {
+      employeeId = (
+        await prisma.user.findFirstOrThrow({
+          where: { organizationId, email: `accrual-emp-${TAG}@example.test` },
+        })
+      ).id;
+      const t = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Sched CF',
+          code: 'SCF',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 0,
+          accrualFrequency: 'YEARLY',
+          carryForward: { allowed: true, maxDays: 10, expiryMonths: null },
+        })
+        .expect(201);
+      typeId = (t.body as { id: string }).id;
+      await prisma.leaveBalance.create({
+        data: {
+          organizationId,
+          employeeId,
+          leaveTypeId: typeId,
+          year: closingYear,
+          opening: 0,
+          credited: 6,
+          closing: 6,
+        },
+      });
+    });
+
+    it('does nothing for an organization that has not turned automatic carry-forward on', async () => {
+      await setAuto(false);
+      expect(
+        await leaveTypes.autoRunCarryForwardForOrg(organizationId, closingYear),
+      ).toEqual({ ran: false });
+      expect(
+        await prisma.leaveBalance.count({
+          where: { organizationId, leaveTypeId: typeId, year: closingYear + 1 },
+        }),
+      ).toBe(0);
+    });
+
+    it('carries the closing year forward, records it, and does not repeat it for the same year', async () => {
+      await setAuto(true);
+      const first = await leaveTypes.autoRunCarryForwardForOrg(
+        organizationId,
+        closingYear,
+      );
+      expect(first.ran).toBe(true);
+      const next = await prisma.leaveBalance.findFirstOrThrow({
+        where: {
+          organizationId,
+          employeeId,
+          leaveTypeId: typeId,
+          year: closingYear + 1,
+        },
+      });
+      expect(next.opening).toBe(6);
+      expect(
+        await prisma.auditLog.count({
+          where: {
+            organizationId,
+            action: 'LEAVE_CARRYFORWARD_RUN',
+            details: { path: ['source'], equals: 'SCHEDULED' },
+          },
+        }),
+      ).toBe(1);
+
+      // A later day in January: already recorded for this year, so it is a no-op.
+      expect(
+        await leaveTypes.autoRunCarryForwardForOrg(organizationId, closingYear),
+      ).toEqual({ ran: false });
+      expect(
+        await prisma.auditLog.count({
+          where: {
+            organizationId,
+            action: 'LEAVE_CARRYFORWARD_RUN',
+            details: { path: ['source'], equals: 'SCHEDULED' },
+          },
+        }),
+      ).toBe(1);
+    });
+  });
 });

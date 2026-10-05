@@ -104,43 +104,81 @@ export class LeaveTypesService {
     return admin?.id ?? null;
   }
 
-  // Opt-in org-level automation (Organization Settings > General Settings
-  // > "Automatic Year-End Carry Forward") for orgs that don't want to rely
-  // on someone remembering to click "Run Year-End Carry Forward" every
-  // January. Leave-balance years are plain calendar years (see the
-  // `new Date().getFullYear()` uses in leave-balance.service.ts) —
-  // independent of the org's financialYearStartMonth, which only affects
-  // payroll/tax — so this fires once, on January 1st, carrying the just-
-  // ended calendar year forward. runYearEndCarryForward recomputes
-  // deterministically from each row's current closing balance, so running
-  // it again the same day (or if the cron restarts) is a safe no-op, same
-  // as autoRunAccrualsDaily above.
+  // Opt-in org-level automation (Organization Settings > General Settings > "Automatic Year-End Carry Forward") for
+  // orgs that don't want to rely on someone remembering to click "Run Year-End Carry Forward" every January.
+  // Leave-balance years are plain calendar years (see the `new Date().getFullYear()` uses in
+  // leave-balance.service.ts), independent of the org's financialYearStartMonth, which only affects payroll/tax.
+  //
+  // It used to fire only if the server happened to be running on 1 January, so a restart, deploy or outage on that
+  // one day skipped carry-forward for the whole year with nothing to say so. It now checks every day of January and
+  // runs for each organization that has no scheduled carry-forward for the closing year on record (the history entry
+  // it writes is the marker), so a missed 1 January is picked up the next day the server is up. Once recorded it does
+  // not run again, so later edits to January data are not silently re-carried.
   @Cron('0 3 * * *')
   async autoRunCarryForwardDailyCheck() {
     const today = new Date();
-    if (today.getMonth() !== 0 || today.getDate() !== 1) return;
+    if (today.getMonth() !== 0) return;
     const previousYear = today.getFullYear() - 1;
 
     const organizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
-      select: { id: true, policies: true },
+      select: { id: true },
     });
     for (const org of organizations) {
-      const policies = org.policies as {
-        autoCarryForwardEnabled?: boolean;
-      } | null;
-      if (!policies?.autoCarryForwardEnabled) continue;
       try {
-        await this.leaveBalanceService.runYearEndCarryForward(
-          previousYear,
-          org.id,
-        );
+        await this.autoRunCarryForwardForOrg(org.id, previousYear);
       } catch (err) {
         this.logger.error(
           `Auto carry-forward failed for org ${org.id}: ${err instanceof Error ? err.message : err}`,
         );
       }
     }
+  }
+
+  async autoRunCarryForwardForOrg(
+    organizationId: string,
+    previousYear: number,
+  ) {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { policies: true },
+    });
+    const policies = org?.policies as {
+      autoCarryForwardEnabled?: boolean;
+    } | null;
+    if (!policies?.autoCarryForwardEnabled) return { ran: false as const };
+
+    const alreadyDone = await this.scopedPrisma.auditLog.findFirst({
+      where: {
+        organizationId,
+        action: 'LEAVE_CARRYFORWARD_RUN',
+        AND: [
+          { details: { path: ['source'], equals: 'SCHEDULED' } },
+          { details: { path: ['year'], equals: previousYear } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (alreadyDone) return { ran: false as const };
+
+    const { processed, disabledByOrg } =
+      await this.leaveBalanceService.runYearEndCarryForward(
+        previousYear,
+        organizationId,
+      );
+    if (disabledByOrg) return { ran: false as const };
+
+    const actorId = await this.systemActorId(organizationId);
+    if (actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'LEAVE_CARRYFORWARD_RUN',
+        module: 'LEAVE',
+        organizationId,
+        details: { year: previousYear, processed, source: 'SCHEDULED' },
+      });
+    }
+    return { ran: true as const, processed };
   }
 
   // Every new org starts with the standard leave-type set (Casual, Sick,
