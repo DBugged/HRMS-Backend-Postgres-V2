@@ -52,6 +52,7 @@ import { DocumentsModule } from './documents/documents.module';
 import { PolicyAssistantModule } from './policy-assistant/policy-assistant.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ApprovalsDigestModule } from './approvals-digest/approvals-digest.module';
+import { ScheduledRemindersModule } from './scheduled-reminders/scheduled-reminders.module';
 import { HrEventsModule } from './hr-events/hr-events.module';
 import { EmailTemplatesModule } from './email-templates/email-templates.module';
 import { OrgListItemsModule } from './org-list-items/org-list-items.module';
@@ -95,10 +96,11 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
         storage: redisEnabled() ? storage : undefined,
       }),
     }),
-    // Enables @Cron() handlers app-wide — currently 5 jobs: HrEventsService's
+    // Enables @Cron() handlers app-wide — currently 14 jobs: HrEventsService's
     // daily birthday/work-anniversary email job, AttendanceService's daily
-    // job, LeaveTypesService's two daily jobs, and ApprovalsDigestService's
-    // weekday job.
+    // job, LeaveTypesService's two daily jobs, ApprovalsDigestService's
+    // weekday job, and the five scheduled-reminders jobs (probation, payroll
+    // cut-off, statutory due dates, missed punch-out, approval escalation).
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisCacheModule,
@@ -143,6 +145,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     NotificationsModule,
     HrEventsModule,
     ApprovalsDigestModule,
+    ScheduledRemindersModule,
     EmailTemplatesModule,
     OrgListItemsModule,
     WorkSchedulesModule,

@@ -92,6 +92,39 @@ const SUPPLIED: Record<string, string[]> = {
     'loanCount',
     'reviewUrl',
   ],
+  PROBATION_ENDING: [
+    'subjectName',
+    'daysLeft',
+    'probationEndDate',
+    'reviewUrl',
+  ],
+  PAYROLL_CUTOFF_REMINDER: [
+    'payrollMonth',
+    'processingDate',
+    'daysLeft',
+    'totalPending',
+    'leaveCount',
+    'regularizationCount',
+    'wfhCount',
+    'overtimeCount',
+    'loanCount',
+    'reviewUrl',
+  ],
+  STATUTORY_DUE_REMINDER: [
+    'dueLabel',
+    'dueDate',
+    'duePeriod',
+    'daysLeft',
+    'reviewUrl',
+  ],
+  MISSED_PUNCH_OUT: ['date', 'inTime', 'reviewUrl'],
+  APPROVAL_ESCALATION: [
+    'totalPending',
+    'thresholdDays',
+    'oldestSummary',
+    'requestList',
+    'reviewUrl',
+  ],
 };
 
 describe('email layout', () => {
