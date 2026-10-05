@@ -541,14 +541,10 @@ export class LeaveBalanceService {
               new Date(),
             );
 
-        // Atomic increment, not `row.credited + delta` — this loop can
-        // process the same employee's row again across two accrual runs
-        // that overlap in time (e.g. the daily cron firing while HR
-        // manually clicks "Run Accrual Now"), and a JS-computed value
-        // read before either transaction commits would silently lose one
-        // run's credit. The lastAccrualPeriod check above already makes a
-        // *second* call for the same period a no-op; this closes the
-        // remaining gap for two genuinely concurrent first-time credits.
+        // Atomic increment, not `row.credited + delta` — a JS-computed value read before the
+        // transaction would lose a concurrent run's credit. The check above makes a *later* call for
+        // the same period a no-op; the compare-and-swap on lastAccrualPeriod below makes two
+        // genuinely concurrent calls safe.
         // A Fixed Annual / Prorated row's first-ever accrual only tops it up
         // to what's due so far: rows created before accrual followed
         // Accrual Frequency were already granted the whole quota upfront
@@ -561,8 +557,17 @@ export class LeaveBalanceService {
           leaveType.allocationType !== AllocationType.EARNED_MONTHLY
             ? Math.max(0, Math.round((due - row.credited) * 100) / 100)
             : due;
-        await tx.leaveBalance.updateMany({
-          where: { id: row.id, organizationId },
+        // Claim the period with a compare-and-swap on the stamp this run read: the UPDATE only matches while the
+        // row still holds that same lastAccrualPeriod. `row` comes from a read made before this transaction, so
+        // two overlapping runs (two admins, a double-click, the 02:00 cron plus a manual run) both start from the
+        // same stale stamp; the first UPDATE changes it, and the second finds 0 rows and credits nothing instead
+        // of adding the same cycles again.
+        const claimed = await tx.leaveBalance.updateMany({
+          where: {
+            id: row.id,
+            organizationId,
+            lastAccrualPeriod: row.lastAccrualPeriod,
+          },
           data: {
             credited: {
               increment: daysCredited,
@@ -570,6 +575,10 @@ export class LeaveBalanceService {
             lastAccrualPeriod: periodKey,
           },
         });
+        if (claimed.count === 0) {
+          alreadyAccrued += 1;
+          continue;
+        }
         await this.recalculate(tx, row.id, organizationId);
         credited += 1;
         totalDaysCredited += daysCredited;
