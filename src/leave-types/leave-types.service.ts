@@ -18,11 +18,13 @@ import {
   AllocationType,
   LeaveType,
   Prisma,
+  Role,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import {
+  accrualCreditPerCycle,
   accruesPerCycle,
   computeAccrualPerCycle,
 } from '../leave-balances/leave-balance-math';
@@ -43,13 +45,12 @@ export class LeaveTypesService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  // Auto-credits every EARNED_MONTHLY leave type, org-wide, once a day —
-  // no HR click required. Safe to run daily regardless of each leave
-  // type's own accrualFrequency (MONTHLY/QUARTERLY/etc.): creditAccrual is
-  // idempotent per period (see computeAccrualPeriodKey/lastAccrualPeriod),
-  // so a day that isn't a new cycle's start is just a no-op for that
-  // employee. Same daily-sweep-across-orgs shape as HrEventsService's
-  // sendDailyWishes; one org or leave type failing doesn't abort the rest.
+  // Auto-credits every leave type that accrues cycle by cycle (Quarterly, Monthly, ... — Earned, Fixed Annual or
+  // Prorated; see accruesPerCycle), org-wide, once a day — no HR click required. It used to cover only
+  // EARNED_MONTHLY types, so a Fixed Annual type on a Quarterly schedule was never credited unless someone ran it by
+  // hand. It goes through runAccrual, the same path as the manual button, so both apply identical rules and both are
+  // audited. Safe to run daily: creditAccrual is idempotent per period (and now concurrency-safe), so a day that
+  // isn't a new cycle's start is a no-op. One org or leave type failing doesn't abort the rest.
   @Cron('0 2 * * *')
   async autoRunAccrualsDaily() {
     const organizations = await this.scopedPrisma.organization.findMany({
@@ -57,25 +58,50 @@ export class LeaveTypesService {
       select: { id: true },
     });
     for (const org of organizations) {
-      const leaveTypes = await this.scopedPrisma.leaveType.findMany({
-        where: {
-          organizationId: org.id,
-          isActive: true,
-          allocationType: AllocationType.EARNED_MONTHLY,
-          accrualAmountPerCycle: { gt: 0 },
+      await this.autoRunAccrualsForOrg(org.id);
+    }
+  }
+
+  async autoRunAccrualsForOrg(organizationId: string) {
+    const candidates = await this.scopedPrisma.leaveType.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        allocationType: {
+          in: [
+            AllocationType.FIXED_ANNUAL,
+            AllocationType.PRORATED_ON_JOINING,
+            AllocationType.EARNED_MONTHLY,
+          ],
         },
-        select: { id: true, code: true },
-      });
-      for (const lt of leaveTypes) {
-        try {
-          await this.leaveBalanceService.creditAccrual(lt.id, org.id);
-        } catch (err) {
-          this.logger.error(
-            `Auto accrual failed for org ${org.id} leave type ${lt.code}: ${err instanceof Error ? err.message : err}`,
-          );
-        }
+      },
+    });
+    const leaveTypes = candidates.filter(
+      (lt) => accruesPerCycle(lt) && accrualCreditPerCycle(lt) > 0,
+    );
+    if (leaveTypes.length === 0) return;
+    const actorId = await this.systemActorId(organizationId);
+    for (const lt of leaveTypes) {
+      try {
+        await this.runAccrual(lt.id, actorId, organizationId, 'SCHEDULED');
+      } catch (err) {
+        this.logger.error(
+          `Auto accrual failed for org ${organizationId} leave type ${lt.code}: ${err instanceof Error ? err.message : err}`,
+        );
       }
     }
+  }
+
+  // The audit log needs a user as its actor, and a scheduled run has none. The organization's oldest active Admin
+  // stands in; every scheduled entry is marked details.source = 'SCHEDULED' (and the history shows "scheduled run"
+  // rather than that person's name), so it is never mistaken for something they did.
+  private async systemActorId(organizationId: string): Promise<string | null> {
+    const admin = await this.scopedPrisma.user.findFirst({
+      where: { organizationId, isActive: true, role: Role.ADMIN },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
+    return admin?.id ?? null;
   }
 
   // Opt-in org-level automation (Organization Settings > General Settings
@@ -444,7 +470,12 @@ export class LeaveTypesService {
     );
   }
 
-  async runAccrual(id: string, actorId: string, organizationId: string) {
+  async runAccrual(
+    id: string,
+    actorId: string | null,
+    organizationId: string,
+    source: 'MANUAL' | 'SCHEDULED' = 'MANUAL',
+  ) {
     const leaveType = await this.findByIdOrThrow(id, organizationId);
     if (!accruesPerCycle(leaveType)) {
       return {
@@ -460,22 +491,28 @@ export class LeaveTypesService {
     }
     const { matched, credited, alreadyAccrued, behind, totalDaysCredited } =
       await this.leaveBalanceService.creditAccrual(id, organizationId);
-    await this.auditLogService.log({
-      actorId,
-      action: 'LEAVE_ACCRUAL_RUN',
-      module: 'LEAVE',
-      organizationId,
-      targetId: id,
-      details: {
-        leaveType: leaveType.code,
-        amount: leaveType.accrualAmountPerCycle,
-        matched,
-        credited,
-        alreadyAccrued,
-        behind,
-        totalDaysCredited,
-      },
-    });
+    // A scheduled run that credited nothing (the usual case on 364 days of the year) is not worth a history entry. An
+    // employee who is "behind" does not count: that persists until someone repairs it and would log every single day;
+    // it is reported by Run Accrual and Check balances instead.
+    if (actorId && (source === 'MANUAL' || totalDaysCredited > 0)) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'LEAVE_ACCRUAL_RUN',
+        module: 'LEAVE',
+        organizationId,
+        targetId: id,
+        details: {
+          leaveType: leaveType.code,
+          amount: leaveType.accrualAmountPerCycle,
+          matched,
+          credited,
+          alreadyAccrued,
+          behind,
+          totalDaysCredited,
+          source,
+        },
+      });
+    }
     // `credited` = employees processed; totalDaysCredited = actual days.
     // `behind` = already-stamped employees holding less than is due: not "up to date", so say so.
     const behindNote =

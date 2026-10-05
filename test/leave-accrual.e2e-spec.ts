@@ -11,6 +11,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { LeaveBalanceService } from '../src/leave-balances/leave-balance.service';
+import { LeaveTypesService } from '../src/leave-types/leave-types.service';
 
 const PASSWORD = 'TestPass123!';
 const TAG = String(Date.now());
@@ -21,6 +22,7 @@ describe('Leave accrual engine (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
   let balances: LeaveBalanceService;
+  let leaveTypes: LeaveTypesService;
   let adminToken: string;
   let organizationId: string;
   let adminId: string;
@@ -48,6 +50,7 @@ describe('Leave accrual engine (e2e)', () => {
     await app.init();
     prisma = app.get(PrismaService);
     balances = app.get(LeaveBalanceService);
+    leaveTypes = app.get(LeaveTypesService);
 
     const email = `accrual-${TAG}@example.test`;
     await request(app.getHttpServer())
@@ -448,6 +451,57 @@ describe('Leave accrual engine (e2e)', () => {
         .send({ leaveType: typeId, days: 1 })
         .expect(400);
       expect(JSON.stringify(res.body)).toMatch(/Cannot encash more than 0/);
+    });
+  });
+
+  describe('the daily schedule', () => {
+    const scheduledEntries = () =>
+      prisma.auditLog.count({
+        where: {
+          organizationId,
+          action: 'LEAVE_ACCRUAL_RUN',
+          targetId: leaveTypeId,
+          details: { path: ['source'], equals: 'SCHEDULED' },
+        },
+      });
+
+    it('credits a Fixed Annual type on a Quarterly schedule — it used to cover Earned types only', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(1.5, `${year}-Q1`);
+      await leaveTypes.autoRunAccrualsForOrg(organizationId);
+      expect((await row()).credited).toBe(1.5 * currentQuarter);
+      expect((await row()).lastAccrualPeriod).toBe(currentPeriod);
+    });
+
+    it('leaves a history entry marked as scheduled, and none when it had nothing to do', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(1.5, `${year}-Q1`);
+      const before = await scheduledEntries();
+      await leaveTypes.autoRunAccrualsForOrg(organizationId);
+      expect(await scheduledEntries()).toBe(before + 1);
+      await leaveTypes.autoRunAccrualsForOrg(organizationId); // everything is up to date now
+      expect(await scheduledEntries()).toBe(before + 1);
+    });
+
+    it('does not touch a leave type that is granted upfront (Yearly)', async () => {
+      const yearly = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Sched Yearly',
+          code: 'SCHY',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 12,
+          accrualFrequency: 'YEARLY',
+        })
+        .expect(201);
+      const yearlyId = (yearly.body as { id: string }).id;
+      await leaveTypes.autoRunAccrualsForOrg(organizationId);
+      expect(
+        await prisma.leaveBalance.count({
+          where: { organizationId, leaveTypeId: yearlyId },
+        }),
+      ).toBe(0);
     });
   });
 });
