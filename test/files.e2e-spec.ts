@@ -7,6 +7,7 @@ dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -38,6 +39,14 @@ describe('Files (e2e)', () => {
     }).compile();
 
     app = moduleFixture.createNestApplication();
+    // Same helmet settings as main.ts, so the framing test below proves the file route strips the
+    // X-Frame-Options: SAMEORIGIN helmet would otherwise send.
+    app.use(
+      helmet({
+        contentSecurityPolicy: false,
+        crossOriginResourcePolicy: { policy: 'cross-origin' },
+      }),
+    );
     app.use(cookieParser());
     app.useGlobalPipes(
       new ValidationPipe({
@@ -162,6 +171,14 @@ describe('Files (e2e)', () => {
   it('serves the uploaded file via the signed url, without any auth header', async () => {
     const res = await request(app.getHttpServer()).get(uploadedUrl).expect(200);
     expect((res.body as Buffer).equals(PNG)).toBe(true);
+  });
+
+  it('serves files inline and embeddable (no X-Frame-Options), so the in-app viewer can frame them from another origin', async () => {
+    const res = await request(app.getHttpServer()).get(uploadedUrl).expect(200);
+    expect(res.headers['x-frame-options']).toBeUndefined();
+    expect(res.headers['content-disposition']).toMatch(/^inline;/);
+    expect(res.headers['cross-origin-resource-policy']).toBe('cross-origin');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
   });
 
   it('404s on a tampered token', async () => {
