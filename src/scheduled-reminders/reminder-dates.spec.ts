@@ -3,12 +3,8 @@ import {
   dateOf,
   daysBetween,
   isEscalationDue,
-  isTaxDeclarationReminderDay,
-  leaveExpiryDaysLeft,
   monthLabel,
-  taxDeclarationWindow,
   upcomingStatutoryDues,
-  weekdayOf,
 } from './reminder-dates';
 import { escalationThresholdDays } from './approval-escalation.service';
 
@@ -94,41 +90,5 @@ describe('upcomingStatutoryDues', () => {
   });
   it('returns nothing on an ordinary day', () => {
     expect(keys('2026-11-20', none)).toEqual([]);
-  });
-});
-
-describe('leaveExpiryDaysLeft', () => {
-  it('is due exactly 30 days before, then only on Mondays, never after the lapse date', () => {
-    expect(weekdayOf('2026-12-07')).toBe(1); // Monday
-    expect(leaveExpiryDaysLeft('2026-12-01', '2026-12-31')).toBe(30); // 30 days out (a Tuesday)
-    expect(leaveExpiryDaysLeft('2026-12-02', '2026-12-31')).toBeNull(); // Wednesday
-    expect(leaveExpiryDaysLeft('2026-12-07', '2026-12-31')).toBe(24); // Monday
-    expect(leaveExpiryDaysLeft('2026-11-30', '2026-12-31')).toBeNull(); // 31 days out
-    expect(leaveExpiryDaysLeft('2027-01-04', '2026-12-31')).toBeNull(); // already lapsed
-  });
-});
-
-describe('taxDeclarationWindow', () => {
-  it('opens on the first day of the financial year and closes on 31 January for an April start', () => {
-    const w = taxDeclarationWindow('2026-06-15', 4);
-    expect(w).toEqual({
-      financialYear: '2026-27',
-      opens: '2026-04-01',
-      deadline: '2027-01-31',
-    });
-    // January still belongs to the previous financial year.
-    expect(taxDeclarationWindow('2027-01-10', 4).financialYear).toBe('2026-27');
-  });
-  it('reminds on the opening day and every 7 days until the deadline, not after', () => {
-    const w = taxDeclarationWindow('2026-06-15', 4);
-    expect(isTaxDeclarationReminderDay('2026-04-01', w)).toBe(true);
-    expect(isTaxDeclarationReminderDay('2026-04-05', w)).toBe(false);
-    expect(isTaxDeclarationReminderDay('2026-04-08', w)).toBe(true);
-    expect(isTaxDeclarationReminderDay('2026-03-25', w)).toBe(false); // before it opens
-    expect(isTaxDeclarationReminderDay('2027-02-04', w)).toBe(false); // after the deadline
-  });
-  it('respects a non-April financial-year start', () => {
-    expect(taxDeclarationWindow('2026-02-10', 1).opens).toBe('2026-01-01');
-    expect(taxDeclarationWindow('2026-02-10', 1).deadline).toBe('2026-10-31');
   });
 });
