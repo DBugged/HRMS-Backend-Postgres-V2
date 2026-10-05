@@ -309,7 +309,12 @@ export class LeaveTypesService {
     return this.findByIdOrThrow(id, organizationId);
   }
 
-  async update(id: string, dto: UpdateLeaveTypeDto, organizationId: string) {
+  async update(
+    id: string,
+    dto: UpdateLeaveTypeDto,
+    organizationId: string,
+    actorId?: string,
+  ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
     // A built-in's name/code is what other modules key off of (see
@@ -364,6 +369,7 @@ export class LeaveTypesService {
       (dto.accrualFrequency !== undefined &&
         dto.accrualFrequency !== existing.accrualFrequency);
 
+    let rowsReconciled = 0;
     await this.scopedPrisma.$transaction(async (tx) => {
       await tx.leaveType.updateMany({
         where: { id, organizationId },
@@ -457,16 +463,68 @@ export class LeaveTypesService {
         const updated = await tx.leaveType.findFirstOrThrow({
           where: { id, organizationId },
         });
-        await this.leaveBalanceService.reconcileUpfrontCredit(
-          tx,
-          existing,
-          updated,
-          organizationId,
-        );
+        const reconciled =
+          await this.leaveBalanceService.reconcileUpfrontCredit(
+            tx,
+            existing,
+            updated,
+            organizationId,
+          );
+        rowsReconciled = reconciled.rowsUpdated;
       }
     });
 
-    return this.findByIdOrThrow(id, organizationId);
+    const updated = await this.findByIdOrThrow(id, organizationId);
+    await this.auditPolicyChange(
+      existing,
+      updated,
+      rowsReconciled,
+      actorId,
+      organizationId,
+    );
+    return updated;
+  }
+
+  // There are no effective dates on a leave type, so a policy edit applies from the moment it is saved: upfront types
+  // have this year's balances recalculated to the new rule (reconcileUpfrontCredit), while a per-cycle type keeps what
+  // earlier cycles already credited and uses the new rule from the next cycle. Either way the before/after of every
+  // rule that drives balances is recorded here, with how many balances were recalculated, so a changed balance can be
+  // traced back to the edit that caused it.
+  private async auditPolicyChange(
+    before: LeaveType,
+    after: LeaveType,
+    rowsReconciled: number,
+    actorId: string | undefined,
+    organizationId: string,
+  ) {
+    if (!actorId) return;
+    const fields = [
+      'allocationType',
+      'annualQuota',
+      'accrualFrequency',
+      'accrualAmountPerCycle',
+      'prorateOnJoining',
+      'minServiceMonths',
+      'maxServiceMonths',
+      'carryForward',
+      'negativeBalance',
+      'encashment',
+    ] as const;
+    const changes: Record<string, { from: unknown; to: unknown }> = {};
+    for (const f of fields) {
+      if (JSON.stringify(before[f]) !== JSON.stringify(after[f])) {
+        changes[f] = { from: before[f], to: after[f] };
+      }
+    }
+    if (Object.keys(changes).length === 0) return;
+    await this.auditLogService.log({
+      actorId,
+      action: 'LEAVE_TYPE_POLICY_CHANGED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: after.id,
+      details: { leaveType: after.code, changes, rowsReconciled },
+    });
   }
 
   async remove(id: string, organizationId: string) {

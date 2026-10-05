@@ -684,4 +684,104 @@ describe('Leave accrual engine (e2e)', () => {
       expect(results.filter((r) => r.status === 201)).toHaveLength(1);
     });
   });
+
+  describe("editing a leave type's policy", () => {
+    const edit = (id: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .put(`/leave-types/${id}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(body);
+    const policyEntries = (id: string) =>
+      prisma.auditLog.findMany({
+        where: {
+          organizationId,
+          action: 'LEAVE_TYPE_POLICY_CHANGED',
+          targetId: id,
+        },
+        orderBy: { createdAt: 'asc' },
+      });
+
+    it('records what changed and how many balances were recalculated, for an upfront type', async () => {
+      const t = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Policy Up',
+          code: 'POLU',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 6,
+          accrualFrequency: 'YEARLY',
+        })
+        .expect(201);
+      const typeId = (t.body as { id: string }).id;
+      await prisma.leaveBalance.create({
+        data: {
+          organizationId,
+          employeeId: adminId,
+          leaveTypeId: typeId,
+          year,
+          opening: 0,
+          credited: 6,
+          closing: 6,
+        },
+      });
+
+      await edit(typeId, { annualQuota: 12 }).expect(200);
+      const entries = await policyEntries(typeId);
+      expect(entries).toHaveLength(1);
+      const details = entries[0].details as {
+        changes: Record<string, { from: unknown; to: unknown }>;
+        rowsReconciled: number;
+      };
+      expect(details.changes.annualQuota).toEqual({ from: 6, to: 12 });
+      expect(details.rowsReconciled).toBe(1);
+      expect(
+        (
+          await prisma.leaveBalance.findFirstOrThrow({
+            where: { leaveTypeId: typeId, employeeId: adminId, year },
+          })
+        ).credited,
+      ).toBe(12);
+    });
+
+    it('an edit that changes no balance rule writes no policy entry', async () => {
+      const t = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Policy Cosmetic',
+          code: 'POLC',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 6,
+          accrualFrequency: 'YEARLY',
+        })
+        .expect(201);
+      const typeId = (t.body as { id: string }).id;
+      await edit(typeId, { color: '#112233', description: 'renamed' }).expect(
+        200,
+      );
+      expect(await policyEntries(typeId)).toHaveLength(0);
+    });
+
+    it('a mid-year raise on a per-cycle type does not rewrite credited cycles; Check balances then shows the gap', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(1.5 * currentQuarter, currentPeriod); // fully up to date at 1.5 a quarter
+      await edit(leaveTypeId, { annualQuota: 8 }).expect(200); // 2 a quarter from now on
+      expect((await row()).credited).toBe(1.5 * currentQuarter); // earlier cycles keep the amount they were credited at
+      const check = await request(app.getHttpServer())
+        .get(`/leave-types/${leaveTypeId}/accrual-check`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const adminRow = (
+        check.body as {
+          rows: { employeeId: string; status: string; difference: number }[];
+        }
+      ).rows.find((r) => r.employeeId === adminId);
+      expect(adminRow).toMatchObject({
+        status: 'SHORT',
+        difference: 2 * currentQuarter - 1.5 * currentQuarter,
+      });
+      await edit(leaveTypeId, { annualQuota: 6 }).expect(200); // restore for the tests that follow
+    });
+  });
 });

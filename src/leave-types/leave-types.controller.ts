@@ -97,7 +97,12 @@ export class LeaveTypesController {
     @Body() dto: UpdateLeaveTypeDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.leaveTypesService.update(id, dto, caller.organizationId);
+    return this.leaveTypesService.update(
+      id,
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
   }
 
   @Delete(':id')
