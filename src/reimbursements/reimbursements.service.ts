@@ -2,6 +2,7 @@
 // Responsibilities: Owns receipt-URL signing (withSignedReceipt, same relativeKey pattern as
 // DocumentsService.withSignedUrl) on every read, and department-scoped review authorization via
 // assertManagerDeptScope.
+import * as path from 'path';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -62,14 +63,19 @@ export class ReimbursementsService {
 
   // receiptUrl is stored as the relativeKey from POST /files/upload/documents
   // — never servable as-is, so every read signs it fresh, same pattern as
-  // DocumentsService.withSignedUrl.
-  private withSignedReceipt<T extends Reimbursement>(claim: T): T {
+  // DocumentsService.withSignedUrl. The signed /files/<token> URL carries no extension, so receiptFileName (the
+  // stored file's own name, e.g. "EMP-001-documents-1a2b3c4d.pdf") is returned beside it: clients need it to tell an
+  // image from a PDF, and to name a downloaded copy so the device opens it with the right viewer.
+  private withSignedReceipt<T extends Reimbursement>(
+    claim: T,
+  ): T & { receiptFileName?: string } {
     if (!claim.receiptUrl || EXTERNAL_URL_RE.test(claim.receiptUrl)) {
       return claim;
     }
     return {
       ...claim,
       receiptUrl: `/files/${signFileToken(claim.organizationId, claim.receiptUrl)}`,
+      receiptFileName: path.basename(claim.receiptUrl),
     };
   }
 

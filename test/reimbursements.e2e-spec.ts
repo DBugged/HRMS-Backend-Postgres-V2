@@ -243,6 +243,10 @@ describe('Reimbursements (e2e)', () => {
     const body = created.body as ReimbursementBody;
     expect(body.receiptUrl).toMatch(/^\/files\//);
     expect(body.receiptUrl).not.toBe('documents/some-org/receipt.pdf');
+    // The token URL has no extension, so the file's own name comes back too (clients use it to pick a viewer).
+    expect((body as { receiptFileName?: string }).receiptFileName).toBe(
+      'receipt.pdf',
+    );
 
     const list = await request(app.getHttpServer())
       .get('/reimbursements')
