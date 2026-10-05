@@ -3,6 +3,8 @@ import {
   contentMatchesDeclaredType,
   describeAllowedTypes,
   hasAllowedExtension,
+  INLINE_SAFE_EXTENSIONS,
+  inlineContentType,
   matchesJpegOrPng,
   sniffKind,
   sniffRasterFormat,
@@ -118,5 +120,21 @@ describe('branding is JPEG and PNG only', () => {
     expect(describeAllowedTypes('selfies', ['image/'])).toContain(
       'image files',
     );
+  });
+  it('derives the inline Content-Type from the extension, case-insensitively', () => {
+    expect(inlineContentType('.pdf')).toBe('application/pdf');
+    expect(inlineContentType('.PDF')).toBe('application/pdf');
+    expect(inlineContentType('.jpg')).toBe('image/jpeg');
+    expect(inlineContentType('.mp4')).toBe('video/mp4');
+  });
+  it('has no inline Content-Type for types that must download', () => {
+    expect(inlineContentType('.html')).toBeUndefined();
+    expect(inlineContentType('.svg')).toBeUndefined();
+    expect(inlineContentType('')).toBeUndefined();
+  });
+  it('covers every inline-safe extension', () => {
+    for (const ext of INLINE_SAFE_EXTENSIONS) {
+      expect(inlineContentType(ext)).toBeDefined();
+    }
   });
 });

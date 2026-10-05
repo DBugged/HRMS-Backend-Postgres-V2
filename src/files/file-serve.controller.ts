@@ -11,7 +11,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { UPLOAD_ROOT, fileStorageDriver } from './file-storage.config';
 import { getS3Bucket, getS3Client } from './s3-client';
 import { isKeyAllowedForOrg, verifyFileToken } from './file-token';
-import { INLINE_SAFE_EXTENSIONS } from './file-signature';
+import { INLINE_SAFE_EXTENSIONS, inlineContentType } from './file-signature';
 
 // Deliberately NOT behind the JwtAuthGuard — an <img src>, a
 // <link rel="icon">, or an embedded PDF viewer's <iframe> can't attach a
@@ -78,6 +78,10 @@ export class FileServeController {
       path.extname(filePath).toLowerCase(),
     );
     if (!inlineSafe) res.setHeader('Content-Type', 'application/octet-stream');
+    else {
+      const inlineType = inlineContentType(path.extname(filePath));
+      if (inlineType) res.setHeader('Content-Type', inlineType);
+    }
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
@@ -96,7 +100,12 @@ export class FileServeController {
       const inlineSafe = INLINE_SAFE_EXTENSIONS.has(
         path.extname(relativeKey).toLowerCase(),
       );
-      if (inlineSafe && object.ContentType) {
+      // Inline types come from the extension, not the stored ContentType: that is the client-declared MIME, and a
+      // PDF stored as application/octet-stream would otherwise render blank under nosniff.
+      const inlineType = inlineContentType(path.extname(relativeKey));
+      if (inlineSafe && inlineType) {
+        res.setHeader('Content-Type', inlineType);
+      } else if (inlineSafe && object.ContentType) {
         res.setHeader('Content-Type', object.ContentType);
       } else if (!inlineSafe) {
         res.setHeader('Content-Type', 'application/octet-stream');

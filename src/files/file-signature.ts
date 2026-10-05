@@ -64,6 +64,32 @@ export const INLINE_SAFE_EXTENSIONS = new Set([
   ...VIDEO_EXTENSIONS,
 ]);
 
+// Content-Type to serve for each inline-safe extension. The type recorded at upload is whatever the client declared
+// (a PDF dragged in from some browsers/OSes arrives as application/octet-stream), and with nosniff on, a wrong type
+// makes the browser refuse to render the file inline — a blank preview. The extension is validated at upload, so it
+// is the trustworthy source.
+const INLINE_CONTENT_TYPES: Record<string, string> = {
+  '.pdf': 'application/pdf',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.heic': 'image/heic',
+  '.heif': 'image/heif',
+  '.avif': 'image/avif',
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.m4v': 'video/x-m4v',
+  '.webm': 'video/webm',
+};
+
+/** Content-Type for an inline-safe stored file, derived from its extension; undefined when not inline-safe. */
+export function inlineContentType(extension: string): string | undefined {
+  return INLINE_CONTENT_TYPES[extension.toLowerCase()];
+}
+
 export function hasAllowedExtension(
   category: string,
   originalName: string,
