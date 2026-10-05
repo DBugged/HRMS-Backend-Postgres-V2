@@ -125,6 +125,18 @@ const SUPPLIED: Record<string, string[]> = {
     'requestList',
     'reviewUrl',
   ],
+  LEAVE_EXPIRY_REMINDER: ['leaveSummary', 'daysLeft', 'reviewUrl'],
+  MISSING_DOCUMENTS_REMINDER: ['missingCount', 'missingDocuments', 'reviewUrl'],
+  MISSING_DOCUMENTS_SUMMARY: ['employeeCount', 'reviewUrl'],
+  TAX_DECLARATION_REMINDER: ['financialYear', 'deadline', 'reviewUrl'],
+  EXIT_HANDOVER_REMINDER: ['lastWorkingDay', 'when', 'tasks', 'reviewUrl'],
+  EXIT_CLEARANCE_REMINDER: [
+    'subjectName',
+    'lastWorkingDay',
+    'when',
+    'openItems',
+    'reviewUrl',
+  ],
 };
 
 describe('email layout', () => {

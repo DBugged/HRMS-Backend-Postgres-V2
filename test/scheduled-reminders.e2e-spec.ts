@@ -12,6 +12,10 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/notifications/email.service';
 import { EmailTemplatesService } from '../src/email-templates/email-templates.service';
+import { LeaveExpiryReminderService } from '../src/scheduled-reminders/leave-expiry-reminder.service';
+import { MissingDocumentsReminderService } from '../src/scheduled-reminders/missing-documents-reminder.service';
+import { TaxDeclarationReminderService } from '../src/scheduled-reminders/tax-declaration-reminder.service';
+import { ExitClearanceReminderService } from '../src/scheduled-reminders/exit-clearance-reminder.service';
 import { ProbationReminderService } from '../src/scheduled-reminders/probation-reminder.service';
 import { PayrollCutoffReminderService } from '../src/scheduled-reminders/payroll-cutoff-reminder.service';
 import { StatutoryDueReminderService } from '../src/scheduled-reminders/statutory-due-reminder.service';
@@ -307,5 +311,160 @@ describe('Scheduled reminders (e2e)', () => {
         n.title.includes('16-11-2026'),
       ),
     ).toBe(true);
+  });
+
+  it('leave expiry: warns about year-end lapse 30 days out, then on Mondays, honouring carry-forward limits', async () => {
+    const service = app.get(LeaveExpiryReminderService);
+    const leaveType = await prisma.leaveType.findFirstOrThrow({
+      where: {
+        organizationId,
+        isActive: true,
+        code: { not: 'COMPOFF' },
+        allocationType: { notIn: ['NONE', 'UNLIMITED'] },
+      },
+    });
+    await prisma.leaveType.update({
+      where: { id: leaveType.id },
+      data: { carryForward: { allowed: true, maxDays: 2, expiryMonths: null } },
+    });
+    await prisma.leaveBalance.create({
+      data: {
+        organizationId,
+        employeeId: empId,
+        leaveTypeId: leaveType.id,
+        year: 2026,
+        credited: 8,
+        closing: 8,
+      },
+    });
+    expect(await service.remindForOrg(organizationId, '2026-11-30')).toBe(0); // 31 days out
+    expect(await service.remindForOrg(organizationId, '2026-12-02')).toBe(0); // Wednesday
+    expect(await service.remindForOrg(organizationId, '2026-12-01')).toBe(1); // 30 days out
+    const html = sendSpy.mock.calls[0][0].html;
+    expect(html).toContain('6 day(s) lapse'); // 8 balance - 2 carry-forward max
+    expect(await service.remindForOrg(organizationId, '2026-12-01')).toBe(0); // deduped
+    expect(await service.remindForOrg(organizationId, '2026-12-07')).toBe(1); // next Monday
+
+    // Carry-forward off org-wide: the whole balance lapses.
+    sendSpy.mockClear();
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { policies: { allowCarryForward: false } },
+    });
+    expect(await service.remindForOrg(organizationId, '2026-12-14')).toBe(1);
+    expect(sendSpy.mock.calls[0][0].html).toContain('8 day(s) lapse');
+  });
+
+  it('missing documents: reminds each employee missing a mandatory document and summarises for HR, weekly', async () => {
+    const service = app.get(MissingDocumentsReminderService);
+    // Nothing mandatory yet (the seeded requirements are optional).
+    await prisma.documentRequirement.updateMany({
+      where: { organizationId },
+      data: { isMandatory: false },
+    });
+    expect(await service.remindForOrg(organizationId, '2026-11-02')).toBe(0);
+
+    // Seeded as optional by default; the org makes it mandatory.
+    await prisma.documentRequirement.updateMany({
+      where: { organizationId, name: 'PAN Card' },
+      data: { isMandatory: true },
+    });
+    await prisma.employeeDocument.create({
+      data: {
+        organizationId,
+        employeeId: managerId,
+        docType: 'PAN Card',
+        fileName: 'pan.pdf',
+        fileUrl: 'x/pan.pdf',
+        status: 'APPROVED',
+      },
+    });
+    await prisma.employeeDocument.create({
+      data: {
+        organizationId,
+        employeeId: hrId,
+        docType: 'PAN Card',
+        fileName: 'pan.pdf',
+        fileUrl: 'x/pan.pdf',
+        status: 'REJECTED', // a rejected upload counts as missing
+      },
+    });
+    sendSpy.mockClear();
+    // Missing: admin, HR (rejected), employee = 3 reminders; summary to HR + admin = 2.
+    expect(await service.remindForOrg(organizationId, '2026-11-02')).toBe(5);
+    expect(sentTo().filter((t) => t === 'rem-manager@example.test')).toEqual(
+      [],
+    );
+    expect(await service.remindForOrg(organizationId, '2026-11-02')).toBe(0);
+    expect(await service.remindForOrg(organizationId, '2026-11-09')).toBe(5); // the following week
+  });
+
+  it('tax declaration: reminds on the opening day and weekly, skips submitted employees and orgs that switched it off', async () => {
+    const service = app.get(TaxDeclarationReminderService);
+    await prisma.employeeTaxDeclaration.create({
+      data: {
+        organizationId,
+        employeeId: managerId,
+        financialYear: '2026-27',
+        status: 'SUBMITTED',
+      },
+    });
+    sendSpy.mockClear();
+    expect(await service.remindForOrg(organizationId, '2026-04-01')).toBe(3); // all but the manager
+    expect(sentTo()).not.toContain('rem-manager@example.test');
+    expect(await service.remindForOrg(organizationId, '2026-04-05')).toBe(0); // not a reminder day
+    expect(await service.remindForOrg(organizationId, '2026-04-08')).toBe(3); // a week later
+    expect(await service.remindForOrg(organizationId, '2027-02-04')).toBe(0); // after the deadline
+
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { attendancePayrollPrefs: { enableTaxDeclaration: false } },
+    });
+    expect(await service.remindForOrg(organizationId, '2026-04-15')).toBe(0);
+  });
+
+  it('exit clearance: the leaver, their manager and HR/Admin are reminded at each milestone, only for an open case', async () => {
+    const service = app.get(ExitClearanceReminderService);
+    await prisma.employeeAsset.create({
+      data: {
+        organizationId,
+        employeeId: empId,
+        assetType: 'Laptop',
+        assetName: 'Dell Latitude',
+        allocatedDate: '2025-01-01',
+        allocatedById: adminId,
+      },
+    });
+    const offboarding = await prisma.offboardingCase.create({
+      data: {
+        organizationId,
+        employeeId: empId,
+        initiatedById: adminId,
+        lastWorkingDay: '2026-12-10',
+      },
+    });
+    sendSpy.mockClear();
+    expect(await service.remindForOrg(organizationId, '2026-12-02')).toBe(0); // 8 days: not a milestone
+    // 7 days: the leaver + manager + HR + admin.
+    expect(await service.remindForOrg(organizationId, '2026-12-03')).toBe(4);
+    expect(sentTo()).toEqual(
+      [
+        'rem-admin@example.test',
+        'rem-emp@example.test',
+        'rem-hr@example.test',
+        'rem-manager@example.test',
+      ].sort(),
+    );
+    const clearance = sendSpy.mock.calls
+      .map((c) => c[0])
+      .find((m) => m.to === 'rem-hr@example.test');
+    expect(clearance?.html).toContain('Dell Latitude');
+    expect(await service.remindForOrg(organizationId, '2026-12-03')).toBe(0); // deduped
+
+    await prisma.offboardingCase.update({
+      where: { id: offboarding.id },
+      data: { status: 'COMPLETED' },
+    });
+    expect(await service.remindForOrg(organizationId, '2026-12-07')).toBe(0); // completed: nothing
   });
 });

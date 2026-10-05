@@ -187,3 +187,59 @@ export function upcomingStatutoryDues(
   }
   return result.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 }
+
+/** Exit-clearance reminders go out this many days before the last working day (0 = the day itself). */
+export const EXIT_REMINDER_DAYS: readonly number[] = [14, 7, 3, 1, 0];
+
+/** Leave-expiry warnings start this many days before the date balances lapse. */
+export const LEAVE_EXPIRY_LEAD_DAYS = 30;
+
+/** Day of week (0 = Sunday) of a YYYY-MM-DD date. */
+export function weekdayOf(date: string): number {
+  return new Date(parse(date)).getUTCDay();
+}
+
+/**
+ * Whether a leave-lapse warning should go out today for a balance that lapses on `lapseDate`: exactly 30 days
+ * before, and then weekly (every Monday) until the day it lapses. Returns the days left, or null when not due.
+ */
+export function leaveExpiryDaysLeft(
+  today: string,
+  lapseDate: string,
+): number | null {
+  const daysLeft = daysBetween(today, lapseDate);
+  if (daysLeft < 0 || daysLeft > LEAVE_EXPIRY_LEAD_DAYS) return null;
+  if (daysLeft === LEAVE_EXPIRY_LEAD_DAYS) return daysLeft;
+  return weekdayOf(today) === 1 ? daysLeft : null;
+}
+
+export interface TaxDeclarationWindow {
+  financialYear: string; // e.g. "2026-27"
+  opens: string;
+  deadline: string;
+}
+
+// Tax declarations are asked for at the start of the financial year and are due before year-end payroll needs the
+// proofs: the window opens on the first day of the financial year and closes on the last day of the month that is
+// three months before the year ends (31 January for an April start).
+export function taxDeclarationWindow(
+  today: string,
+  financialYearStartMonth: number,
+): TaxDeclarationWindow {
+  const [year, month] = today.split('-').map(Number);
+  const startYear = month >= financialYearStartMonth ? year : year - 1;
+  return {
+    financialYear: `${startYear}-${String((startYear + 1) % 100).padStart(2, '0')}`,
+    opens: dateOf(startYear, financialYearStartMonth, 1),
+    deadline: dateOf(startYear, financialYearStartMonth + 9, 31),
+  };
+}
+
+/** On the opening day, then every 7 days until the deadline (inclusive). */
+export function isTaxDeclarationReminderDay(
+  today: string,
+  window: TaxDeclarationWindow,
+): boolean {
+  if (today < window.opens || today > window.deadline) return false;
+  return daysBetween(window.opens, today) % 7 === 0;
+}

@@ -96,11 +96,12 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
         storage: redisEnabled() ? storage : undefined,
       }),
     }),
-    // Enables @Cron() handlers app-wide — currently 14 jobs: HrEventsService's
+    // Enables @Cron() handlers app-wide — currently 18 jobs: HrEventsService's
     // daily birthday/work-anniversary email job, AttendanceService's daily
     // job, LeaveTypesService's two daily jobs, ApprovalsDigestService's
-    // weekday job, and the five scheduled-reminders jobs (probation, payroll
-    // cut-off, statutory due dates, missed punch-out, approval escalation).
+    // weekday job, and the nine scheduled-reminders jobs (probation, payroll
+    // cut-off, statutory due dates, missed punch-out, approval escalation,
+    // leave expiry, missing documents, tax declaration, exit clearance).
     ScheduleModule.forRoot(),
     PrismaModule,
     RedisCacheModule,
