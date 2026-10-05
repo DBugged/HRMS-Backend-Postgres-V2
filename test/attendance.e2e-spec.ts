@@ -593,12 +593,20 @@ describe('Attendance (e2e)', () => {
       const first = await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .send({
+          latitude: OFFICE_LAT,
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
       const second = await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .send({
+          latitude: OFFICE_LAT,
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
       expect((second.body as PunchIngestBody).punch.id).toBe(
         (first.body as PunchIngestBody).punch.id,
@@ -780,7 +788,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(403);
     });
 
@@ -788,7 +800,11 @@ describe('Attendance (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .send({
+          latitude: OFFICE_LAT,
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
       expect(
         (res.body as { punchCount: number }).punchCount,
@@ -799,7 +815,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
     });
 
@@ -813,7 +833,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(403);
 
       // A different employee with no location flag set at all is
@@ -821,7 +845,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ latitude: OFFICE_LAT, longitude: OFFICE_LNG })
+        .send({
+          latitude: OFFICE_LAT,
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
 
       await request(app.getHttpServer())
@@ -833,7 +861,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
     });
 
@@ -986,7 +1018,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(403);
     });
 
@@ -1056,7 +1092,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(201);
     });
 
@@ -1075,7 +1115,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
-        .send({ latitude: FAR_LAT, longitude: FAR_LNG })
+        .send({
+          latitude: FAR_LAT,
+          longitude: FAR_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+        })
         .expect(403);
     });
 
@@ -2216,7 +2260,11 @@ describe('Attendance (e2e)', () => {
       // right at shift end — exercising recalculateAttendanceForDay again,
       // same as a regularization approval would.
       await prisma.punch.updateMany({
-        where: { employeeId, organizationId, punchTime: new Date(`${date}T19:15:00.000Z`) },
+        where: {
+          employeeId,
+          organizationId,
+          punchTime: new Date(`${date}T19:15:00.000Z`),
+        },
         data: { punchTime: new Date(`${date}T18:30:00.000Z`) },
       });
       await attendanceService.recalculateAttendanceForDay(
@@ -2321,7 +2369,10 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employeeId: remEmployeeId, punchTime: new Date(now.getTime() - 60 * 60000).toISOString() })
+        .send({
+          employeeId: remEmployeeId,
+          punchTime: new Date(now.getTime() - 60 * 60000).toISOString(),
+        })
         .expect(201);
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')

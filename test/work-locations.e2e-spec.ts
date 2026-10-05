@@ -117,13 +117,24 @@ describe('Work Locations (e2e)', () => {
       .post('/work-locations')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
+        name: 'Mum',
+        state: 'Maharashtra',
+        latitude: 19.07,
+        longitude: 72.87,
+      })
+      .expect(201);
+    expect((ok.body as { state: string }).state).toBe('Maharashtra');
+    // A real Indian state, but the product is Maharashtra-only for now.
+    await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
         name: 'Blr',
         state: 'Karnataka',
         latitude: 12.97,
         longitude: 77.59,
       })
-      .expect(201);
-    expect((ok.body as { state: string }).state).toBe('Karnataka');
+      .expect(400);
     expect(
       (
         await request(app.getHttpServer())

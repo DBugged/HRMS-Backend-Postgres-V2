@@ -66,17 +66,24 @@ describe('Per-employee work location + personalData encryption (e2e)', () => {
       .send({ email: 'wl-e2e-admin@example.test', password: PASSWORD });
     adminToken = (login.body as AuthBody).accessToken;
 
-    const mk = async (name: string, state: string) =>
-      (
+    // The API only accepts the supported state (Maharashtra); a second state is written straight to
+    // the DB to simulate existing multi-state data, which the override logic must still handle.
+    const mk = async (name: string, state: string) => {
+      const id = (
         (
           await admin(http().post('/work-locations')).send({
             name,
-            state,
+            state: 'Maharashtra',
             latitude: 19.07,
             longitude: 72.87,
           })
         ).body as { id: string }
       ).id;
+      if (state !== 'Maharashtra') {
+        await prisma.workLocation.update({ where: { id }, data: { state } });
+      }
+      return id;
+    };
     deptLocId = await mk('Dept HQ', 'Maharashtra');
     ownLocId = await mk('Remote Hub', 'Karnataka');
 

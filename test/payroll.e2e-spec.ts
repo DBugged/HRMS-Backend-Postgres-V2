@@ -1883,10 +1883,13 @@ describe('Payroll (e2e)', () => {
         },
       });
       const april = await calculateOne(otEmpId, 4);
-      // ROUND(OT_WEIGHTED_HOURS * BASIC / 200) = 80 weighted hours × 500 — it was 40 × 500 before.
-      expect(amountOf(april.earnings, 'OVERTIME_PAY')).toBe(40000);
-      // This month's 180,000 once + 11 months of the regular 140,000 (not 180,000 × 12).
-      expect(april.taxDetails?.grossAnnualIncome).toBe(180000 + 140000 * 11);
+      // ROUND(OT_WEIGHTED_HOURS * BASIC / 208) = 80 weighted hours × (100,000 / 208) — the default OT divisor is
+      // now 208 (26 days × 8h) on Basic; it was 40 hours at the same rate before the 2x weighting.
+      expect(amountOf(april.earnings, 'OVERTIME_PAY')).toBe(38462);
+      // This month's 140,000 + 38,462 overtime once + 11 months of the regular 140,000 (not the OT-inflated month × 12).
+      expect(april.taxDetails?.grossAnnualIncome).toBe(
+        140000 + 38462 + 140000 * 11,
+      );
     });
 
     // P13 — PF used the unrounded prorated Basic, so it could be ₹1 off 12% of the Basic on the payslip.

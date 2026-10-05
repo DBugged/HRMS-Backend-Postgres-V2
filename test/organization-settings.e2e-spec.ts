@@ -168,6 +168,11 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       timeFormat: '24',
       enableTaxDeclaration: true,
       autoCarryForwardEnabled: false,
+      // Org-wide leave/attendance switches exposed to every role so the apps can hide what is turned off.
+      allowCarryForward: true,
+      allowLeaveEncashment: true,
+      allowNegativeLeaveBalance: true,
+      requireSelfieForPunch: true,
       // Needed client-side wherever a user enters a wall-clock time that
       // must be converted to UTC before being sent to an endpoint that
       // stores/interprets timestamps as UTC (e.g. attendance Excel import)
@@ -401,28 +406,25 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     },
   );
 
-  it('writing policies.timezone keeps Organization.timezone in sync', async () => {
+  it('writing policies.timezone keeps Organization.timezone in sync; only India time is accepted', async () => {
+    // The product is India-only, so any other timezone is rejected and nothing is written.
     await request(app.getHttpServer())
       .patch('/organizations/settings/policies')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ policies: { timezone: 'Asia/Dubai' } })
-      .expect(200);
-    let org = await prisma.organization.findFirstOrThrow({
-      where: { id: organizationId },
-    });
-    expect(org.timezone).toBe('Asia/Dubai');
-    expect((org.policies as Record<string, unknown>).timezone).toBe(
-      'Asia/Dubai',
-    );
+      .expect(400);
     await request(app.getHttpServer())
       .patch('/organizations/settings/policies')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ policies: { timezone: 'Asia/Kolkata' } })
       .expect(200);
-    org = await prisma.organization.findFirstOrThrow({
+    const org = await prisma.organization.findFirstOrThrow({
       where: { id: organizationId },
     });
     expect(org.timezone).toBe('Asia/Kolkata');
+    expect((org.policies as Record<string, unknown>).timezone).toBe(
+      'Asia/Kolkata',
+    );
   });
 
   it.each([
@@ -481,10 +483,10 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
         // Required for complete-setup below (REQUIRED_FOR_COMPLETION).
         corporateAddress: '123 Main St',
         website: 'https://acme.test',
-        city: 'Bengaluru',
-        state: 'Karnataka',
+        city: 'Mumbai',
+        state: 'Maharashtra',
         country: 'India',
-        pincode: '560001',
+        pincode: '400001',
         phone: '+91 98765 43210',
         contactEmail: 'hr@acme.test',
       })

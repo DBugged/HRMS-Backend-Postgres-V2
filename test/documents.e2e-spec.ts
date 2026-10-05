@@ -626,6 +626,7 @@ describe('Documents (e2e)', () => {
           title: 'Acknowledgment Test Policy',
           fileUrl: '00000000-0000-0000-0000-000000000000/documents/ack.pdf',
           fileName: 'ack.pdf',
+          requiresAcknowledgment: true, // not the default
         })
         .expect(201);
       ackPolicyId = (res.body as PolicyBody).id;

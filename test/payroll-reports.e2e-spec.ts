@@ -200,7 +200,18 @@ describe('Payroll Reports (e2e)', () => {
       .query({ financialYear: '2026-27' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
-    expect(res.headers['content-disposition']).toContain('form16_summary.xlsx');
+    // From FY 2026-27 the certificate is Form 130 (Income-tax Act, 2025); earlier years stay Form 16.
+    expect(res.headers['content-disposition']).toContain(
+      'form130_summary.xlsx',
+    );
+    const older = await request(app.getHttpServer())
+      .get('/reports/payroll/form16')
+      .query({ financialYear: '2025-26' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(older.headers['content-disposition']).toContain(
+      'form16_summary.xlsx',
+    );
   });
 
   it('the audit report includes the PAYROLL_CALCULATED action from setup, and no other module', async () => {

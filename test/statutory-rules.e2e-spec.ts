@@ -41,7 +41,7 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
   let prisma: PrismaService;
   let adminToken: string;
   let organizationId: string;
-  let empA: string; // Karnataka department
+  let empA: string; // Maharashtra department
   let empB: string; // no department
 
   const post = (url: string, body: object) =>
@@ -141,11 +141,11 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
       })
     ).organizationId;
 
-    // A Karnataka work location + department for employee A.
+    // A Maharashtra work location + department for employee A.
     const loc = (
       await post('/work-locations', {
-        name: 'Bengaluru',
-        state: 'Karnataka',
+        name: 'Mumbai',
+        state: 'Maharashtra',
         latitude: 12.9,
         longitude: 77.5,
       }).expect(201)
@@ -178,7 +178,7 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
     const esi = { employeeRate: 0.75, employerRate: 3.25 };
     await version('esi', `${YEAR}-01-01`, { ...esi, wageCeiling: 45000 });
     await version('esi', `${YEAR}-11-01`, { ...esi, wageCeiling: 30000 });
-    // PT: default ladder plus a Karnataka-specific one.
+    // PT: default ladder plus a Maharashtra-specific one (Maharashtra is the only supported state).
     await version('pt', `${YEAR}-01-01`, {
       slabs: [
         { upTo: 7500, amount: 0 },
@@ -191,7 +191,7 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
         { upTo: null, amount: 200 },
       ],
       stateRates: [
-        { state: 'Karnataka', slabs: [{ upTo: null, amount: 250 }] },
+        { state: 'Maharashtra', slabs: [{ upTo: null, amount: 250 }] },
       ],
     });
     // Bonus accrual with the Act's defaults.
@@ -249,10 +249,11 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
     expect(oct.emp('EPF_ADMIN_EMPLOYER')).toBe(75);
   });
 
-  it('EDLI is capped at the statutory monthly maximum; employer PF is split into EPS and EPF for the ECR', async () => {
+  it('EDLI is 0.5% of PF wages, capped at 0.5% of the wage ceiling; employer PF is split into EPS and EPF for the ECR', async () => {
     const nov = await run(empA, 11);
-    // 0.5% of the 20,500 PF wages would be 103, but EDLI is capped at 75 a month.
-    expect(nov.emp('EDLI_EMPLOYER')).toBe(75);
+    // 0.5% of the 20,500 PF wages is 103. The cap is 0.5% of this version's 25,000 ceiling (125), so it doesn't bite
+    // here (it was a fixed 75 before the ceiling was raised).
+    expect(nov.emp('EDLI_EMPLOYER')).toBe(103);
     // Employer PF 2,460 = EPS 8.33% of 20,500 (1,708) + EPF (752).
     expect(nov.line('PF_EMPLOYER')?.breakup).toEqual({ eps: 1708, epf: 752 });
   });
@@ -269,7 +270,7 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
     expect(nov.ded('ESI')).toBe(0);
   });
 
-  it('Professional Tax: a Karnataka work location uses the Karnataka ladder, everyone else the default', async () => {
+  it('Professional Tax: a Maharashtra work location uses the Maharashtra ladder, everyone else the default', async () => {
     expect((await run(empA, 12)).ded('PT')).toBe(250);
     expect((await run(empB, 12)).ded('PT')).toBe(200);
   });

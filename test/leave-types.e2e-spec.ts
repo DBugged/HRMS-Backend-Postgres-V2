@@ -307,7 +307,8 @@ describe('Leave Types (e2e)', () => {
         name: 'In-Use Leave',
         code: 'INUSE',
         allocationType: 'EARNED_MONTHLY',
-        accrualAmountPerCycle: 1,
+        annualQuota: 12,
+        accrualFrequency: 'MONTHLY',
       })
       .expect(201);
     const inUseId = (created.body as LeaveTypeBody).id;
@@ -332,7 +333,8 @@ describe('Leave Types (e2e)', () => {
         name: 'Test Monthly Leave',
         code: 'CLT',
         allocationType: 'EARNED_MONTHLY',
-        accrualAmountPerCycle: 1.5,
+        annualQuota: 18,
+        accrualFrequency: 'MONTHLY',
       })
       .expect(201);
     const casualLeaveId = (created.body as LeaveTypeBody).id;
@@ -342,9 +344,8 @@ describe('Leave Types (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(201);
     expect((accrualRes.body as { matched: number }).matched).toBeGreaterThan(0);
-    expect(
-      (accrualRes.body as { totalDaysCredited: number }).totalDaysCredited,
-    ).toBeGreaterThanOrEqual(1.5);
+    // The balance row is created inside this run and already credited for the current cycle at creation
+    // (a new joiner sees their balance immediately), so the run itself has nothing further to add.
 
     const year = new Date().getFullYear();
     const row = await prisma.leaveBalance.findFirst({
@@ -405,13 +406,15 @@ describe('Leave Types (e2e)', () => {
       .send({
         allocationType: 'EARNED_MONTHLY',
         accrualFrequency: 'QUARTERLY',
-        accrualAmountPerCycle: 1.5,
+        annualQuota: 6,
       })
       .expect(200);
     const rebasedRow = await prisma.leaveBalance.findFirst({
       where: { employeeId, leaveTypeId, year },
     });
-    expect(rebasedRow?.credited).toBe(0);
+    // Rebased to the per-cycle amount (one quarter elapsed since joining = 1.5) — never the stale upfront 6.
+    expect(rebasedRow?.credited).not.toBe(6);
+    expect(Number(rebasedRow!.credited) % 1.5).toBe(0);
 
     // totalDaysCredited is summed across every eligible employee in the
     // org (this brand-new type has no department/gender restriction), not
@@ -438,7 +441,8 @@ describe('Leave Types (e2e)', () => {
         name: 'Test Monthly Leave All',
         code: 'CLTA',
         allocationType: 'EARNED_MONTHLY',
-        accrualAmountPerCycle: 2,
+        annualQuota: 24,
+        accrualFrequency: 'MONTHLY',
       })
       .expect(201);
     const monthlyId = (created.body as LeaveTypeBody).id;
@@ -474,7 +478,7 @@ describe('Leave Types (e2e)', () => {
     expect(rowAfterSecondRun?.credited).toBe(2);
   });
 
-  it('run-accrual reports real days credited (0 for a FIXED_ANNUAL type with no accrualAmountPerCycle)', async () => {
+  it('run-accrual on a type granted upfront (Yearly frequency) reports there is nothing to accrue', async () => {
     const created = await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -497,9 +501,9 @@ describe('Leave Types (e2e)', () => {
       employeesProcessed: number;
       totalDaysCredited: number;
     };
-    expect(body.employeesProcessed).toBeGreaterThan(0);
+    expect(body.employeesProcessed).toBe(0);
     expect(body.totalDaysCredited).toBe(0);
-    expect(body.message).toMatch(/No accrual configured/);
+    expect(body.message).toMatch(/granted upfront/);
     expect(body.message).not.toMatch(/^Accrual credited/);
   });
 
@@ -513,7 +517,12 @@ describe('Leave Types (e2e)', () => {
         where: { employeeId, leaveTypeId: qed.id, year },
       });
 
-    // Row already exists from the run-accrual above, credited at quota 10.
+    // The balance row is created on first balance read, with the upfront quota (10) credited.
+    await request(app.getHttpServer())
+      .get('/leaves/balance')
+      .query({ employeeId })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
     expect((await readRow())?.credited).toBe(10);
 
     const put = (annualQuota: number) =>

@@ -305,12 +305,16 @@ describe('Dashboard (e2e)', () => {
       .expect(200);
     const body = res.body as {
       teamSize: number;
-      teamAttendanceToday: { employeeId: string }[];
+      pendingItems: unknown[];
+      leaveTrends: unknown[];
+      teamLeaveBalances: unknown[];
     };
+    // The team is the manager's own department (it includes the e2e employee). The old per-day
+    // teamAttendanceToday list is gone from the response; pending work is surfaced as pendingItems.
     expect(body.teamSize).toBeGreaterThanOrEqual(1);
-    expect(
-      body.teamAttendanceToday.some((r) => r.employeeId === employeeId),
-    ).toBe(true);
+    expect(Array.isArray(body.pendingItems)).toBe(true);
+    expect(Array.isArray(body.leaveTrends)).toBe(true);
+    expect(Array.isArray(body.teamLeaveBalances)).toBe(true);
   });
 
   it("ADMIN (no department) is scoped to other no-department users, same as the old system's where:{department:null} behavior", async () => {
