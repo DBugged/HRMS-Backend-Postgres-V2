@@ -100,6 +100,24 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
   EXIT_COMPLETED:
     'Your exit process is complete and your HRMS access is closed.',
   APPROVALS_DIGEST: '{{totalPending}} request(s) are waiting for your review.',
+  PROBATION_ENDING: "{{subjectName}}'s probation ends in {{daysLeft}} days.",
+  PAYROLL_CUTOFF_REMINDER:
+    'Payroll is processed on {{processingDate}}; {{totalPending}} request(s) are still pending.',
+  STATUTORY_DUE_REMINDER: '{{dueLabel}} is due on {{dueDate}}.',
+  MISSED_PUNCH_OUT: 'No punch-out was recorded for {{date}}.',
+  APPROVAL_ESCALATION:
+    '{{totalPending}} request(s) have waited {{thresholdDays}} days or more for a decision.',
+  LEAVE_EXPIRY_REMINDER: 'Some of your leave balance is about to lapse.',
+  MISSING_DOCUMENTS_REMINDER:
+    '{{missingCount}} required document(s) are still missing from your record.',
+  MISSING_DOCUMENTS_SUMMARY:
+    '{{employeeCount}} employee(s) have not uploaded all mandatory documents.',
+  TAX_DECLARATION_REMINDER:
+    'Submit your FY {{financialYear}} tax declaration by {{deadline}}.',
+  EXIT_HANDOVER_REMINDER:
+    'Your last working day is {{lastWorkingDay}} ({{when}}).',
+  EXIT_CLEARANCE_REMINDER:
+    "{{subjectName}}'s last working day is {{lastWorkingDay}}; clearance is still open.",
 };
 
 // Shared shape for the many "your <thing> was <decision>" emails.
@@ -756,5 +774,266 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     }),
     ccAllActive: false,
     category: 'General',
+  },
+  {
+    // Fires from ProbationReminderService (daily) 15 and 7 days before an employee's probation end date — to the
+    // reporting manager and every active HR/Admin. Empty rows are hidden.
+    occasionKey: 'PROBATION_ENDING',
+    name: 'Probation Ending Soon',
+    subject: 'Probation ending in {{daysLeft}} days: {{employeeName}}',
+    bodyHtml: emailBody({
+      category: 'General',
+      title: 'Probation ending soon',
+      blocks: [
+        hello,
+        paragraph(
+          "{{subjectName}}'s probation ends in {{daysLeft}} days. Please confirm or extend it before the end date.",
+        ),
+        infoCard([
+          row('Employee', '{{subjectName}}'),
+          row('Probation end date', '{{probationEndDate}}'),
+        ]),
+        button('{{reviewUrl}}', 'Review probation'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'General',
+  },
+  {
+    // Fires from PayrollCutoffReminderService (daily) 3 days and 1 day before the payroll processing date — to every
+    // active HR/Admin. A count is '' when zero, which hides its row.
+    occasionKey: 'PAYROLL_CUTOFF_REMINDER',
+    name: 'Payroll Cut-off Reminder',
+    subject:
+      'Payroll processing on {{processingDate}}: {{totalPending}} item(s) still pending',
+    bodyHtml: emailBody({
+      category: 'Payroll & Finance',
+      title: 'Payroll cut-off approaching',
+      blocks: [
+        hello,
+        paragraph(
+          'Payroll for {{payrollMonth}} is processed on {{processingDate}} ({{daysLeft}} day(s) away). These pending requests will affect it if they are not decided first.',
+        ),
+        infoCard(
+          [
+            row('Leave requests', '{{leaveCount}}', '{{leaveCount}}'),
+            row(
+              'Attendance regularizations',
+              '{{regularizationCount}}',
+              '{{regularizationCount}}',
+            ),
+            row('Work From Home requests', '{{wfhCount}}', '{{wfhCount}}'),
+            row('Overtime requests', '{{overtimeCount}}', '{{overtimeCount}}'),
+            row('Loan / advance requests', '{{loanCount}}', '{{loanCount}}'),
+          ],
+          { dividers: false },
+        ),
+        button('{{reviewUrl}}', 'Review requests'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Payroll & Finance',
+  },
+  {
+    // Fires from StatutoryDueReminderService (daily) 5 days and 1 day before a statutory due date — to every
+    // active HR/Admin. Due dates are the standard ones; the message tells HR to verify against their registration.
+    occasionKey: 'STATUTORY_DUE_REMINDER',
+    name: 'Statutory Due Date Reminder',
+    subject: '{{dueLabel}} due on {{dueDate}}',
+    bodyHtml: emailBody({
+      category: 'Payroll & Finance',
+      title: 'Statutory due date approaching',
+      blocks: [
+        hello,
+        paragraph(
+          '{{dueLabel}} is due on {{dueDate}} ({{daysLeft}} day(s) away).',
+        ),
+        infoCard([
+          row('Obligation', '{{dueLabel}}'),
+          row('Due date', '{{dueDate}}'),
+          row('Period', '{{duePeriod}}'),
+        ]),
+        mutedText(
+          'This is the standard due date. Please confirm it for your registration category, as it can differ.',
+        ),
+        button('{{reviewUrl}}', 'Open statutory compliance'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Payroll & Finance',
+  },
+  {
+    // Fires from MissedPunchOutService (daily, morning) for an employee who punched in on the previous day but never
+    // punched out and has no regularization request open.
+    occasionKey: 'MISSED_PUNCH_OUT',
+    name: 'Missed Punch-out',
+    subject: 'You did not punch out on {{date}}',
+    bodyHtml: emailBody({
+      category: 'Attendance',
+      title: 'Missed punch-out',
+      blocks: [
+        greet,
+        paragraph(
+          'We could not find a punch-out for {{date}}. Please request an attendance regularization so your hours are recorded correctly.',
+        ),
+        infoCard([row('Date', '{{date}}'), row('Punched in at', '{{inTime}}')]),
+        button('{{reviewUrl}}', 'Request regularization'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Attendance',
+  },
+  {
+    // Fires from ApprovalEscalationService (daily) when a request has waited N days (and every N days after that) —
+    // to the requester's skip-level manager, or to HR/Admin when there is none.
+    occasionKey: 'APPROVAL_ESCALATION',
+    name: 'Approval Escalation',
+    subject:
+      'Escalation: {{totalPending}} request(s) waiting over {{thresholdDays}} days',
+    bodyHtml: emailBody({
+      category: 'General',
+      title: 'Requests waiting too long',
+      blocks: [
+        hello,
+        paragraph(
+          '{{totalPending}} request(s) have been waiting for a decision for {{thresholdDays}} days or more.',
+        ),
+        infoCard(
+          [
+            row('Oldest waiting', '{{oldestSummary}}'),
+            row('Requests', '{{requestList}}'),
+          ],
+          { dividers: false },
+        ),
+        button('{{reviewUrl}}', 'Review requests'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'General',
+  },
+  {
+    // Fires from LeaveExpiryReminderService (daily check; sends 30 days before a lapse date and then on Mondays) to an
+    // employee whose leave will lapse at year-end or whose carried-forward days are about to expire.
+    occasionKey: 'LEAVE_EXPIRY_REMINDER',
+    name: 'Leave Balance Expiring',
+    subject: 'Some of your leave balance is about to lapse',
+    bodyHtml: emailBody({
+      category: 'Leave & Comp-Off',
+      title: 'Leave balance expiring soon',
+      blocks: [
+        greet,
+        paragraph(
+          'Some of your leave will lapse soon unless you use it. Use it, or check whether it can be carried forward or encashed.',
+        ),
+        infoCard([row('What is lapsing', '{{leaveSummary}}')]),
+        button('{{reviewUrl}}', 'Apply for leave'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Leave & Comp-Off',
+  },
+  {
+    // Fires from MissingDocumentsReminderService (Mondays) to an employee missing mandatory documents.
+    occasionKey: 'MISSING_DOCUMENTS_REMINDER',
+    name: 'Missing Documents Reminder',
+    subject: '{{missingCount}} required document(s) still missing',
+    bodyHtml: emailBody({
+      category: 'Documents',
+      title: 'Documents needed',
+      blocks: [
+        greet,
+        paragraph(
+          'We are still missing {{missingCount}} required document(s) for your employee record. A rejected upload counts as missing until it is replaced.',
+        ),
+        infoCard([row('Please upload', '{{missingDocuments}}')]),
+        button('{{reviewUrl}}', 'Upload documents'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Documents',
+  },
+  {
+    // Fires from MissingDocumentsReminderService (Mondays) to every active HR/Admin when anyone is missing documents.
+    occasionKey: 'MISSING_DOCUMENTS_SUMMARY',
+    name: 'Missing Documents Summary (HR)',
+    subject: '{{employeeCount}} employee(s) have required documents missing',
+    bodyHtml: emailBody({
+      category: 'Documents',
+      title: 'Employees with documents missing',
+      blocks: [
+        hello,
+        paragraph(
+          '{{employeeCount}} employee(s) have not uploaded all mandatory documents. They have each been reminded.',
+        ),
+        button('{{reviewUrl}}', 'Review pending onboarding'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Documents',
+  },
+  {
+    // Fires from TaxDeclarationReminderService on the day the declaration window opens and weekly until the
+    // deadline, to employees who have not submitted a declaration for the current financial year.
+    occasionKey: 'TAX_DECLARATION_REMINDER',
+    name: 'Tax Declaration Reminder',
+    subject: 'Submit your tax declaration for FY {{financialYear}}',
+    bodyHtml: emailBody({
+      category: 'Payroll & Finance',
+      title: 'Tax declaration due',
+      blocks: [
+        greet,
+        paragraph(
+          'Your investment declaration for FY {{financialYear}} is not submitted yet. Submit it by {{deadline}} so your monthly TDS reflects your deductions.',
+        ),
+        infoCard([
+          row('Financial year', '{{financialYear}}'),
+          row('Submit by', '{{deadline}}'),
+        ]),
+        button('{{reviewUrl}}', 'Submit declaration'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Payroll & Finance',
+  },
+  {
+    // Fires from ExitClearanceReminderService to the leaver before their last working day (14, 7, 3, 1 days, and
+    // on the day).
+    occasionKey: 'EXIT_HANDOVER_REMINDER',
+    name: 'Exit Handover Reminder',
+    subject: 'Your last working day is {{lastWorkingDay}}',
+    bodyHtml: emailBody({
+      category: 'Exit',
+      title: 'Before you leave',
+      blocks: [
+        greet,
+        paragraph(
+          'Your last working day is {{lastWorkingDay}} ({{when}}). Please make sure you: {{tasks}}.',
+        ),
+        infoCard([row('Last working day', '{{lastWorkingDay}}')]),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Exit',
+  },
+  {
+    // Fires from ExitClearanceReminderService to the leaver's manager and every active HR/Admin while any clearance
+    // item is still open.
+    occasionKey: 'EXIT_CLEARANCE_REMINDER',
+    name: 'Exit Clearance Reminder',
+    subject: 'Exit clearance open for {{subjectName}}',
+    bodyHtml: emailBody({
+      category: 'Exit',
+      title: 'Exit clearance still open',
+      blocks: [
+        hello,
+        paragraph(
+          "{{subjectName}}'s last working day is {{lastWorkingDay}} ({{when}}). These items are still open:",
+        ),
+        infoCard([row('Open items', '{{openItems}}')]),
+        button('{{reviewUrl}}', 'Open exit process'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Exit',
   },
 ];
