@@ -290,7 +290,7 @@ export class EmployeesService {
       throw err;
     }
 
-    // Welcome email — login URL, employee ID, generated password — sent to
+    // Welcome email — login URL, login email, employee ID (reference only), set-password link — sent to
     // the personal email HR just entered, since the official/company email
     // is normally still unset at this point (see officialEmail's comment on
     // the User model and resendCredentials() below for that path). Sent
@@ -1453,9 +1453,7 @@ function maskFor(actor: Actor, targetId: string): boolean {
   // looking at someone else's row, not just MANAGER, or an employee
   // browsing that list would see every colleague's bank/PAN/Aadhar/address.
   return (
-    actor.role !== Role.ADMIN &&
-    actor.role !== Role.HR &&
-    actor.id !== targetId
+    actor.role !== Role.ADMIN && actor.role !== Role.HR && actor.id !== targetId
   );
 }
 
@@ -1474,11 +1472,11 @@ function welcomeEmailHtml(params: {
   const company = escapeHtml(params.companyName);
   return `
     <p>Hello ${name},</p>
-    <p>Your account on ${company} HRMS is ready. Here are your login details:</p>
+    <p>Your account on ${company} HRMS is ready. Set your password with the link below, then sign in with your login email and that password:</p>
     <p>
+      Login email: <strong>${escapeHtml(params.email)}</strong><br>
       Login URL: <a href="${loginUrl}">${loginUrl}</a><br>
-      Employee ID: <strong>${escapeHtml(params.employeeId)}</strong><br>
-      Email: <strong>${escapeHtml(params.email)}</strong>
+      Employee ID (reference only): <strong>${escapeHtml(params.employeeId)}</strong>
     </p>
     <p><a href="${params.setPasswordUrl}">Set your password</a> (this link works once and expires in 7 days).</p>
   `;

@@ -149,15 +149,17 @@ const CREDENTIALS_BODY = emailBody({
   blocks: [
     hello,
     paragraph(
-      'Your account on {{companyName}} HRMS is ready. Use the button below to set your password.',
+      'Your account on {{companyName}} HRMS is ready. Use the button below to set your password, then sign in with your login email and that password.',
     ),
+    // Sign-in is by email + password only (no Employee ID), so the login email leads and the Employee ID is labelled
+    // as a reference.
     infoCard([
-      row('Employee ID', '{{employeeId}}'),
-      row('Email', '{{email}}'),
+      row('Login email', '{{email}}'),
       row(
         'Login URL',
         '<a href="{{loginUrl}}" style="color:#5546e0;text-decoration:underline;">{{loginUrl}}</a>',
       ),
+      row('Employee ID (reference only)', '{{employeeId}}'),
     ]),
     button('{{setPasswordUrl}}', 'Set your password'),
     notice(

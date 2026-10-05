@@ -33,7 +33,7 @@ export class CreateEmployeeDto {
   // unchanged — the single "Add Employee" form enforces it as required
   // client-side instead, since that's the flow this actually matters for.
   // When present, EmployeesService.create() routes it into personalData and
-  // sends the welcome email (login URL, employee ID, generated password);
+  // sends the welcome email (login URL, login email, employee ID for reference, and a set-password link);
   // when absent (bulk-imported rows), no email is sent, matching today's
   // fallback of returning the password in the response only.
   // '' and absent are both "don't send a welcome email" to
