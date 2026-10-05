@@ -986,6 +986,31 @@ export class AttendanceService {
       punchTime,
       manualShiftConfig,
     );
+
+    // Optional check-out, recorded with the check-in in one request so HR doesn't have to know to add a second punch.
+    // In/out are still derived from the day's earliest/latest punch; this only validates that the two entered times
+    // are a coherent pair.
+    const outPunchTime = dto.outPunchTime
+      ? new Date(dto.outPunchTime)
+      : undefined;
+    if (outPunchTime) {
+      if (!dto.punchTime) {
+        throw new BadRequestException(
+          'An In time (punchTime) is required when an Out time is given.',
+        );
+      }
+      if (outPunchTime.getTime() <= punchTime.getTime()) {
+        throw new BadRequestException('Out time must be after In time.');
+      }
+      if (
+        resolveAttendanceDateForPunch(outPunchTime, manualShiftConfig) !==
+        attendanceDate
+      ) {
+        throw new BadRequestException(
+          'In and Out times must belong to the same shift day.',
+        );
+      }
+    }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       organizationId,
@@ -1004,6 +1029,28 @@ export class AttendanceService {
         longitude: dto.longitude ?? null,
       },
     });
+    let outPunch: Punch | undefined;
+    if (outPunchTime) {
+      try {
+        outPunch = await this.scopedPrisma.punch.create({
+          data: {
+            organizationId,
+            employeeId: user.id,
+            punchTime: outPunchTime,
+            source: PunchSource.MANUAL,
+            location: dto.location ?? null,
+            latitude: dto.latitude ?? null,
+            longitude: dto.longitude ?? null,
+          },
+        });
+      } catch (err) {
+        // Don't leave a lone check-in behind when the pair was requested.
+        await this.scopedPrisma.punch.deleteMany({
+          where: { id: punch.id, organizationId },
+        });
+        throw err;
+      }
+    }
 
     const attendance = await this.recalculateAttendanceForDay(
       this.scopedPrisma,
@@ -1023,12 +1070,13 @@ export class AttendanceService {
       details: {
         employeeId: user.id,
         punchTime: punchTime.toISOString(),
+        ...(outPunch && { outPunchTime: outPunch.punchTime.toISOString() }),
         attendanceDate,
         attendanceId: attendance?.id ?? null,
       },
     });
 
-    return { punch, attendance };
+    return { punch, ...(outPunch && { outPunch }), attendance };
   }
 
   async selfPunch(dto: SelfPunchDto, actor: Actor, organizationId: string) {

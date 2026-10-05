@@ -325,6 +325,86 @@ describe('Attendance (e2e)', () => {
       expect(forThisDay).toHaveLength(2);
     });
 
+    describe('In and Out entered together (outPunchTime)', () => {
+      const post = (body: Record<string, unknown>) =>
+        request(app.getHttpServer())
+          .post('/attendance/punch/manual')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ employeeId, ...body });
+
+      it('records both punches in one request and derives In/Out from them', async () => {
+        const date = offsetDateAvoidingHolidays(-23);
+        const res = await post({
+          punchTime: `${date}T09:00:00.000Z`,
+          outPunchTime: `${date}T18:00:00.000Z`,
+        }).expect(201);
+        const body = res.body as PunchIngestBody & {
+          outPunch?: { punchTime: string };
+        };
+        expect(body.outPunch?.punchTime).toBe(`${date}T18:00:00.000Z`);
+
+        const row = await prisma.attendance.findFirstOrThrow({
+          where: { employeeId, date },
+        });
+        expect(row.inTime?.toISOString()).toBe(`${date}T09:00:00.000Z`);
+        expect(row.outTime?.toISOString()).toBe(`${date}T18:00:00.000Z`);
+        expect(row.workDurationMinutes).toBe(9 * 60);
+
+        // One request, one audit entry that records the Out time too.
+        const audits = (
+          await prisma.auditLog.findMany({
+            where: { organizationId, action: 'ATTENDANCE_MANUAL_PUNCH' },
+          })
+        ).filter(
+          (a) =>
+            (a.details as { employeeId?: string }).employeeId === employeeId &&
+            (a.details as { attendanceDate?: string }).attendanceDate === date,
+        );
+        expect(audits).toHaveLength(1);
+        expect(
+          (audits[0].details as { outPunchTime?: string }).outPunchTime,
+        ).toBe(`${date}T18:00:00.000Z`);
+      });
+
+      it('rejects an Out time that is not after the In time, and stores nothing', async () => {
+        const date = offsetDateAvoidingHolidays(-24);
+        await post({
+          punchTime: `${date}T18:00:00.000Z`,
+          outPunchTime: `${date}T09:00:00.000Z`,
+        }).expect(400);
+        await post({
+          punchTime: `${date}T09:00:00.000Z`,
+          outPunchTime: `${date}T09:00:00.000Z`,
+        }).expect(400);
+        const punches = await prisma.punch.count({
+          where: {
+            employeeId,
+            punchTime: {
+              gte: new Date(`${date}T00:00:00.000Z`),
+              lte: new Date(`${date}T23:59:59.000Z`),
+            },
+          },
+        });
+        expect(punches).toBe(0);
+      });
+
+      it('requires an In time when an Out time is given', async () => {
+        const date = offsetDateAvoidingHolidays(-24);
+        await post({ outPunchTime: `${date}T18:00:00.000Z` }).expect(400);
+      });
+
+      it('rejects an In/Out pair that spans two shift days', async () => {
+        const date = offsetDateAvoidingHolidays(-24);
+        const twoDaysLater = new Date(
+          new Date(`${date}T09:00:00.000Z`).getTime() + 48 * 3600_000,
+        ).toISOString();
+        await post({
+          punchTime: `${date}T09:00:00.000Z`,
+          outPunchTime: twoDaysLater,
+        }).expect(400);
+      });
+    });
+
     it('a single short punch on a weekly-off day resolves to WEEKLY_OFF, not ABSENT', async () => {
       const sunday = nextWeekday(0, 20);
       await request(app.getHttpServer())

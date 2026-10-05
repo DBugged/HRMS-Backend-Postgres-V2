@@ -23,6 +23,16 @@ export class ManualPunchDto {
   @IsISO8601()
   punchTime?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'ISO 8601 check-out time, recorded as a second punch in the same request. Must be after punchTime (the check-in) ' +
+      'and fall in the same shift day. Requires punchTime.',
+  })
+  @IsOptional()
+  @IsNotEmpty()
+  @IsISO8601()
+  outPunchTime?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
