@@ -102,6 +102,15 @@ export class NotificationsController {
     );
   }
 
+  @Patch(':id/unread')
+  markAsUnread(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.notificationsService.markAsUnread(
+      id,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   @Patch('read-all')
   markAllAsRead(@CurrentUser() caller: Caller) {
     return this.notificationsService.markAllAsRead(

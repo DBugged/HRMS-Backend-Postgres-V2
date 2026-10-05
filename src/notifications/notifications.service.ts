@@ -251,6 +251,16 @@ export class NotificationsService {
     if (count === 0) throw new NotFoundException('Notification not found.');
   }
 
+  // The reverse of markAsRead: puts a notification the user has already read back to unread (so it counts in the
+  // unread badge again). Scoped to the caller's own notifications like markAsRead; an id that isn't theirs is 404.
+  async markAsUnread(id: string, actor: Actor, organizationId: string) {
+    const { count } = await this.scopedPrisma.notification.updateMany({
+      where: { id, userId: actor.id, organizationId },
+      data: { isRead: false },
+    });
+    if (count === 0) throw new NotFoundException('Notification not found.');
+  }
+
   async markAllAsRead(actor: Actor, organizationId: string) {
     await this.scopedPrisma.notification.updateMany({
       where: { userId: actor.id, organizationId, isRead: false },

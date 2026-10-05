@@ -401,6 +401,67 @@ describe('Notifications (e2e)', () => {
     expect(nowRead.isRead).toBe(true);
   });
 
+  it('PATCH /:id/unread puts a read notification back to unread, scoped to the owner, and the unread count follows', async () => {
+    const created = await prisma.notification.create({
+      data: {
+        organizationId,
+        userId: employeeId,
+        title: 'Mark Me Unread',
+        message: 'test',
+        category: 'GENERAL',
+        isRead: true,
+      },
+    });
+    const unreadCount = async () =>
+      (
+        (
+          await request(app.getHttpServer())
+            .get('/notifications/unread-count')
+            .set('Authorization', `Bearer ${employeeToken}`)
+            .expect(200)
+        ).body as { unreadCount: number }
+      ).unreadCount;
+    const before = await unreadCount();
+
+    // Someone else's notification: 404, and it stays read.
+    await request(app.getHttpServer())
+      .patch(`/notifications/${created.id}/unread`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .expect(404);
+    expect(
+      (
+        await prisma.notification.findUniqueOrThrow({
+          where: { id: created.id },
+        })
+      ).isRead,
+    ).toBe(true);
+
+    await request(app.getHttpServer())
+      .patch(`/notifications/${created.id}/unread`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect(
+      (
+        await prisma.notification.findUniqueOrThrow({
+          where: { id: created.id },
+        })
+      ).isRead,
+    ).toBe(false);
+    expect(await unreadCount()).toBe(before + 1);
+
+    // And back: read -> unread -> read round-trips.
+    await request(app.getHttpServer())
+      .patch(`/notifications/${created.id}/read`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect(await unreadCount()).toBe(before);
+
+    await request(app.getHttpServer())
+      .patch('/notifications/00000000-0000-4000-8000-000000000000/unread')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(404);
+  });
+
   it('PATCH /read-all marks every unread notification read for the caller and unreadCount drops to 0', async () => {
     await prisma.notification.createMany({
       data: [
