@@ -9,6 +9,10 @@ import {
 import type { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { captureException } from '../sentry';
+import {
+  MULTER_FILE_TOO_LARGE,
+  describeFileTooLarge,
+} from '../../files/upload-errors';
 
 // Prisma's own P2002 message ("Unique constraint failed on the fields:
 // (`x`)") leaks the raw column name and isn't something a client should
@@ -103,6 +107,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
         const b = body as { message?: string | string[]; error?: string };
         message = b.message ?? exception.message;
         error = b.error ?? exception.name;
+      }
+      // An upload over the category's size limit arrives as a bare "File too large"; say what the limit is.
+      if (status === 413 && message === MULTER_FILE_TOO_LARGE) {
+        message = describeFileTooLarge(request.originalUrl ?? request.url);
       }
     } else if (isDuplicateKey) {
       message = duplicateFieldMessage(exception);

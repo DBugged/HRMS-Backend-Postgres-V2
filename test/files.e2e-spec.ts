@@ -168,6 +168,23 @@ describe('Files (e2e)', () => {
     await photo('me.svg', 'image/svg+xml', '<svg/>').expect(400);
   });
 
+  it('an upload over the size limit is refused with a message that states the limit (413)', async () => {
+    // Profile photos are limited to 5 MB: a 6 MB JPEG-looking file is over it.
+    const JPEG_HEAD = Buffer.from(
+      'ffd8ffe000104a46494600010100000100010000',
+      'hex',
+    );
+    const big = Buffer.concat([JPEG_HEAD, Buffer.alloc(6 * 1024 * 1024)]);
+    const res = await request(app.getHttpServer())
+      .post('/files/upload/profile-photos')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('file', big, { filename: 'huge.jpg', contentType: 'image/jpeg' })
+      .expect(413);
+    const message = (res.body as { message: string }).message;
+    expect(message).toMatch(/too large/i);
+    expect(message).toContain('5 MB'); // not just "File too large"
+  });
+
   it('serves the uploaded file via the signed url, without any auth header', async () => {
     const res = await request(app.getHttpServer()).get(uploadedUrl).expect(200);
     expect((res.body as Buffer).equals(PNG)).toBe(true);
