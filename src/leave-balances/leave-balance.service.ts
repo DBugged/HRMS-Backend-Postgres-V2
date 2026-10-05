@@ -495,12 +495,24 @@ export class LeaveBalanceService {
   async creditAccrual(
     leaveTypeId: string,
     organizationId: string,
+    // repairShort: also top up an employee whose row is already stamped for this period but holds less than the rule
+    // says is due (see checkAccrual). Only an HR-initiated run asks for it: the unattended daily schedule leaves such
+    // rows alone, because a short row can also be a deliberate mid-year policy raise and crediting that unseen is not
+    // easy to undo.
+    options: { repairShort?: boolean } = {},
   ): Promise<{
     matched: number;
     credited: number;
     alreadyAccrued: number;
-    // Of the already-accrued employees, how many hold less than they should have by now (see checkAccrual).
+    // Of the already-accrued employees, how many still hold less than they should have by now (see checkAccrual).
     behind: number;
+    // Short rows topped up by this run (repairShort only), with each employee's balance before and the days added.
+    repaired: {
+      employeeId: string;
+      employeeCode: string;
+      before: number;
+      added: number;
+    }[];
     totalDaysCredited: number;
   }> {
     const leaveType = await this.scopedPrisma.leaveType.findFirst({
@@ -517,6 +529,7 @@ export class LeaveBalanceService {
         credited: 0,
         alreadyAccrued: 0,
         behind: 0,
+        repaired: [],
         totalDaysCredited: 0,
       };
     }
@@ -573,6 +586,12 @@ export class LeaveBalanceService {
     let credited = 0;
     let alreadyAccrued = 0;
     let behind = 0;
+    const repaired: {
+      employeeId: string;
+      employeeCode: string;
+      before: number;
+      added: number;
+    }[] = [];
     let totalDaysCredited = 0;
 
     await this.scopedPrisma.$transaction(async (tx) => {
@@ -588,15 +607,43 @@ export class LeaveBalanceService {
           ));
 
         if (row.lastAccrualPeriod === periodKey) {
-          alreadyAccrued += 1;
-          // Stamped for this period but holding less than is due: the run cannot tell, so it is flagged for
-          // checkAccrual/repairAccrual instead of being reported as simply "up to date".
-          if (
-            row.credited + 0.005 <
-            expectedAccrualToDate(leaveType, employee.joiningDate, year, now)
-          ) {
+          // Stamped for this period, so there is no cycle left to credit. But stamped is not the same as complete: an
+          // earlier version of the engine could stamp a row after crediting it too little (1.5 where 6 is due), and the
+          // stamp alone then says "up to date" forever.
+          const expected = expectedAccrualToDate(
+            leaveType,
+            employee.joiningDate,
+            year,
+            now,
+          );
+          if (row.credited + 0.005 < expected) {
+            if (options.repairShort) {
+              const added = Math.round((expected - row.credited) * 100) / 100;
+              // Adds the difference (never sets the balance to the expected figure), and only if the row is still
+              // exactly as this run read it — a concurrent run or edit makes the UPDATE match nothing.
+              const fixed = await tx.leaveBalance.updateMany({
+                where: {
+                  id: row.id,
+                  organizationId,
+                  credited: row.credited,
+                  lastAccrualPeriod: periodKey,
+                },
+                data: { credited: { increment: added } },
+              });
+              if (fixed.count > 0) {
+                await this.recalculate(tx, row.id, organizationId);
+                repaired.push({
+                  employeeId: employee.id,
+                  employeeCode: employee.employeeId,
+                  before: row.credited,
+                  added,
+                });
+                continue;
+              }
+            }
             behind += 1;
           }
+          alreadyAccrued += 1;
           continue;
         }
 
@@ -675,6 +722,7 @@ export class LeaveBalanceService {
       credited,
       alreadyAccrued,
       behind,
+      repaired,
       totalDaysCredited: Math.round(totalDaysCredited * 100) / 100,
     };
   }

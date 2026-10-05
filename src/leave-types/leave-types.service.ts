@@ -582,15 +582,32 @@ export class LeaveTypesService {
         credited: 0,
         alreadyAccrued: 0,
         behind: 0,
+        repaired: 0,
+        repairedDays: 0,
         totalDaysCredited: 0,
       };
     }
-    const { matched, credited, alreadyAccrued, behind, totalDaysCredited } =
-      await this.leaveBalanceService.creditAccrual(id, organizationId);
+    // An HR-initiated run also tops up balances that are stamped as accrued for this period but hold too little (the
+    // "stuck at 1.5" case); the unattended schedule does not (see creditAccrual).
+    const {
+      matched,
+      credited,
+      alreadyAccrued,
+      behind,
+      repaired,
+      totalDaysCredited,
+    } = await this.leaveBalanceService.creditAccrual(id, organizationId, {
+      repairShort: source === 'MANUAL',
+    });
+    const repairedDays =
+      Math.round(repaired.reduce((sum, r) => sum + r.added, 0) * 100) / 100;
     // A scheduled run that credited nothing (the usual case on 364 days of the year) is not worth a history entry. An
     // employee who is "behind" does not count: that persists until someone repairs it and would log every single day;
     // it is reported by Run Accrual and Check balances instead.
-    if (actorId && (source === 'MANUAL' || totalDaysCredited > 0)) {
+    if (
+      actorId &&
+      (source === 'MANUAL' || totalDaysCredited > 0 || repaired.length > 0)
+    ) {
       await this.auditLogService.log({
         actorId,
         action: 'LEAVE_ACCRUAL_RUN',
@@ -605,6 +622,11 @@ export class LeaveTypesService {
           alreadyAccrued,
           behind,
           totalDaysCredited,
+          // Balances topped up because they were stamped as accrued but held too little: each employee's balance
+          // before and the days added, so every corrected balance can be traced.
+          repaired: repaired.length,
+          repairedDays,
+          repairs: repaired.slice(0, 200),
           source,
         },
       });
@@ -612,9 +634,12 @@ export class LeaveTypesService {
     // `credited` = employees processed; totalDaysCredited = actual days.
     // `behind` = already-stamped employees holding less than is due: not "up to date", so say so.
     const behindNote =
-      behind > 0
+      (repaired.length > 0
+        ? ` Corrected ${repaired.length} balance(s) that held too little: +${repairedDays} day(s) in total.`
+        : '') +
+      (behind > 0
         ? ` ${behind} employee(s) hold less than they should by now — use Check balances to review and credit the difference.`
-        : '';
+        : '');
     const message =
       credited === 0 && alreadyAccrued > 0
         ? `Already accrued for this period — nothing to credit (${alreadyAccrued} employee(s) already up to date).`
@@ -632,6 +657,8 @@ export class LeaveTypesService {
       credited,
       alreadyAccrued,
       behind,
+      repaired: repaired.length,
+      repairedDays,
       totalDaysCredited,
     };
   }
@@ -698,6 +725,8 @@ export class LeaveTypesService {
     let totalCredited = 0;
     let totalAlreadyAccrued = 0;
     let totalBehind = 0;
+    let totalRepaired = 0;
+    let totalRepairedDays = 0;
     const failed: string[] = [];
     for (const lt of leaveTypes) {
       try {
@@ -705,6 +734,8 @@ export class LeaveTypesService {
         totalCredited += result.credited;
         totalAlreadyAccrued += result.alreadyAccrued;
         totalBehind += result.behind;
+        totalRepaired += result.repaired;
+        totalRepairedDays += result.repairedDays;
       } catch (err) {
         this.logger.error(
           `Accrue-all failed for leave type ${lt.code} (org ${organizationId}): ${err instanceof Error ? err.message : err}`,
@@ -720,11 +751,15 @@ export class LeaveTypesService {
           ? `Accrual run for ${leaveTypes.length - failed.length}/${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total. Failed: ${failed.join(', ')}.`
           : `Accrual run for ${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total${totalAlreadyAccrued > 0 ? `, ${totalAlreadyAccrued} already up to date` : ''}.`;
     const behindNote =
-      totalBehind > 0
+      (totalRepaired > 0
+        ? ` Corrected ${totalRepaired} balance(s) that held too little: +${Math.round(totalRepairedDays * 100) / 100} day(s) in total.`
+        : '') +
+      (totalBehind > 0
         ? ` ${totalBehind} employee(s) hold less than they should by now — use Check balances to review and credit the difference.`
-        : '';
+        : '');
     return {
       message: message + behindNote,
+      totalRepaired,
       leaveTypesProcessed: leaveTypes.length,
       totalCredited,
       totalAlreadyAccrued,

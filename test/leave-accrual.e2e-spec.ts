@@ -210,17 +210,21 @@ describe('Leave accrual engine (e2e)', () => {
       }[];
     };
 
-    it('Run Accrual no longer calls such a row simply "up to date"', async () => {
+    it('the unattended schedule leaves such a row alone but reports it as behind', async () => {
       if (currentQuarter === 1) return;
       await resetRow(1.5, currentPeriod);
-      const res = await request(app.getHttpServer())
-        .post(`/leave-types/${leaveTypeId}/run-accrual`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(201);
-      const body = res.body as { behind: number; message: string };
-      expect(body.behind).toBe(1);
-      expect(body.message).toMatch(/Check balances/);
-      expect((await row()).credited).toBe(1.5); // Run Accrual itself never changes it
+      const adminUser = await prisma.user.findFirstOrThrow({
+        where: { id: adminId },
+      });
+      const res = await leaveTypes.runAccrual(
+        leaveTypeId,
+        adminUser.id,
+        organizationId,
+        'SCHEDULED',
+      );
+      expect(res.behind).toBeGreaterThanOrEqual(1);
+      expect(res.message).toMatch(/Check balances/);
+      expect((await row()).credited).toBe(1.5); // not credited behind anyone's back
     });
 
     it('the check is read-only and reports current, expected and the difference', async () => {
@@ -865,6 +869,136 @@ describe('Leave accrual engine (e2e)', () => {
       await balances.creditAccrual(type.id, organizationId);
       const check = await balances.checkAccrual(type.id, organizationId);
       expect(check.summary.short).toBe(0);
+    });
+  });
+
+  describe('Run Accrual repairs balances that are stamped as accrued but hold too little', () => {
+    const run = () =>
+      request(app.getHttpServer())
+        .post(`/leave-types/${leaveTypeId}/run-accrual`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+    type RunBody = {
+      repaired: number;
+      repairedDays: number;
+      behind: number;
+      message: string;
+    };
+
+    it('an employee stuck at 1.5 with a full year behind them is brought to 6 (scenario 1: joined 2020)', async () => {
+      if (currentQuarter !== 4) return; // the 6.0 figure is for Q4
+      await resetRow(1.5, currentPeriod);
+      const body = (await run()).body as RunBody;
+      expect(body.repaired).toBeGreaterThanOrEqual(1);
+      expect(body.message).toMatch(/Corrected \d+ balance\(s\)/);
+      const fixed = await row();
+      expect(fixed.credited).toBe(6);
+      expect(fixed.closing).toBe(6);
+      expect(fixed.lastAccrualPeriod).toBe(currentPeriod);
+    });
+
+    it('records each corrected balance (before and added) in the history', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(1.5, currentPeriod);
+      await run();
+      const entry = await prisma.auditLog.findFirst({
+        where: {
+          organizationId,
+          action: 'LEAVE_ACCRUAL_RUN',
+          targetId: leaveTypeId,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      const details = entry!.details as {
+        repaired: number;
+        repairedDays: number;
+        repairs: { employeeCode: string; before: number; added: number }[];
+      };
+      expect(details.repaired).toBeGreaterThanOrEqual(1);
+      expect(details.repairs[0]).toMatchObject({ before: 1.5 });
+      expect(details.repairs[0].added).toBeGreaterThan(0);
+    });
+
+    it('running it again corrects nothing more', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(1.5, currentPeriod);
+      await run();
+      const after = (await row()).credited;
+      expect(((await run()).body as RunBody).repaired).toBe(0);
+      expect((await row()).credited).toBe(after);
+    });
+
+    it('never reduces a balance that holds more than the rule gives', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(9, currentPeriod);
+      await run();
+      expect((await row()).credited).toBe(9);
+    });
+
+    it('simultaneous runs correct a stuck balance exactly once', async () => {
+      if (currentQuarter === 1) return;
+      const outcomes: number[] = [];
+      for (let i = 0; i < 4; i++) {
+        await resetRow(1.5, currentPeriod);
+        await Promise.all(
+          Array.from({ length: 8 }, () =>
+            balances.creditAccrual(leaveTypeId, organizationId, {
+              repairShort: true,
+            }),
+          ),
+        );
+        outcomes.push((await row()).credited);
+      }
+      expect(outcomes).toEqual(Array(4).fill(1.5 * currentQuarter));
+    });
+
+    it('Run All Accruals corrects it too, and afterwards Check balances reports nothing short', async () => {
+      if (currentQuarter === 1) return;
+      await resetRow(1.5, currentPeriod);
+      const res = await request(app.getHttpServer())
+        .post('/leave-types/run-accrual-all')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      expect(
+        (res.body as { totalRepaired: number }).totalRepaired,
+      ).toBeGreaterThanOrEqual(1);
+      expect(
+        (await balances.checkAccrual(leaveTypeId, organizationId)).summary
+          .short,
+      ).toBe(0);
+    });
+
+    it('scenario 2: joined on 1 April gets Q2, Q3 and Q4 (4.5) once the stuck 1.5 is corrected', async () => {
+      if (currentQuarter < 2) return;
+      const email = `stuck-apr-${TAG}@example.test`;
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'April Joiner', email, joiningDate: `${year}-04-01` })
+        .expect(201);
+      const joiner = await prisma.user.findFirstOrThrow({
+        where: { organizationId, email },
+      });
+      await prisma.leaveBalance.deleteMany({
+        where: { organizationId, employeeId: joiner.id, leaveTypeId },
+      });
+      await prisma.leaveBalance.create({
+        data: {
+          organizationId,
+          employeeId: joiner.id,
+          leaveTypeId,
+          year,
+          opening: 0,
+          credited: 1.5,
+          closing: 1.5,
+          lastAccrualPeriod: currentPeriod,
+        },
+      });
+      await run();
+      const fixed = await prisma.leaveBalance.findFirstOrThrow({
+        where: { organizationId, employeeId: joiner.id, leaveTypeId, year },
+      });
+      expect(fixed.credited).toBe(1.5 * (currentQuarter - 1)); // Q2..current: 4.5 in Q4
     });
   });
 });
