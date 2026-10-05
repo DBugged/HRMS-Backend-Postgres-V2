@@ -251,7 +251,18 @@ export class SettlementsService {
           year,
           organizationId,
         );
-        leaveDaysEncashed += balanceRow.closing;
+        // Carried-in days that lapsed unused by the last working day are not paid out: `closing` still counts them,
+        // but they can no longer be used (see LeaveBalanceService.forfeitedCarryIn).
+        const lapsed =
+          (
+            await this.leaveBalanceService.forfeitedCarryIn(
+              tx,
+              [balanceRow],
+              organizationId,
+              dto.lastWorkingDay.slice(0, 10),
+            )
+          ).get(balanceRow.id) ?? 0;
+        leaveDaysEncashed += Math.max(0, balanceRow.closing - lapsed);
       }
     });
     const leaveEncashmentAmount = Math.round(leaveDaysEncashed * ratePerDay);
