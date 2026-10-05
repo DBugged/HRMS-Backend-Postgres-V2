@@ -108,6 +108,57 @@ describe('Files (e2e)', () => {
     expect(uploadedUrl).toMatch(/^\/files\/.+/);
   });
 
+  it('branding accepts JPEG as well as PNG, and rejects SVG/WEBP/GIF with a JPEG-and-PNG message', async () => {
+    const JPEG = Buffer.from('ffd8ffe000104a46494600010100000100010000', 'hex');
+    const branding = (name: string, type: string, body: Buffer | string) =>
+      request(app.getHttpServer())
+        .post('/files/upload/branding')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .attach('file', Buffer.isBuffer(body) ? body : Buffer.from(body), {
+          filename: name,
+          contentType: type,
+        });
+    await branding('logo.jpg', 'image/jpeg', JPEG).expect(201);
+    await branding('logo.jpeg', 'image/jpeg', JPEG).expect(201);
+
+    for (const [name, type, body] of [
+      [
+        'logo.svg',
+        'image/svg+xml',
+        '<svg xmlns="http://www.w3.org/2000/svg"/>',
+      ],
+      ['logo.webp', 'image/webp', 'RIFF\x24\x00\x00\x00WEBPVP8 '],
+      ['logo.gif', 'image/gif', 'GIF89a\x00\x00'],
+    ] as const) {
+      const res = await branding(name, type, body).expect(400);
+      expect((res.body as { message: string }).message).toContain(
+        'JPEG and PNG images',
+      );
+    }
+    // Real bytes must be PNG/JPEG and agree with the extension and declared type.
+    await branding('fake.png', 'image/png', 'GIF89a\x00\x00').expect(400);
+    await branding('mismatch.png', 'image/png', JPEG).expect(400);
+    await branding('mismatch.jpg', 'image/jpeg', PNG).expect(400);
+  });
+
+  it('profile photos follow the same JPEG/PNG-only rule', async () => {
+    const JPEG = Buffer.from('ffd8ffe000104a46494600010100000100010000', 'hex');
+    const photo = (name: string, type: string, body: Buffer | string) =>
+      request(app.getHttpServer())
+        .post('/files/upload/profile-photos')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .attach('file', Buffer.isBuffer(body) ? body : Buffer.from(body), {
+          filename: name,
+          contentType: type,
+        });
+    await photo('me.jpg', 'image/jpeg', JPEG).expect(201);
+    await photo('me.png', 'image/png', PNG).expect(201);
+    await photo('me.webp', 'image/webp', 'RIFF\x24\x00\x00\x00WEBPVP8 ').expect(
+      400,
+    );
+    await photo('me.svg', 'image/svg+xml', '<svg/>').expect(400);
+  });
+
   it('serves the uploaded file via the signed url, without any auth header', async () => {
     const res = await request(app.getHttpServer()).get(uploadedUrl).expect(200);
     expect((res.body as Buffer).equals(PNG)).toBe(true);

@@ -24,9 +24,38 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm'];
 export const ALLOWED_EXTENSIONS: Record<string, string[]> = {
   documents: ['.pdf', ...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS],
   selfies: IMAGE_EXTENSIONS,
-  branding: IMAGE_EXTENSIONS,
-  'profile-photos': IMAGE_EXTENSIONS,
+  // Company logo, favicon, report/email logo, signatures and seal: JPEG and PNG only. Not WEBP/GIF/HEIC (not
+  // reliably renderable in emails, PDFs and every browser) and never SVG (scriptable).
+  branding: ['.png', '.jpg', '.jpeg'],
+  // Profile photos follow the same rule as branding images.
+  'profile-photos': ['.png', '.jpg', '.jpeg'],
 };
+
+// Categories that also pin the exact MIME types (not just the "image/" family), so the declared type has to agree
+// with the extension allow-list above.
+export const ALLOWED_MIME_TYPES: Record<string, string[]> = {
+  branding: ['image/png', 'image/jpeg'],
+  'profile-photos': ['image/png', 'image/jpeg'],
+};
+
+// Human-readable list of what a category accepts, used in the upload error message.
+export function describeAllowedTypes(
+  category: string,
+  mimePrefixes: string[],
+): string {
+  const extensions = (ALLOWED_EXTENSIONS[category] ?? []).join(', ');
+  if (ALLOWED_MIME_TYPES[category]) {
+    return `JPEG and PNG images (${extensions})`;
+  }
+  const kinds = mimePrefixes.map((p) =>
+    p.startsWith('image/')
+      ? 'image'
+      : p === 'application/pdf'
+        ? 'PDF'
+        : p.replace(/\/$/, ''),
+  );
+  return `${kinds.join(' / ')} files (${extensions})`;
+}
 
 // Extensions safe to render inline when a stored file is served back; everything else is forced to download.
 export const INLINE_SAFE_EXTENSIONS = new Set([
@@ -70,6 +99,37 @@ export function sniffKind(head: Buffer): 'pdf' | 'image' | 'video' | null {
   }
   if (startsWith(head, '1a45dfa3')) return 'video'; // WebM / Matroska
   return null;
+}
+
+export type RasterFormat = 'png' | 'jpeg';
+
+// Recognises PNG and JPEG from the first bytes; null for anything else (including GIF/WEBP/BMP/HEIC/SVG).
+export function sniffRasterFormat(head: Buffer): RasterFormat | null {
+  if (startsWith(head, '89504e470d0a1a0a')) return 'png';
+  if (startsWith(head, 'ffd8ff')) return 'jpeg';
+  return null;
+}
+
+// Strict check for the JPEG/PNG-only categories: the real bytes must be PNG or JPEG, and the declared MIME type and
+// the file extension must both name that same format — so a GIF or WEBP renamed ".png", or a JPEG sent as
+// "image/png", is refused instead of being stored under a misleading type.
+export function matchesJpegOrPng(
+  head: Buffer,
+  originalName: string,
+  declaredMime: string,
+): boolean {
+  const format = sniffRasterFormat(head);
+  if (!format) return false;
+  const ext = path.extname(originalName ?? '').toLowerCase();
+  const extFormat =
+    ext === '.png' ? 'png' : ext === '.jpg' || ext === '.jpeg' ? 'jpeg' : null;
+  const mimeFormat =
+    declaredMime === 'image/png'
+      ? 'png'
+      : declaredMime === 'image/jpeg'
+        ? 'jpeg'
+        : null;
+  return extFormat === format && mimeFormat === format;
 }
 
 // Whether the file's real bytes are consistent with the MIME family the client declared. An empty file is never

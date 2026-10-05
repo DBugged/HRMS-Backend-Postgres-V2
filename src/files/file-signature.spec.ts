@@ -1,7 +1,11 @@
 import {
+  ALLOWED_MIME_TYPES,
   contentMatchesDeclaredType,
+  describeAllowedTypes,
   hasAllowedExtension,
+  matchesJpegOrPng,
   sniffKind,
+  sniffRasterFormat,
 } from './file-signature';
 
 const png = Buffer.from('89504e470d0a1a0a0000000d', 'hex');
@@ -52,6 +56,67 @@ describe('content sniffing', () => {
     ).toBe(false);
     expect(contentMatchesDeclaredType(Buffer.alloc(0), 'application/pdf')).toBe(
       false,
+    );
+  });
+});
+
+describe('branding is JPEG and PNG only', () => {
+  const jpeg = Buffer.from('ffd8ffe000104a464946', 'hex');
+  const gif = Buffer.from('474946383961', 'hex');
+  const webp = Buffer.concat([
+    Buffer.from('RIFF....', 'ascii'),
+    Buffer.from('WEBPVP8 ', 'ascii'),
+  ]);
+
+  it('allows only .png/.jpg/.jpeg for branding, rejecting every other image type and SVG', () => {
+    for (const n of ['logo.png', 'logo.JPG', 'logo.jpeg']) {
+      expect(hasAllowedExtension('branding', n)).toBe(true);
+    }
+    for (const n of [
+      'logo.svg',
+      'logo.webp',
+      'logo.gif',
+      'logo.bmp',
+      'logo.heic',
+      'logo.avif',
+    ]) {
+      expect(hasAllowedExtension('branding', n)).toBe(false);
+    }
+    expect(ALLOWED_MIME_TYPES.branding).toEqual(['image/png', 'image/jpeg']);
+  });
+  it('applies the same JPEG/PNG-only rule to profile photos, but not to selfies or documents', () => {
+    expect(hasAllowedExtension('profile-photos', 'me.jpg')).toBe(true);
+    expect(hasAllowedExtension('profile-photos', 'me.webp')).toBe(false);
+    expect(hasAllowedExtension('profile-photos', 'me.svg')).toBe(false);
+    expect(ALLOWED_MIME_TYPES['profile-photos']).toEqual([
+      'image/png',
+      'image/jpeg',
+    ]);
+    expect(hasAllowedExtension('selfies', 'me.heic')).toBe(true);
+    expect(hasAllowedExtension('documents', 'scan.webp')).toBe(true);
+  });
+  it('recognises only PNG and JPEG bytes', () => {
+    expect(sniffRasterFormat(png)).toBe('png');
+    expect(sniffRasterFormat(jpeg)).toBe('jpeg');
+    expect(sniffRasterFormat(gif)).toBeNull();
+    expect(sniffRasterFormat(webp)).toBeNull();
+    expect(sniffRasterFormat(html)).toBeNull();
+  });
+  it('requires bytes, MIME type and extension to agree', () => {
+    expect(matchesJpegOrPng(png, 'a.png', 'image/png')).toBe(true);
+    expect(matchesJpegOrPng(jpeg, 'a.jpg', 'image/jpeg')).toBe(true);
+    expect(matchesJpegOrPng(jpeg, 'a.jpeg', 'image/jpeg')).toBe(true);
+    expect(matchesJpegOrPng(gif, 'a.png', 'image/png')).toBe(false); // GIF renamed
+    expect(matchesJpegOrPng(jpeg, 'a.png', 'image/png')).toBe(false); // JPEG labelled PNG
+    expect(matchesJpegOrPng(png, 'a.png', 'image/jpeg')).toBe(false); // wrong MIME
+    expect(matchesJpegOrPng(png, 'a.jpg', 'image/png')).toBe(false); // wrong extension
+  });
+  it('describes the accepted types for the error message', () => {
+    expect(describeAllowedTypes('branding', ['image/'])).toBe(
+      'JPEG and PNG images (.png, .jpg, .jpeg)',
+    );
+    expect(describeAllowedTypes('selfies', ['image/'])).toContain(
+      'image files',
     );
   });
 });

@@ -5,7 +5,11 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import * as fs from 'fs';
 import { relativeKeyFor } from './file-storage.config';
 import { signFileToken } from './file-token';
-import { contentMatchesDeclaredType } from './file-signature';
+import {
+  ALLOWED_MIME_TYPES,
+  contentMatchesDeclaredType,
+  matchesJpegOrPng,
+} from './file-signature';
 
 @Injectable()
 export class FilesService {
@@ -27,10 +31,21 @@ export class FilesService {
       } finally {
         fs.closeSync(fd);
       }
-      if (!contentMatchesDeclaredType(head.subarray(0, read), file.mimetype)) {
+      const bytes = head.subarray(0, read);
+      if (!contentMatchesDeclaredType(bytes, file.mimetype)) {
         fs.rmSync(file.path, { force: true });
         throw new BadRequestException(
           'The file is empty or its contents do not match its type.',
+        );
+      }
+      // JPEG/PNG-only categories (branding): the bytes, MIME type and extension must all agree on the format.
+      if (
+        ALLOWED_MIME_TYPES[category] &&
+        !matchesJpegOrPng(bytes, file.originalname, file.mimetype)
+      ) {
+        fs.rmSync(file.path, { force: true });
+        throw new BadRequestException(
+          'The image must be a real JPEG or PNG whose file extension and type match.',
         );
       }
     }
