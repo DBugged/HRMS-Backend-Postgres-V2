@@ -1589,6 +1589,18 @@ export class AttendanceService {
                 fence,
               )
             : null;
+        // Same verdict for the check-out point, so the Attendance table's Checkout Location can show the
+        // inside/outside result on its map the way Checkin Location does.
+        const checkoutInsideGeoFence =
+          fence &&
+          record.checkoutLatitude !== null &&
+          record.checkoutLongitude !== null
+            ? isInsideGeoFence(
+                record.checkoutLatitude,
+                record.checkoutLongitude,
+                fence,
+              )
+            : null;
 
         // Prefer a department-specific holiday over a company-wide one for
         // the same date, matching recalculateAttendanceForDay's own lookup.
@@ -1624,6 +1636,7 @@ export class AttendanceService {
             record.checkoutSelfieUrl,
           ),
           checkinInsideGeoFence,
+          checkoutInsideGeoFence,
           ...(holidayName !== undefined && { holidayName }),
           ...(leaveTypeName !== undefined && { leaveTypeName }),
         };
