@@ -209,6 +209,20 @@ function resolveAttendanceDateForPunch(
 // duplicate tap (double-submit, device retry) rather than a new punch.
 const DUPLICATE_PUNCH_WINDOW_MS = 10 * 1000;
 
+// Clock skew allowed between the client that picked a time and this server when checking "not in the future".
+const FUTURE_TIME_TOLERANCE_MS = 5 * 60 * 1000;
+
+// Attendance records what already happened. A punch or requested In/Out time ahead of the clock can't be real, and
+// accepting one (HR back-entry, a regularization request, an import) lets someone mark a day before it has happened;
+// the supported route for correcting a day is a regularization request for a past date.
+function assertNotInFuture(time: Date, label: string): void {
+  if (time.getTime() > Date.now() + FUTURE_TIME_TOLERANCE_MS) {
+    throw new BadRequestException(
+      `${label} cannot be in the future. Attendance can only be recorded for times that have already happened.`,
+    );
+  }
+}
+
 // Parses an import-sheet timestamp as UTC. A bare "YYYY-MM-DD HH:mm[:ss]" (or
 // with a "T" separator) carries no zone and is interpreted as UTC, matching
 // buildShiftDateTime — never server-local time. A string with an
@@ -978,6 +992,7 @@ export class AttendanceService {
     if (!user) throw new NotFoundException('Employee not found.');
 
     const punchTime = dto.punchTime ? new Date(dto.punchTime) : new Date();
+    assertNotInFuture(punchTime, 'A punch time');
     const manualShiftConfig = await this.resolveEmployeeShiftConfig(
       user.id,
       organizationId,
@@ -994,6 +1009,7 @@ export class AttendanceService {
       ? new Date(dto.outPunchTime)
       : undefined;
     if (outPunchTime) {
+      assertNotInFuture(outPunchTime, 'The Out time');
       if (!dto.punchTime) {
         throw new BadRequestException(
           'An In time (punchTime) is required when an Out time is given.',
@@ -1936,6 +1952,17 @@ export class AttendanceService {
         'Regularization can only be requested for a date within the last 7 days.',
       );
     }
+    // The date can't be in the future (checked above), and neither can the times being asked for: a request dated
+    // today could otherwise carry tomorrow's In/Out, and an Admin's own request applies immediately.
+    if (dto.requestedInTime) {
+      assertNotInFuture(new Date(dto.requestedInTime), 'The requested In time');
+    }
+    if (dto.requestedOutTime) {
+      assertNotInFuture(
+        new Date(dto.requestedOutTime),
+        'The requested Out time',
+      );
+    }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       organizationId,
@@ -2319,7 +2346,9 @@ export class AttendanceService {
     // silently, which is never a real attendance record.
     const now = Date.now();
     const MIN_DATE_MS = now - 2 * 365 * 24 * 60 * 60 * 1000;
-    const MAX_DATE_MS = now + 365 * 24 * 60 * 60 * 1000;
+    // Attendance can't be imported for a day that hasn't happened: the latest allowed date is today in the
+    // organization's timezone (a future date used to be accepted up to a year ahead).
+    const todayInTz = todayInOrgTz(await this.getOrgTimezone(organizationId));
 
     // Rows sharing employeeId+date collapse into a single Attendance row in
     // executeImportBatch (upsert-by-key), so a duplicate pair here isn't a
@@ -2366,10 +2395,17 @@ export class AttendanceService {
         return;
       }
       const dateMs = new Date(`${date}T00:00:00.000Z`).getTime();
-      if (dateMs < MIN_DATE_MS || dateMs > MAX_DATE_MS) {
+      if (date > todayInTz) {
         failed.push({
           row: rowNum,
-          error: `Date out of range: ${date} (must be within 2 years in the past and 1 year in the future)`,
+          error: `Date ${date} is in the future — attendance can only be imported for today or earlier`,
+        });
+        return;
+      }
+      if (dateMs < MIN_DATE_MS) {
+        failed.push({
+          row: rowNum,
+          error: `Date out of range: ${date} (must be within the last 2 years)`,
         });
         return;
       }

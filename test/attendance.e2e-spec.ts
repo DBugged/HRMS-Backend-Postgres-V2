@@ -325,6 +325,36 @@ describe('Attendance (e2e)', () => {
       expect(forThisDay).toHaveLength(2);
     });
 
+    describe('no attendance for a time that has not happened yet', () => {
+      const tomorrowAt = (hhmm: string) => `${offsetDate(1)}T${hhmm}:00.000Z`;
+      const post = (body: Record<string, unknown>) =>
+        request(app.getHttpServer())
+          .post('/attendance/punch/manual')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ employeeId, ...body });
+
+      it('rejects a manual punch dated tomorrow, and stores nothing', async () => {
+        const before = await prisma.punch.count({ where: { employeeId } });
+        const res = await post({ punchTime: tomorrowAt('09:00') }).expect(400);
+        expect(JSON.stringify(res.body)).toMatch(/future/i);
+        expect(await prisma.punch.count({ where: { employeeId } })).toBe(
+          before,
+        );
+      });
+
+      it('rejects a future Out time even when the In time is in the past', async () => {
+        const date = offsetDateAvoidingHolidays(-25);
+        const before = await prisma.punch.count({ where: { employeeId } });
+        await post({
+          punchTime: `${date}T09:00:00.000Z`,
+          outPunchTime: tomorrowAt('18:00'),
+        }).expect(400);
+        expect(await prisma.punch.count({ where: { employeeId } })).toBe(
+          before,
+        );
+      });
+    });
+
     describe('In and Out entered together (outPunchTime)', () => {
       const post = (body: Record<string, unknown>) =>
         request(app.getHttpServer())
@@ -406,7 +436,8 @@ describe('Attendance (e2e)', () => {
     });
 
     it('a single short punch on a weekly-off day resolves to WEEKLY_OFF, not ABSENT', async () => {
-      const sunday = nextWeekday(0, 20);
+      // A past Sunday: a manual punch can no longer be dated in the future.
+      const sunday = nextWeekday(0, -40);
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
         .set('Authorization', `Bearer ${hrToken}`)
@@ -1568,6 +1599,20 @@ describe('Attendance (e2e)', () => {
         .expect(400);
     });
 
+    it('rejects a request dated today that asks for a future In or Out time', async () => {
+      const future = new Date(Date.now() + 24 * 3600_000).toISOString();
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date: offsetDate(0), requestedOutTime: future, reason: 'x' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date: offsetDate(0), requestedInTime: future, reason: 'x' })
+        .expect(400);
+    });
+
     it('rejects a request older than the 7-day lookback window', async () => {
       await request(app.getHttpServer())
         .post('/attendance/regularization')
@@ -1877,6 +1922,20 @@ describe('Attendance (e2e)', () => {
         },
       };
     };
+
+    it('rejects a row dated in the future', async () => {
+      const tomorrow = offsetDate(1);
+      const { body } = await uploadValidate([
+        {
+          employeeId: importEmployeeHumanId,
+          date: tomorrow,
+          inTime: `${tomorrow} 09:00:00`,
+          outTime: `${tomorrow} 18:00:00`,
+        },
+      ]);
+      expect(body.validationErrors).toHaveLength(1);
+      expect(body.validationErrors[0].error).toMatch(/in the future/i);
+    });
 
     it('rejects a row dated before the employee joining date', async () => {
       const lateJoiner = await request(app.getHttpServer())
