@@ -600,4 +600,88 @@ describe('Leave accrual engine (e2e)', () => {
       ).toBe(1);
     });
   });
+
+  describe('encashment yearly cap', () => {
+    it('counts what was already requested this year, not just the current request', async () => {
+      const t = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Cap EL',
+          code: 'CAPEL',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 0,
+          accrualFrequency: 'YEARLY',
+          encashment: {
+            allowed: true,
+            maxDaysPerYear: 3,
+            minBalanceToRetain: 0,
+          },
+        })
+        .expect(201);
+      const typeId = (t.body as { id: string }).id;
+      await prisma.leaveBalance.create({
+        data: {
+          organizationId,
+          employeeId: adminId,
+          leaveTypeId: typeId,
+          year,
+          opening: 0,
+          credited: 20,
+          closing: 20,
+        },
+      });
+      const ask = (days: number) =>
+        request(app.getHttpServer())
+          .post('/leave-encashments')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ leaveType: typeId, days });
+
+      await ask(2).expect(201);
+      const over = await ask(2).expect(400); // 2 + 2 > 3
+      expect(JSON.stringify(over.body)).toMatch(/2 day\(s\) already requested/);
+      await ask(1).expect(201); // 2 + 1 = 3, exactly the cap
+      await ask(1).expect(400);
+    });
+
+    it('two simultaneous requests cannot both pass', async () => {
+      const t = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Cap Race',
+          code: 'CAPRC',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 0,
+          accrualFrequency: 'YEARLY',
+          encashment: {
+            allowed: true,
+            maxDaysPerYear: 2,
+            minBalanceToRetain: 0,
+          },
+        })
+        .expect(201);
+      const typeId = (t.body as { id: string }).id;
+      await prisma.leaveBalance.create({
+        data: {
+          organizationId,
+          employeeId: adminId,
+          leaveTypeId: typeId,
+          year,
+          opening: 0,
+          credited: 20,
+          closing: 20,
+        },
+      });
+      const results = await Promise.all(
+        [0, 1, 2].map(() =>
+          request(app.getHttpServer())
+            .post('/leave-encashments')
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ leaveType: typeId, days: 2 }),
+        ),
+      );
+      expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+    });
+  });
 });

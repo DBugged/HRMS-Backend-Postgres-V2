@@ -181,6 +181,31 @@ export class LeaveEncashmentsService {
           year,
           organizationId,
         );
+        // The yearly cap counts everything this employee has already requested for this leave type this year
+        // (pending, approved or processed — a request cannot be rejected), not just this one request. Checked here,
+        // under the row lock above, so two simultaneous requests cannot both pass.
+        if (rule.maxDaysPerYear) {
+          const requested =
+            (
+              await tx.leaveEncashment.aggregate({
+                _sum: { days: true },
+                where: {
+                  organizationId,
+                  employeeId: actor.id,
+                  leaveTypeId: leaveType.id,
+                  createdAt: {
+                    gte: new Date(Date.UTC(year, 0, 1)),
+                    lt: new Date(Date.UTC(year + 1, 0, 1)),
+                  },
+                },
+              })
+            )._sum.days ?? 0;
+          if (requested + dto.days > rule.maxDaysPerYear) {
+            throw new BadRequestException(
+              `Cannot encash more than ${rule.maxDaysPerYear} day(s) per year for this leave type (${requested} day(s) already requested this year).`,
+            );
+          }
+        }
         const minRetain = rule.minBalanceToRetain ?? 0;
         // `pending` (this employee's other open encashment/leave holds on
         // this leave type) is subtracted here, same as leave application's
