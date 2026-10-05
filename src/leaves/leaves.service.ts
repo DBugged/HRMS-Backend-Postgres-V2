@@ -284,12 +284,37 @@ export class LeavesService {
       return rows;
     });
 
+    // `closing` still counts carried-in days that lapsed unused; what an employee can actually use (apply, encash)
+    // does not, so the balances shown here exclude them and say how many lapsed.
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const lapsedByRow = await this.leaveBalanceService.forfeitedCarryIn(
+      this.scopedPrisma,
+      balances,
+      organizationId,
+      new Date().getFullYear() > resolvedYear
+        ? `${resolvedYear}-12-31`
+        : todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
+    );
+    const shown = balances.map((b) => {
+      const lapsed = lapsedByRow.get(b.id) ?? 0;
+      return lapsed > 0
+        ? {
+            ...b,
+            closing: Math.round((b.closing - lapsed) * 100) / 100,
+            forfeitedCarryIn: lapsed,
+          }
+        : b;
+    });
+
     const compOffAvailable = await this.compOffService.available(
       targetEmployeeId,
       organizationId,
     );
 
-    return { balances, compOffAvailable };
+    return { balances: shown, compOffAvailable };
   }
 
   async getTeamCalendar(
@@ -1028,11 +1053,20 @@ export class LeavesService {
         // calls for the same employee+leaveType+year can both read this
         // same snapshot before either commits its hold below, so both
         // would pass here even if only one can actually be afforded.
+        const forfeited = (
+          await this.leaveBalanceService.forfeitedCarryIn(
+            tx,
+            [row],
+            organizationId,
+            today,
+          )
+        ).get(row.id);
         const preflight = checkAffordability(
           row,
           negativeBalance,
           totalDays,
           today,
+          forfeited ?? 0,
         );
         if (!preflight.ok) {
           throw new ForbiddenException('Insufficient leave balance.');
@@ -1070,6 +1104,7 @@ export class LeavesService {
           negativeBalance,
           0,
           today,
+          forfeited ?? 0,
         );
         if (!affordability.ok) {
           throw new ForbiddenException('Insufficient leave balance.');

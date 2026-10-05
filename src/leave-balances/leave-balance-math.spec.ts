@@ -1,6 +1,7 @@
 import { AccrualFrequency, AllocationType } from '@prisma/client';
 import {
   accruesPerCycle,
+  availedBeforeExpiry,
   computeAccrualPerCycle,
   computeAccrualPeriodKey,
   computeCarriedInExpiry,
@@ -8,6 +9,9 @@ import {
   computeUpfrontCredit,
   countElapsedCycles,
   cyclesSinceJoining,
+  expectedAccrualToDate,
+  forfeitedCarryIn,
+  isCarriedInExpired,
   recalcClosing,
 } from './leave-balance-math';
 
@@ -326,5 +330,91 @@ describe('accruesPerCycle', () => {
         2026,
       ),
     ).toBe(6);
+  });
+});
+
+describe('carried-in expiry', () => {
+  it('a balance expires ON its expiry date (3 months from 1 Jan is gone on 1 Apr, usable through 31 Mar)', () => {
+    expect(isCarriedInExpired('2026-04-01', '2026-03-31')).toBe(false);
+    expect(isCarriedInExpired('2026-04-01', '2026-04-01')).toBe(true);
+    expect(isCarriedInExpired('2026-04-01', '2026-06-01')).toBe(true);
+    expect(isCarriedInExpired(null, '2099-01-01')).toBe(false);
+  });
+
+  it('counts approved leave taken wholly before the expiry date', () => {
+    const leaves = [
+      { startDate: '2026-01-12', endDate: '2026-01-16', totalDays: 5 },
+      { startDate: '2026-02-10', endDate: '2026-02-12', totalDays: 3 },
+    ];
+    expect(availedBeforeExpiry(leaves, '2026-04-01')).toBe(8);
+  });
+
+  it('ignores leave that starts on or after the expiry date', () => {
+    expect(
+      availedBeforeExpiry(
+        [{ startDate: '2026-04-01', endDate: '2026-04-03', totalDays: 3 }],
+        '2026-04-01',
+      ),
+    ).toBe(0);
+  });
+
+  it('counts only the share of a straddling leave that falls before the expiry', () => {
+    // 30 Mar - 2 Apr is 4 calendar days, 2 of them (30, 31 Mar) before 1 Apr.
+    expect(
+      availedBeforeExpiry(
+        [{ startDate: '2026-03-30', endDate: '2026-04-02', totalDays: 4 }],
+        '2026-04-01',
+      ),
+    ).toBe(2);
+  });
+
+  it('forfeits only the carried-in days that went unused', () => {
+    expect(forfeitedCarryIn(10, 8, true)).toBe(2);
+    expect(forfeitedCarryIn(10, 0, true)).toBe(10);
+  });
+
+  it('forfeits nothing when leave used all of it, or before it expires, or when nothing was carried in', () => {
+    expect(forfeitedCarryIn(10, 12, true)).toBe(0);
+    expect(forfeitedCarryIn(10, 0, false)).toBe(0);
+    expect(forfeitedCarryIn(0, 0, true)).toBe(0);
+  });
+});
+
+describe('expectedAccrualToDate', () => {
+  const quarterly = {
+    allocationType: AllocationType.FIXED_ANNUAL,
+    annualQuota: 6,
+    accrualFrequency: AccrualFrequency.QUARTERLY,
+    accrualAmountPerCycle: 1.5,
+  };
+  it('a long-serving employee has a full year of quarters due, not a part-year from their joining month', () => {
+    expect(
+      expectedAccrualToDate(
+        quarterly,
+        new Date('2020-02-07T00:00:00Z'),
+        2026,
+        new Date('2026-10-05T00:00:00Z'),
+      ),
+    ).toBe(6);
+  });
+  it('counts from the joining cycle for someone who joined this year', () => {
+    expect(
+      expectedAccrualToDate(
+        quarterly,
+        new Date('2026-08-01T00:00:00Z'),
+        2026,
+        new Date('2026-10-05T00:00:00Z'),
+      ),
+    ).toBe(3);
+  });
+  it('is 0 before the joining date', () => {
+    expect(
+      expectedAccrualToDate(
+        quarterly,
+        new Date('2026-12-01T00:00:00Z'),
+        2026,
+        new Date('2026-10-05T00:00:00Z'),
+      ),
+    ).toBe(0);
   });
 });

@@ -185,7 +185,22 @@ export class LeaveEncashmentsService {
         // `pending` (this employee's other open encashment/leave holds on
         // this leave type) is subtracted here, same as leave application's
         // checkAffordability — closing alone ignores holds not yet decided.
-        const available = balanceRow.closing - balanceRow.pending;
+        // Carried-in days that already lapsed unused are subtracted too: `closing` still counts them, but
+        // applying for leave does not, so they cannot be paid out either.
+        const orgForToday = await tx.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        });
+        const lapsed =
+          (
+            await this.leaveBalanceService.forfeitedCarryIn(
+              tx,
+              [balanceRow],
+              organizationId,
+              localDateStr(orgForToday?.timezone ?? 'Asia/Kolkata', now),
+            )
+          ).get(balanceRow.id) ?? 0;
+        const available = balanceRow.closing - lapsed - balanceRow.pending;
         if (!dto.days || dto.days > available - minRetain) {
           throw new BadRequestException(
             `Cannot encash more than ${Math.max(0, available - minRetain)} day(s) (must retain ${minRetain}).`,

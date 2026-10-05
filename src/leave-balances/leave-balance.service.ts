@@ -13,6 +13,7 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import {
   AllocationType,
   LeaveBalance,
+  LeaveStatus,
   LeaveType,
   Prisma,
   Role,
@@ -28,6 +29,9 @@ import {
   computeCarriedInExpiry,
   computeCarryOut,
   computeUpfrontCredit,
+  availedBeforeExpiry,
+  forfeitedCarryIn,
+  isCarriedInExpired,
   countElapsedCycles,
   cyclesSinceJoining,
   expectedAccrualToDate,
@@ -391,6 +395,69 @@ export class LeaveBalanceService {
     return tx.leaveBalance.findFirstOrThrow({
       where: { id: balanceId, organizationId },
     });
+  }
+
+  /**
+   * Carried-in days that lapsed unused, per balance row id, as of `asOf` (YYYY-MM-DD). Only rows whose carried-in
+   * balance has expired appear in the result (everything else is 0). The days leave took from the carried-in pool
+   * before it expired are spent, not lost, so they are worked out from the employee's approved leave (oldest days
+   * first): lapsed = carried-in opening − min(opening, approved leave taken before the expiry date). One query for
+   * all the rows, and none at all when nothing has expired.
+   */
+  async forfeitedCarryIn(
+    db: Pick<Prisma.TransactionClient, 'leave'>,
+    rows: Pick<
+      LeaveBalance,
+      | 'id'
+      | 'employeeId'
+      | 'leaveTypeId'
+      | 'year'
+      | 'opening'
+      | 'carriedInExpiresOn'
+    >[],
+    organizationId: string,
+    asOf: string,
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    const expired = rows.filter(
+      (r) => r.opening > 0 && isCarriedInExpired(r.carriedInExpiresOn, asOf),
+    );
+    if (expired.length === 0) return result;
+
+    const years = expired.map((r) => r.year);
+    const leaves = await db.leave.findMany({
+      where: {
+        organizationId,
+        status: LeaveStatus.APPROVED,
+        employeeId: { in: [...new Set(expired.map((r) => r.employeeId))] },
+        leaveTypeId: { in: [...new Set(expired.map((r) => r.leaveTypeId))] },
+        startDate: {
+          gte: `${Math.min(...years)}-01-01`,
+          lte: `${Math.max(...years)}-12-31`,
+        },
+      },
+      select: {
+        employeeId: true,
+        leaveTypeId: true,
+        startDate: true,
+        endDate: true,
+        totalDays: true,
+      },
+    });
+    for (const row of expired) {
+      const taken = availedBeforeExpiry(
+        leaves.filter(
+          (l) =>
+            l.employeeId === row.employeeId &&
+            l.leaveTypeId === row.leaveTypeId &&
+            l.startDate.startsWith(`${row.year}-`),
+        ),
+        row.carriedInExpiresOn as string,
+      );
+      const lapsed = forfeitedCarryIn(row.opening, taken, true);
+      if (lapsed > 0) result.set(row.id, lapsed);
+    }
+    return result;
   }
 
   async getEligibleLeaveTypes(
@@ -835,6 +902,16 @@ export class LeaveBalanceService {
       rowsByLeaveTypeId.set(row.leaveTypeId, list);
     }
 
+    // Carry-forward happens at the turn of the year, so a balance carried INTO the closing year is judged as of that
+    // moment (1 Jan of the next year). Carried-in days that lapsed unused by then — the usual case for a 12-month
+    // expiry, whose date is exactly that 1 Jan — are not carried a second time with a fresh expiry.
+    const lapsedByRow = await this.forfeitedCarryIn(
+      this.scopedPrisma,
+      closingRows,
+      organizationId,
+      `${year + 1}-01-01`,
+    );
+
     let processed = 0;
     await this.scopedPrisma.$transaction(async (tx) => {
       for (const leaveType of carryForwardTypes) {
@@ -842,7 +919,10 @@ export class LeaveBalanceService {
         const rows = rowsByLeaveTypeId.get(leaveType.id) ?? [];
 
         for (const row of rows) {
-          const carryOut = computeCarryOut(row.closing, cf.maxDays);
+          const carryOut = computeCarryOut(
+            row.closing - (lapsedByRow.get(row.id) ?? 0),
+            cf.maxDays,
+          );
           await tx.leaveBalance.updateMany({
             where: { id: row.id, organizationId },
             data: { carriedForwardOut: carryOut },

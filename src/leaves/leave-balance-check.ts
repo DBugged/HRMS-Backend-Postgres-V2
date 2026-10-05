@@ -5,6 +5,8 @@
  * for those two cases before ever reaching this function.
  */
 
+import { isCarriedInExpired } from '../leave-balances/leave-balance-math';
+
 export interface AffordabilityBalanceRow {
   opening: number;
   credited: number;
@@ -31,22 +33,26 @@ export function checkAffordability(
   negativeBalance: NegativeBalanceRule,
   requestedDays: number,
   today: string,
+  // Carried-in days that lapsed unused (LeaveBalanceService.forfeitedCarryIn). Only the UNUSED part is lost: days
+  // that leave already took from the carried-in pool are spent, and charging them again to this year's credit made
+  // the balance negative. When omitted, every carried-in day is treated as lapsed once the expiry has passed.
+  forfeitedCarryIn?: number,
 ): AffordabilityResult {
-  const effectiveOpening =
-    row.carriedInExpiresOn !== null && today > row.carriedInExpiresOn
-      ? 0
-      : row.opening;
+  const forfeited =
+    forfeitedCarryIn ??
+    (isCarriedInExpired(row.carriedInExpiresOn, today) ? row.opening : 0);
 
   // `pending` IS subtracted here (unlike LeaveBalance.closing's formula)
   // to block a second concurrent request from double-booking the same
   // balance — see leave-balances/leave-balance.service.ts's comment on
   // why the two formulas deliberately differ.
   const available =
-    effectiveOpening +
+    row.opening +
     row.credited -
     row.availed -
     row.encashed +
     row.adjusted -
+    forfeited -
     row.pending;
 
   const shortfall = Math.max(0, requestedDays - available);

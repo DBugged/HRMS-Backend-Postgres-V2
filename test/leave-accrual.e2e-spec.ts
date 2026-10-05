@@ -281,4 +281,173 @@ describe('Leave accrual engine (e2e)', () => {
       await repair(otherOrgToken).expect(404);
     });
   });
+
+  describe('carried-forward days that expire', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    // Needs the expiry (1 Feb) to be behind us.
+    const expiredByNow = today > `${year}-02-01`;
+    let employeeId: string;
+    const makeType = (code: string, extra: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: `Expiry ${code}`,
+          code,
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 0,
+          accrualFrequency: 'YEARLY',
+          ...extra,
+        })
+        .expect(201)
+        .then((r) => (r.body as { id: string }).id);
+    const putRow = (
+      typeId: string,
+      rowYear: number,
+      v: {
+        opening: number;
+        credited: number;
+        availed?: number;
+        expiresOn?: string | null;
+      },
+    ) =>
+      prisma.leaveBalance.create({
+        data: {
+          organizationId,
+          employeeId,
+          leaveTypeId: typeId,
+          year: rowYear,
+          opening: v.opening,
+          credited: v.credited,
+          availed: v.availed ?? 0,
+          carriedInExpiresOn: v.expiresOn ?? null,
+          closing: v.opening + v.credited - (v.availed ?? 0),
+          lastAccrualPeriod: null,
+        },
+      });
+
+    beforeAll(async () => {
+      employeeId = (
+        await prisma.user.findFirstOrThrow({
+          where: { organizationId, email: `accrual-emp-${TAG}@example.test` },
+        })
+      ).id;
+      await prisma.user.updateMany({
+        where: { id: employeeId },
+        data: { joiningDate: new Date('2020-02-07T00:00:00.000Z') },
+      });
+    });
+
+    it('days already taken from the carried-in pool are spent, only the unused part lapses', async () => {
+      if (!expiredByNow) return;
+      const typeId = await makeType('XP1', {});
+      const r = await putRow(typeId, year, {
+        opening: 10,
+        credited: 6,
+        availed: 8,
+        expiresOn: `${year}-02-01`,
+      });
+      for (const [start, end, days] of [
+        [`${year}-01-05`, `${year}-01-09`, 5],
+        [`${year}-01-20`, `${year}-01-22`, 3],
+      ] as const) {
+        await prisma.leave.create({
+          data: {
+            organizationId,
+            employeeId,
+            leaveTypeId: typeId,
+            startDate: start,
+            endDate: end,
+            totalDays: days,
+            status: 'APPROVED',
+          },
+        });
+      }
+      const lapsed = await balances.forfeitedCarryIn(
+        prisma,
+        [r],
+        organizationId,
+        today,
+      );
+      expect(lapsed.get(r.id)).toBe(2); // 10 carried in - 8 used before it expired
+
+      // What My Leave shows now matches what can be used: 10 + 6 - 8 - 2.
+      const login = await request(app.getHttpServer())
+        .get('/leaves/balance')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      const mine = (
+        login.body as {
+          balances: {
+            leaveTypeId: string;
+            closing: number;
+            forfeitedCarryIn?: number;
+          }[];
+        }
+      ).balances.find((b) => b.leaveTypeId === typeId);
+      expect(mine?.closing).toBe(6);
+      expect(mine?.forfeitedCarryIn).toBe(2);
+    });
+
+    it('unused carried-in days that lapse are not carried forward a second time', async () => {
+      const typeId = await makeType('XP2', {
+        carryForward: { allowed: true, maxDays: 10, expiryMonths: 12 },
+      });
+      // 10 carried in with a 12-month expiry (gone on 1 Jan next year), 6 credited this year, nothing used.
+      await putRow(typeId, year, {
+        opening: 10,
+        credited: 6,
+        expiresOn: `${year + 1}-01-01`,
+      });
+      await balances.runYearEndCarryForward(year, organizationId);
+      const next = await prisma.leaveBalance.findFirstOrThrow({
+        where: {
+          organizationId,
+          employeeId,
+          leaveTypeId: typeId,
+          year: year + 1,
+        },
+      });
+      expect(next.opening).toBe(6); // this year's own 6, not 10 again
+    });
+
+    it('a carried-in balance that never expires is carried as before', async () => {
+      const typeId = await makeType('XP3', {
+        carryForward: { allowed: true, maxDays: 10, expiryMonths: null },
+      });
+      await putRow(typeId, year, { opening: 10, credited: 6 });
+      await balances.runYearEndCarryForward(year, organizationId);
+      const next = await prisma.leaveBalance.findFirstOrThrow({
+        where: {
+          organizationId,
+          employeeId,
+          leaveTypeId: typeId,
+          year: year + 1,
+        },
+      });
+      expect(next.opening).toBe(10); // closing 16, capped at the 10-day limit
+    });
+
+    it('expired carried-in days cannot be encashed', async () => {
+      if (!expiredByNow) return;
+      const typeId = await makeType('XP4', {
+        encashment: {
+          allowed: true,
+          maxDaysPerYear: 10,
+          minBalanceToRetain: 0,
+        },
+      });
+      await putRow(typeId, year, {
+        opening: 10,
+        credited: 0,
+        expiresOn: `${year}-02-01`,
+      });
+      const res = await request(app.getHttpServer())
+        .post('/leave-encashments')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ leaveType: typeId, days: 1 })
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/Cannot encash more than 0/);
+    });
+  });
 });

@@ -61,4 +61,28 @@ describe('checkAffordability', () => {
     const result = checkAffordability(row, noNegative, 5, '2026-06-01');
     expect(result.available).toBe(13); // opening kept: 5+10-2
   });
+
+  it('charges days already taken from the carried-in pool to that pool, not to this year (only the unused part lapses)', () => {
+    // 10 carried in (expires 1 Apr), 6 credited, 8 taken before it expired: 2 lapse, the other 8 were spent.
+    const row = {
+      ...baseRow,
+      opening: 10,
+      credited: 6,
+      availed: 8,
+      carriedInExpiresOn: '2026-04-01',
+    };
+    const result = checkAffordability(row, noNegative, 1, '2026-06-01', 2);
+    expect(result.available).toBe(6); // 10+6-8-2
+    expect(result.ok).toBe(true);
+  });
+
+  it('the expiry date itself is already expired', () => {
+    const row = { ...baseRow, carriedInExpiresOn: '2026-04-01' };
+    expect(checkAffordability(row, noNegative, 1, '2026-03-31').available).toBe(
+      13,
+    );
+    expect(checkAffordability(row, noNegative, 1, '2026-04-01').available).toBe(
+      8,
+    );
+  });
 });

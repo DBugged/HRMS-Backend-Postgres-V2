@@ -400,6 +400,18 @@ export class LeaveTrackerService {
       activeLeaveTypes,
     );
 
+    // Carried-in days that lapsed unused are not part of what an employee can use, so the tracker's Closing excludes
+    // them — the same figure applying for leave and encashment use. Judged as of today, or as of 31 Dec for a past
+    // year; a future year has nothing lapsed yet.
+    const lapsedByRow = await this.leaveBalanceService.forfeitedCarryIn(
+      this.scopedPrisma,
+      [...existingBalanceByKey.values(), ...ensuredByKey.values()],
+      organizationId,
+      new Date().getFullYear() > query.year
+        ? `${query.year}-12-31`
+        : new Date().toISOString().slice(0, 10),
+    );
+
     for (const employee of employees) {
       const balanceEligible = balanceEligibleByEmployee.get(employee.id)!;
 
@@ -415,7 +427,9 @@ export class LeaveTrackerService {
             leaveTypeName: leaveType.name,
             credited: row.credited,
             availed: row.availed,
-            closing: row.closing,
+            closing:
+              Math.round((row.closing - (lapsedByRow.get(row.id) ?? 0)) * 100) /
+              100,
           };
         });
 

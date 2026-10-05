@@ -270,6 +270,57 @@ export function computeCarryOut(closing: number, maxDays: number): number {
   return Math.max(0, Math.min(closing, maxDays || 0));
 }
 
+// A carried-in balance expires ON `expiresOn` (computeCarriedInExpiry returns Jan 1 + N months, i.e. the first day
+// the days are gone): "3 months" from Jan 1 means usable through 31 Mar, expired on 1 Apr. `asOf` is YYYY-MM-DD.
+export function isCarriedInExpired(
+  expiresOn: string | null | undefined,
+  asOf: string,
+): boolean {
+  return !!expiresOn && asOf >= expiresOn;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const dayNumber = (d: string) =>
+  Math.round(Date.parse(`${d}T00:00:00Z`) / DAY_MS);
+
+/**
+ * Days of approved leave taken before a carried-in balance expired. The oldest days are used first (carried-in
+ * before this year's credit), so these are the days that came out of the carried-in pool. A leave that straddles the
+ * expiry date counts for the share of its calendar days that fall before it.
+ */
+export function availedBeforeExpiry(
+  leaves: { startDate: string; endDate: string; totalDays: number }[],
+  expiresOn: string,
+): number {
+  let total = 0;
+  for (const l of leaves) {
+    if (l.startDate >= expiresOn) continue;
+    if (l.endDate < expiresOn) {
+      total += l.totalDays;
+      continue;
+    }
+    const span = dayNumber(l.endDate) - dayNumber(l.startDate) + 1;
+    const before = dayNumber(expiresOn) - dayNumber(l.startDate);
+    total += l.totalDays * (before / span);
+  }
+  return Math.round(total * 100) / 100;
+}
+
+/**
+ * Carried-in days that went unused and lapsed with the expiry date: the carried-in opening minus what leave already
+ * took from it. Zero before expiry, and zero when leave had used all of it — those days were spent, not lost, so they
+ * must not be charged a second time against this year's credit.
+ */
+export function forfeitedCarryIn(
+  opening: number,
+  availedBeforeExpiryDays: number,
+  expired: boolean,
+): number {
+  if (!expired || opening <= 0) return 0;
+  const used = Math.min(opening, Math.max(0, availedBeforeExpiryDays));
+  return Math.round((opening - used) * 100) / 100;
+}
+
 // Jan 1 of `rolloverYear` plus `expiryMonths`, as YYYY-MM-DD — null if the
 // leave type doesn't set an expiry (carried-in balance never expires).
 export function computeCarriedInExpiry(
