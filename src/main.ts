@@ -5,7 +5,6 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import type { NextFunction, Request, Response } from 'express';
-import { timingSafeEqual } from 'crypto';
 import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
@@ -14,6 +13,8 @@ import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
 import {
   assertProductionConfig,
   corsOrigins,
+  SWAGGER_PATHS,
+  swaggerAuthCheck,
   swaggerEnabled,
 } from './common/production-config';
 
@@ -97,23 +98,14 @@ async function bootstrap() {
   });
 
   if (swaggerEnabled()) {
-    // Optional basic-auth gate for the docs when SWAGGER_USER/PASSWORD are set.
-    const { SWAGGER_USER, SWAGGER_PASSWORD } = process.env;
-    if (
-      process.env.NODE_ENV === 'production' &&
-      SWAGGER_USER &&
-      SWAGGER_PASSWORD
-    ) {
-      const expected =
-        'Basic ' +
-        Buffer.from(`${SWAGGER_USER}:${SWAGGER_PASSWORD}`).toString('base64');
+    // Optional basic-auth gate for the docs when SWAGGER_USER/PASSWORD are set. Covers the raw
+    // OpenAPI documents too (/api/docs-json, /api/docs-yaml) — mounting only '/api/docs' left them open.
+    const docsAuth = swaggerAuthCheck();
+    if (docsAuth) {
       app.use(
-        '/api/docs',
+        [...SWAGGER_PATHS],
         (req: Request, res: Response, next: NextFunction) => {
-          const got = Buffer.from(req.headers.authorization ?? '');
-          const want = Buffer.from(expected);
-          if (got.length === want.length && timingSafeEqual(got, want))
-            return next();
+          if (docsAuth(req.headers.authorization)) return next();
           res.setHeader('WWW-Authenticate', 'Basic realm="docs"');
           res.status(401).send('Authentication required');
         },

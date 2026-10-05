@@ -1,5 +1,6 @@
 // Fail-fast startup checks. Everything here is a no-op unless
 // NODE_ENV=production so dev/test behave exactly as before.
+import { timingSafeEqual } from 'crypto';
 const isProd = (env: NodeJS.ProcessEnv) => env.NODE_ENV === 'production';
 
 const LOCAL_RE = /(^|\/\/)(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])(:|\/|$)/i;
@@ -91,4 +92,30 @@ export function cookieSecure(env: NodeJS.ProcessEnv = process.env): boolean {
 /** Swagger is on outside production; in production only with ENABLE_SWAGGER=true. */
 export function swaggerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !isProd(env) || env.ENABLE_SWAGGER === 'true';
+}
+
+/** Every URL Swagger serves: the UI, plus the raw OpenAPI documents (which expose the full API surface). */
+export const SWAGGER_PATHS = [
+  '/api/docs',
+  '/api/docs-json',
+  '/api/docs-yaml',
+] as const;
+
+/**
+ * Basic-auth check for the docs, or null when no gate applies (not production, or credentials unset).
+ * Returns a predicate over the request's Authorization header (constant-time compare).
+ */
+export function swaggerAuthCheck(
+  env: NodeJS.ProcessEnv = process.env,
+): ((authorization: string | undefined) => boolean) | null {
+  const { SWAGGER_USER, SWAGGER_PASSWORD } = env;
+  if (!isProd(env) || !SWAGGER_USER || !SWAGGER_PASSWORD) return null;
+  const want = Buffer.from(
+    'Basic ' +
+      Buffer.from(`${SWAGGER_USER}:${SWAGGER_PASSWORD}`).toString('base64'),
+  );
+  return (authorization) => {
+    const got = Buffer.from(authorization ?? '');
+    return got.length === want.length && timingSafeEqual(got, want);
+  };
 }
