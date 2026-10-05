@@ -371,6 +371,19 @@ export class NotificationsService {
       },
     });
 
-    return { success: true, recipientCount: recipients.length };
+    // Of the recipients, how many have the app installed with push on — so the sender can tell whether the
+    // broadcast will also appear on phones, not just in the in-app list.
+    const pushReachableCount = await this.pushService
+      .countReachable(
+        organizationId,
+        recipients.map((r) => r.id),
+      )
+      .catch(() => 0);
+
+    return {
+      success: true,
+      recipientCount: recipients.length,
+      pushReachableCount,
+    };
   }
 }

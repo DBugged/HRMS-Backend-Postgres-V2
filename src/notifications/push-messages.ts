@@ -7,6 +7,8 @@ export const EXPO_TOKEN_RE = /^(Exponent|Expo)PushToken\[[A-Za-z0-9_-]+\]$/;
 export const EXPO_CHUNK_SIZE = 100;
 export const MAX_DEVICES_PER_USER = 8;
 const MAX_BODY = 140;
+// Expo rejects a message over ~4KB; a broadcast title has no length limit of its own, so it is capped here.
+const MAX_TITLE = 65;
 
 export function isExpoPushToken(token: unknown): token is string {
   return typeof token === 'string' && EXPO_TOKEN_RE.test(token);
@@ -28,6 +30,8 @@ export interface ExpoMessage {
   sound: 'default';
   channelId: 'default';
   priority: 'high';
+  // iOS app-icon badge: the recipient's unread count. Android ignores it.
+  badge?: number;
   data: { category: string; notificationId?: string; kind?: 'APPROVAL' };
 }
 
@@ -38,18 +42,25 @@ export function pushBody(category: string, message: string): string {
   return clean.length > MAX_BODY ? `${clean.slice(0, MAX_BODY - 1)}…` : clean;
 }
 
+export function pushTitle(title: string): string {
+  const clean = title.replace(/\s+/g, ' ').trim();
+  return clean.length > MAX_TITLE ? `${clean.slice(0, MAX_TITLE - 1)}…` : clean;
+}
+
 export function buildExpoMessages(
   tokens: string[],
   input: PushInput,
+  badge?: number,
 ): ExpoMessage[] {
   const body = pushBody(input.category, input.message);
   return tokens.map((to) => ({
     to,
-    title: input.title,
+    title: pushTitle(input.title),
     body,
     sound: 'default',
     channelId: 'default',
     priority: 'high',
+    ...(badge !== undefined ? { badge } : {}),
     data: {
       category: input.category,
       ...(input.notificationId ? { notificationId: input.notificationId } : {}),
@@ -82,4 +93,28 @@ export function deadTokens(
     }
   });
   return dead;
+}
+
+// Every ticket Expo rejected for a reason other than a dead token (bad FCM/APNs credentials, an oversized payload,
+// a malformed message...). These were previously dropped silently, so a phone that never received anything left no
+// trace on the server. DeviceNotRegistered is excluded: deadTokens() handles it by removing the token.
+export function ticketErrors(
+  messages: { to: string }[],
+  tickets: {
+    status?: string;
+    message?: string;
+    details?: { error?: string };
+  }[],
+): { to: string; error: string; message: string }[] {
+  const out: { to: string; error: string; message: string }[] = [];
+  tickets.forEach((t, i) => {
+    if (t?.status !== 'error' || t.details?.error === 'DeviceNotRegistered')
+      return;
+    out.push({
+      to: messages[i]?.to ?? 'unknown',
+      error: t.details?.error ?? 'unknown',
+      message: t.message ?? '',
+    });
+  });
+  return out;
 }

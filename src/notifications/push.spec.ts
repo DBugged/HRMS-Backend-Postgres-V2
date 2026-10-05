@@ -4,6 +4,8 @@ import {
   deadTokens,
   isExpoPushToken,
   pushBody,
+  pushTitle,
+  ticketErrors,
 } from './push-messages';
 import { PushService } from './push.service';
 
@@ -63,6 +65,44 @@ describe('push-messages', () => {
     expect(plain.data).not.toHaveProperty('kind');
   });
 
+  it('caps a long title and sets the iOS badge only when given one', () => {
+    expect(pushTitle(`  ${'t'.repeat(200)} `).length).toBeLessThanOrEqual(65);
+    expect(pushTitle('Holiday  on\nFriday')).toBe('Holiday on Friday');
+    const [withBadge] = buildExpoMessages(
+      ['ExpoPushToken[a]'],
+      { title: 'x', message: 'y', category: 'GENERAL' },
+      3,
+    );
+    expect(withBadge.badge).toBe(3);
+    const [noBadge] = buildExpoMessages(['ExpoPushToken[a]'], {
+      title: 'x',
+      message: 'y',
+      category: 'GENERAL',
+    });
+    expect(noBadge).not.toHaveProperty('badge');
+  });
+
+  it('reports rejected pushes other than dead tokens', () => {
+    const msgs = [{ to: 'A' }, { to: 'B' }, { to: 'C' }];
+    expect(
+      ticketErrors(msgs, [
+        { status: 'ok' },
+        { status: 'error', details: { error: 'DeviceNotRegistered' } },
+        {
+          status: 'error',
+          message: 'Unable to retrieve the FCM server key',
+          details: { error: 'InvalidCredentials' },
+        },
+      ]),
+    ).toEqual([
+      {
+        to: 'C',
+        error: 'InvalidCredentials',
+        message: 'Unable to retrieve the FCM server key',
+      },
+    ]);
+  });
+
   it('chunks into groups of 100', () => {
     expect(
       chunk(Array.from({ length: 250 }, (_, i) => i)).map((c) => c.length),
@@ -94,6 +134,7 @@ describe('PushService.notify', () => {
   function make(opts: {
     devices: { userId: string; token: string }[];
     users: { id: string; notificationPreferences: unknown }[];
+    unread?: { userId: string; _count: { _all: number } }[];
   }) {
     const deleted: string[][] = [];
     const scoped = {
@@ -109,6 +150,13 @@ describe('PushService.notify', () => {
           ),
       },
       user: { findMany: jest.fn().mockResolvedValue(opts.users) },
+      notification: {
+        groupBy: jest
+          .fn()
+          .mockResolvedValue(
+            opts.unread ?? [{ userId: 'u1', _count: { _all: 2 } }],
+          ),
+      },
     };
     const svc = new PushService(scoped as never, {} as never);
     return { svc, scoped, deleted };
@@ -146,11 +194,13 @@ describe('PushService.notify', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const sent = JSON.parse(
       (fetchMock.mock.calls[0][1] as { body: string }).body,
-    ) as { to: string }[];
+    ) as { to: string; badge?: number }[];
     expect(sent.map((m) => m.to)).toEqual([
       'ExpoPushToken[a]',
       'ExpoPushToken[b]',
     ]);
+    // The recipient's unread count rides along as the app-icon badge.
+    expect(sent.every((m) => m.badge === 2)).toBe(true);
     expect(deleted).toEqual([['ExpoPushToken[b]']]);
   });
 
@@ -182,6 +232,24 @@ describe('PushService.notify', () => {
     jest.spyOn(global, 'fetch').mockRejectedValue(new Error('network down'));
     expect(() => svc.notify([target('u1')])).not.toThrow();
     await flush();
+  });
+
+  it('counts only broadcast recipients a push would actually reach', async () => {
+    const { svc } = make({
+      devices: [
+        { userId: 'u1', token: 'ExpoPushToken[a]' },
+        { userId: 'u2', token: 'ExpoPushToken[b]' },
+        { userId: 'u3', token: 'ExpoPushToken[c]' },
+      ],
+      users: [
+        { id: 'u1', notificationPreferences: null },
+        { id: 'u2', notificationPreferences: { pushEnabled: false } },
+        { id: 'u3', notificationPreferences: { mutedCategories: ['GENERAL'] } },
+        { id: 'u4', notificationPreferences: null }, // no phone registered
+      ],
+    });
+    expect(await svc.countReachable('o1', ['u1', 'u2', 'u3', 'u4'])).toBe(1);
+    expect(await svc.countReachable('o1', [])).toBe(0);
   });
 
   it('does nothing in the test environment', async () => {

@@ -15,6 +15,7 @@ import {
   buildExpoMessages,
   chunk,
   deadTokens,
+  ticketErrors,
   type PushInput,
 } from './push-messages';
 
@@ -90,6 +91,35 @@ export class PushService {
     return { removed: count };
   }
 
+  // How many of these users would actually get a push for a GENERAL broadcast: active, push switched on, GENERAL not
+  // muted, and at least one registered phone. Lets the sender see whether the broadcast will reach any device.
+  async countReachable(
+    organizationId: string,
+    userIds: string[],
+  ): Promise<number> {
+    if (userIds.length === 0) return 0;
+    const [devices, users] = await Promise.all([
+      this.scopedPrisma.pushDevice.findMany({
+        where: { organizationId, userId: { in: userIds } },
+        select: { userId: true },
+        distinct: ['userId'],
+      }),
+      this.scopedPrisma.user.findMany({
+        where: { organizationId, id: { in: userIds }, isActive: true },
+        select: { id: true, notificationPreferences: true },
+      }),
+    ]);
+    const withDevice = new Set(devices.map((d) => d.userId));
+    return users.filter((u) => {
+      const p = (u.notificationPreferences ?? {}) as PrefsShape;
+      return (
+        withDevice.has(u.id) &&
+        p.pushEnabled !== false &&
+        !(p.mutedCategories ?? []).includes(NotificationCategory.GENERAL)
+      );
+    }).length;
+  }
+
   // Fire-and-forget entry point used by NotificationsService after it writes the in-app rows.
   notify(targets: PushTarget[]): void {
     if (!this.enabled || targets.length === 0) return;
@@ -116,6 +146,16 @@ export class PushService {
         }),
       ]);
       if (devices.length === 0) continue;
+      // Unread count per user, sent as the iOS app-icon badge so the red number shows with the app closed. The
+      // in-app rows are already written when notify() runs, so this includes the notification being pushed.
+      const unread = await this.scopedPrisma.notification.groupBy({
+        by: ['userId'],
+        where: { organizationId, userId: { in: userIds }, isRead: false },
+        _count: { _all: true },
+      });
+      const unreadByUser = new Map(
+        unread.map((u) => [u.userId, u._count._all]),
+      );
       const prefs = new Map(
         users.map((u) => [
           u.id,
@@ -133,7 +173,7 @@ export class PushService {
         const tokens = devices
           .filter((d) => d.userId === t.userId)
           .map((d) => d.token);
-        return buildExpoMessages(tokens, t);
+        return buildExpoMessages(tokens, t, unreadByUser.get(t.userId) ?? 0);
       });
 
       for (const batch of chunk(messages)) {
@@ -168,7 +208,13 @@ export class PushService {
       const json = (await res.json()) as {
         data?: { status?: string; details?: { error?: string } }[];
       };
-      const dead = deadTokens(batch, json.data ?? []);
+      const tickets = json.data ?? [];
+      for (const e of ticketErrors(batch, tickets)) {
+        this.logger.warn(
+          `Expo rejected a push (${e.error}): ${e.message} [${e.to.slice(0, 24)}…]`,
+        );
+      }
+      const dead = deadTokens(batch, tickets);
       if (dead.length) {
         await this.scopedPrisma.pushDevice.deleteMany({
           where: { organizationId, token: { in: dead } },
