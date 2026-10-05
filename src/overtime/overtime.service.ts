@@ -5,6 +5,7 @@
 // Important: rateMultiplier is fixed per type at creation and not recalculated later, so a later change to
 // RATE_MULTIPLIERS only affects new records, not historical ones.
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
+import { OVERTIME_PAY_OFF_MESSAGE, isOvertimePayEnabled } from './overtime-pay';
 import {
   BadRequestException,
   ConflictException,
@@ -102,6 +103,10 @@ export class OvertimeService {
   ) {}
 
   async log(dto: LogOvertimeDto, actor: Actor, organizationId: string) {
+    // With Overtime Pay off, nothing logged here could ever be paid.
+    if (!(await isOvertimePayEnabled(this.scopedPrisma, organizationId))) {
+      throw new BadRequestException(OVERTIME_PAY_OFF_MESSAGE);
+    }
     const type = dto.type ?? OvertimeType.REGULAR;
 
     // REGULAR/NIGHT overtime means "extra hours on top of a normal working
@@ -191,6 +196,14 @@ export class OvertimeService {
   // them (e.g. "Holiday (2x)") instead of hardcoding them client-side.
   getRates(organizationId: string) {
     return getOvertimeRates(this.scopedPrisma, organizationId);
+  }
+
+  // Whether overtime is currently paid (the Overtime Pay salary component is active). The web and mobile apps use it
+  // to show or hide "log overtime" instead of letting the employee fill a form the server will refuse.
+  async status(organizationId: string) {
+    return {
+      payEnabled: await isOvertimePayEnabled(this.scopedPrisma, organizationId),
+    };
   }
 
   async findAll(query: QueryOvertimeDto, actor: Actor, organizationId: string) {

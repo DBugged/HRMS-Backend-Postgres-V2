@@ -2375,6 +2375,37 @@ describe('Attendance (e2e)', () => {
       expect(reviewed.source).toBe('AUTO_PUNCH');
     });
 
+    it('suggests nothing while Overtime Pay is turned off, and resumes when it is back on', async () => {
+      const setOvertimePay = (isActive: boolean) =>
+        prisma.salaryComponent.updateMany({
+          where: { organizationId, code: 'OVERTIME_PAY' },
+          data: { isActive },
+        });
+      try {
+        await setOvertimePay(false);
+        const offDate = offsetDateAvoidingHolidays(-33);
+        await punchAt(employeeId, `${offDate}T09:30:00.000Z`);
+        await punchAt(employeeId, `${offDate}T19:15:00.000Z`); // 45 min past shift end
+        expect(
+          await prisma.overtimeRecord.findFirst({
+            where: { organizationId, employeeId, date: offDate },
+          }),
+        ).toBeNull();
+
+        await setOvertimePay(true);
+        const onDate = offsetDateAvoidingHolidays(-34);
+        await punchAt(employeeId, `${onDate}T09:30:00.000Z`);
+        await punchAt(employeeId, `${onDate}T19:15:00.000Z`);
+        expect(
+          await prisma.overtimeRecord.findFirst({
+            where: { organizationId, employeeId, date: onDate },
+          }),
+        ).not.toBeNull();
+      } finally {
+        await setOvertimePay(true);
+      }
+    });
+
     it('does not create a record for a punch-out only a few minutes past shift end', async () => {
       const date = offsetDateAvoidingHolidays(-31);
       await punchAt(employeeId, `${date}T09:30:00.000Z`);

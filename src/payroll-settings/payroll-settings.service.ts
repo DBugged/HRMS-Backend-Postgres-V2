@@ -10,6 +10,7 @@ import {
   OrganizationAttendancePrefs,
 } from '../attendance/attendance-shift-config';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { isOvertimePayEnabled } from '../overtime/overtime-pay';
 
 // Read once per employee inside a payroll batch, rarely written — same
 // caching rationale as StatutoryConfigService.getEffective.
@@ -101,6 +102,12 @@ export class PayrollSettingsService {
     );
     return {
       settings,
+      // False when the Overtime Pay salary component is off. The settings screen locks the Overtime Rates then (they
+      // feed only that component), and update() below ignores edits to them.
+      overtimePayEnabled: await isOvertimePayEnabled(
+        this.scopedPrisma,
+        organizationId,
+      ),
       resolvedForCurrentMonth: {
         processingDate: resolveDayOfMonth(
           settings.processingDay,
@@ -124,10 +131,20 @@ export class PayrollSettingsService {
     organizationId: string,
   ): Promise<PayrollSettings> {
     await this.getOrCreate(organizationId);
+    // The overtime pay multipliers feed only the Overtime Pay component. While it is off they are locked: the screen
+    // sends the whole settings object on every save, so rather than reject a save that merely carries the unchanged
+    // rates, any rate in the request is dropped and the stored values are kept for when it is turned back on.
+    const effective: UpdatePayrollSettingsDto = { ...dto };
+    if (!(await isOvertimePayEnabled(this.scopedPrisma, organizationId))) {
+      delete effective.otRegularRate;
+      delete effective.otHolidayRate;
+      delete effective.otWeekendRate;
+      delete effective.otNightRate;
+    }
     await this.scopedPrisma.payrollSettings.updateMany({
       where: { organizationId },
       data: {
-        ...(dto as unknown as Prisma.PayrollSettingsUpdateManyMutationInput),
+        ...(effective as unknown as Prisma.PayrollSettingsUpdateManyMutationInput),
         updatedById,
       },
     });
@@ -138,7 +155,7 @@ export class PayrollSettingsService {
       action: 'PAYROLL_SETTINGS_UPDATED',
       module: 'PAYROLL',
       organizationId,
-      details: { ...dto },
+      details: { ...effective },
     });
 
     return this.getOrCreate(organizationId);

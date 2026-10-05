@@ -35,6 +35,12 @@ export class OvertimeController {
     return this.overtimeService.getRates(caller.organizationId);
   }
 
+  // No @Roles() — whether overtime is currently paid (Overtime Pay component active), so clients can hide the log form.
+  @Get('status')
+  status(@CurrentUser() caller: Caller) {
+    return this.overtimeService.status(caller.organizationId);
+  }
+
   // No @Roles() — any authenticated caller can view (self-scoped for
   // EMPLOYEE, service-side).
   @Get()

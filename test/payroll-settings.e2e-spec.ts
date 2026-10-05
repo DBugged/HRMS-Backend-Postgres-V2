@@ -154,4 +154,59 @@ describe('Payroll Settings (e2e)', () => {
     expected.setUTCDate(expected.getUTCDate() + 30); // the PUT above set this to 30
     expect(expiryDate).toBe(expected.toISOString().slice(0, 10));
   });
+  describe('Overtime Rates follow the Overtime Pay component', () => {
+    const rates = () =>
+      request(app.getHttpServer())
+        .get('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    const setOvertimePay = (isActive: boolean) =>
+      prisma.salaryComponent.updateMany({
+        where: { code: 'OVERTIME_PAY' },
+        data: { isActive },
+      });
+    afterAll(async () => {
+      await setOvertimePay(true);
+    });
+
+    it('GET reports overtimePayEnabled', async () => {
+      await setOvertimePay(true);
+      expect((await rates()).body).toMatchObject({ overtimePayEnabled: true });
+      await setOvertimePay(false);
+      expect((await rates()).body).toMatchObject({ overtimePayEnabled: false });
+    });
+
+    it('ignores overtime rate edits while off, but still saves the other fields, and keeps the stored rates', async () => {
+      await setOvertimePay(true);
+      await request(app.getHttpServer())
+        .put('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ otRegularRate: 1.75 })
+        .expect(200);
+
+      await setOvertimePay(false);
+      const res = await request(app.getHttpServer())
+        .put('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ otRegularRate: 3, otNightRate: 4, compOffExpiryDays: 31 })
+        .expect(200);
+      const saved = res.body as {
+        otRegularRate: number;
+        otNightRate: number;
+        compOffExpiryDays: number;
+      };
+      expect(saved.compOffExpiryDays).toBe(31); // the rest of the save still went through
+      expect(saved.otRegularRate).toBe(1.75); // the edit was dropped
+      expect(saved.otNightRate).not.toBe(4);
+
+      // Turned back on: the rates edited before it was switched off are intact and editable again.
+      await setOvertimePay(true);
+      const back = await request(app.getHttpServer())
+        .put('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ otRegularRate: 2.25 })
+        .expect(200);
+      expect((back.body as { otRegularRate: number }).otRegularRate).toBe(2.25);
+    });
+  });
 });

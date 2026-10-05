@@ -82,6 +82,7 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { getOvertimeRates } from '../overtime/overtime.service';
+import { isOvertimePayEnabled } from '../overtime/overtime-pay';
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
@@ -664,6 +665,9 @@ export class AttendanceService {
     shiftConfig: ShiftConfig,
   ): Promise<void> {
     if (!outTime) return;
+    // Overtime Pay is off: overtime could never be paid, so don't suggest any (existing suggestions are left as they
+    // are for HR to review).
+    if (!(await isOvertimePayEnabled(db, organizationId))) return;
     // No real shift was worked — nothing to overshoot.
     if (
       status === AttendanceStatus.ABSENT ||

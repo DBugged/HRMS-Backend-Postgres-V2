@@ -342,4 +342,58 @@ describe('Overtime (e2e)', () => {
         .expect(403);
     });
   });
+  describe('Overtime Pay turned off (the OVERTIME_PAY salary component is inactive)', () => {
+    let organizationId: string;
+    const setOvertimePay = async (isActive: boolean) => {
+      await prisma.salaryComponent.updateMany({
+        where: { organizationId, code: 'OVERTIME_PAY' },
+        data: { isActive },
+      });
+    };
+
+    beforeAll(async () => {
+      organizationId = (
+        await prisma.user.findFirstOrThrow({ where: { id: employeeId } })
+      ).organizationId;
+    });
+    afterAll(async () => {
+      await setOvertimePay(true);
+    });
+
+    it('GET /overtime/status reports whether overtime is paid', async () => {
+      const status = () =>
+        request(app.getHttpServer())
+          .get('/overtime/status')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .expect(200);
+      expect((await status()).body).toEqual({ payEnabled: true });
+      await setOvertimePay(false);
+      expect((await status()).body).toEqual({ payEnabled: false });
+    });
+
+    it('refuses to log overtime, with a message that says why, and stores nothing', async () => {
+      await setOvertimePay(false);
+      const before = await prisma.overtimeRecord.count({
+        where: { organizationId },
+      });
+      const res = await request(app.getHttpServer())
+        .post('/overtime')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date: '2026-07-20', hours: 2, type: 'REGULAR' })
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/Overtime Pay is turned off/);
+      expect(
+        await prisma.overtimeRecord.count({ where: { organizationId } }),
+      ).toBe(before);
+    });
+
+    it('logging works again once the component is turned back on', async () => {
+      await setOvertimePay(true);
+      await request(app.getHttpServer())
+        .post('/overtime')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ date: '2026-07-21', hours: 1, type: 'REGULAR' })
+        .expect(201);
+    });
+  });
 });
