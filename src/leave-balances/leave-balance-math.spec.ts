@@ -1,5 +1,6 @@
 import { AccrualFrequency, AllocationType } from '@prisma/client';
 import {
+  accrualCyclesDue,
   accruesPerCycle,
   availedBeforeExpiry,
   computeAccrualPerCycle,
@@ -10,9 +11,12 @@ import {
   countElapsedCycles,
   cyclesSinceJoining,
   expectedAccrualToDate,
+  firstCountedMonthIndex,
   forfeitedCarryIn,
   isCarriedInExpired,
+  joiningCycleFraction,
   recalcClosing,
+  shouldProrateOnJoining,
 } from './leave-balance-math';
 
 describe('computeUpfrontCredit', () => {
@@ -386,6 +390,7 @@ describe('expectedAccrualToDate', () => {
     annualQuota: 6,
     accrualFrequency: AccrualFrequency.QUARTERLY,
     accrualAmountPerCycle: 1.5,
+    prorateOnJoining: true,
   };
   it('a long-serving employee has a full year of quarters due, not a part-year from their joining month', () => {
     expect(
@@ -397,10 +402,20 @@ describe('expectedAccrualToDate', () => {
       ),
     ).toBe(6);
   });
-  it('counts from the joining cycle for someone who joined this year', () => {
+  it('prorates the joining cycle for someone who joined this year (Aug: 2 of Q3 months, then a full Q4)', () => {
     expect(
       expectedAccrualToDate(
         quarterly,
+        new Date('2026-08-01T00:00:00Z'),
+        2026,
+        new Date('2026-10-05T00:00:00Z'),
+      ),
+    ).toBe(2.5);
+  });
+  it('gives the whole joining cycle when the type does not prorate', () => {
+    expect(
+      expectedAccrualToDate(
+        { ...quarterly, prorateOnJoining: false },
         new Date('2026-08-01T00:00:00Z'),
         2026,
         new Date('2026-10-05T00:00:00Z'),
@@ -416,5 +431,153 @@ describe('expectedAccrualToDate', () => {
         new Date('2026-10-05T00:00:00Z'),
       ),
     ).toBe(0);
+  });
+});
+
+describe('joining-date proration (the 15th rule)', () => {
+  const d = (iso: string) => new Date(`${iso}T00:00:00Z`);
+  const asOf = d('2026-10-05');
+
+  it('the 15th still counts the joining month; the 16th starts counting from the next month', () => {
+    expect(firstCountedMonthIndex(d('2026-02-15'))).toBe(1);
+    expect(firstCountedMonthIndex(d('2026-02-16'))).toBe(2);
+    expect(firstCountedMonthIndex(d('2026-12-20'))).toBe(12);
+  });
+
+  it('splits a quarterly joining cycle by the months that count', () => {
+    expect(
+      joiningCycleFraction(AccrualFrequency.QUARTERLY, d('2026-01-01')),
+    ).toBe(1);
+    expect(
+      joiningCycleFraction(AccrualFrequency.QUARTERLY, d('2026-02-07')),
+    ).toBeCloseTo(2 / 3);
+    expect(
+      joiningCycleFraction(AccrualFrequency.QUARTERLY, d('2026-02-20')),
+    ).toBeCloseTo(1 / 3);
+    expect(
+      joiningCycleFraction(AccrualFrequency.QUARTERLY, d('2026-03-20')),
+    ).toBe(0);
+  });
+
+  it('splits a half-yearly and a bi-monthly joining cycle', () => {
+    const fraction = (f: AccrualFrequency, iso: string) =>
+      joiningCycleFraction(f, d(iso));
+    expect(fraction(AccrualFrequency.HALF_YEARLY, '2026-07-01')).toBe(1);
+    expect(fraction(AccrualFrequency.HALF_YEARLY, '2026-09-10')).toBeCloseTo(
+      4 / 6,
+    );
+    expect(fraction(AccrualFrequency.BI_MONTHLY, '2026-03-10')).toBe(1); // first month of Mar-Apr
+    expect(fraction(AccrualFrequency.BI_MONTHLY, '2026-04-10')).toBe(1 / 2);
+    expect(fraction(AccrualFrequency.BI_MONTHLY, '2026-04-25')).toBe(0);
+  });
+
+  it('a monthly cycle is all or nothing: joining after the 15th earns nothing for that month', () => {
+    expect(
+      joiningCycleFraction(AccrualFrequency.MONTHLY, d('2026-08-10')),
+    ).toBe(1);
+    expect(
+      joiningCycleFraction(AccrualFrequency.MONTHLY, d('2026-08-20')),
+    ).toBe(0);
+    expect(
+      accrualCyclesDue(
+        AccrualFrequency.MONTHLY,
+        d('2026-08-10'),
+        2026,
+        asOf,
+        true,
+      ),
+    ).toBe(3); // Aug, Sep, Oct
+    expect(
+      accrualCyclesDue(
+        AccrualFrequency.MONTHLY,
+        d('2026-08-20'),
+        2026,
+        asOf,
+        true,
+      ),
+    ).toBe(2); // Sep, Oct
+  });
+
+  it('only the joining cycle is prorated: every later cycle counts in full', () => {
+    // Quarterly, joined 7 Feb 2026, asked for in Oct: Q1 (2/3) + Q2 + Q3 + Q4 = 3 2/3.
+    expect(
+      accrualCyclesDue(
+        AccrualFrequency.QUARTERLY,
+        d('2026-02-07'),
+        2026,
+        asOf,
+        true,
+      ),
+    ).toBeCloseTo(11 / 3);
+    expect(
+      accrualCyclesDue(
+        AccrualFrequency.QUARTERLY,
+        d('2026-08-20'),
+        2026,
+        asOf,
+        true,
+      ),
+    ).toBeCloseTo(1 + 1 / 3);
+  });
+
+  it('does nothing when the type does not prorate, or the employee joined in an earlier year', () => {
+    expect(
+      accrualCyclesDue(
+        AccrualFrequency.QUARTERLY,
+        d('2026-08-20'),
+        2026,
+        asOf,
+        false,
+      ),
+    ).toBe(2);
+    expect(
+      accrualCyclesDue(
+        AccrualFrequency.QUARTERLY,
+        d('2020-02-20'),
+        2026,
+        asOf,
+        true,
+      ),
+    ).toBe(4);
+  });
+
+  it('matches the example: quota 6 quarterly, joined 7 Feb = 5.5, joined 5 Aug = 2.5, joined 20 Aug = 2', () => {
+    const quarterly = {
+      allocationType: AllocationType.FIXED_ANNUAL,
+      annualQuota: 6,
+      accrualFrequency: AccrualFrequency.QUARTERLY,
+      accrualAmountPerCycle: 1.5,
+      prorateOnJoining: true,
+    };
+    expect(expectedAccrualToDate(quarterly, d('2026-02-07'), 2026, asOf)).toBe(
+      5.5,
+    );
+    expect(expectedAccrualToDate(quarterly, d('2026-08-05'), 2026, asOf)).toBe(
+      2.5,
+    );
+    expect(expectedAccrualToDate(quarterly, d('2026-08-20'), 2026, asOf)).toBe(
+      2,
+    );
+  });
+
+  it('shouldProrateOnJoining: the checkbox, or the Prorated on Joining allocation type', () => {
+    expect(
+      shouldProrateOnJoining({
+        allocationType: AllocationType.FIXED_ANNUAL,
+        prorateOnJoining: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldProrateOnJoining({
+        allocationType: AllocationType.FIXED_ANNUAL,
+        prorateOnJoining: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldProrateOnJoining({
+        allocationType: AllocationType.PRORATED_ON_JOINING,
+        prorateOnJoining: false,
+      }),
+    ).toBe(true);
   });
 });

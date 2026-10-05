@@ -784,4 +784,87 @@ describe('Leave accrual engine (e2e)', () => {
       await edit(leaveTypeId, { annualQuota: 6 }).expect(200); // restore for the tests that follow
     });
   });
+
+  describe('proration on joining (the 15th rule)', () => {
+    const today = new Date().toISOString().slice(0, 10);
+    const settled = today > `${year}-02-20`; // both joining dates below are behind us
+    const q = currentQuarter;
+    const makeEmployee = async (label: string, joined: string) => {
+      const email = `prorate-${label}-${TAG}@example.test`;
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: `Prorate ${label}`, email })
+        .expect(201);
+      const u = await prisma.user.findFirstOrThrow({
+        where: { organizationId, email },
+      });
+      await prisma.user.updateMany({
+        where: { id: u.id },
+        data: { joiningDate: new Date(`${joined}T00:00:00.000Z`) },
+      });
+      return u.id;
+    };
+    const makeType = async (code: string, prorate: boolean) =>
+      (
+        await request(app.getHttpServer())
+          .post('/leave-types')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({
+            name: `Prorate ${code}`,
+            code,
+            allocationType: 'FIXED_ANNUAL',
+            annualQuota: 6,
+            accrualFrequency: 'QUARTERLY',
+            prorateOnJoining: prorate,
+          })
+          .expect(201)
+      ).body as { id: string };
+    const credited = async (typeId: string, employeeId: string) =>
+      (
+        await prisma.leaveBalance.findFirstOrThrow({
+          where: { organizationId, leaveTypeId: typeId, employeeId, year },
+        })
+      ).credited;
+
+    it('credits the joining quarter for the months that count, and later quarters in full', async () => {
+      if (!settled) return;
+      const early = await makeEmployee('early', `${year}-02-07`); // on/before the 15th: Feb and Mar count (2 of 3 months)
+      const late = await makeEmployee('late', `${year}-02-20`); // after the 15th: only Mar counts (1 of 3)
+      const type = await makeType('PRO1', true);
+      await balances.creditAccrual(type.id, organizationId);
+      expect(await credited(type.id, early)).toBeCloseTo(
+        1.5 * (q - 1 + 2 / 3),
+        2,
+      );
+      expect(await credited(type.id, late)).toBeCloseTo(
+        1.5 * (q - 1 + 1 / 3),
+        2,
+      );
+    });
+
+    it('credits the whole joining quarter when the type does not prorate', async () => {
+      if (!settled) return;
+      const late = await makeEmployee('whole', `${year}-02-20`);
+      const type = await makeType('PRO2', false);
+      await balances.creditAccrual(type.id, organizationId);
+      expect(await credited(type.id, late)).toBe(1.5 * q);
+    });
+
+    it('someone who joined in an earlier year always gets full quarters', async () => {
+      const veteran = await makeEmployee('veteran', '2020-02-20');
+      const type = await makeType('PRO3', true);
+      await balances.creditAccrual(type.id, organizationId);
+      expect(await credited(type.id, veteran)).toBe(1.5 * q);
+    });
+
+    it('Check balances agrees with what was credited, so a prorated joiner is not reported as short', async () => {
+      if (!settled) return;
+      const type = await makeType('PRO4', true);
+      await makeEmployee('checked', `${year}-02-20`);
+      await balances.creditAccrual(type.id, organizationId);
+      const check = await balances.checkAccrual(type.id, organizationId);
+      expect(check.summary.short).toBe(0);
+    });
+  });
 });

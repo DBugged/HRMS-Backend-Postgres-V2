@@ -235,19 +235,93 @@ export function expectedAccrualToDate(
     annualQuota: number;
     accrualFrequency: AccrualFrequency;
     accrualAmountPerCycle: number;
+    prorateOnJoining: boolean;
   },
   joiningDate: Date,
   year: number,
   asOf: Date,
 ): number {
   if (joiningDate > asOf) return 0;
-  const yearStart = new Date(Date.UTC(year, 0, 1));
-  const cycles = cyclesSinceJoining(
+  const cycles = accrualCyclesDue(
     leaveType.accrualFrequency,
+    joiningDate,
+    year,
+    asOf,
+    shouldProrateOnJoining(leaveType),
+  );
+  return Math.round(accrualCreditPerCycle(leaveType) * cycles * 100) / 100;
+}
+
+// ---- Joining-date proration (the "15th rule") -----------------------------------------------------------------
+// Someone who joins on or before the 15th counts their joining month in full; someone who joins after the 15th starts
+// counting from the next month. This is the one rule behind "Prorate on Joining" for every leave type, so the same
+// joining date gives the same entitlement whichever way the type is credited.
+export const PRORATION_CUTOFF_DAY = 15;
+
+/** Index (0 = January) of the first month that counts toward proration in the joining year; 12 = none left. */
+export function firstCountedMonthIndex(joiningDate: Date): number {
+  return (
+    joiningDate.getUTCMonth() +
+    (joiningDate.getUTCDate() > PRORATION_CUTOFF_DAY ? 1 : 0)
+  );
+}
+
+/** Whether a leave type prorates on joining: the checkbox, or the Prorated on Joining allocation type itself. */
+export function shouldProrateOnJoining(leaveType: {
+  allocationType: AllocationType;
+  prorateOnJoining: boolean;
+}): boolean {
+  return (
+    leaveType.allocationType === AllocationType.PRORATED_ON_JOINING ||
+    leaveType.prorateOnJoining
+  );
+}
+
+/**
+ * The share (0 to 1) of the joining cycle that counts: the months from the first counted month to the end of that
+ * cycle, over the months in the cycle. Quarterly, joined 7 Feb: Feb and Mar of Jan-Mar = 2/3. Joined 20 Feb: only Mar
+ * = 1/3. A Yearly frequency has no cycle to split, so it is 1.
+ */
+export function joiningCycleFraction(
+  frequency: AccrualFrequency,
+  joiningDate: Date,
+): number {
+  const cyclesPerYear = ACCRUAL_CYCLES_PER_YEAR[frequency];
+  if (cyclesPerYear <= 1) return 1;
+  const monthsInCycle = 12 / cyclesPerYear;
+  const cycleStart =
+    Math.floor(joiningDate.getUTCMonth() / monthsInCycle) * monthsInCycle;
+  const counted = Math.max(
+    0,
+    Math.min(
+      monthsInCycle,
+      cycleStart + monthsInCycle - firstCountedMonthIndex(joiningDate),
+    ),
+  );
+  return counted / monthsInCycle;
+}
+
+/**
+ * Cycles of credit due in `year` as of `asOf` (can be fractional). Every cycle from the joining cycle (or Jan 1,
+ * whichever is later) through the current one counts in full, except that when the type prorates and the employee
+ * joined in `year`, the joining cycle counts only for its share (joiningCycleFraction). Someone who joined in an
+ * earlier year gets full cycles: their joining date does not matter any more.
+ */
+export function accrualCyclesDue(
+  frequency: AccrualFrequency,
+  joiningDate: Date,
+  year: number,
+  asOf: Date,
+  prorate: boolean,
+): number {
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const whole = cyclesSinceJoining(
+    frequency,
     joiningDate > yearStart ? joiningDate : yearStart,
     asOf,
   );
-  return Math.round(accrualCreditPerCycle(leaveType) * cycles * 100) / 100;
+  if (!prorate || joiningDate.getUTCFullYear() !== year) return whole;
+  return Math.max(0, whole - 1 + joiningCycleFraction(frequency, joiningDate));
 }
 
 export interface BalanceRowLike {

@@ -24,6 +24,7 @@ import { isEligible } from './leave-eligibility';
 import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 import {
   accrualCreditPerCycle,
+  accrualCyclesDue,
   accruesPerCycle,
   computeAccrualPeriodKey,
   computeCarriedInExpiry,
@@ -33,9 +34,9 @@ import {
   forfeitedCarryIn,
   isCarriedInExpired,
   countElapsedCycles,
-  cyclesSinceJoining,
   expectedAccrualToDate,
   recalcClosing,
+  shouldProrateOnJoining,
 } from './leave-balance-math';
 
 interface CarryForwardShape {
@@ -100,11 +101,12 @@ export class LeaveBalanceService {
       year === now.getFullYear() &&
       joiningDate <= now
     ) {
-      const yearStart = new Date(Date.UTC(year, 0, 1));
-      const cycles = cyclesSinceJoining(
+      const cycles = accrualCyclesDue(
         leaveType.accrualFrequency,
-        joiningDate > yearStart ? joiningDate : yearStart,
+        joiningDate,
+        year,
         now,
+        shouldProrateOnJoining(leaveType),
       );
       credited =
         Math.round(accrualCreditPerCycle(leaveType) * cycles * 100) / 100;
@@ -316,14 +318,15 @@ export class LeaveBalanceService {
         // balance row), so the year isn't credited twice (6 upfront +
         // 4 × 1.5) and nobody sits at 0 until the next Run Accrual.
         const now = new Date();
-        const yearStart = new Date(Date.UTC(year, 0, 1));
         const due =
           joiningDate <= now
             ? accrualCreditPerCycle(updated) *
-              cyclesSinceJoining(
+              accrualCyclesDue(
                 updated.accrualFrequency,
-                joiningDate > yearStart ? joiningDate : yearStart,
+                joiningDate,
+                year,
                 now,
+                shouldProrateOnJoining(updated),
               )
             : 0;
         credited =
@@ -566,8 +569,7 @@ export class LeaveBalanceService {
     // never backdate past Jan 1 of `year`, even for an employee who joined
     // in an earlier year — those earlier cycles belong to (and, unless
     // carry-forward is on, expire with) that earlier year's own row, which
-    // this call was never asked to touch.
-    const yearStart = new Date(Date.UTC(year, 0, 1));
+    // this call was never asked to touch (accrualCyclesDue counts from Jan 1 of `year` at the earliest).
     let credited = 0;
     let alreadyAccrued = 0;
     let behind = 0;
@@ -605,7 +607,7 @@ export class LeaveBalanceService {
         // the employee's joining cycle within *this* year — their true
         // entitlement since they joined (or since Jan 1, whichever is
         // later, since a prior year is a different row entirely — see
-        // yearStart above) — not just from whenever accrual first
+        // Jan 1 of `year`) — not just from whenever accrual first
         // happened to run for them.
         const cycles = row.lastAccrualPeriod
           ? countElapsedCycles(
@@ -613,12 +615,12 @@ export class LeaveBalanceService {
               row.lastAccrualPeriod,
               periodKey,
             )
-          : cyclesSinceJoining(
+          : accrualCyclesDue(
               leaveType.accrualFrequency,
-              employee.joiningDate > yearStart
-                ? employee.joiningDate
-                : yearStart,
+              employee.joiningDate,
+              year,
               new Date(),
+              shouldProrateOnJoining(leaveType),
             );
 
         // Atomic increment, not `row.credited + delta` — a JS-computed value read before the
