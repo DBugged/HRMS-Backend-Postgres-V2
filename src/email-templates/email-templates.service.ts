@@ -13,9 +13,7 @@ import {
   ConflictException,
   Inject,
   Injectable,
-  Logger,
   NotFoundException,
-  OnApplicationBootstrap,
 } from '@nestjs/common';
 import { AuditModule, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -49,65 +47,12 @@ export interface EmailSignature {
 }
 
 @Injectable()
-export class EmailTemplatesService implements OnApplicationBootstrap {
-  private readonly logger = new Logger(EmailTemplatesService.name);
-
+export class EmailTemplatesService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
   ) {}
-
-  // Orgs registered before a built-in template existed never got its row, so an admin could neither edit nor
-  // switch it off (the sender fell back to the code default). On startup, add any missing built-in rows to every
-  // org — insert-only and idempotent (skipDuplicates + the unique key make concurrent instances safe), and an
-  // existing row is never touched, so admin edits are preserved.
-  async onApplicationBootstrap(): Promise<void> {
-    try {
-      await this.ensureMissingDefaults();
-    } catch (err) {
-      this.logger.warn(
-        `Backfilling missing email templates failed: ${err instanceof Error ? err.message : err}`,
-      );
-    }
-  }
-
-  async ensureMissingDefaults(): Promise<number> {
-    const organizations = await this.scopedPrisma.organization.findMany({
-      select: { id: true },
-    });
-    const seedable = EMAIL_TEMPLATE_DEFAULTS.filter(
-      (d) => d.occasionKey !== 'FOUNDER_ACCOUNT_WELCOME',
-    );
-    let created = 0;
-    for (const org of organizations) {
-      const have = new Set(
-        (
-          await this.scopedPrisma.emailTemplate.findMany({
-            where: { organizationId: org.id },
-            select: { occasionKey: true },
-          })
-        ).map((t) => t.occasionKey),
-      );
-      const missing = seedable.filter((d) => !have.has(d.occasionKey));
-      if (missing.length === 0) continue;
-      const result = await this.scopedPrisma.emailTemplate.createMany({
-        data: missing.map((def) => ({
-          organizationId: org.id,
-          occasionKey: def.occasionKey,
-          name: def.name,
-          subject: def.subject,
-          bodyHtml: def.bodyHtml,
-          ccAllActive: def.ccAllActive,
-          isCustom: false,
-          category: def.category,
-        })),
-        skipDuplicates: true,
-      });
-      created += result.count;
-    }
-    return created;
-  }
 
   // Every new org starts with the standard occasion set (Birthday, Work
   // Anniversary) instead of an empty Email Templates page — admin can edit
