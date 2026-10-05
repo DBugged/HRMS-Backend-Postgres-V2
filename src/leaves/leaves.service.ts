@@ -70,7 +70,11 @@ type Actor = Omit<User, 'password'>;
 
 // The only two actions LeaveTypesService.runAccrual/runCarryForward ever
 // write — same fixed list the old system's getCreditHistory filtered on.
-const CREDIT_HISTORY_ACTIONS = ['LEAVE_ACCRUAL_RUN', 'LEAVE_CARRYFORWARD_RUN'];
+const CREDIT_HISTORY_ACTIONS = [
+  'LEAVE_ACCRUAL_RUN',
+  'LEAVE_ACCRUAL_REPAIRED',
+  'LEAVE_CARRYFORWARD_RUN',
+];
 
 // Old system's LEAVE_APPROVE_ROLES / LEAVE_VIEW_ROLES both collapse to this
 // set — see the Batch 4b plan's role-mapping note.

@@ -30,6 +30,7 @@ import {
   computeUpfrontCredit,
   countElapsedCycles,
   cyclesSinceJoining,
+  expectedAccrualToDate,
   recalcClosing,
 } from './leave-balance-math';
 
@@ -428,6 +429,8 @@ export class LeaveBalanceService {
     matched: number;
     credited: number;
     alreadyAccrued: number;
+    // Of the already-accrued employees, how many hold less than they should have by now (see checkAccrual).
+    behind: number;
     totalDaysCredited: number;
   }> {
     const leaveType = await this.scopedPrisma.leaveType.findFirst({
@@ -443,6 +446,7 @@ export class LeaveBalanceService {
         matched: 0,
         credited: 0,
         alreadyAccrued: 0,
+        behind: 0,
         totalDaysCredited: 0,
       };
     }
@@ -499,6 +503,7 @@ export class LeaveBalanceService {
     const yearStart = new Date(Date.UTC(year, 0, 1));
     let credited = 0;
     let alreadyAccrued = 0;
+    let behind = 0;
     let totalDaysCredited = 0;
 
     await this.scopedPrisma.$transaction(async (tx) => {
@@ -515,6 +520,14 @@ export class LeaveBalanceService {
 
         if (row.lastAccrualPeriod === periodKey) {
           alreadyAccrued += 1;
+          // Stamped for this period but holding less than is due: the run cannot tell, so it is flagged for
+          // checkAccrual/repairAccrual instead of being reported as simply "up to date".
+          if (
+            row.credited + 0.005 <
+            expectedAccrualToDate(leaveType, employee.joiningDate, year, now)
+          ) {
+            behind += 1;
+          }
           continue;
         }
 
@@ -592,7 +605,179 @@ export class LeaveBalanceService {
       matched: eligible.length,
       credited,
       alreadyAccrued,
+      behind,
       totalDaysCredited: Math.round(totalDaysCredited * 100) / 100,
+    };
+  }
+
+  // Compares each eligible employee's current-year credit with what the leave type's own rule says they should
+  // have by now (expectedAccrualToDate). Read-only. Only rows already stamped for the current period are
+  // repairable: an older or empty stamp means the normal Run Accrual still owes those cycles and will credit them
+  // (repairing those too would credit them twice), so they are reported as PENDING_RUN. A row holding MORE than
+  // expected (e.g. a whole quota granted upfront before the type switched to Quarterly) is reported as OVER and never
+  // reduced.
+  async checkAccrual(leaveTypeId: string, organizationId: string) {
+    const leaveType = await this.scopedPrisma.leaveType.findFirst({
+      where: { id: leaveTypeId, organizationId },
+    });
+    if (!leaveType) throw new NotFoundException('Leave type not found.');
+    const year = new Date().getFullYear();
+    const now = new Date();
+    const periodKey = computeAccrualPeriodKey(leaveType.accrualFrequency, now);
+
+    if (!accruesPerCycle(leaveType)) {
+      return {
+        leaveType: {
+          id: leaveType.id,
+          name: leaveType.name,
+          code: leaveType.code,
+        },
+        year,
+        period: periodKey,
+        perCycle: 0,
+        rows: [],
+        summary: { short: 0, pendingRun: 0, over: 0, ok: 0, daysShort: 0 },
+        note: 'This leave type is granted upfront or not accrued, so there is nothing to check.',
+      };
+    }
+
+    const employees = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        role: { in: ACCRUAL_ELIGIBLE_ROLES },
+      },
+      select: {
+        id: true,
+        name: true,
+        employeeId: true,
+        joiningDate: true,
+        departmentId: true,
+        employeeType: true,
+        gender: true,
+      },
+    });
+    const eligible = employees.filter(
+      (e) => e.joiningDate <= now && isEligible(leaveType, e),
+    );
+    const existing = await this.scopedPrisma.leaveBalance.findMany({
+      where: {
+        organizationId,
+        leaveTypeId,
+        year,
+        employeeId: { in: eligible.map((e) => e.id) },
+      },
+    });
+    const byEmployee = new Map(existing.map((r) => [r.employeeId, r]));
+
+    const rows = eligible.flatMap((e) => {
+      const row = byEmployee.get(e.id);
+      // No row yet: the first Run Accrual (or opening My Leave) creates it with everything due.
+      if (!row) return [];
+      const expected = expectedAccrualToDate(
+        leaveType,
+        e.joiningDate,
+        year,
+        now,
+      );
+      const difference = Math.round((expected - row.credited) * 100) / 100;
+      const status: 'SHORT' | 'PENDING_RUN' | 'OVER' | 'OK' =
+        difference > 0.005
+          ? row.lastAccrualPeriod === periodKey
+            ? 'SHORT'
+            : 'PENDING_RUN'
+          : difference < -0.005
+            ? 'OVER'
+            : 'OK';
+      return [
+        {
+          balanceId: row.id,
+          employeeId: e.id,
+          employeeCode: e.employeeId,
+          employeeName: e.name,
+          joiningDate: e.joiningDate.toISOString().slice(0, 10),
+          lastAccrualPeriod: row.lastAccrualPeriod,
+          current: row.credited,
+          expected,
+          difference,
+          status,
+          availed: row.availed,
+        },
+      ];
+    });
+    const count = (s: string) => rows.filter((r) => r.status === s).length;
+    return {
+      leaveType: {
+        id: leaveType.id,
+        name: leaveType.name,
+        code: leaveType.code,
+      },
+      year,
+      period: periodKey,
+      perCycle: accrualCreditPerCycle(leaveType),
+      // Only the problem rows are returned, so the report stays readable for large organizations.
+      rows: rows.filter((r) => r.status !== 'OK'),
+      summary: {
+        short: count('SHORT'),
+        pendingRun: count('PENDING_RUN'),
+        over: count('OVER'),
+        ok: count('OK'),
+        daysShort:
+          Math.round(
+            rows
+              .filter((r) => r.status === 'SHORT')
+              .reduce((sum, r) => sum + r.difference, 0) * 100,
+          ) / 100,
+      },
+    };
+  }
+
+  // Credits the missing days for the SHORT rows from checkAccrual — and only those. Adds the difference (never sets
+  // the balance to the expected figure), guarded per row by a compare-and-swap on the credited amount the check saw, so
+  // a row that changed in the meantime is skipped rather than overwritten. Returns what was applied for the audit log.
+  async repairAccrual(leaveTypeId: string, organizationId: string) {
+    const check = await this.checkAccrual(leaveTypeId, organizationId);
+    const short = check.rows.filter((r) => r.status === 'SHORT');
+    const applied: {
+      employeeId: string;
+      employeeCode: string;
+      before: number;
+      added: number;
+    }[] = [];
+    let skipped = 0;
+    await this.scopedPrisma.$transaction(async (tx) => {
+      for (const r of short) {
+        const claimed = await tx.leaveBalance.updateMany({
+          where: {
+            id: r.balanceId,
+            organizationId,
+            credited: r.current,
+            lastAccrualPeriod: r.lastAccrualPeriod,
+          },
+          data: { credited: { increment: r.difference } },
+        });
+        if (claimed.count === 0) {
+          skipped += 1;
+          continue;
+        }
+        await this.recalculate(tx, r.balanceId, organizationId);
+        applied.push({
+          employeeId: r.employeeId,
+          employeeCode: r.employeeCode,
+          before: r.current,
+          added: r.difference,
+        });
+      }
+    });
+    return {
+      leaveType: check.leaveType,
+      year: check.year,
+      period: check.period,
+      repaired: applied.length,
+      skipped,
+      totalDaysAdded:
+        Math.round(applied.reduce((sum, a) => sum + a.added, 0) * 100) / 100,
+      applied,
     };
   }
 

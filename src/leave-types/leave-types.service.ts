@@ -454,10 +454,11 @@ export class LeaveTypesService {
         employeesProcessed: 0,
         credited: 0,
         alreadyAccrued: 0,
+        behind: 0,
         totalDaysCredited: 0,
       };
     }
-    const { matched, credited, alreadyAccrued, totalDaysCredited } =
+    const { matched, credited, alreadyAccrued, behind, totalDaysCredited } =
       await this.leaveBalanceService.creditAccrual(id, organizationId);
     await this.auditLogService.log({
       actorId,
@@ -471,10 +472,16 @@ export class LeaveTypesService {
         matched,
         credited,
         alreadyAccrued,
+        behind,
         totalDaysCredited,
       },
     });
     // `credited` = employees processed; totalDaysCredited = actual days.
+    // `behind` = already-stamped employees holding less than is due: not "up to date", so say so.
+    const behindNote =
+      behind > 0
+        ? ` ${behind} employee(s) hold less than they should by now — use Check balances to review and credit the difference.`
+        : '';
     const message =
       credited === 0 && alreadyAccrued > 0
         ? `Already accrued for this period — nothing to credit (${alreadyAccrued} employee(s) already up to date).`
@@ -486,13 +493,43 @@ export class LeaveTypesService {
             ? `Credited ${totalDaysCredited} day(s) across ${credited} employee(s); ${alreadyAccrued} already up to date for this period.`
             : `Accrual credited: ${totalDaysCredited} day(s) across ${credited} employee(s).`;
     return {
-      message,
+      message: message + behindNote,
       matched,
       employeesProcessed: credited,
       credited,
       alreadyAccrued,
+      behind,
       totalDaysCredited,
     };
+  }
+
+  accrualCheck(id: string, organizationId: string) {
+    return this.leaveBalanceService.checkAccrual(id, organizationId);
+  }
+
+  async accrualRepair(id: string, actorId: string, organizationId: string) {
+    const result = await this.leaveBalanceService.repairAccrual(
+      id,
+      organizationId,
+    );
+    await this.auditLogService.log({
+      actorId,
+      action: 'LEAVE_ACCRUAL_REPAIRED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: {
+        leaveType: result.leaveType.code,
+        year: result.year,
+        period: result.period,
+        repaired: result.repaired,
+        skipped: result.skipped,
+        totalDaysAdded: result.totalDaysAdded,
+        // Per employee: balance before and the days added — the trail for the correction.
+        applied: result.applied,
+      },
+    });
+    return result;
   }
 
   // Same per-leave-type logic/idempotency/audit-log as runAccrual above,
@@ -527,12 +564,14 @@ export class LeaveTypesService {
 
     let totalCredited = 0;
     let totalAlreadyAccrued = 0;
+    let totalBehind = 0;
     const failed: string[] = [];
     for (const lt of leaveTypes) {
       try {
         const result = await this.runAccrual(lt.id, actorId, organizationId);
         totalCredited += result.credited;
         totalAlreadyAccrued += result.alreadyAccrued;
+        totalBehind += result.behind;
       } catch (err) {
         this.logger.error(
           `Accrue-all failed for leave type ${lt.code} (org ${organizationId}): ${err instanceof Error ? err.message : err}`,
@@ -547,11 +586,16 @@ export class LeaveTypesService {
         : failed.length > 0
           ? `Accrual run for ${leaveTypes.length - failed.length}/${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total. Failed: ${failed.join(', ')}.`
           : `Accrual run for ${leaveTypes.length} leave type(s): ${totalCredited} employee credit(s) total${totalAlreadyAccrued > 0 ? `, ${totalAlreadyAccrued} already up to date` : ''}.`;
+    const behindNote =
+      totalBehind > 0
+        ? ` ${totalBehind} employee(s) hold less than they should by now — use Check balances to review and credit the difference.`
+        : '';
     return {
-      message,
+      message: message + behindNote,
       leaveTypesProcessed: leaveTypes.length,
       totalCredited,
       totalAlreadyAccrued,
+      totalBehind,
       failed,
     };
   }

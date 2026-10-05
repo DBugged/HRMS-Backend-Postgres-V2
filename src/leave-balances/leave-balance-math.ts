@@ -223,6 +223,33 @@ export function cyclesSinceJoining(
   return to - from + 1;
 }
 
+/**
+ * What an employee should have been credited by `asOf` for a per-cycle type in `year`: one cycle's credit for every
+ * cycle from their joining cycle (or Jan 1, whichever is later — a prior year is a different balance row) through
+ * the cycle `asOf` falls in. The same figure creditAccrual's first-ever credit and a new balance row use, exposed so
+ * a balance can be checked against it. Zero for someone who has not joined yet.
+ */
+export function expectedAccrualToDate(
+  leaveType: {
+    allocationType: AllocationType;
+    annualQuota: number;
+    accrualFrequency: AccrualFrequency;
+    accrualAmountPerCycle: number;
+  },
+  joiningDate: Date,
+  year: number,
+  asOf: Date,
+): number {
+  if (joiningDate > asOf) return 0;
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const cycles = cyclesSinceJoining(
+    leaveType.accrualFrequency,
+    joiningDate > yearStart ? joiningDate : yearStart,
+    asOf,
+  );
+  return Math.round(accrualCreditPerCycle(leaveType) * cycles * 100) / 100;
+}
+
 export interface BalanceRowLike {
   opening: number;
   credited: number;

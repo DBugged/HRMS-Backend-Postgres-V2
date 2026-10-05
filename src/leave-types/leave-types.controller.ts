@@ -117,4 +117,24 @@ export class LeaveTypesController {
       caller.organizationId,
     );
   }
+
+  // Read-only: each employee's current-year credit against what this leave type's rule says they should have by now.
+  @Get(':id/accrual-check')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  accrualCheck(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.leaveTypesService.accrualCheck(id, caller.organizationId);
+  }
+
+  // Credits the missing days for the employees accrual-check reports as SHORT (adds, never resets) and audits it.
+  @Post(':id/accrual-repair')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  accrualRepair(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.leaveTypesService.accrualRepair(
+      id,
+      caller.id,
+      caller.organizationId,
+    );
+  }
 }
