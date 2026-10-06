@@ -3,6 +3,7 @@
 // mapped); assignHead() folds a role promotion (to MANAGER) into the same call as head assignment.
 // Important: assignHead() refuses to promote a user who already holds ADMIN/HR (NON_DEMOTABLE_ROLES) since
 // that would silently demote their real role to MANAGER — mirrors the frontend's own NON_DEMOTABLE_ROLES list.
+import { syncDepartmentsToOrgAttendance } from './org-attendance-sync';
 import {
   BadRequestException,
   ConflictException,
@@ -210,12 +211,26 @@ export class DepartmentsService {
   }
 
   async findAll(organizationId: string) {
+    // Thresholds / min hours / break come from the organisation — repair any department that drifted.
+    await this.syncToOrg(organizationId);
     const data = await this.scopedPrisma.department.findMany({
       where: { organizationId, isActive: true },
       orderBy: { name: 'asc' },
       include: DEPARTMENT_INCLUDE,
     });
     return wrapAll(data);
+  }
+
+  private async syncToOrg(organizationId: string) {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { attendancePayrollPrefs: true },
+    });
+    await syncDepartmentsToOrgAttendance(
+      this.scopedPrisma,
+      organizationId,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
   }
 
   private async findOrThrow(id: string, organizationId: string) {
@@ -233,7 +248,12 @@ export class DepartmentsService {
     actorId?: string,
   ) {
     const existing = await this.findOrThrow(id, organizationId);
+    // These four come from Organization Settings (see org-attendance-sync.ts); a value sent here is ignored.
     const { workScheduleId, ...rest } = dto;
+    delete rest.lateInThresholdMinutes;
+    delete rest.earlyOutThresholdMinutes;
+    delete rest.minHoursForPresent;
+    delete rest.minHoursForHalfDay;
 
     // Deactivating (isActive: false) hides the department from every picker
     // and list, so it gets the same guard as remove(): no employees may
@@ -285,6 +305,8 @@ export class DepartmentsService {
       where: { id, organizationId },
       data: { ...rest, ...scheduleFields },
     });
+
+    await this.syncToOrg(organizationId);
 
     if (actorId) {
       await this.auditLogService.log({

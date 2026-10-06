@@ -322,6 +322,58 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     expect(body.minHoursForHalfDay).toBe(3.5);
   });
 
+  it('saving org attendance defaults cascades the thresholds and min hours to existing departments', async () => {
+    const dept = await request(app.getHttpServer())
+      .post('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Cascade Dept', code: 'CSC' })
+      .expect(201);
+    const id = (dept.body as { id: string }).id;
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: {
+          defaultLateInThresholdMinutes: 25,
+          defaultEarlyOutThresholdMinutes: 12,
+          defaultMinHoursForPresent: 7.5,
+          defaultMinHoursForHalfDay: 3.5,
+        },
+      })
+      .expect(200);
+    const list = await request(app.getHttpServer())
+      .get('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const row = (
+      (list.body as { data: unknown[] }).data as {
+        id: string;
+        lateInThresholdMinutes: number;
+        earlyOutThresholdMinutes: number;
+        minHoursForPresent: number;
+        minHoursForHalfDay: number;
+      }[]
+    ).find((d) => d.id === id)!;
+    expect(row.lateInThresholdMinutes).toBe(25);
+    expect(row.earlyOutThresholdMinutes).toBe(12);
+    expect(row.minHoursForPresent).toBe(7.5);
+    expect(row.minHoursForHalfDay).toBe(3.5);
+
+    // Put the org back so later tests see the defaults they expect.
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: {
+          defaultLateInThresholdMinutes: 20,
+          defaultEarlyOutThresholdMinutes: 20,
+          defaultMinHoursForPresent: 7,
+          defaultMinHoursForHalfDay: 3.5,
+        },
+      })
+      .expect(200);
+  });
+
   it('a partial policies write (missing all 7 shift keys) merges against the existing prefs instead of wiping attendancePayrollPrefs', async () => {
     // Deliberately omits defaultShiftStartTime/etc. entirely — only a
     // frontend that always sends the full blob would mask the bug this

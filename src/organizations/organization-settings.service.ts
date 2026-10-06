@@ -20,6 +20,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { syncDepartmentsToOrgAttendance } from '../departments/org-attendance-sync';
 import { frontendUrl } from '../common/frontend-url';
 import {
   button,
@@ -566,6 +567,15 @@ export class OrganizationSettingsService {
       organizationId,
       details: { section, fields: Object.keys(data) },
     });
+
+    if (section === 'policies' && data.attendancePayrollPrefs) {
+      // Departments take thresholds / min hours / break time from the org — push the new values down.
+      await syncDepartmentsToOrgAttendance(
+        this.prisma,
+        organizationId,
+        data.attendancePayrollPrefs,
+      );
+    }
 
     if (section === 'policies') {
       // PayrollSettingsService.getOrCreate overlays currency/currency
