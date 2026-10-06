@@ -20,7 +20,8 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
-import { syncDepartmentsToOrgAttendance } from '../departments/org-attendance-sync';
+import { cascadeOrgAttendanceDefaults } from '../departments/org-attendance-sync';
+import type { OrganizationAttendancePrefs } from '../attendance/attendance-shift-config';
 import { frontendUrl } from '../common/frontend-url';
 import {
   button,
@@ -520,6 +521,7 @@ export class OrganizationSettingsService {
       }
       data.companyName = name;
     }
+    let previousAttendancePrefs: OrganizationAttendancePrefs | null = null;
     if (section === 'policies' && data.orgPayrollAttendancePrefs) {
       // attendancePayrollPrefs (read by AttendanceService.
       // recalculateAttendanceForDay) had no write path at all before this
@@ -533,6 +535,8 @@ export class OrganizationSettingsService {
       // attendancePayrollPrefs is merged underneath too, so a key only
       // ever present there (legacy rows) isn't dropped.
       const existingOrg = await this.findOrThrow(organizationId);
+      previousAttendancePrefs =
+        existingOrg.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
       const effectivePrefs = data.orgPayrollAttendancePrefs as Record<
         string,
         unknown
@@ -569,10 +573,12 @@ export class OrganizationSettingsService {
     });
 
     if (section === 'policies' && data.attendancePayrollPrefs) {
-      // Departments take thresholds / min hours / break time from the org — push the new values down.
-      await syncDepartmentsToOrgAttendance(
+      // Departments default their thresholds / min hours / break time from the org: those still on the old
+      // org value follow the new one, customised departments keep theirs.
+      await cascadeOrgAttendanceDefaults(
         this.prisma,
         organizationId,
+        previousAttendancePrefs,
         data.attendancePayrollPrefs,
       );
     }

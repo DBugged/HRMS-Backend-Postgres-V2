@@ -59,6 +59,12 @@ export class UpdateDepartmentDto {
   @Min(0)
   minHoursForHalfDay?: number;
 
+  @ApiPropertyOptional({ description: 'Unpaid break, in minutes' })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  breakMinutes?: number;
+
   @ApiPropertyOptional({
     type: [Number],
     description: '0=Sunday ... 6=Saturday',

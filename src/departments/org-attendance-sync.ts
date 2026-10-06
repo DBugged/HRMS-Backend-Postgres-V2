@@ -11,41 +11,51 @@ interface DepartmentWriter {
   };
 }
 
+const FIELDS = [
+  'lateInThresholdMinutes',
+  'earlyOutThresholdMinutes',
+  'minHoursForPresent',
+  'minHoursForHalfDay',
+  'breakMinutes',
+] as const;
+
 /**
- * Late-in / early-out thresholds, minimum hours for Present / Half Day and the break time are organisation
- * policy, not a per-department choice: every department takes them from Organization Settings. A department
- * assigned a Work Schedule keeps that schedule's break time (the schedule owns it); everything else follows the
- * org. A no-op when the departments already match, so it is cheap to call on reads and writes alike.
+ * Late-in / early-out thresholds, minimum hours for Present / Half Day and the break time default from
+ * Organization Settings, and each department may still override them. When the org defaults change, a department
+ * still sitting on the OLD org value (i.e. never customised) follows the new one; a department someone edited
+ * keeps its own value. Break time of a department with a Work Schedule belongs to that schedule and is left alone.
  */
-export async function syncDepartmentsToOrgAttendance(
+export async function cascadeOrgAttendanceDefaults(
   db: DepartmentWriter,
   organizationId: string,
-  orgPrefs: OrganizationAttendancePrefs | null | undefined,
+  oldPrefs: OrganizationAttendancePrefs | null | undefined,
+  newPrefs: OrganizationAttendancePrefs | null | undefined,
 ): Promise<void> {
-  const cfg = resolveShiftConfig(null, orgPrefs);
-  await db.department.updateMany({
-    where: {
-      organizationId,
-      OR: [
-        { lateInThresholdMinutes: { not: cfg.lateInThresholdMinutes } },
-        { earlyOutThresholdMinutes: { not: cfg.earlyOutThresholdMinutes } },
-        { minHoursForPresent: { not: cfg.minHoursForPresent } },
-        { minHoursForHalfDay: { not: cfg.minHoursForHalfDay } },
-      ],
-    },
-    data: {
-      lateInThresholdMinutes: cfg.lateInThresholdMinutes,
-      earlyOutThresholdMinutes: cfg.earlyOutThresholdMinutes,
-      minHoursForPresent: cfg.minHoursForPresent,
-      minHoursForHalfDay: cfg.minHoursForHalfDay,
-    },
-  });
-  await db.department.updateMany({
-    where: {
-      organizationId,
-      workScheduleId: null,
-      breakMinutes: { not: cfg.breakMinutes },
-    },
-    data: { breakMinutes: cfg.breakMinutes },
-  });
+  const before = resolveShiftConfig(null, oldPrefs);
+  const after = resolveShiftConfig(null, newPrefs);
+  for (const field of FIELDS) {
+    if (before[field] === after[field]) continue;
+    await db.department.updateMany({
+      where: {
+        organizationId,
+        [field]: before[field],
+        ...(field === 'breakMinutes' ? { workScheduleId: null } : {}),
+      },
+      data: { [field]: after[field] },
+    });
+  }
+}
+
+/** The org-level values a department starts from (and can be reset to). */
+export function orgAttendanceDefaults(
+  prefs: OrganizationAttendancePrefs | null | undefined,
+) {
+  const c = resolveShiftConfig(null, prefs);
+  return {
+    lateInThresholdMinutes: c.lateInThresholdMinutes,
+    earlyOutThresholdMinutes: c.earlyOutThresholdMinutes,
+    minHoursForPresent: c.minHoursForPresent,
+    minHoursForHalfDay: c.minHoursForHalfDay,
+    breakMinutes: c.breakMinutes,
+  };
 }

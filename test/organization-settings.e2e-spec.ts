@@ -322,58 +322,6 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     expect(body.minHoursForHalfDay).toBe(3.5);
   });
 
-  it('saving org attendance defaults cascades the thresholds and min hours to existing departments', async () => {
-    const dept = await request(app.getHttpServer())
-      .post('/departments')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Cascade Dept', code: 'CSC' })
-      .expect(201);
-    const id = (dept.body as { id: string }).id;
-    await request(app.getHttpServer())
-      .patch('/organizations/settings/policies')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        orgPayrollAttendancePrefs: {
-          defaultLateInThresholdMinutes: 25,
-          defaultEarlyOutThresholdMinutes: 12,
-          defaultMinHoursForPresent: 7.5,
-          defaultMinHoursForHalfDay: 3.5,
-        },
-      })
-      .expect(200);
-    const list = await request(app.getHttpServer())
-      .get('/departments')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(200);
-    const row = (
-      (list.body as { data: unknown[] }).data as {
-        id: string;
-        lateInThresholdMinutes: number;
-        earlyOutThresholdMinutes: number;
-        minHoursForPresent: number;
-        minHoursForHalfDay: number;
-      }[]
-    ).find((d) => d.id === id)!;
-    expect(row.lateInThresholdMinutes).toBe(25);
-    expect(row.earlyOutThresholdMinutes).toBe(12);
-    expect(row.minHoursForPresent).toBe(7.5);
-    expect(row.minHoursForHalfDay).toBe(3.5);
-
-    // Put the org back so later tests see the defaults they expect.
-    await request(app.getHttpServer())
-      .patch('/organizations/settings/policies')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        orgPayrollAttendancePrefs: {
-          defaultLateInThresholdMinutes: 20,
-          defaultEarlyOutThresholdMinutes: 20,
-          defaultMinHoursForPresent: 7,
-          defaultMinHoursForHalfDay: 3.5,
-        },
-      })
-      .expect(200);
-  });
-
   it('a partial policies write (missing all 7 shift keys) merges against the existing prefs instead of wiping attendancePayrollPrefs', async () => {
     // Deliberately omits defaultShiftStartTime/etc. entirely — only a
     // frontend that always sends the full blob would mask the bug this
@@ -400,6 +348,81 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     });
   });
 
+  it('org attendance defaults flow to departments still on the old value, not to customised ones, and are editable per department', async () => {
+    const mk = async (name: string, code: string) =>
+      (
+        (
+          await request(app.getHttpServer())
+            .post('/departments')
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({ name, code })
+            .expect(201)
+        ).body as { id: string }
+      ).id;
+    const inheritId = await mk('Inherit Dept', 'INH');
+    const customId = await mk('Custom Dept', 'CUS');
+    await request(app.getHttpServer())
+      .patch(`/departments/${customId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ lateInThresholdMinutes: 5, breakMinutes: 45 })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: {
+          defaultLateInThresholdMinutes: 25,
+          defaultMinHoursForPresent: 7.5,
+          defaultBreakMinutes: 30,
+        },
+      })
+      .expect(200);
+
+    const defaults = await request(app.getHttpServer())
+      .get('/departments/attendance-defaults')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(defaults.body).toMatchObject({
+      lateInThresholdMinutes: 25,
+      minHoursForPresent: 7.5,
+      breakMinutes: 30,
+    });
+
+    const list = await request(app.getHttpServer())
+      .get('/departments')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    type Row = {
+      id: string;
+      lateInThresholdMinutes: number;
+      minHoursForPresent: number;
+      breakMinutes: number;
+    };
+    const rows = (list.body as { data: Row[] }).data;
+    const inherit = rows.find((d) => d.id === inheritId)!;
+    const custom = rows.find((d) => d.id === customId)!;
+    expect(inherit.lateInThresholdMinutes).toBe(25);
+    expect(inherit.minHoursForPresent).toBe(7.5);
+    expect(inherit.breakMinutes).toBe(30);
+    // Customised values survive; the untouched field still follows the org.
+    expect(custom.lateInThresholdMinutes).toBe(5);
+    expect(custom.breakMinutes).toBe(45);
+    expect(custom.minHoursForPresent).toBe(7.5);
+
+    // Put the org back so later tests see the defaults they expect.
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: {
+          defaultLateInThresholdMinutes: 20,
+          defaultMinHoursForPresent: 7,
+          defaultBreakMinutes: 0,
+        },
+      })
+      .expect(200);
+  });
   it('a partial policies write keeps orgPayrollAttendancePrefs itself merged (not just the derived copy)', async () => {
     const org = await prisma.organization.findFirstOrThrow({
       where: { id: organizationId },

@@ -964,8 +964,8 @@ describe('Employees + Departments (e2e)', () => {
         lateInThresholdMinutes: number;
       };
       expect(body.shiftStartTime).toBe('10:00');
-      // Thresholds are organisation policy: a department PATCH cannot override them.
-      expect(body.lateInThresholdMinutes).not.toBe(20);
+      // A department can override the org default.
+      expect(body.lateInThresholdMinutes).toBe(20);
     });
 
     it('refuses to deactivate a department that still has employees mapped, allows it once empty', async () => {

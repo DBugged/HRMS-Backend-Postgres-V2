@@ -42,6 +42,14 @@ export class DepartmentsController {
     );
   }
 
+  // Org-level attendance defaults (thresholds, min hours, break) that a department starts from.
+  @Get('attendance-defaults')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  attendanceDefaults(@CurrentUser() caller: Caller) {
+    return this.departmentsService.attendanceDefaults(caller.organizationId);
+  }
+
   // No @Roles() — any authenticated caller (needed for dropdowns on the
   // create-employee form regardless of the caller's own role).
   @Get()
