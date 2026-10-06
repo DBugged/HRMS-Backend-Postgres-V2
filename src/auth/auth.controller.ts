@@ -145,11 +145,21 @@ export class AuthController {
   @AllowPendingPasswordChange()
   @Post('change-password')
   @ApiBearerAuth('access-token')
-  changePassword(
+  async changePassword(
     @CurrentUser() user: { id: string; organizationId: string },
     @Body() dto: ChangePasswordDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return this.authService.changePassword(user.id, user.organizationId, dto);
+    const result = await this.authService.changePassword(
+      user.id,
+      user.organizationId,
+      dto,
+      { ip: req.ip, userAgent: req.headers['user-agent'] },
+    );
+    // The old refresh tokens are revoked by the change; hand this session its replacement.
+    setRefreshCookie(res, result.refreshToken);
+    return result;
   }
 }
 

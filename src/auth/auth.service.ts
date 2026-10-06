@@ -510,7 +510,9 @@ export class AuthService {
       where: { id: userId, organizationId },
       include: {
         department: { select: { id: true, name: true } },
-        reportingManager: { select: { id: true, name: true, employeeId: true } },
+        reportingManager: {
+          select: { id: true, name: true, employeeId: true },
+        },
         workLocation: { select: { id: true, name: true } },
       },
     });
@@ -639,7 +641,8 @@ export class AuthService {
     userId: string,
     organizationId: string,
     dto: ChangePasswordDto,
-  ): Promise<{ message: string }> {
+    meta: { ip?: string; userAgent?: string } = {},
+  ): Promise<{ message: string } & IssuedTokens> {
     const user = await this.usersService.findByIdInOrg(userId, organizationId);
     if (!user) throw new UnauthorizedException();
 
@@ -669,6 +672,17 @@ export class AuthService {
         data: { revokedAt: new Date() },
       }),
     ]);
+
+    // Every refresh token was just revoked, including the one backing THIS session. Without a replacement the
+    // caller stays signed in only until the current access token expires and is then logged out — which is
+    // exactly what hit every new user (the first login forces this change). Mint a fresh pair for the
+    // session that made the change; every other session stays signed out.
+    const tokens = await this.issueTokenPair(
+      user.id,
+      user.organizationId,
+      user.role,
+      meta,
+    );
 
     if (wasFirstTimeChange) {
       // Best-effort, fire-and-forget — a send failure must never fail the
@@ -702,7 +716,7 @@ export class AuthService {
     // sends the (friendlier) account-activated email, so it doesn't get both.
     if (!wasFirstTimeChange) this.sendPasswordChangedEmail(user);
 
-    return { message: 'Password changed successfully.' };
+    return { message: 'Password changed successfully.', ...tokens };
   }
 
   // Best-effort, fire-and-forget security notice — a send failure must never fail the password

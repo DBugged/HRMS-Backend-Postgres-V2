@@ -252,10 +252,27 @@ describe('Auth + RBAC (e2e)', () => {
         .user.mustChangePassword,
     ).toBe(true);
 
-    await request(app.getHttpServer())
+    const changed = await request(app.getHttpServer())
       .post('/auth/change-password')
       .set('Authorization', `Bearer ${accessToken}`)
       .send({ currentPassword: password, newPassword: 'NewPass123!' })
+      .expect(201);
+
+    // Regression: the first-login change revokes every old refresh token, so it must hand THIS session a
+    // fresh pair — otherwise the new user is logged out as soon as the first access token expires.
+    const newTokens = changed.body as AuthBody;
+    expect(newTokens.accessToken).toBeTruthy();
+    expect(newTokens.refreshToken).toBeTruthy();
+    expect(newTokens.refreshToken).not.toBe(
+      (loginRes.body as AuthBody).refreshToken,
+    );
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: (loginRes.body as AuthBody).refreshToken })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({ refreshToken: newTokens.refreshToken })
       .expect(201);
 
     // Old password no longer works.
