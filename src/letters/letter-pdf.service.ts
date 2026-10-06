@@ -251,24 +251,37 @@ export class LetterPdfService {
       // letterhead is still a real, traceable document), it just has no
       // signature image.
       doc.moveDown(1.5);
-      if (doc.y > doc.page.height - 160) doc.addPage();
+      // Keep the whole block together and clear of the bottom margin: measure
+      // it, and start a new page if it would not fit. Everything inside is
+      // placed from explicit offsets (not fixed moveDown steps) so the name
+      // can never land on top of the signature image.
+      const SIG_H = 40;
+      const blockHeight =
+        14 + // "For <company>,"
+        6 +
+        SIG_H +
+        8 +
+        14 + // name
+        (input.signatoryName && input.signatoryDesignation ? 12 : 0);
+      const bottomLimit = doc.page.height - MARGIN;
+      if (doc.y + blockHeight > bottomLimit) doc.addPage();
       doc.font('Letter-Regular').fontSize(10.5).fillColor(INK_900);
       doc.text(`For ${input.companyName},`, MARGIN, doc.y, {
         width: CONTENT_W,
       });
-      doc.moveDown(0.5);
+      const sigTop = doc.y + 6;
       if (input.signatureBuffer) {
         try {
-          doc.image(input.signatureBuffer, MARGIN, doc.y, { fit: [110, 40] });
-          doc.moveDown(2.6);
+          doc.image(input.signatureBuffer, MARGIN, sigTop, {
+            fit: [110, SIG_H],
+          });
         } catch {
-          doc.moveDown(2.6);
+          // unreadable image — leave the space blank, the letter still stands
         }
-      } else {
-        doc.moveDown(2.6);
       }
+      doc.y = sigTop + SIG_H + 8;
       if (input.signatoryName) {
-        doc.font('Letter-Bold').fontSize(10);
+        doc.font('Letter-Bold').fontSize(10).fillColor(INK_900);
         doc.text(input.signatoryName, MARGIN, doc.y, { width: CONTENT_W });
         if (input.signatoryDesignation) {
           doc.font('Letter-Regular').fontSize(9).fillColor(INK_400);
