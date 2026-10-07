@@ -583,23 +583,45 @@ export class LeaveTypesService {
     // it would otherwise hit the FK constraint (Leave/LeaveBalance both
     // reference leaveTypeId with no onDelete) as an unhandled 500 — this
     // turns that into a clear, actionable message instead.
-    const [balanceCount, leaveCount] = await Promise.all([
+    //
+    // A new leave type gets a balance row for every eligible employee the moment it is created, so a row existing is
+    // not "in use" by itself: only leave requests, encashments, or a balance that has actually moved (carried in,
+    // taken, held, encashed or adjusted) block the delete. Untouched rows go with the type.
+    const [movedBalances, leaveCount, encashmentCount] = await Promise.all([
       this.scopedPrisma.leaveBalance.count({
-        where: { leaveTypeId: id, organizationId },
+        where: {
+          leaveTypeId: id,
+          organizationId,
+          OR: [
+            { opening: { not: 0 } },
+            { availed: { not: 0 } },
+            { pending: { not: 0 } },
+            { encashed: { not: 0 } },
+            { adjusted: { not: 0 } },
+          ],
+        },
       }),
       this.scopedPrisma.leave.count({
         where: { leaveTypeId: id, organizationId },
       }),
+      this.scopedPrisma.leaveEncashment.count({
+        where: { leaveTypeId: id, organizationId },
+      }),
     ]);
-    if (balanceCount > 0 || leaveCount > 0) {
+    if (movedBalances > 0 || leaveCount > 0 || encashmentCount > 0) {
       throw new BadRequestException(
-        'This leave type has existing balances or leave requests and cannot be deleted — deactivate it instead.',
+        `This leave type is in use (${leaveCount} leave request(s), ${encashmentCount} encashment(s), ${movedBalances} balance(s) with activity) and cannot be deleted — deactivate it instead.`,
       );
     }
 
-    await this.scopedPrisma.leaveType.deleteMany({
-      where: { id, organizationId },
-    });
+    await this.scopedPrisma.$transaction([
+      this.scopedPrisma.leaveBalance.deleteMany({
+        where: { leaveTypeId: id, organizationId },
+      }),
+      this.scopedPrisma.leaveType.deleteMany({
+        where: { id, organizationId },
+      }),
+    ]);
     return { message: 'Leave type deleted' };
   }
 

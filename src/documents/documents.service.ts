@@ -606,6 +606,15 @@ export class DocumentsService {
         'This is a built-in document and cannot be deleted — disable it instead.',
       );
     }
+    // Employees' uploads are filed under the requirement's name; deleting it would leave them without a home.
+    const uploaded = await this.scopedPrisma.employeeDocument.count({
+      where: { organizationId, docType: existing.name },
+    });
+    if (uploaded > 0) {
+      throw new ConflictException(
+        `${uploaded} uploaded document(s) are filed under "${existing.name}" and it can't be deleted — disable it instead.`,
+      );
+    }
 
     await this.scopedPrisma.documentRequirement.deleteMany({
       where: { id, organizationId },
@@ -639,6 +648,20 @@ export class DocumentsService {
     if (existing.some((r) => r.isSystemDefault)) {
       throw new ConflictException(
         'Built-in documents cannot be deleted — disable them instead.',
+      );
+    }
+
+    const usedNames = await this.scopedPrisma.employeeDocument.groupBy({
+      by: ['docType'],
+      where: {
+        organizationId,
+        docType: { in: existing.map((r) => r.name) },
+      },
+      _count: { _all: true },
+    });
+    if (usedNames.length > 0) {
+      throw new ConflictException(
+        `These requirements have uploaded documents and can't be deleted — disable them instead: ${usedNames.map((u) => `${u.docType} (${u._count._all})`).join(', ')}.`,
       );
     }
 

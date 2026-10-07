@@ -229,10 +229,13 @@ export class LeaveBalanceService {
       eligible,
       [leaveType],
     );
+    // ensureBalanceRowsBulk returns every balance row these employees hold for the year (all leave types), so only
+    // this type's rows are counted.
+    const own = [...rows.values()].filter((r) => r.leaveTypeId === leaveType.id);
     let total = 0;
-    for (const row of rows.values()) total += row.credited;
+    for (const row of own) total += row.credited;
     return {
-      rows: rows.size,
+      rows: own.length,
       totalDaysCredited: Math.round(total * 100) / 100,
     };
   }

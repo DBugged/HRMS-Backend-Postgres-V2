@@ -2,7 +2,12 @@
 // surcharge, 87A rebate) that PayrollService.calculatePayroll's tax engine reads.
 // Responsibilities: Owns upsert-by-(financialYear, regime) and exposes getDefaults() (static slab data,
 // not persisted) for the frontend to pre-fill a new config.
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Inject,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma, TaxRegime, TaxSlabConfig } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -135,6 +140,20 @@ export class TaxSlabsService {
       where: { id, organizationId },
     });
     if (!existing) throw new NotFoundException('Tax slab config not found.');
+    // Employees who chose this regime for this financial year are taxed from these slabs; deleting them would leave
+    // those declarations (and the payroll that follows) with no slabs to calculate from.
+    const declarations = await this.scopedPrisma.employeeTaxDeclaration.count({
+      where: {
+        organizationId,
+        financialYear: existing.financialYear,
+        regimeChosen: existing.regime,
+      },
+    });
+    if (declarations > 0) {
+      throw new ConflictException(
+        `${declarations} employee tax declaration(s) use the ${existing.regime} regime for FY ${existing.financialYear}, so these slabs can't be deleted — set them inactive instead.`,
+      );
+    }
     await this.scopedPrisma.taxSlabConfig.deleteMany({
       where: { id, organizationId },
     });
