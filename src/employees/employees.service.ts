@@ -865,6 +865,19 @@ export class EmployeesService {
       throw new ForbiddenException('Only an Admin can assign an Admin role.');
     }
 
+    // Only ADMIN/HR ever reach `clean.isActive` at all — stripLockedFields
+    // strips it for a plain employee editing their own profile — but
+    // neither role check stops an Admin (or HR) from deactivating their
+    // *own* record, which immediately revokes every one of their own
+    // sessions below and locks them out with no one left to reactivate
+    // them. Reactivating is still fine on your own record (e.g. an
+    // in-progress self-edit that never actually went inactive).
+    if (actor.id === id && clean.isActive === false) {
+      throw new BadRequestException(
+        'You cannot deactivate your own account — ask another Admin or HR to do it.',
+      );
+    }
+
     // A deactivated employee's record is frozen except for reactivating
     // them — no promotion, department move, designation change, etc.
     // should slip through while the account is inactive; reactivate first,
@@ -1294,6 +1307,11 @@ export class EmployeesService {
     actor: Actor & { id: string },
     organizationId: string,
   ) {
+    if (actor.id === id) {
+      throw new BadRequestException(
+        'You cannot deactivate your own account — ask another Admin or HR to do it.',
+      );
+    }
     await this.findByIdOrThrow(id, organizationId);
     await reassignDirectReportsBeforeDeactivation(
       {

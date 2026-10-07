@@ -1022,6 +1022,77 @@ describe('Employees + Departments (e2e)', () => {
     expect((res.body as { isActive: boolean }).isActive).toBe(false);
   });
 
+  describe('self-deactivation is blocked', () => {
+    it('an Admin cannot deactivate themselves via PATCH /employees/:id/deactivate', async () => {
+      const me = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const adminId = (me.body as { id: string }).id;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${adminId}/deactivate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+      expect((res.body as { message: string }).message).toMatch(
+        /cannot deactivate your own account/,
+      );
+
+      const after = await prisma.user.findUniqueOrThrow({
+        where: { id: adminId },
+      });
+      expect(after.isActive).toBe(true);
+    });
+
+    it('an Admin cannot deactivate themselves via PATCH /employees/:id with isActive:false', async () => {
+      const me = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const adminId = (me.body as { id: string }).id;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${adminId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ isActive: false })
+        .expect(400);
+      expect((res.body as { message: string }).message).toMatch(
+        /cannot deactivate your own account/,
+      );
+    });
+
+    it('HR cannot deactivate themselves either', async () => {
+      const me = await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const hrId = (me.body as { id: string }).id;
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${hrId}/deactivate`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
+    });
+
+    it('an Admin can still deactivate someone else (not blocked by the self-check)', async () => {
+      const target = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Self Deactivation Target',
+          email: 'employees-e2e-selfdeactivate-target@example.test',
+        })
+        .expect(201);
+      const targetId = (target.body as EmployeeBody).employee.id;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${targetId}/deactivate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect((res.body as { isActive: boolean }).isActive).toBe(false);
+    });
+  });
+
   describe('department management', () => {
     interface DepartmentDetail {
       id: string;
