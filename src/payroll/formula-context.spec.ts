@@ -32,6 +32,7 @@ function attendance(
     weeklyOffs: 4,
     lopDays: 0,
     payableDays: 27,
+    incompleteDays: 0,
     ...overrides,
   };
 }

@@ -139,6 +139,7 @@ export class DashboardService {
       totalEmployees,
       presentToday,
       absentToday,
+      incompleteToday,
       onLeaveToday,
       pendingLeaves,
       pendingRegularizationCount,
@@ -168,6 +169,15 @@ export class DashboardService {
       }),
       this.scopedPrisma.attendance.count({
         where: { organizationId, date: today, status: AttendanceStatus.ABSENT },
+      }),
+      // Punched in, no punch-out, shift already ended — distinct from a
+      // plain no-show so HR can see who still needs to regularize today.
+      this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          status: AttendanceStatus.INCOMPLETE,
+        },
       }),
       this.scopedPrisma.attendance.count({
         where: {
@@ -389,7 +399,12 @@ export class DashboardService {
 
     return {
       totalEmployees,
-      attendanceSummary: { presentToday, absentToday, onLeaveToday },
+      attendanceSummary: {
+        presentToday,
+        absentToday,
+        incompleteToday,
+        onLeaveToday,
+      },
       pendingItems: await this.pendingItems(organizationId, null, true),
       pendingApprovals: {
         leaves: pendingLeaves,
@@ -786,6 +801,7 @@ export class DashboardService {
       pendingReimbursementCount,
       pendingLoanCount,
       pendingRegularizationCount,
+      incompleteAttendanceCount,
       pendingCompOffCount,
       recentReimbursements,
       reimbursementPending,
@@ -871,6 +887,18 @@ export class DashboardService {
           regularization: { path: ['status'], equals: 'pending' },
         },
       }),
+      // Days this month that still need a regularization request submitted
+      // (not counted via the `regularization` JSON above — that only
+      // tracks requests already made) — this is the "you need to act"
+      // nudge, surfaced separately from the "waiting on HR" count.
+      this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          date: { startsWith: monthPrefix },
+          status: AttendanceStatus.INCOMPLETE,
+        },
+      }),
       this.scopedPrisma.compOff.count({
         where: {
           organizationId,
@@ -916,6 +944,7 @@ export class DashboardService {
       ON_LEAVE: 0,
       HOLIDAY: 0,
       WEEKLY_OFF: 0,
+      INCOMPLETE: 0,
     };
     for (const row of attendanceThisMonth) {
       summary[row.status] = (summary[row.status] ?? 0) + 1;
@@ -945,6 +974,10 @@ export class DashboardService {
         regularization: pendingRegularizationCount,
         compOff: pendingCompOffCount,
       },
+      // Days this month marked Incomplete (punch-out missing) that the
+      // employee hasn't yet requested regularization for — drives the
+      // "N day(s) need your attention" dashboard nudge.
+      incompleteAttendanceCount,
       reimbursements: {
         recent: recentReimbursements,
         pendingCount: reimbursementPending._count,

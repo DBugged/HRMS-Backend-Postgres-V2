@@ -58,6 +58,11 @@ export interface AttendanceSummary {
   weeklyOffs: number;
   lopDays: number;
   payableDays: number;
+  // Days this month still marked INCOMPLETE (punch-in with no punch-out) —
+  // paid as LOP exactly like ABSENT until regularized (same as before this
+  // status existed), but called out separately so payroll can warn HR
+  // instead of silently paying out a day that's still pending resolution.
+  incompleteDays: number;
 }
 
 export function computeAttendanceSummary(
@@ -76,6 +81,7 @@ export function computeAttendanceSummary(
     [AttendanceStatus.HOLIDAY]: 0,
     [AttendanceStatus.WEEKLY_OFF]: 0,
     [AttendanceStatus.ABSENT]: 0,
+    [AttendanceStatus.INCOMPLETE]: 0,
   };
   let lateMarks = 0;
   for (const row of attendanceRows) {
@@ -112,6 +118,7 @@ export function computeAttendanceSummary(
   const halfDays = counts[AttendanceStatus.HALF_DAY];
   const holidays = counts[AttendanceStatus.HOLIDAY];
   const weeklyOffs = counts[AttendanceStatus.WEEKLY_OFF];
+  const incompleteDays = counts[AttendanceStatus.INCOMPLETE];
   const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
   const dated =
     attendanceRows.length > 0 && attendanceRows.every((r) => r.date);
@@ -153,6 +160,7 @@ export function computeAttendanceSummary(
     weeklyOffs,
     lopDays,
     payableDays,
+    incompleteDays,
   };
 }
 

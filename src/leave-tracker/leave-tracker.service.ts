@@ -64,7 +64,8 @@ export type LeaveTrackerCellCode =
   | 'ON_LEAVE'
   | 'COMP_OFF'
   | 'WEEKLY_OFF'
-  | 'HOLIDAY';
+  | 'HOLIDAY'
+  | 'INCOMPLETE';
 
 // Same short codes as the frontend grid's own CELL_SHORT map
 // (AttendanceGrid.tsx) — kept in sync by hand, not imported, since the
@@ -78,6 +79,7 @@ const CELL_SHORT: Record<LeaveTrackerCellCode, string> = {
   COMP_OFF: 'CO',
   WEEKLY_OFF: 'WO',
   HOLIDAY: 'H',
+  INCOMPLETE: 'I',
 };
 
 const DOW_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];

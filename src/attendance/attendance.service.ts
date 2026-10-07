@@ -527,8 +527,9 @@ export class AttendanceService {
   // The status/duration rules shared by recalculateAttendanceForDay (punch-
   // derived in/out) and executeImportBatch (sheet-supplied in/out), so both
   // apply identical shift-config/holiday/leave/weekly-off logic. A day with
-  // only one of inTime/outTime is treated exactly like a single punch
-  // (zero-length span).
+  // only one of inTime/outTime resolves to INCOMPLETE once that day's shift
+  // has ended (see hasDanglingPunchIn below) — before then, it's still
+  // treated like a single punch (zero-length span), same as always.
   private async deriveDayOutcome(
     db: Db,
     params: {
@@ -582,10 +583,10 @@ export class AttendanceService {
     let isEarlyOut = false;
 
     if (inTime && outTime) {
-      workDurationMinutes = Math.max(
-        0,
-        Math.round((outTime.getTime() - inTime.getTime()) / 60000),
-      );
+      // A *real* punch-in with no punch-out (as opposed to no punches at
+      // all) — params.inTime/outTime are the raw, un-defaulted values, so
+      // exactly one being present means the other was never recorded.
+      const hasDanglingPunchIn = !!params.inTime && !params.outTime;
 
       const shiftStart = buildShiftDateTime(
         dateStr,
@@ -598,25 +599,50 @@ export class AttendanceService {
         shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
         shiftConfig.shiftEndTime,
       );
-      isLate =
-        inTime.getTime() - shiftStart.getTime() >
-        shiftConfig.lateInThresholdMinutes * 60000;
-      isEarlyOut =
-        shiftEnd.getTime() - outTime.getTime() >
-        shiftConfig.earlyOutThresholdMinutes * 60000;
 
-      // Break time is unpaid — doesn't count toward Present/Half-Day
-      // thresholds, only the raw punch-in-to-punch-out span still does
-      // (workDurationMinutes itself stays the full span, unadjusted, since
-      // that's what's actually displayed/exported elsewhere).
-      const hours =
-        Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
-      if (hours >= shiftConfig.minHoursForPresent) {
-        status = AttendanceStatus.PRESENT;
-      } else if (hours >= shiftConfig.minHoursForHalfDay) {
-        status = AttendanceStatus.HALF_DAY;
+      // Once the shift has actually ended, a dangling punch-in is missing
+      // data, not a worked (or unworked) day — it's just as consistent with
+      // "worked the full shift and forgot to punch out" as with "punched in
+      // and left after ten minutes", so guessing hours either way is unsafe
+      // (see the weekly-off override below, which still treats this like
+      // the old ABSENT default for day-type purposes). Surfaced as its own
+      // status instead, resolved later via regularization. While the shift
+      // is still ongoing today (shiftEnd hasn't passed yet), this falls
+      // through to the unchanged original behavior below — there's nothing
+      // wrong yet, the employee just hasn't punched out because their shift
+      // isn't over.
+      if (hasDanglingPunchIn && Date.now() >= shiftEnd.getTime()) {
+        status = AttendanceStatus.INCOMPLETE;
+        isLate =
+          inTime.getTime() - shiftStart.getTime() >
+          shiftConfig.lateInThresholdMinutes * 60000;
+        // workDurationMinutes/isEarlyOut stay at their safe defaults
+        // (0/false) — never derived from a guessed punch-out.
       } else {
-        status = AttendanceStatus.ABSENT;
+        workDurationMinutes = Math.max(
+          0,
+          Math.round((outTime.getTime() - inTime.getTime()) / 60000),
+        );
+        isLate =
+          inTime.getTime() - shiftStart.getTime() >
+          shiftConfig.lateInThresholdMinutes * 60000;
+        isEarlyOut =
+          shiftEnd.getTime() - outTime.getTime() >
+          shiftConfig.earlyOutThresholdMinutes * 60000;
+
+        // Break time is unpaid — doesn't count toward Present/Half-Day
+        // thresholds, only the raw punch-in-to-punch-out span still does
+        // (workDurationMinutes itself stays the full span, unadjusted,
+        // since that's what's actually displayed/exported elsewhere).
+        const hours =
+          Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
+        if (hours >= shiftConfig.minHoursForPresent) {
+          status = AttendanceStatus.PRESENT;
+        } else if (hours >= shiftConfig.minHoursForHalfDay) {
+          status = AttendanceStatus.HALF_DAY;
+        } else {
+          status = AttendanceStatus.ABSENT;
+        }
       }
     } else {
       const approvedLeave =
@@ -640,12 +666,16 @@ export class AttendanceService {
 
     // Overrides, in priority order — a holiday wins even over an
     // approved-leave-derived status; weekly-off only overrides a bare
-    // ABSENT (never on_leave/half_day), matching the old system exactly.
+    // ABSENT or INCOMPLETE (never on_leave/half_day), matching the old
+    // system exactly (INCOMPLETE is treated like ABSENT here — a stray
+    // single punch on a day off is still a day off, not something to
+    // regularize).
     if (holiday) {
       status = AttendanceStatus.HOLIDAY;
     } else if (
       isWeeklyOff(dateStr, shiftConfig.weeklyOffs) &&
-      status === AttendanceStatus.ABSENT
+      (status === AttendanceStatus.ABSENT ||
+        status === AttendanceStatus.INCOMPLETE)
     ) {
       status = AttendanceStatus.WEEKLY_OFF;
     }
@@ -771,6 +801,28 @@ export class AttendanceService {
       organizationId,
     );
     const displayDate = formatDateDisplay(dateStr, '', dateFormat);
+    // A dangling punch-in gets its own nudge instead of the "Marked Absent"
+    // one — it's actionable (submit a regularization request) rather than
+    // just informational, and wrongly telling someone who clearly showed up
+    // that they were marked absent is exactly the confusion this status
+    // exists to avoid.
+    if (status === AttendanceStatus.INCOMPLETE) {
+      const title = `Punch-Out Missing — ${displayDate}`;
+      const alreadyNotified = await this.scopedPrisma.notification.findFirst({
+        where: { organizationId, userId: employeeId, title },
+      });
+      if (!alreadyNotified) {
+        await this.notificationsService.create({
+          organizationId,
+          userId: employeeId,
+          title,
+          message: `We found a punch-in for ${displayDate} but no punch-out, so this day is marked Incomplete. Submit a regularization request with the correct times to resolve it.`,
+          category: NotificationCategory.ATTENDANCE,
+        });
+      }
+      return;
+    }
+
     if (status === AttendanceStatus.ABSENT) {
       const title = `Marked Absent — ${displayDate}`;
       const alreadyNotified = await this.scopedPrisma.notification.findFirst({

@@ -1636,6 +1636,10 @@ enum AttendanceStatus {
   HOLIDAY
   WEEKLY_OFF
   ON_LEAVE
+  // A real punch-in with no punch-out once the shift has ended — not enough data to call it
+  // Present/Half-Day/Absent, so it's surfaced distinctly instead of silently defaulting to
+  // Absent. Resolves to a final status once the employee/HR submits a regularization request.
+  INCOMPLETE
 }
 
 enum WorkArrangement {
