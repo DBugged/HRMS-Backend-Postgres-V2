@@ -297,6 +297,8 @@ export class LeaveTrackerService {
         employeeType: true,
         gender: true,
         joiningDate: true,
+        // An inactive employee earns no leave: no balance row is created for them here (existing rows still show).
+        isActive: true,
       },
       orderBy: EMPLOYEE_ORDER_BY,
     });
@@ -387,7 +389,10 @@ export class LeaveTrackerService {
       );
       balanceEligibleByEmployee.set(employee.id, balanceEligible);
       for (const lt of balanceEligible) {
-        if (!existingBalanceByKey.has(`${employee.id}:${lt.id}`)) {
+        if (
+          employee.isActive &&
+          !existingBalanceByKey.has(`${employee.id}:${lt.id}`)
+        ) {
           missingPairs.push({ employeeId: employee.id, leaveTypeId: lt.id });
         }
       }
@@ -418,19 +423,24 @@ export class LeaveTrackerService {
       // Balances are still created for every eligible type; only the tracker's view/export skips hidden ones.
       const leaveBalances = balanceEligible
         .filter((leaveType) => leaveType.showInLeaveTracker)
-        .map((leaveType) => {
+        .flatMap((leaveType) => {
           const row =
             existingBalanceByKey.get(`${employee.id}:${leaveType.id}`) ??
-            ensuredByKey.get(`${employee.id}:${leaveType.id}`)!;
-          return {
-            leaveTypeCode: leaveType.code,
-            leaveTypeName: leaveType.name,
-            credited: row.credited,
-            availed: row.availed,
-            closing:
-              Math.round((row.closing - (lapsedByRow.get(row.id) ?? 0)) * 100) /
-              100,
-          };
+            ensuredByKey.get(`${employee.id}:${leaveType.id}`);
+          // No row for an inactive employee: nothing was ever credited to them.
+          if (!row) return [];
+          return [
+            {
+              leaveTypeCode: leaveType.code,
+              leaveTypeName: leaveType.name,
+              credited: row.credited,
+              availed: row.availed,
+              closing:
+                Math.round(
+                  (row.closing - (lapsedByRow.get(row.id) ?? 0)) * 100,
+                ) / 100,
+            },
+          ];
         });
 
       const compOffAvailable = compOffAvailableByEmployee.get(employee.id) ?? 0;

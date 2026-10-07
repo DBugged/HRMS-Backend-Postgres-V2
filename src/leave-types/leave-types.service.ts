@@ -35,6 +35,9 @@ import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
 import { wrapAll } from '../common/pagination';
 import { DEFAULT_RULES, LEAVE_TYPE_DEFAULTS } from './leave-type-defaults';
 
+// The only negative-balance setting a leave type can have now (see create/update below).
+const NO_NEGATIVE_BALANCE = { allowed: false, maxNegativeDays: 0 };
+
 @Injectable()
 export class LeaveTypesService {
   private readonly logger = new Logger(LeaveTypesService.name);
@@ -250,7 +253,7 @@ export class LeaveTypesService {
       dto.accrualAmountPerCycle ?? 0,
     );
 
-    return this.scopedPrisma.leaveType.create({
+    const created = await this.scopedPrisma.leaveType.create({
       data: {
         organizationId,
         name: dto.name,
@@ -285,16 +288,58 @@ export class LeaveTypesService {
         ...(dto.carryForward !== undefined && {
           carryForward: dto.carryForward as unknown as Prisma.InputJsonValue,
         }),
-        ...(dto.negativeBalance !== undefined && {
-          negativeBalance:
-            dto.negativeBalance as unknown as Prisma.InputJsonValue,
-        }),
+        // Leave never goes negative: whatever the request says, the type is stored with negative balance off. Days
+        // beyond the quota are taken as Leave Without Pay (pay is deducted for them).
+        negativeBalance: NO_NEGATIVE_BALANCE as unknown as Prisma.InputJsonValue,
         ...(dto.encashment !== undefined && {
           encashment: dto.encashment as unknown as Prisma.InputJsonValue,
         }),
         createdById,
       },
     });
+    await this.creditNewType(created, createdById, organizationId);
+    return created;
+  }
+
+  // A new leave type credits everyone who is eligible right away (see seedBalancesForNewType) and that credit goes into
+  // the Accrual History like any other, so "who was given what, and when" is on record from day one. A failure here
+  // never fails the creation: balances are still created on first use, exactly as before.
+  private async creditNewType(
+    leaveType: LeaveType,
+    actorId: string,
+    organizationId: string,
+  ) {
+    try {
+      const { rows, totalDaysCredited } =
+        await this.leaveBalanceService.seedBalancesForNewType(
+          leaveType,
+          organizationId,
+        );
+      if (rows === 0) return;
+      await this.auditLogService.log({
+        actorId,
+        action: 'LEAVE_ACCRUAL_RUN',
+        module: 'LEAVE',
+        organizationId,
+        targetId: leaveType.id,
+        details: {
+          leaveType: leaveType.code,
+          amount: leaveType.accrualAmountPerCycle,
+          matched: rows,
+          credited: rows,
+          alreadyAccrued: 0,
+          behind: 0,
+          totalDaysCredited,
+          repaired: 0,
+          repairedDays: 0,
+          source: 'CREATED',
+        },
+      });
+    } catch (err) {
+      this.logger.error(
+        `Crediting new leave type ${leaveType.code} failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
   }
 
   async findAll(organizationId: string, activeOnly?: boolean) {
@@ -451,7 +496,7 @@ export class LeaveTypesService {
           }),
           ...(dto.negativeBalance !== undefined && {
             negativeBalance:
-              dto.negativeBalance as unknown as Prisma.InputJsonValue,
+              NO_NEGATIVE_BALANCE as unknown as Prisma.InputJsonValue,
           }),
           ...(dto.encashment !== undefined && {
             encashment: dto.encashment as unknown as Prisma.InputJsonValue,
@@ -485,11 +530,10 @@ export class LeaveTypesService {
     return updated;
   }
 
-  // There are no effective dates on a leave type, so a policy edit applies from the moment it is saved: upfront types
-  // have this year's balances recalculated to the new rule (reconcileUpfrontCredit), while a per-cycle type keeps what
-  // earlier cycles already credited and uses the new rule from the next cycle. Either way the before/after of every
-  // rule that drives balances is recorded here, with how many balances were recalculated, so a changed balance can be
-  // traced back to the edit that caused it.
+  // There are no effective dates on a leave type, so a policy edit applies from the moment it is saved: this year's
+  // balances (upfront and per-cycle types alike) are recalculated to the new rule (reconcileUpfrontCredit). The
+  // before/after of every rule that drives balances is recorded here, with how many balances were recalculated, so a
+  // changed balance can be traced back to the edit that caused it.
   private async auditPolicyChange(
     before: LeaveType,
     after: LeaveType,

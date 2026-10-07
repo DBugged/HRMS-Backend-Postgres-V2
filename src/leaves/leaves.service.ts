@@ -52,6 +52,7 @@ import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   assertManagerScopeOrDelegate,
+  assertNotOwnRequest,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -64,7 +65,6 @@ import {
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
 import { todayInOrgTz } from '../common/org-date';
-import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 
 type Actor = Omit<User, 'password'>;
 
@@ -111,6 +111,9 @@ function monthsInRange(
   }
   return months;
 }
+
+const INSUFFICIENT_BALANCE_MESSAGE =
+  'Insufficient leave balance. For the extra days, apply for Leave Without Pay (pay is deducted for those days).';
 
 function isCompOffType(leaveType: LeaveType): boolean {
   return leaveType.code === LEAVE_TYPE_CODES.COMPOFF;
@@ -210,7 +213,9 @@ export class LeavesService {
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
-            leaveType: { select: { id: true, name: true, code: true } },
+            leaveType: {
+              select: { id: true, name: true, code: true, approvalLevels: true },
+            },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
@@ -299,15 +304,18 @@ export class LeavesService {
         ? `${resolvedYear}-12-31`
         : todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
     );
+    // `available` is what the employee can still apply for: closing minus the days already held by pending requests
+    // (closing itself ignores pending), never below zero.
     const shown = balances.map((b) => {
       const lapsed = lapsedByRow.get(b.id) ?? 0;
+      const closing = Math.round((b.closing - lapsed) * 100) / 100;
+      const available = Math.max(
+        0,
+        Math.round((closing - b.pending) * 100) / 100,
+      );
       return lapsed > 0
-        ? {
-            ...b,
-            closing: Math.round((b.closing - lapsed) * 100) / 100,
-            forfeitedCarryIn: lapsed,
-          }
-        : b;
+        ? { ...b, closing, available, forfeitedCarryIn: lapsed }
+        : { ...b, available };
     });
 
     const compOffAvailable = await this.compOffService.available(
@@ -435,6 +443,19 @@ export class LeavesService {
       );
     }
 
+    // Nobody reviews their own leave, an Admin included: someone else (another Admin, or HR) has to decide it.
+    assertNotOwnRequest(actor, leave.employeeId);
+
+    // A rejection or return has to say why - the employee sees this text on the request and in the notification.
+    if (
+      (dto.decision === 'REJECTED' || dto.decision === 'RETURNED') &&
+      !dto.comments?.trim()
+    ) {
+      throw new BadRequestException(
+        'A comment is required when rejecting or returning a leave request.',
+      );
+    }
+
     // Same department-scope-or-delegate boundary as findAll()'s pending
     // queue (deptScopedEmployeeIds) and every other review action in the
     // app (attendance/overtime/comp-off — see assertManagerScopeOrDelegate).
@@ -492,6 +513,21 @@ export class LeavesService {
     ) {
       throw new ForbiddenException(
         'This leave type requires final approval from HR/Admin after level-1 sign-off.',
+      );
+    }
+
+    // ...and HR/Admin cannot skip level 1: while the reporting manager's sign-off is still outstanding, the final
+    // approval has to wait for it (rejecting or returning is always allowed). If there is nobody who could give
+    // level-1 (no manager above the employee), the final approver decides alone so the request is never stuck.
+    if (
+      leaveType.approvalLevels === 2 &&
+      actor.role !== Role.MANAGER &&
+      leave.level1ApprovedById === null &&
+      dto.decision === 'APPROVED' &&
+      (await this.levelOneApproverExists(leave, organizationId))
+    ) {
+      throw new BadRequestException(
+        "This leave type needs level-1 approval from the employee's manager first. It is still waiting for them.",
       );
     }
 
@@ -663,6 +699,41 @@ export class LeavesService {
         );
       }
     }
+  }
+
+  // True when someone could actually give this leave's level-1 sign-off: an active MANAGER who is the employee's
+  // reporting manager or sits in the employee's department. Only employees and managers have a level 1; an HR or Admin
+  // applicant goes straight to final approval.
+  private async levelOneApproverExists(
+    leave: Leave,
+    organizationId: string,
+  ): Promise<boolean> {
+    const applicant = await this.scopedPrisma.user.findFirst({
+      where: { id: leave.employeeId, organizationId },
+      select: { role: true, reportingManagerId: true, departmentId: true },
+    });
+    if (!applicant) return false;
+    if (applicant.role === Role.ADMIN || applicant.role === Role.HR) {
+      return false;
+    }
+    const scope: Prisma.UserWhereInput[] = [];
+    if (applicant.reportingManagerId) {
+      scope.push({ id: applicant.reportingManagerId });
+    }
+    if (applicant.departmentId) {
+      scope.push({ departmentId: applicant.departmentId });
+    }
+    if (scope.length === 0) return false;
+    const count = await this.scopedPrisma.user.count({
+      where: {
+        organizationId,
+        isActive: true,
+        role: Role.MANAGER,
+        id: { not: leave.employeeId },
+        OR: scope,
+      },
+    });
+    return count > 0;
   }
 
   private async notifyLevel1Approved(leave: Leave, organizationId: string) {
@@ -989,16 +1060,6 @@ export class LeavesService {
     }
     const totalDays = ruleResult.totalDays;
 
-    if (isCompOffType(leaveType)) {
-      const available = await this.compOffService.available(
-        actor.id,
-        organizationId,
-      );
-      if (available < totalDays) {
-        throw new ForbiddenException('Insufficient comp-off balance.');
-      }
-    }
-
     const created = await this.scopedPrisma.$transaction(async (tx) => {
       // Row-lock the applicant's own User row so two concurrent apply()
       // calls for the same employee serialize instead of both reading the
@@ -1030,17 +1091,43 @@ export class LeavesService {
         );
       }
 
+      // Comp-off leave: as many days as the employee has earned (and are still valid on the leave's start date) can be
+      // taken, counting what other pending comp-off requests already hold. Checked here, after the row lock above, so
+      // two requests submitted together cannot both be granted the same comp-off.
+      if (isCompOffType(leaveType)) {
+        const [validBalance, pendingHolds] = await Promise.all([
+          this.compOffService.availableOn(
+            actor.id,
+            organizationId,
+            dto.startDate,
+          ),
+          tx.leave.findMany({
+            where: {
+              organizationId,
+              employeeId: actor.id,
+              leaveTypeId: leaveType.id,
+              status: LeaveStatus.PENDING,
+            },
+            select: { totalDays: true },
+          }),
+        ]);
+        const held = pendingHolds.reduce((sum, l) => sum + l.totalDays, 0);
+        const free = Math.round((validBalance - held) * 100) / 100;
+        if (free + 0.001 < totalDays) {
+          throw new ForbiddenException(
+            `Insufficient comp-off balance: ${Math.max(0, free)} day(s) available${held > 0 ? ` (${held} day(s) are held by your pending comp-off requests)` : ''}.`,
+          );
+        }
+      }
+
       if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
         const year = deriveLeaveYear(dto.startDate);
-        // Company-wide switch (Organization Settings → Policies) overrides
-        // the leave type's own Allow Negative Balance while it's off.
-        const { allowNegativeLeaveBalance } = await getOrgLeaveSwitches(
-          tx,
-          organizationId,
-        );
-        const negativeBalance: NegativeBalanceRule = allowNegativeLeaveBalance
-          ? (leaveType.negativeBalance as unknown as NegativeBalanceRule)
-          : { allowed: false, maxNegativeDays: 0 };
+        // Leave never goes negative: once the quota is used up the employee applies Leave Without Pay for the extra
+        // days (pay is deducted for those). Any Allow Negative Balance setting on the leave type is ignored.
+        const negativeBalance: NegativeBalanceRule = {
+          allowed: false,
+          maxNegativeDays: 0,
+        };
         const row = await this.leaveBalanceService.ensureBalanceRow(
           tx,
           actor.id,
@@ -1070,7 +1157,7 @@ export class LeavesService {
           forfeited ?? 0,
         );
         if (!preflight.ok) {
-          throw new ForbiddenException('Insufficient leave balance.');
+          throw new ForbiddenException(INSUFFICIENT_BALANCE_MESSAGE);
         }
         // Atomic increment, not `row.pending + totalDays` — the latter is a
         // read-modify-write against the JS-side value captured before this
@@ -1108,7 +1195,7 @@ export class LeavesService {
           forfeited ?? 0,
         );
         if (!affordability.ok) {
-          throw new ForbiddenException('Insufficient leave balance.');
+          throw new ForbiddenException(INSUFFICIENT_BALANCE_MESSAGE);
         }
       }
 

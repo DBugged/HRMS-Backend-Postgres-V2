@@ -27,8 +27,10 @@ import { CreateCompOffDto } from './dto/create-comp-off.dto';
 import { ReviewCompOffDto } from './dto/review-comp-off.dto';
 import {
   consumeCompOff,
+  financialYearEnd,
   releaseCompOff,
   sumAvailable,
+  sumAvailableOn,
 } from './comp-off-consumption';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import {
@@ -44,6 +46,7 @@ import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   assertManagerScopeOrDelegate,
+  assertNotOwnRequest,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -180,7 +183,11 @@ export class CompOffService {
 
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
-    const expiryDate = addDays(dto.earnedForDate, settings.compOffExpiryDays);
+    // Valid for the whole financial year it was earned in: it can be taken any time until that year ends.
+    const expiryDate = financialYearEnd(
+      dto.earnedForDate,
+      settings.financialYearStartMonth,
+    );
 
     const compOff = await this.scopedPrisma.compOff.create({
       data: {
@@ -306,6 +313,24 @@ export class CompOffService {
     };
   }
 
+  // Unconsumed comp-off that is still valid on `asOf` (the date the leave would start): a credit that expires before
+  // that date cannot cover it. Used by LeavesService when someone applies for comp-off leave.
+  async availableOn(
+    employeeId: string,
+    organizationId: string,
+    asOf: string,
+  ): Promise<number> {
+    await this.sweepExpired(organizationId);
+    const rows = await this.scopedPrisma.compOff.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        status: { in: CONSUMABLE_STATUSES },
+      },
+    });
+    return sumAvailableOn(rows, asOf);
+  }
+
   // Read-only sum of unconsumed comp-off — used here and by LeavesService
   // for COMPOFF-type leave affordability checks.
   async available(employeeId: string, organizationId: string): Promise<number> {
@@ -363,6 +388,8 @@ export class CompOffService {
     organizationId: string,
   ) {
     const compOff = await this.findByIdOrThrow(id, organizationId);
+    // Nobody reviews their own request, an Admin included.
+    assertNotOwnRequest(actor, compOff.employeeId);
     await assertManagerScopeOrDelegate(
       this.scopedPrisma,
       this.delegationService,
@@ -581,10 +608,4 @@ export class CompOffService {
     if (!compOff) throw new NotFoundException('Comp-off request not found.');
     return compOff;
   }
-}
-
-function addDays(dateStr: string, days: number): string {
-  const date = new Date(`${dateStr}T00:00:00.000Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
 }

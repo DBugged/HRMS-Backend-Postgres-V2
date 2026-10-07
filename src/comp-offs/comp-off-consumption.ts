@@ -110,3 +110,28 @@ export function releaseCompOff(
 export function sumAvailable(rows: CompOffRow[]): number {
   return rows.reduce((sum, row) => sum + (row.daysEarned - row.daysAvailed), 0);
 }
+
+/**
+ * Last day (YYYY-MM-DD) of the financial year that `date` falls in. A comp-off can be taken any time until then: it is
+ * valid for the whole financial year it was earned in. `startMonth` is 1-12 (April = 4 for an April-March year;
+ * January = 1 makes the year a calendar year).
+ */
+export function financialYearEnd(date: string, startMonth: number): string {
+  const month = Number(date.slice(5, 7));
+  const year = Number(date.slice(0, 4));
+  const start =
+    Number.isInteger(startMonth) && startMonth >= 1 && startMonth <= 12
+      ? startMonth
+      : 4;
+  const endYear = month >= start ? year + 1 : year;
+  // Day 0 of the start month is the last day of the month before it (UTC, so no timezone shifts the date).
+  const last = new Date(Date.UTC(endYear, start - 1, 0));
+  return last.toISOString().slice(0, 10);
+}
+
+// Sum of unconsumed comp-off that is still valid on `asOf` (YYYY-MM-DD): rows with no expiry or an expiry on/after it.
+export function sumAvailableOn(rows: CompOffRow[], asOf: string): number {
+  return sumAvailable(
+    rows.filter((row) => row.expiryDate === null || row.expiryDate >= asOf),
+  );
+}
