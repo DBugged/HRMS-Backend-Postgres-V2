@@ -11,6 +11,7 @@
 //   useEmployeeTypes() and the old inline flow already use, so all three surfaces stay in sync.
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -215,6 +216,18 @@ export class EmployeeTypesService {
     const next = custom.filter((t) => t.value !== value);
     if (next.length === custom.length) {
       throw new NotFoundException('Employee type not found.');
+    }
+    // `value` is stored as a plain string on User.employeeType — block the
+    // delete while anyone still has it, like every other master-data
+    // delete in the app, instead of silently leaving them pointed at a
+    // type that no longer exists in the list.
+    const usageCount = await this.prisma.user.count({
+      where: { organizationId, employeeType: value },
+    });
+    if (usageCount > 0) {
+      throw new ConflictException(
+        `This employee type is assigned to ${usageCount} ${usageCount === 1 ? 'employee' : 'employees'} and can't be deleted — deactivate it instead.`,
+      );
     }
     await this.prisma.organization.update({
       where: { id: organizationId },

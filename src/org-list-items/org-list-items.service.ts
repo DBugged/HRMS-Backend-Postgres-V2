@@ -2,8 +2,10 @@
 //   Employee Categories screens — each is just OrgListItem rows filtered by `type`.
 // Responsibilities: list/create/delete one item, plus a client-parsed Excel/CSV bulk import — same
 //   Promise.allSettled per-row-isolation pattern as DocumentRequirement's bulk import.
-// Important: `name` is stored as a plain string on the Employee record wherever it's selected (no FK) —
-//   deleting or renaming an OrgListItem never orphans an employee who already has that value set.
+// Important: `name` is stored as a plain string on the Employee record wherever it's selected (no FK, except
+//   ASSET_CATEGORY, a real FK onto Asset) — renaming never orphans a record that already has it set, but
+//   delete() blocks while any record still has it selected (see countUsage), same as every other master-data
+//   delete in the app; isActive is the way to retire one still in use.
 import {
   ConflictException,
   Inject,
@@ -67,6 +69,14 @@ export const BUILTIN_ASSET_CATEGORIES = [
   'Access Card',
   'Other',
 ];
+
+const ORG_LIST_TYPE_LABELS: Record<OrgListType, string> = {
+  [OrgListType.DESIGNATION]: 'designation',
+  [OrgListType.GRADE]: 'grade',
+  [OrgListType.EMPLOYEE_CATEGORY]: 'employee category',
+  [OrgListType.ASSET_CATEGORY]: 'asset category',
+  [OrgListType.REASON_FOR_LEAVING]: 'reason for leaving',
+};
 
 @Injectable()
 export class OrgListItemsService {
@@ -205,6 +215,46 @@ export class OrgListItemsService {
     });
   }
 
+  // How many other records currently have this item selected — the exact
+  // field each OrgListType is copied onto as a plain string (or, for
+  // ASSET_CATEGORY, a real FK) per the type comment on the schema's
+  // OrgListItem model.
+  private async countUsage(
+    item: { id: string; type: OrgListType; name: string },
+    organizationId: string,
+  ): Promise<number> {
+    switch (item.type) {
+      case OrgListType.DESIGNATION:
+        return this.scopedPrisma.user.count({
+          where: { organizationId, designation: item.name },
+        });
+      case OrgListType.GRADE:
+        return this.scopedPrisma.user.count({
+          where: { organizationId, gradeLevel: item.name },
+        });
+      case OrgListType.EMPLOYEE_CATEGORY:
+        return this.scopedPrisma.user.count({
+          where: { organizationId, employeeCategory: item.name },
+        });
+      case OrgListType.ASSET_CATEGORY:
+        return this.scopedPrisma.asset.count({
+          where: { organizationId, categoryId: item.id },
+        });
+      case OrgListType.REASON_FOR_LEAVING:
+        // Stored inside the exitInterviewResponses JSON blob (see
+        // OffboardingService.submitExitInterview), not a plain column.
+        return this.scopedPrisma.offboardingCase.count({
+          where: {
+            organizationId,
+            exitInterviewResponses: {
+              path: ['reasonForLeaving'],
+              equals: item.name,
+            },
+          },
+        });
+    }
+  }
+
   async delete(id: string, organizationId: string, actor: Actor) {
     const item = await this.scopedPrisma.orgListItem.findFirst({
       where: { id, organizationId },
@@ -213,6 +263,19 @@ export class OrgListItemsService {
     if (item.isSystemDefault) {
       throw new ConflictException(
         'This is a built-in category and cannot be deleted — deactivate it instead.',
+      );
+    }
+
+    // `name` is a plain string on the Employee record wherever it's
+    // selected (no FK), so a stale delete would never 500 — it would
+    // silently orphan whoever already has this value set, leaving their
+    // designation/grade/category looking blank. Block it like every other
+    // master-data delete instead, so the fix is "deactivate it" the same
+    // way isSystemDefault already steers people above.
+    const usageCount = await this.countUsage(item, organizationId);
+    if (usageCount > 0) {
+      throw new ConflictException(
+        `This ${ORG_LIST_TYPE_LABELS[item.type]} is assigned to ${usageCount} ${usageCount === 1 ? 'record' : 'records'} and can't be deleted — deactivate it instead.`,
       );
     }
 

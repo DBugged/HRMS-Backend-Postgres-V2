@@ -6,6 +6,7 @@
 //   sets Department.workScheduleId for traceability, replace semantics (exact target set).
 import {
   BadRequestException,
+  ConflictException,
   Inject,
   Injectable,
   NotFoundException,
@@ -192,14 +193,18 @@ export class WorkSchedulesService {
   async delete(id: string, organizationId: string, actor: Actor) {
     const schedule = await this.findOrThrow(id, organizationId);
 
-    // Unlink first — departments keep whatever shift fields they currently
-    // have (already copied over at assign time), they just stop being
-    // traceable to this schedule, same "delete doesn't ripple into other
-    // records' live data" choice as OrgListItem/DocumentRequirement deletes.
-    await this.scopedPrisma.department.updateMany({
+    // Blocked while any department is still assigned to it — like every
+    // other master-data delete in the app, instead of silently unlinking
+    // departments out from under whoever set this up.
+    const assignedDepartments = await this.scopedPrisma.department.findMany({
       where: { organizationId, workScheduleId: id },
-      data: { workScheduleId: null },
+      select: { name: true },
     });
+    if (assignedDepartments.length > 0) {
+      throw new ConflictException(
+        `This work schedule is assigned to ${assignedDepartments.length} department(s) (${assignedDepartments.map((d) => d.name).join(', ')}) and can't be deleted — reassign them first.`,
+      );
+    }
     await this.scopedPrisma.workSchedule.deleteMany({
       where: { id, organizationId },
     });

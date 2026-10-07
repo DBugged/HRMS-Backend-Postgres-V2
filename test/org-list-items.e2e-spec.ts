@@ -174,4 +174,42 @@ describe('Org List Items (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
   });
+
+  it('a Designation assigned to an employee cannot be deleted, but can once unassigned', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/org-list-items')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ type: 'DESIGNATION', name: 'Site Reliability Engineer' })
+      .expect(201);
+    const id = (created.body as OrgListItemBody).id;
+
+    const emp = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Designation User',
+        email: 'orglistitems-e2e-designation@example.test',
+        designation: 'Site Reliability Engineer',
+      })
+      .expect(201);
+    const employeeId = (emp.body as { employee: { id: string } }).employee.id;
+
+    const blocked = await request(app.getHttpServer())
+      .delete(`/org-list-items/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(409);
+    expect((blocked.body as { message: string }).message).toContain('1');
+
+    // Reassign to a different designation — the realistic "unassign" path.
+    await request(app.getHttpServer())
+      .patch(`/employees/${employeeId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ designation: 'Other' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/org-list-items/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
 });
