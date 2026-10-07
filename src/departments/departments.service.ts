@@ -358,12 +358,33 @@ export class DepartmentsService {
 
   async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findOrThrow(id, organizationId);
-    const employeeCount = await this.scopedPrisma.user.count({
-      where: { departmentId: id, organizationId },
-    });
-    if (employeeCount > 0) {
+    // Everything that points at the department: employees, department-specific holidays, company-performance entries
+    // and attendance import batches. Deleting it while any exist would either fail on the database constraint (an
+    // unexplained 500) or orphan that data, so say what is using it instead.
+    const [employeeCount, holidayCount, performanceCount, importBatchCount] =
+      await Promise.all([
+        this.scopedPrisma.user.count({
+          where: { departmentId: id, organizationId },
+        }),
+        this.scopedPrisma.holiday.count({
+          where: { departmentId: id, organizationId },
+        }),
+        this.scopedPrisma.companyPerformance.count({
+          where: { departmentId: id, organizationId },
+        }),
+        this.scopedPrisma.attendanceImportBatch.count({
+          where: { departmentId: id, organizationId },
+        }),
+      ]);
+    const usedBy = [
+      employeeCount > 0 && `${employeeCount} employee(s)`,
+      holidayCount > 0 && `${holidayCount} holiday(s)`,
+      performanceCount > 0 && `${performanceCount} company-performance entr${performanceCount === 1 ? 'y' : 'ies'}`,
+      importBatchCount > 0 && `${importBatchCount} attendance import batch(es)`,
+    ].filter(Boolean);
+    if (usedBy.length > 0) {
       throw new BadRequestException(
-        'Cannot delete a department with employees mapped to it.',
+        `Department is in use by ${usedBy.join(', ')}. Move or remove those first, or deactivate the department instead of deleting it.`,
       );
     }
     await this.scopedPrisma.department.deleteMany({
