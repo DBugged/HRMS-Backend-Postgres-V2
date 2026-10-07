@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
+import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
 
 // Format checks for the identifier fields inside personalData — these were
 // previously free-text with no validation at all (any string, any length,
@@ -122,6 +123,58 @@ export function assertValidIdentifiers(patch: Record<string, unknown>): void {
 interface PreviousEmploymentEntry {
   documentUrl?: string;
   [key: string]: unknown;
+}
+
+// personalData's plain-string date fields (dateOfBirth, previousEmployment[]
+// start/end dates) had no validation at all — the Profile.tsx form's own
+// `type="date"` + `max` only constrains the native picker UI; manually
+// typed digits still reach this endpoint as a raw string, and an impossible
+// or implausible value (e.g. "2026-02-30", a future DOB) was persisted
+// as-is, then shown back wherever that date renders (profile, any calendar/
+// age display derived from it) exactly as entered. Throws on the first bad
+// date found in `patch`, same "only fields actually present" scoping as
+// assertValidIdentifiers above.
+export function assertValidDates(patch: Record<string, unknown>): void {
+  if ('dateOfBirth' in patch) {
+    const value = patch.dateOfBirth;
+    if (typeof value === 'string' && value.trim() !== '') {
+      if (!isValidCalendarDateString(value)) {
+        throw new BadRequestException(
+          'Invalid date of birth — must be a real calendar date (YYYY-MM-DD).',
+        );
+      }
+      if (value > new Date().toISOString().slice(0, 10)) {
+        throw new BadRequestException('Date of birth cannot be in the future.');
+      }
+    }
+  }
+  if (Array.isArray(patch.previousEmployment)) {
+    for (const entry of patch.previousEmployment as Record<string, unknown>[]) {
+      for (const key of ['startDate', 'endDate'] as const) {
+        const value = entry?.[key];
+        if (
+          typeof value === 'string' &&
+          value.trim() !== '' &&
+          !isValidCalendarDateString(value)
+        ) {
+          throw new BadRequestException(
+            `Invalid previous employment ${key === 'startDate' ? 'start' : 'end'} date — must be a real calendar date (YYYY-MM-DD).`,
+          );
+        }
+      }
+      if (
+        typeof entry?.startDate === 'string' &&
+        typeof entry?.endDate === 'string' &&
+        entry.startDate.trim() !== '' &&
+        entry.endDate.trim() !== '' &&
+        entry.endDate < entry.startDate
+      ) {
+        throw new BadRequestException(
+          'Previous employment end date cannot be before its start date.',
+        );
+      }
+    }
+  }
 }
 
 // The two file-bearing fields inside the personalData JSON blob

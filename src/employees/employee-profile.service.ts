@@ -45,6 +45,7 @@ import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
 import {
   areMandatoryDocumentsUploaded,
+  assertValidDates,
   assertValidIdentifiers,
   mergePersonalData,
 } from './personal-data';
@@ -199,6 +200,7 @@ export class EmployeeProfileService {
       delete patch.personalEmail;
     }
     assertValidIdentifiers(patch);
+    assertValidDates(patch);
     // One PAN / UAN belongs to one person. Compared after decryption (the values are encrypted at rest, so SQL
     // cannot do it) within this organisation only.
     for (const [key, label] of [

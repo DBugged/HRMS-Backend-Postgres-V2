@@ -1,5 +1,6 @@
 import {
   areMandatoryDocumentsUploaded,
+  assertValidDates,
   assertValidIdentifiers,
   isProfileComplete,
   mergePersonalData,
@@ -181,5 +182,58 @@ describe('India-only phone numbers in personal data', () => {
     expect(() =>
       assertValidIdentifiers({ emergencyContact1Number: '+44 20 7946 0958' }),
     ).toThrow(/Indian \(\+91\)/);
+  });
+});
+
+describe('assertValidDates', () => {
+  it('accepts a real, past date of birth', () => {
+    expect(() => assertValidDates({ dateOfBirth: '1990-01-01' })).not.toThrow();
+  });
+
+  it('rejects a calendar-impossible date of birth (Feb 30)', () => {
+    expect(() => assertValidDates({ dateOfBirth: '2026-02-30' })).toThrow(
+      /real calendar date/,
+    );
+  });
+
+  it('rejects a date of birth in the future', () => {
+    expect(() => assertValidDates({ dateOfBirth: '2099-01-01' })).toThrow(
+      /cannot be in the future/,
+    );
+  });
+
+  it('ignores a blank or absent date of birth', () => {
+    expect(() => assertValidDates({ dateOfBirth: '' })).not.toThrow();
+    expect(() => assertValidDates({})).not.toThrow();
+  });
+
+  it('rejects an impossible previousEmployment start/end date', () => {
+    expect(() =>
+      assertValidDates({
+        previousEmployment: [
+          { startDate: '2020-13-01', endDate: '2021-01-01' },
+        ],
+      }),
+    ).toThrow(/start date/);
+  });
+
+  it('rejects a previousEmployment end date before its start date', () => {
+    expect(() =>
+      assertValidDates({
+        previousEmployment: [
+          { startDate: '2021-01-01', endDate: '2020-01-01' },
+        ],
+      }),
+    ).toThrow(/end date cannot be before/);
+  });
+
+  it('accepts a valid previousEmployment date range', () => {
+    expect(() =>
+      assertValidDates({
+        previousEmployment: [
+          { startDate: '2018-01-01', endDate: '2020-01-01' },
+        ],
+      }),
+    ).not.toThrow();
   });
 });

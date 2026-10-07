@@ -195,6 +195,36 @@ describe('Employee Rich Profile (e2e)', () => {
         .expect(200);
     });
 
+    it('rejects a calendar-impossible date of birth instead of persisting it as-is', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({ personalData: { dateOfBirth: '2026-02-30' } })
+        .expect(400);
+    });
+
+    it('rejects a future date of birth', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({ personalData: { dateOfBirth: '2099-01-01' } })
+        .expect(400);
+    });
+
+    it('rejects an impossible previousEmployment date', async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/personal-data`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({
+          personalData: {
+            previousEmployment: [
+              { startDate: '2020-13-01', endDate: '2021-01-01' },
+            ],
+          },
+        })
+        .expect(400);
+    });
+
     it('profileCompleted flips true once all 9 required fields are present, and stays stamped', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${empId}/personal-data`)
