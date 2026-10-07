@@ -41,20 +41,31 @@ export class EmailDomainService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
 
-  private async lookupToken(domain: string): Promise<string | null> {
+  // Distinguishes "no TXT record published yet" (not added, or added but not
+  // propagated — recoverable, admin should just wait/retry) from "a record
+  // is published but its value doesn't match" (a real mismatch — wrong
+  // token, stale record from a previous attempt, or copy-paste error).
+  private async lookupToken(
+    domain: string,
+  ): Promise<{ found: false } | { found: true; token: string | null }> {
     let records: string[][];
     try {
       records = await dns.resolveTxt(recordNameFor(domain));
     } catch {
-      return null;
+      // Covers ENODATA/ENOTFOUND (no record published/propagated yet) and
+      // any other resolver failure (timeout, SERVFAIL) — all recoverable,
+      // the org did nothing wrong and retrying may well succeed.
+      return { found: false };
     }
     for (const chunks of records) {
       const value = chunks.join('');
       if (value.startsWith(VALUE_PREFIX)) {
-        return value.slice(VALUE_PREFIX.length);
+        return { found: true, token: value.slice(VALUE_PREFIX.length) };
       }
     }
-    return null;
+    // The _hrms-verify subdomain resolves, but none of its TXT values carry
+    // our prefix — e.g. only an unrelated TXT record exists there.
+    return { found: true, token: null };
   }
 
   private recordFor(domain: string, token: string) {
@@ -121,9 +132,28 @@ export class EmailDomainService {
       );
     }
     const domain = extractDomain(org.emailSendingAddress);
-    const foundToken = await this.lookupToken(domain);
-    const status =
-      foundToken === org.emailDomainVerificationToken ? 'verified' : 'failed';
+    const result = await this.lookupToken(domain);
+
+    let status: string;
+    let message: string;
+    if (!result.found) {
+      status = 'pending';
+      message =
+        'No TXT record was found yet. DNS changes can take a few minutes ' +
+        '(sometimes longer) to propagate — add the record if you haven\'t ' +
+        'already, then try again shortly.';
+    } else if (result.token === org.emailDomainVerificationToken) {
+      status = 'verified';
+      message = 'Domain ownership verified.';
+    } else {
+      status = 'failed';
+      message =
+        'A TXT record was found at ' +
+        recordNameFor(domain) +
+        ", but its value doesn't match what we expected. Make sure you " +
+        "copied the value exactly and haven't added it more than once.";
+    }
+
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
       data: { emailDomainStatus: status },
@@ -131,6 +161,7 @@ export class EmailDomainService {
     return {
       emailSendingAddress: org.emailSendingAddress,
       status,
+      message,
       records: [this.recordFor(domain, org.emailDomainVerificationToken)],
     };
   }
