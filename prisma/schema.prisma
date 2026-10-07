@@ -443,6 +443,8 @@ model User {
   employeeCategory String           @default("")
   contactNumber    String           @default("")
   joiningDate      DateTime         @default(now())
+  // Set when HR/Admin corrects the joining date - the correction is allowed only once.
+  joiningDateChangedAt DateTime?
   employeeType     String           @default("permanent")
   employmentStatus EmploymentStatus @default(ONBOARDING)
 

@@ -10,6 +10,10 @@
 // pre-check. officialEmail is normalized to null (not '') on clear since it's a unique column and empty
 // strings would collide across employees.
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
+import { AttendanceService } from '../attendance/attendance.service';
+import { PayrollService } from '../payroll/payroll.service';
+import { todayInOrgTz } from '../common/org-date';
+import { enumerateDateStrings } from '../attendance/attendance-shift-config';
 import {
   BadRequestException,
   ConflictException,
@@ -27,6 +31,8 @@ import {
   Gender,
   OrgListType,
   Prisma,
+  AttendanceStatus,
+  PayrollRunStatus,
   Role,
   SelfieRequirement,
   User,
@@ -70,6 +76,12 @@ const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 const ROLES_HR_CAN_ASSIGN: Role[] = [Role.EMPLOYEE, Role.MANAGER, Role.HR];
 
 const MAX_MANAGER_CHAIN_HOPS = 100;
+
+const addDaysStr = (dateStr: string, days: number): string => {
+  const d = new Date(`${dateStr}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+};
 
 // bulkCreate()'s Excel rows carry Gender as a human-typed label (or the
 // raw enum value), same reasoning as role/employeeType's name-matching
@@ -170,6 +182,8 @@ export class EmployeesService {
     private readonly auditLogService: AuditLogService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly privacyAudit: PrivacyAuditService,
+    private readonly attendanceService: AttendanceService,
+    private readonly payrollService: PayrollService,
   ) {}
 
   async create(
@@ -947,6 +961,13 @@ export class EmployeesService {
       );
     }
 
+    // Joining date: a one-time correction, never after payroll has been processed for the employee.
+    const joiningDateChange = await this.assertJoiningDateChangeAllowed(
+      before,
+      clean.joiningDate,
+      organizationId,
+    );
+
     // Deactivating (not reactivating) someone who's still another active
     // employee's reportingManagerId requires reassigning those direct
     // reports first — otherwise they're left pointing at a manager who can
@@ -987,6 +1008,7 @@ export class EmployeesService {
           joiningDate: clean.joiningDate
             ? new Date(clean.joiningDate)
             : undefined,
+          joiningDateChangedAt: joiningDateChange ? new Date() : undefined,
         },
       });
     } catch (err) {
@@ -1002,6 +1024,15 @@ export class EmployeesService {
         );
       }
       throw err;
+    }
+
+    if (joiningDateChange) {
+      await this.syncAfterJoiningDateChange(
+        before,
+        joiningDateChange.newDate,
+        actor,
+        organizationId,
+      );
     }
 
     // Losing login (exit status or plain deactivation) also kills every
@@ -1363,6 +1394,132 @@ export class EmployeesService {
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     return employee;
+  }
+
+  // Returns the change descriptor when joiningDate really changes (null when it is absent/unchanged).
+  // Allowed once per employee, and only while no payroll for them is past the editable
+  // draft/calculated stage - a verified/approved/locked/paid run is final, so the date is frozen.
+  private async assertJoiningDateChangeAllowed(
+    before: {
+      id: string;
+      joiningDate: Date;
+      joiningDateChangedAt: Date | null;
+    },
+    newDateStr: string | undefined,
+    organizationId: string,
+  ): Promise<{ newDate: string } | null> {
+    if (!newDateStr) return null;
+    const newDate = newDateStr.slice(0, 10);
+    if (newDate === before.joiningDate.toISOString().slice(0, 10)) return null;
+    if (before.joiningDateChangedAt) {
+      throw new BadRequestException(
+        'The joining date has already been changed once and cannot be changed again.',
+      );
+    }
+    const processed = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId: before.id,
+        status: {
+          in: [
+            PayrollRunStatus.VERIFIED,
+            PayrollRunStatus.APPROVED,
+            PayrollRunStatus.LOCKED,
+            PayrollRunStatus.PAID,
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    if (processed) {
+      throw new BadRequestException(
+        'The joining date cannot be changed after payroll has been processed for this employee.',
+      );
+    }
+    return { newDate };
+  }
+
+  // Attendance and payroll are derived from the joining date: days before it have no attendance row, days from it
+  // do. Re-aligns the rows (drops empty system rows before the new date, creates the ones the earlier date now
+  // needs) and recalculates the employee's still-open payroll runs so payslips follow the new date.
+  private async syncAfterJoiningDateChange(
+    before: { id: string; joiningDate: Date },
+    newDate: string,
+    actor: Actor & { id: string; role: Role },
+    organizationId: string,
+  ) {
+    const oldDate = before.joiningDate.toISOString().slice(0, 10);
+    const orgRow = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const yesterday = addDaysStr(
+      todayInOrgTz(orgRow?.timezone ?? 'Asia/Kolkata'),
+      -1,
+    );
+
+    if (newDate > oldDate) {
+      // Moved later: system-generated empty rows before the new date no longer belong.
+      await this.scopedPrisma.attendance.deleteMany({
+        where: {
+          organizationId,
+          employeeId: before.id,
+          date: { lt: newDate },
+          inTime: null,
+          status: {
+            in: [
+              AttendanceStatus.ABSENT,
+              AttendanceStatus.WEEKLY_OFF,
+              AttendanceStatus.HOLIDAY,
+            ],
+          },
+        },
+      });
+    } else {
+      // Moved earlier: create the rows for newDate..(oldDate - 1) that the nightly sweep never wrote.
+      const last =
+        addDaysStr(oldDate, -1) < yesterday
+          ? addDaysStr(oldDate, -1)
+          : yesterday;
+      const dates = enumerateDateStrings(newDate, last).slice(0, 366);
+      for (const date of dates) {
+        const exists = await this.scopedPrisma.attendance.findFirst({
+          where: { organizationId, employeeId: before.id, date },
+          select: { id: true },
+        });
+        if (!exists) {
+          await this.attendanceService.recalculateAttendanceForDay(
+            this.scopedPrisma,
+            before.id,
+            date,
+            organizationId,
+          );
+        }
+      }
+    }
+
+    // Recalculate only the months that have an open (draft/calculated) payroll run in the affected range.
+    const from = (newDate < oldDate ? newDate : oldDate).slice(0, 7);
+    const to = (newDate < oldDate ? oldDate : newDate).slice(0, 7);
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId: before.id,
+        isFinalSettlement: false,
+        status: { in: [PayrollRunStatus.DRAFT, PayrollRunStatus.CALCULATED] },
+      },
+      select: { month: true, year: true },
+    });
+    for (const run of runs) {
+      const key = `${run.year}-${String(run.month).padStart(2, '0')}`;
+      if (key < from || key > to) continue;
+      await this.payrollService.calculate(
+        { employeeId: before.id, month: run.month, year: run.year },
+        // calculate() only reads actor.id / actor.role, both present here.
+        actor as unknown as Parameters<PayrollService['calculate']>[1],
+        organizationId,
+      );
+    }
   }
 
   // Rejects a reporting manager that is the employee themself, or whose own

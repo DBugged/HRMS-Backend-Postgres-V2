@@ -936,6 +936,52 @@ describe('Employees + Departments (e2e)', () => {
         .expect(400);
     });
 
+    it('lets the joining date be corrected once, then freezes it', async () => {
+      const emp = await createEmp('joindate');
+      await request(app.getHttpServer())
+        .patch(`/employees/${emp.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ joiningDate: '2026-01-05' })
+        .expect(200);
+      const row = await prisma.user.findUniqueOrThrow({
+        where: { id: emp.id },
+      });
+      expect(row.joiningDate.toISOString().slice(0, 10)).toBe('2026-01-05');
+      expect(row.joiningDateChangedAt).not.toBeNull();
+      // Resending the same date is a no-op; a different one is refused.
+      await request(app.getHttpServer())
+        .patch(`/employees/${emp.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ joiningDate: '2026-01-05' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch(`/employees/${emp.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ joiningDate: '2026-01-06' })
+        .expect(400);
+    });
+
+    it('refuses a joining date change once payroll has been processed', async () => {
+      const emp = await createEmp('joinlocked');
+      const user = await prisma.user.findUniqueOrThrow({
+        where: { id: emp.id },
+      });
+      await prisma.payrollRun.create({
+        data: {
+          organizationId: user.organizationId,
+          employeeId: emp.id,
+          month: 1,
+          year: 2026,
+          status: 'LOCKED',
+        },
+      });
+      await request(app.getHttpServer())
+        .patch(`/employees/${emp.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ joiningDate: '2026-01-05' })
+        .expect(400);
+    });
+
     it('rejects an employee as their own reporting manager', async () => {
       await request(app.getHttpServer())
         .patch(`/employees/${aId}`)

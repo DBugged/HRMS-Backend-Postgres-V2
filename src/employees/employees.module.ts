@@ -1,3 +1,5 @@
+import { AttendanceModule } from '../attendance/attendance.module';
+import { PayrollModule } from '../payroll/payroll.module';
 import { Module } from '@nestjs/common';
 import { PrivacyModule } from '../privacy/privacy.module';
 import { EmployeesController } from './employees.controller';
@@ -13,6 +15,8 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 @Module({
   imports: [
     UsersModule,
+    AttendanceModule,
+    PayrollModule,
     EmployeeTimelineModule,
     NotificationsModule,
     AuditLogModule,
