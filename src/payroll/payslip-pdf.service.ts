@@ -668,20 +668,25 @@ export class PayslipPdfService {
       doc.font(fonts.bold).fontSize(8.5).fillColor(primary);
       text('ATTENDANCE SUMMARY', attX + 10, y + 9, { width: attW - 20 });
       const a = run.attendanceSummary as Record<string, number | undefined>;
-      // Field/label pairing ported verbatim from the old system, including
-      // its apparent mislabeling (Weekly Offs shows weekendWorkDays —
-      // weekend-overtime day count, not attendance.weeklyOffs; Holidays
-      // shows holidayWorkDays — holiday-overtime day count, not
-      // attendance.holidays). Not a calculation bug (display-only), ported
-      // as-is rather than silently "corrected".
+      // Weekly Offs and Holidays are the days actually paid as such (attendance rows plus the calendar's weekly offs and
+      // holidays, see payroll/off-days.ts). Older runs saved before those counts existed show the figures they have.
+      // A half day is worth half a day's pay: the other half shows as "Half-day deduction" instead of being folded into
+      // LOP, so LOP is only the full days lost (absent, unmarked, unpaid leave not counted here).
+      const halfDayDeduction = (a.halfDays ?? 0) * 0.5;
+      const lopFullDays =
+        a.lopDays != null ? Math.max(0, a.lopDays - halfDayDeduction) : null;
       const attFields: [string, string | number][] = [
         ['Working Days', a.workingDays ?? '-'],
         ['Present Days', a.presentDays ?? '-'],
-        ['Weekly Offs', a.weekendWorkDays ?? '-'],
-        ['Holidays', a.holidayWorkDays ?? '-'],
-        ['Paid Leave', a.paidLeaveDays ?? '-'],
-        ['LOP Days', a.lopDays ?? '-'],
         ['Half Days', a.halfDays ?? '-'],
+        ['Weekly Offs', a.weeklyOffs ?? '-'],
+        ['Holidays', a.holidays ?? '-'],
+        ['Paid Leave', a.paidLeaveDays ?? '-'],
+        ['Unpaid Leave', a.unpaidLeaveDays ?? '-'],
+        ['LOP Days', lopFullDays ?? '-'],
+        ...(halfDayDeduction > 0
+          ? ([['Half-day deduction', halfDayDeduction]] as [string, number][])
+          : []),
         ['OT Hours', a.overtimeHours ?? '-'],
         [
           'Payable Days',

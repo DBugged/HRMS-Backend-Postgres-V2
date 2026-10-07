@@ -56,6 +56,27 @@ function validateNoOverlap(
   }
 }
 
+// The longest shift (start to end, a shift past midnight included) a schedule may have. A typo such as 03:30-19:30
+// would otherwise save and then turn every normal working day into a half-day against the minimum-hours rule.
+export const MAX_SHIFT_HOURS = 12;
+
+export function shiftHours(startTime: string, endTime: string): number {
+  const toMinutes = (t: string) => {
+    const [h, m] = t.split(':').map(Number);
+    return h * 60 + m;
+  };
+  const span = (toMinutes(endTime) - toMinutes(startTime) + 24 * 60) % (24 * 60);
+  return span / 60;
+}
+
+function validateShiftLength(startTime: string, endTime: string) {
+  if (shiftHours(startTime, endTime) > MAX_SHIFT_HOURS) {
+    throw new BadRequestException(
+      `A shift can be at most ${MAX_SHIFT_HOURS} hours long (${startTime} to ${endTime} is longer).`,
+    );
+  }
+}
+
 @Injectable()
 export class WorkSchedulesService {
   constructor(
@@ -89,6 +110,7 @@ export class WorkSchedulesService {
   ) {
     const alternateWeeklyOffs = dto.alternateWeeklyOffs ?? [];
     validateNoOverlap(dto.workingDays, alternateWeeklyOffs);
+    validateShiftLength(dto.startTime, dto.endTime);
 
     const schedule = await this.scopedPrisma.workSchedule.create({
       data: {
@@ -134,6 +156,13 @@ export class WorkSchedulesService {
       dto.alternateWeeklyOffs ??
       (existing.alternateWeeklyOffs as unknown as AlternateWeeklyOffDto[]);
     validateNoOverlap(workingDays, alternateWeeklyOffs);
+    // Only when the shift times are being changed, so an older schedule can still be renamed or reassigned.
+    if (dto.startTime !== undefined || dto.endTime !== undefined) {
+      validateShiftLength(
+        dto.startTime ?? existing.startTime,
+        dto.endTime ?? existing.endTime,
+      );
+    }
 
     await this.scopedPrisma.workSchedule.updateMany({
       where: { id, organizationId },

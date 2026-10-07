@@ -71,6 +71,9 @@ export function computeAttendanceSummary(
   overtimeRows: OvertimeRowLike[],
   month: number,
   year: number,
+  // Days of the month before the employee joined: not unpaid leave, just days they were not employed, so they are
+  // kept out of LOP (the salary is prorated to the days from the joining date either way).
+  daysBeforeJoining = 0,
 ): AttendanceSummary {
   const totalDaysInMonth = daysInMonth(month, year);
 
@@ -141,7 +144,10 @@ export function computeAttendanceSummary(
       presentDays + halfDays * 0.5 + holidays + weeklyOffs + paidLeaveDays,
     );
   }
-  const lopDays = Math.max(0, totalDaysInMonth - payableDays - unpaidLeaveDays);
+  const lopDays = Math.max(
+    0,
+    totalDaysInMonth - payableDays - unpaidLeaveDays - daysBeforeJoining,
+  );
   const workingDays = totalDaysInMonth - holidays - weeklyOffs;
 
   return {

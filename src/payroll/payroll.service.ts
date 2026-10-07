@@ -88,6 +88,18 @@ import {
   type LeaveRowWithType,
 } from './attendance-summary';
 import {
+  employmentWindow,
+  missingOffDayRows,
+  offDayCalendar,
+  splitLeavesAroundOffDays,
+  type LeaveRowWithSandwich,
+} from './off-days';
+import {
+  enumerateDateStrings,
+  resolveShiftConfig,
+  type OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
+import {
   buildBaseContext,
   deriveStatutoryContext,
   splitEmployerPf,
@@ -434,7 +446,8 @@ export class PayrollService {
     const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
     const monthEndStr = `${monthPrefix}-${String(totalDaysInMonth).padStart(2, '0')}`;
 
-    const [attendanceRows, leaveRows, overtimeRows] = await Promise.all([
+    const [attendanceRows, leaveRows, overtimeRows, holidayRows, department, org] =
+      await Promise.all([
       this.scopedPrisma.attendance.findMany({
         where: {
           organizationId,
@@ -451,7 +464,9 @@ export class PayrollService {
           endDate: { gte: `${monthPrefix}-01` },
         },
         include: {
-          leaveType: { select: { isPaid: true, salaryImpactPercent: true } },
+          leaveType: {
+            select: { isPaid: true, salaryImpactPercent: true, rules: true },
+          },
         },
       }),
       this.scopedPrisma.overtimeRecord.findMany({
@@ -462,20 +477,71 @@ export class PayrollService {
           date: { gte: `${monthPrefix}-01`, lte: monthEndStr },
         },
       }),
+      // The holidays that apply to this employee (company-wide plus their own department's), optional ones excluded.
+      this.scopedPrisma.holiday.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          isOptional: false,
+          date: { startsWith: monthPrefix },
+          OR: employee.departmentId
+            ? [{ departmentId: null }, { departmentId: employee.departmentId }]
+            : [{ departmentId: null }],
+        },
+        select: { date: true },
+      }),
+      employee.departmentId
+        ? this.scopedPrisma.department.findFirst({
+            where: { id: employee.departmentId, organizationId },
+          })
+        : Promise.resolve(null),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { attendancePayrollPrefs: true },
+      }),
     ]);
 
-    const leaves: LeaveRowWithType[] = leaveRows.map((l) => ({
-      startDate: l.startDate,
-      endDate: l.endDate,
-      isHalfDay: l.isHalfDay,
-      leaveType: l.leaveType,
-    }));
+    // Weekly offs and holidays are paid days even when no attendance row was ever written for them (an imported or
+    // backfilled month, or one the daily job never ran for). The days before the employee joined are not unpaid
+    // leave, they are simply outside their employment. See off-days.ts.
+    const { weeklyOffs } = resolveShiftConfig(
+      department,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
+    const employed = employmentWindow(employee.joiningDate, month, year);
+    const calendar = offDayCalendar(
+      employed.from,
+      employed.to,
+      weeklyOffs,
+      holidayRows.map((h) => h.date),
+    );
+    const attendanceForPay = [
+      ...attendanceRows,
+      ...missingOffDayRows(
+        calendar,
+        new Set(attendanceRows.map((r) => r.date)),
+      ),
+    ];
+    const leaves: LeaveRowWithSandwich[] = splitLeavesAroundOffDays(
+      leaveRows.map((l) => ({
+        startDate: l.startDate,
+        endDate: l.endDate,
+        isHalfDay: l.isHalfDay,
+        leaveType: l.leaveType,
+        // A weekly off or holiday inside a leave is only part of the leave when its type applies the sandwich rule.
+        sandwichApplies: !!(
+          l.leaveType.rules as { sandwichLeaveApplies?: boolean } | null
+        )?.sandwichLeaveApplies,
+      })),
+      new Set([...calendar.weeklyOffDates, ...calendar.holidayDates]),
+    );
     const attendanceSummary = computeAttendanceSummary(
-      attendanceRows,
+      attendanceForPay,
       leaves,
       overtimeRows,
       month,
       year,
+      employed.daysBeforeJoining,
     );
     if (options?.lopDaysOverride !== undefined) {
       // Inverse of computeAttendanceSummary's own lopDays formula —
@@ -604,7 +670,7 @@ export class PayrollService {
             month,
             settings,
             baseContext,
-            attendanceRows,
+            attendanceRows: attendanceForPay,
             leaves,
             totalDaysInMonth,
             roundAmount,
@@ -957,6 +1023,9 @@ export class PayrollService {
           Math.round(taxableGross * 0.2),
         );
       }
+      // What the tax details show for "this month's TDS" is what is actually deducted: a month with no taxable pay
+      // withholds nothing, so it must not show the projected instalment.
+      taxDetails.monthlyTDS = incomeTaxAmount;
       deductionsResults.push({
         code: SALARY_COMPONENT_CODES.INCOME_TAX,
         name: incomeTaxComponent.name,
@@ -1119,11 +1188,15 @@ export class PayrollService {
   }
 
   async draft(dto: DraftPayrollDto, actor: Actor, organizationId: string) {
-    const employees = await this.targetEmployees(
-      dto.employeeId,
-      organizationId,
-      dto.excludeEmployeeIds,
-    );
+    // Nobody is on payroll for a month that ended before they joined.
+    const monthEnd = lastDayOfMonth(dto.month, dto.year);
+    const employees = (
+      await this.targetEmployees(
+        dto.employeeId,
+        organizationId,
+        dto.excludeEmployeeIds,
+      )
+    ).filter((e) => e.joiningDate.toISOString().slice(0, 10) <= monthEnd);
 
     // One batched existence check instead of one findFirst per employee,
     // then one batched createMany for whoever's missing a row — 3 queries
@@ -1238,7 +1311,18 @@ export class PayrollService {
     // not accumulated), and results.push/failures.push from concurrent
     // workers is safe — JS has no true parallelism, so a synchronous
     // array push is never interleaved by another worker mid-operation.
+    const monthEndForJoining = lastDayOfMonth(dto.month, dto.year);
     await mapWithConcurrency(employees, 8, async (employee) => {
+      // Not employed yet: no payroll for a month that ended before the joining date.
+      if (employee.joiningDate.toISOString().slice(0, 10) > monthEndForJoining) {
+        skipped.push({
+          employeeId: employee.id,
+          name: employee.name,
+          code: employee.employeeId,
+          reason: `Joined after ${dto.month}/${dto.year} - not on payroll for this month.`,
+        });
+        return;
+      }
       let run = existingRunByEmployeeId.get(employee.id) ?? null;
       if (
         run &&
@@ -1280,7 +1364,13 @@ export class PayrollService {
         const payslipNumber =
           run?.payslipNumber ??
           (await this.scopedPrisma.$transaction((tx) =>
-            issueDocumentNumber(tx, organizationId, 'payslip'),
+            // The number's date is the last day of the payroll month, not the day it was calculated.
+            issueDocumentNumber(
+              tx,
+              organizationId,
+              'payslip',
+              new Date(dto.year, dto.month, 0),
+            ),
           ));
         const data = {
           financialYear: calc.financialYear,
@@ -1396,7 +1486,33 @@ export class PayrollService {
         skipped: skipped.length,
       },
     });
-    return { count: results.length, payrolls: results, failures, skipped };
+    // Heads-up (never blocks): details the payslip and the payout need that an employee has not filled in yet.
+    const warnings = employees
+      .filter((e) => results.some((r) => r.employeeId === e.id))
+      .map((e) => {
+        const pd = (e.personalData ?? {}) as Record<string, unknown>;
+        const has = (key: string) =>
+          typeof pd[key] === 'string' && (pd[key] as string).trim() !== '';
+        const missing = [
+          !has('bankAccountNo') && 'Bank account number',
+          !has('bankIFSC') && 'IFSC code',
+          !has('panNumber') && 'PAN',
+        ].filter((m): m is string => !!m);
+        return {
+          employeeId: e.id,
+          name: e.name,
+          code: e.employeeId,
+          missing,
+        };
+      })
+      .filter((w) => w.missing.length > 0);
+    return {
+      count: results.length,
+      payrolls: results,
+      failures,
+      skipped,
+      warnings,
+    };
   }
 
   async findAll(query: QueryPayrollDto, actor: Actor, organizationId: string) {
@@ -1940,7 +2056,44 @@ export class PayrollService {
         revertedLeaveEncashments: reversal.revertedEncashmentIds,
       },
     });
+    // The employee was already paid and sent this payslip: tell them it has been taken back and a corrected one will follow.
+    if (run.status === PayrollRunStatus.PAID) {
+      await this.notifyPayslipWithdrawn(run, organizationId);
+    }
     return updated;
+  }
+
+  // Tells the employee that a payslip they already received has been withdrawn for correction. Never fails the unlock
+  // (it has committed): a failed notification is only logged.
+  private async notifyPayslipWithdrawn(
+    run: PayrollRun,
+    organizationId: string,
+  ) {
+    try {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: run.employeeId, organizationId },
+      });
+      if (!employee) return;
+      const title = `Payslip for ${run.month}/${run.year} withdrawn`;
+      const message = `The payslip for ${run.month}/${run.year} that you received earlier has been withdrawn for correction. Please disregard it; a revised payslip will be issued to you.`;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title,
+        message,
+        category: NotificationCategory.PAYROLL,
+      });
+      void this.emailService.send({
+        organizationId,
+        to: employee.email,
+        subject: title,
+        html: `<p>Hi ${employee.name},</p><p>${message}</p>`,
+      });
+    } catch (err) {
+      new Logger(PayrollService.name).warn(
+        `Payslip-withdrawn notification for run ${run.id} failed: ${(err as Error).message}`,
+      );
+    }
   }
 
   // Symmetric undo of afterLock()'s side effects, scoped to exactly this
@@ -2946,10 +3099,9 @@ export class PayrollService {
       where: {
         organizationId,
         isActive: true,
-        // Bulk payroll runs cover every real employee on payroll —
-        // EMPLOYEE/MANAGER/HR — and only skip ADMIN, since that account
-        // is the org's system/owner login rather than a paid role here.
-        role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR] },
+        // Bulk payroll runs cover everyone on payroll, Admin included (an Admin is paid like anyone else; one who is
+        // not can be left out with the standing excludeFromPayroll flag below).
+        role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN] },
         // Standing opt-out (e.g. an unpaid intern) — see the field's own
         // schema comment.
         excludeFromPayroll: false,
@@ -2970,31 +3122,81 @@ export class PayrollService {
   // doesn't matter which) was actually looked at by someone; only a day
   // with no row at all is a genuine blind spot.
   async getAttendanceGaps(month: number, year: number, organizationId: string) {
-    const employees = await this.targetEmployees(undefined, organizationId);
+    const allEmployees = await this.targetEmployees(undefined, organizationId);
     const totalDaysInMonth = daysInMonth(month, year);
     const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
-
-    const counts = await this.scopedPrisma.attendance.groupBy({
-      by: ['employeeId'],
-      where: {
-        organizationId,
-        employeeId: { in: employees.map((e) => e.id) },
-        date: { startsWith: monthPrefix },
-      },
-      _count: { _all: true },
-    });
-    const markedDaysByEmployeeId = new Map(
-      counts.map((c) => [c.employeeId, c._count._all]),
+    // Only people who had joined by the end of the month can have a gap in it.
+    const monthEnd = lastDayOfMonth(month, year);
+    const employees = allEmployees.filter(
+      (e) => e.joiningDate.toISOString().slice(0, 10) <= monthEnd,
     );
 
+    const [marked, holidays, departments, org] = await Promise.all([
+      this.scopedPrisma.attendance.findMany({
+        where: {
+          organizationId,
+          employeeId: { in: employees.map((e) => e.id) },
+          date: { startsWith: monthPrefix },
+        },
+        select: { employeeId: true, date: true },
+      }),
+      this.scopedPrisma.holiday.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          isOptional: false,
+          date: { startsWith: monthPrefix },
+        },
+        select: { date: true, departmentId: true },
+      }),
+      this.scopedPrisma.department.findMany({ where: { organizationId } }),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { attendancePayrollPrefs: true },
+      }),
+    ]);
+    const markedByEmployee = new Map<string, Set<string>>();
+    for (const row of marked) {
+      const set = markedByEmployee.get(row.employeeId) ?? new Set<string>();
+      set.add(row.date);
+      markedByEmployee.set(row.employeeId, set);
+    }
+    const departmentById = new Map(departments.map((d) => [d.id, d]));
+
+    // A day is a real blind spot only when it is a working day the employee was employed for and nobody marked: a
+    // weekly off or holiday is paid anyway (see off-days.ts), and days before they joined are not theirs.
     return employees
       .map((e) => {
-        const markedDays = markedDaysByEmployeeId.get(e.id) ?? 0;
+        const department = e.departmentId
+          ? (departmentById.get(e.departmentId) ?? null)
+          : null;
+        const { weeklyOffs } = resolveShiftConfig(
+          department,
+          org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+        );
+        const employed = employmentWindow(e.joiningDate, month, year);
+        const calendar = offDayCalendar(
+          employed.from,
+          employed.to,
+          weeklyOffs,
+          holidays
+            .filter((h) => !h.departmentId || h.departmentId === e.departmentId)
+            .map((h) => h.date),
+        );
+        const markedDates = markedByEmployee.get(e.id) ?? new Set<string>();
+        const offDates = new Set([
+          ...calendar.weeklyOffDates,
+          ...calendar.holidayDates,
+        ]);
+        let unmarkedDays = 0;
+        for (const date of enumerateDateStrings(employed.from, employed.to)) {
+          if (!markedDates.has(date) && !offDates.has(date)) unmarkedDays += 1;
+        }
         return {
           employeeId: e.id,
           name: e.name,
           employeeCode: e.employeeId,
-          unmarkedDays: Math.max(0, totalDaysInMonth - markedDays),
+          unmarkedDays,
           totalDaysInMonth,
         };
       })

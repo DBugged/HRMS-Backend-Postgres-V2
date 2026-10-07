@@ -91,6 +91,10 @@ export async function issueDocumentNumber(
   tx: Prisma.TransactionClient,
   organizationId: string,
   docType: string,
+  // The date the number's date tokens ({DD_MM_YYYY}, {MM_YYYY}...) show. Defaults to today; a payslip passes its payroll
+  // month so the number says which period it is for, not the day it happened to be calculated. The counter and its
+  // reset period still follow the day of issue, so numbers stay unique.
+  displayDate: Date = new Date(),
 ): Promise<string> {
   const rows = await tx.$queryRaw<{ documentNumbering: unknown }[]>`
     SELECT "documentNumbering" FROM organizations WHERE id = ${organizationId} FOR UPDATE
@@ -105,7 +109,7 @@ export async function issueDocumentNumber(
   const entry = numbering[docType] ?? defaultEntry(docType);
 
   const { nextCounter, periodKey } = computeNextCounter(entry);
-  const formatted = formatDocumentNumber(entry.format, nextCounter);
+  const formatted = formatDocumentNumber(entry.format, nextCounter, displayDate);
 
   const updatedEntry: DocumentNumberingEntry = {
     ...entry,
