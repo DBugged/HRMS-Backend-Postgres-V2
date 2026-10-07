@@ -916,10 +916,24 @@ describe('Employees + Departments (e2e)', () => {
     beforeAll(async () => {
       aId = (await createEmp('a')).id;
       bId = (await createEmp('b')).id;
+      // Only manager-level roles can be a reporting manager.
+      await prisma.user.updateMany({
+        where: { id: { in: [aId, bId] } },
+        data: { role: 'MANAGER' },
+      });
       const c = await createEmp('c');
       cId = c.id;
       cEmail = c.email;
       cPassword = c.password;
+    });
+
+    it('rejects a plain Employee-role user as a new reporting manager', async () => {
+      const plain = await createEmp('plain');
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reportingManagerId: plain.id })
+        .expect(400);
     });
 
     it('rejects an employee as their own reporting manager', async () => {

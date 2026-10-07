@@ -844,7 +844,11 @@ export class EmployeesService {
     } = dto;
     const clean = stripLockedFields(updateFields, actor.role);
     await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
-    await this.assertOrgReferences(clean, organizationId);
+    await this.assertOrgReferences(
+      clean,
+      organizationId,
+      before.reportingManagerId,
+    );
     await this.assertContactNumberUnique(
       clean.contactNumber,
       organizationId,
@@ -1404,6 +1408,10 @@ export class EmployeesService {
       reportingManagerId?: string | null;
     },
     organizationId: string,
+    // The manager already on the record — an unchanged legacy assignment (e.g.
+    // a plain EMPLOYEE set before the role rule existed) must not block
+    // unrelated edits, so the role check applies only to a new choice.
+    currentManagerId?: string | null,
   ) {
     if (refs.departmentId) {
       const dept = await this.scopedPrisma.department.findFirst({
@@ -1419,11 +1427,21 @@ export class EmployeesService {
     if (refs.reportingManagerId) {
       const manager = await this.scopedPrisma.user.findFirst({
         where: { id: refs.reportingManagerId, organizationId },
-        select: { id: true },
+        select: { id: true, role: true },
       });
       if (!manager) {
         throw new BadRequestException(
           'The specified reporting manager was not found.',
+        );
+      }
+      // Only manager-level roles can approve/manage others, so a plain
+      // EMPLOYEE is never a valid reporting manager.
+      if (
+        manager.role === Role.EMPLOYEE &&
+        refs.reportingManagerId !== currentManagerId
+      ) {
+        throw new BadRequestException(
+          'The reporting manager must be an Admin, HR or Manager.',
         );
       }
     }
