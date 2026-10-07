@@ -10,6 +10,7 @@ import { formatDateDisplay, formatDateTimeDisplay } from './format-date';
 import { lastDayOfMonth } from './payroll-date-math';
 import { readStoredFile } from '../files/file-storage.config';
 import { attachWatermark } from '../common/pdf-watermark';
+import { decryptPersonalData } from '../common/personal-data-crypto';
 import { FONTS_DIR, ROBOTO_FILES } from '../common/fonts-dir';
 
 /**
@@ -640,7 +641,11 @@ export class PayslipPdfService {
       // PF Number/ESIC Number still have no data source anywhere in the
       // app (no such field is collected) — those two rows stay '-' until
       // one exists. PAN/UAN/Bank read from personalData below.
-      const pd = run.employee.personalData as Record<string, unknown> | null;
+      // Identifiers are encrypted at rest and a nested include hands back the ciphertext, so decrypt before printing.
+      const pd = decryptPersonalData(run.employee.personalData) as Record<
+        string,
+        unknown
+      > | null;
       const pdStr = (key: string) => {
         const v = pd?.[key];
         return typeof v === 'string' ? v.trim() : '';

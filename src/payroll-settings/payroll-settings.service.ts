@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { PayrollSettings, Prisma } from '@prisma/client';
+import { PayrollSettings, Prisma, StatutoryModule } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { RedisCacheService } from '../common/redis-cache';
@@ -23,6 +23,18 @@ const SETTINGS_CACHE_TTL_SECONDS = 300;
  * through rather than querying the model directly. Find-or-create: a
  * fresh org has no row until the first read or write.
  */
+// The org-level switch on the Payroll Settings screen and the statutory module it controls. A statutory config version
+// carries its own isEnabled and, when one is in effect, that is what payroll obeys, so the two must move together.
+const STATUTORY_SWITCHES = [
+  ['pfEnabled', StatutoryModule.PF],
+  ['esiEnabled', StatutoryModule.ESI],
+  ['ptEnabled', StatutoryModule.PT],
+  ['lwfEnabled', StatutoryModule.LWF],
+  ['npsEnabled', StatutoryModule.NPS],
+  ['gratuityEnabled', StatutoryModule.GRATUITY],
+  ['bonusEnabled', StatutoryModule.BONUS],
+] as const;
+
 @Injectable()
 export class PayrollSettingsService {
   constructor(
@@ -130,7 +142,7 @@ export class PayrollSettingsService {
     updatedById: string,
     organizationId: string,
   ): Promise<PayrollSettings> {
-    await this.getOrCreate(organizationId);
+    const before = await this.getOrCreate(organizationId);
     // The overtime pay multipliers feed only the Overtime Pay component. While it is off they are locked: the screen
     // sends the whole settings object on every save, so rather than reject a save that merely carries the unchanged
     // rates, any rate in the request is dropped and the stored values are kept for when it is turned back on.
@@ -149,6 +161,21 @@ export class PayrollSettingsService {
       },
     });
     await this.cache.invalidate(this.cacheKey(organizationId));
+
+    // A switch that was actually flipped carries over to the open-ended statutory version of its module, otherwise the
+    // version keeps overriding it and e.g. PF stays off after being turned on here. Switches merely resent unchanged
+    // leave a deliberately different version alone.
+    for (const [flag, module] of STATUTORY_SWITCHES) {
+      const next = effective[flag];
+      if (typeof next !== 'boolean' || next === before[flag]) continue;
+      await this.scopedPrisma.statutoryConfigVersion.updateMany({
+        where: { organizationId, module, effectiveTo: null },
+        data: { isEnabled: next },
+      });
+      await this.cache.invalidatePrefix(
+        `statconfig:${organizationId}:${module}:`,
+      );
+    }
 
     await this.auditLogService.log({
       actorId: updatedById,

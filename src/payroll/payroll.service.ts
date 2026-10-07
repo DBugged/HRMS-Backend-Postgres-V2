@@ -88,6 +88,7 @@ import {
   type LeaveRowWithType,
 } from './attendance-summary';
 import {
+  dropLeaveRowsOnOffDays,
   employmentWindow,
   missingOffDayRows,
   offDayCalendar,
@@ -515,24 +516,29 @@ export class PayrollService {
       weeklyOffs,
       holidayRows.map((h) => h.date),
     );
+    const leaveInputs = leaveRows.map((l) => ({
+      startDate: l.startDate,
+      endDate: l.endDate,
+      isHalfDay: l.isHalfDay,
+      leaveType: l.leaveType,
+      // A weekly off or holiday inside a leave is only part of the leave when its type applies the sandwich rule.
+      sandwichApplies: !!(
+        l.leaveType.rules as { sandwichLeaveApplies?: boolean } | null
+      )?.sandwichLeaveApplies,
+    }));
+    // Approving a leave stamps ON_LEAVE on its weekends/holidays too; without the sandwich rule those go back to being
+    // paid off days.
+    const keptRows = dropLeaveRowsOnOffDays(
+      attendanceRows,
+      calendar,
+      leaveInputs,
+    );
     const attendanceForPay = [
-      ...attendanceRows,
-      ...missingOffDayRows(
-        calendar,
-        new Set(attendanceRows.map((r) => r.date)),
-      ),
+      ...keptRows,
+      ...missingOffDayRows(calendar, new Set(keptRows.map((r) => r.date))),
     ];
     const leaves: LeaveRowWithSandwich[] = splitLeavesAroundOffDays(
-      leaveRows.map((l) => ({
-        startDate: l.startDate,
-        endDate: l.endDate,
-        isHalfDay: l.isHalfDay,
-        leaveType: l.leaveType,
-        // A weekly off or holiday inside a leave is only part of the leave when its type applies the sandwich rule.
-        sandwichApplies: !!(
-          l.leaveType.rules as { sandwichLeaveApplies?: boolean } | null
-        )?.sandwichLeaveApplies,
-      })),
+      leaveInputs,
       new Set([...calendar.weeklyOffDates, ...calendar.holidayDates]),
     );
     const attendanceSummary = computeAttendanceSummary(
@@ -1321,6 +1327,18 @@ export class PayrollService {
           code: employee.employeeId,
           reason: `Joined after ${dto.month}/${dto.year} - not on payroll for this month.`,
         });
+        // A row made for this month before the joining date was known (or corrected) is meaningless; drop it unless
+        // it has already moved past calculation.
+        const stale = existingRunByEmployeeId.get(employee.id);
+        if (
+          stale &&
+          (stale.status === PayrollRunStatus.DRAFT ||
+            stale.status === PayrollRunStatus.CALCULATED)
+        ) {
+          await this.scopedPrisma.payrollRun.deleteMany({
+            where: { id: stale.id, organizationId },
+          });
+        }
         return;
       }
       let run = existingRunByEmployeeId.get(employee.id) ?? null;

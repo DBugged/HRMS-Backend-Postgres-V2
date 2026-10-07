@@ -1,5 +1,6 @@
 import { AttendanceStatus } from '@prisma/client';
 import {
+  dropLeaveRowsOnOffDays,
   employmentWindow,
   missingOffDayRows,
   monthBounds,
@@ -112,5 +113,28 @@ describe('splitLeavesAroundOffDays', () => {
     };
     expect(rows(false).unpaidLeaveDays).toBe(2);
     expect(rows(true).unpaidLeaveDays).toBe(4);
+  });
+});
+
+describe('dropLeaveRowsOnOffDays', () => {
+  const cal = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, []);
+  const rows = ['2026-09-10', '2026-09-12', '2026-09-13', '2026-09-14'].map(
+    (date) => ({ status: AttendanceStatus.ON_LEAVE, date }),
+  );
+  const leave = { startDate: '2026-09-10', endDate: '2026-09-14' };
+
+  it('drops the ON_LEAVE rows on a weekend inside a leave without the sandwich rule', () => {
+    const kept = dropLeaveRowsOnOffDays(rows, cal, [leave]);
+    expect(kept.map((r) => r.date)).toEqual(['2026-09-10', '2026-09-14']);
+  });
+
+  it('keeps them when the leave applies the sandwich rule', () => {
+    const kept = dropLeaveRowsOnOffDays(rows, cal, [{ ...leave, sandwichApplies: true }]);
+    expect(kept).toHaveLength(4);
+  });
+
+  it('only touches ON_LEAVE rows', () => {
+    const present = [{ status: AttendanceStatus.PRESENT, date: '2026-09-12' }];
+    expect(dropLeaveRowsOnOffDays(present, cal, [leave])).toHaveLength(1);
   });
 });

@@ -138,3 +138,32 @@ export function splitLeavesAroundOffDays<T extends LeaveRowWithSandwich>(
   }
   return out;
 }
+
+/**
+ * Approving a leave writes an ON_LEAVE attendance row for every date in its range, weekends and holidays included, which
+ * replaces the WEEKLY_OFF/HOLIDAY row that was there. When the leave's type does not apply the sandwich rule those days
+ * are not leave days (splitLeavesAroundOffDays cuts them out), so the ON_LEAVE row is dropped here and the day goes back
+ * to being the paid off day it is. Rows on dates a sandwich leave covers are kept.
+ */
+export function dropLeaveRowsOnOffDays<T extends { status: AttendanceStatus; date: string }>(
+  rows: T[],
+  calendar: OffDayCalendar,
+  leaves: { startDate: string; endDate: string; sandwichApplies?: boolean }[],
+): T[] {
+  const sandwiched = new Set<string>();
+  for (const leave of leaves) {
+    if (!leave.sandwichApplies) continue;
+    for (const date of enumerateDateStrings(leave.startDate, leave.endDate)) {
+      sandwiched.add(date);
+    }
+  }
+  return rows.filter(
+    (r) =>
+      !(
+        r.status === AttendanceStatus.ON_LEAVE &&
+        (calendar.weeklyOffDates.has(r.date) ||
+          calendar.holidayDates.has(r.date)) &&
+        !sandwiched.has(r.date)
+      ),
+  );
+}
