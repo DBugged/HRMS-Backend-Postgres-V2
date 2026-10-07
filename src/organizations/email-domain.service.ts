@@ -1,19 +1,25 @@
-// Purpose: Per-org custom email sending domain, verified via Resend's Domains API — once verified,
-//   EmailService sends notifications "from" the org's own address instead of the shared platform one.
-// Responsibilities: starts verification (creates the Resend domain, returns the DNS records the org
-//   must add at their own DNS provider), re-checks status on demand, and lets an org reset/remove it.
-// Important: Resend-only. EMAIL_DRIVER=smtp orgs have no equivalent (an arbitrary SMTP relay has no
-//   DNS-domain-verification API to call), so this whole feature is a no-op for them — see
-//   email.service.ts's resolveFrom(), which only consults emailDomainStatus on the Resend path.
+// Purpose: Per-org custom email sending domain, verified by proving domain ownership via a DNS TXT
+//   record — no third-party API or API key required. Once verified, EmailService sends notifications
+//   "from" the org's own address instead of the shared platform one.
+// Responsibilities: starts verification (generates a token and returns the TXT record the org must
+//   add at their own DNS provider), re-checks status on demand by looking the record up over public
+//   DNS, and lets an org reset/remove it.
+// Important: proves domain *ownership* only (DNS control) — it does not configure SPF/DKIM/DMARC for
+//   actually sending as that domain over SMTP. The org's mail/DNS provider is responsible for that,
+//   same as before. See email.service.ts's resolveFrom(), which only consults emailDomainStatus.
 import {
   BadRequestException,
   Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Resend } from 'resend';
+import { randomBytes } from 'crypto';
+import { promises as dns } from 'dns';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+
+const RECORD_PREFIX = '_hrms-verify';
+const VALUE_PREFIX = 'hrms-verify=';
 
 function extractDomain(email: string): string {
   const at = email.lastIndexOf('@');
@@ -25,22 +31,38 @@ function extractDomain(email: string): string {
   return email.slice(at + 1).toLowerCase();
 }
 
+function recordNameFor(domain: string): string {
+  return `${RECORD_PREFIX}.${domain}`;
+}
+
 @Injectable()
 export class EmailDomainService {
-  private resend: Resend | null = null;
-
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
 
-  private getResend(): Resend {
-    if (!process.env.RESEND_API_KEY) {
-      throw new BadRequestException(
-        'Email sending domain verification is not available on this deployment.',
-      );
+  private async lookupToken(domain: string): Promise<string | null> {
+    let records: string[][];
+    try {
+      records = await dns.resolveTxt(recordNameFor(domain));
+    } catch {
+      return null;
     }
-    if (!this.resend) this.resend = new Resend(process.env.RESEND_API_KEY);
-    return this.resend;
+    for (const chunks of records) {
+      const value = chunks.join('');
+      if (value.startsWith(VALUE_PREFIX)) {
+        return value.slice(VALUE_PREFIX.length);
+      }
+    }
+    return null;
+  }
+
+  private recordFor(domain: string, token: string) {
+    return {
+      type: 'TXT',
+      name: recordNameFor(domain),
+      value: `${VALUE_PREFIX}${token}`,
+    };
   }
 
   async getStatus(organizationId: string) {
@@ -48,116 +70,77 @@ export class EmailDomainService {
       where: { id: organizationId },
       select: {
         emailSendingAddress: true,
-        resendDomainId: true,
+        emailDomainVerificationToken: true,
         emailDomainStatus: true,
       },
     });
-    if (!org.resendDomainId) {
+    if (!org.emailDomainVerificationToken || !org.emailSendingAddress) {
       return {
         emailSendingAddress: null,
         status: 'not_started',
         records: [],
       };
     }
-    // Live from Resend rather than the cached DB column, so a DNS record
-    // the org just added shows as verified without a separate "refresh"
-    // step being required first.
-    const { data, error } = await this.getResend().domains.get(
-      org.resendDomainId,
-    );
-    if (error || !data) {
-      return {
-        emailSendingAddress: org.emailSendingAddress,
-        status: org.emailDomainStatus,
-        records: [],
-      };
-    }
-    if (data.status !== org.emailDomainStatus) {
-      await this.scopedPrisma.organization.updateMany({
-        where: { id: organizationId },
-        data: { emailDomainStatus: data.status },
-      });
-    }
+    const domain = extractDomain(org.emailSendingAddress);
     return {
       emailSendingAddress: org.emailSendingAddress,
-      status: data.status,
-      records: data.records,
+      status: org.emailDomainStatus,
+      records: [this.recordFor(domain, org.emailDomainVerificationToken)],
     };
   }
 
   async startVerification(organizationId: string, email: string) {
     const domain = extractDomain(email);
-    const { data, error } = await this.getResend().domains.create({
-      name: domain,
-    });
-    if (error || !data) {
-      throw new BadRequestException(
-        error?.message ||
-          'Failed to start domain verification with the email provider.',
-      );
-    }
+    const token = randomBytes(16).toString('hex');
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
       data: {
         emailSendingAddress: email,
-        resendDomainId: data.id,
-        emailDomainStatus: data.status,
+        emailDomainVerificationToken: token,
+        emailDomainStatus: 'pending',
       },
     });
     return {
       emailSendingAddress: email,
-      status: data.status,
-      records: data.records,
+      status: 'pending',
+      records: [this.recordFor(domain, token)],
     };
   }
 
   async recheckVerification(organizationId: string) {
     const org = await this.scopedPrisma.organization.findUniqueOrThrow({
       where: { id: organizationId },
-      select: { resendDomainId: true, emailSendingAddress: true },
+      select: {
+        emailDomainVerificationToken: true,
+        emailSendingAddress: true,
+      },
     });
-    if (!org.resendDomainId) {
+    if (!org.emailDomainVerificationToken || !org.emailSendingAddress) {
       throw new NotFoundException(
         'No email sending domain has been started for this organization yet.',
       );
     }
-    await this.getResend().domains.verify(org.resendDomainId);
-    const { data, error } = await this.getResend().domains.get(
-      org.resendDomainId,
-    );
-    if (error || !data) {
-      throw new BadRequestException(
-        error?.message || 'Failed to check verification status.',
-      );
-    }
+    const domain = extractDomain(org.emailSendingAddress);
+    const foundToken = await this.lookupToken(domain);
+    const status =
+      foundToken === org.emailDomainVerificationToken ? 'verified' : 'failed';
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
-      data: { emailDomainStatus: data.status },
+      data: { emailDomainStatus: status },
     });
     return {
       emailSendingAddress: org.emailSendingAddress,
-      status: data.status,
-      records: data.records,
+      status,
+      records: [this.recordFor(domain, org.emailDomainVerificationToken)],
     };
   }
 
   async remove(organizationId: string) {
-    const org = await this.scopedPrisma.organization.findUniqueOrThrow({
-      where: { id: organizationId },
-      select: { resendDomainId: true },
-    });
-    if (org.resendDomainId) {
-      // Best-effort — even if Resend-side removal fails (e.g. already
-      // gone), the org must still be able to clear its own local state.
-      await this.getResend()
-        .domains.remove(org.resendDomainId)
-        .catch(() => {});
-    }
     await this.scopedPrisma.organization.updateMany({
       where: { id: organizationId },
       data: {
         emailSendingAddress: null,
-        resendDomainId: null,
+        emailDomainVerificationToken: null,
         emailDomainStatus: 'not_started',
       },
     });

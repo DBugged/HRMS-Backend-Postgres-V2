@@ -186,9 +186,9 @@ export class OrganizationsController {
   }
 
   // -- Custom Email Sending Domain (self-service, ADMIN-only) --
-  // Lets an org verify their own domain (Resend) so notification emails
-  // send from their address instead of the shared platform one — see
-  // email-domain.service.ts / email.service.ts.
+  // Lets an org verify their own domain (via a DNS TXT record they control)
+  // so notification emails send from their address instead of the shared
+  // platform one — see email-domain.service.ts / email.service.ts.
 
   @Get('settings/email-domain')
   @Roles(Role.ADMIN)

@@ -147,17 +147,15 @@ model Organization {
   contactEmail      String?
   website           String?
 
-  // Custom "From" sending address (Resend domain verification) — once
+  // Custom "From" sending address, verified by the org proving domain
+  // ownership via a DNS TXT record (no third-party API). Once
   // emailDomainStatus is "verified", EmailService sends from
   // emailSendingAddress instead of the shared platform EMAIL_FROM
-  // address. Resend-only: the SMTP driver has no DNS-domain-verification
-  // API for an arbitrary relay, so this is inert for EMAIL_DRIVER=smtp
-  // orgs. See email-domain.service.ts / email.service.ts.
-  emailSendingAddress String?
-  resendDomainId      String?
-  // Mirrors Resend's DomainStatus values as a plain string: not_started |
-  // pending | verified | failed | partially_verified | partially_failed.
-  emailDomainStatus   String  @default("not_started")
+  // address. See email-domain.service.ts / email.service.ts.
+  emailSendingAddress        String?
+  emailDomainVerificationToken String?
+  // not_started | pending | verified | failed
+  emailDomainStatus          String  @default("not_started")
 
   // Step 4 — Branding (companyLogoUrl doubles as the Step 1 company logo)
   companyLogoUrl String?
