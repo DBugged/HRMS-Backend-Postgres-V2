@@ -186,6 +186,58 @@ export class LeaveBalanceService {
   }
 
   /**
+   * Creates this year's balance row for every active, eligible employee the moment a leave type is created, so what
+   * each person is credited exists (and can be recorded in the credit history) right away instead of appearing the
+   * first time someone opens their balance. Inactive employees earn no leave and get no row. Returns how many rows
+   * were created and the days they were credited in total.
+   */
+  async seedBalancesForNewType(
+    leaveType: LeaveType,
+    organizationId: string,
+  ): Promise<{ rows: number; totalDaysCredited: number }> {
+    if (
+      !leaveType.isActive ||
+      leaveType.allocationType === AllocationType.NONE ||
+      leaveType.allocationType === AllocationType.UNLIMITED
+    ) {
+      return { rows: 0, totalDaysCredited: 0 };
+    }
+    const now = new Date();
+    const employees = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        role: { in: ACCRUAL_ELIGIBLE_ROLES },
+      },
+      select: {
+        id: true,
+        joiningDate: true,
+        departmentId: true,
+        employeeType: true,
+        gender: true,
+      },
+    });
+    const eligible = employees.filter(
+      (e) => e.joiningDate <= now && isEligible(leaveType, e),
+    );
+    if (eligible.length === 0) return { rows: 0, totalDaysCredited: 0 };
+
+    const rows = await this.ensureBalanceRowsBulk(
+      eligible.map((e) => ({ employeeId: e.id, leaveTypeId: leaveType.id })),
+      now.getFullYear(),
+      organizationId,
+      eligible,
+      [leaveType],
+    );
+    let total = 0;
+    for (const row of rows.values()) total += row.credited;
+    return {
+      rows: rows.size,
+      totalDaysCredited: Math.round(total * 100) / 100,
+    };
+  }
+
+  /**
    * Get-or-create for (employee, leaveType, year). Must be called with a
    * transaction client so this is atomic under concurrent callers, same
    * reasoning as EmployeeIdService.generate.
@@ -338,6 +390,25 @@ export class LeaveBalanceService {
           joiningDate <= now
             ? computeAccrualPeriodKey(updated.accrualFrequency, now)
             : null;
+      } else if (previousAccrues && updatedAccrues) {
+        // Per-cycle before and after (quota or frequency edited): the balance is set to what the new rule says is due
+        // by today, so raising the quota tops everyone up and lowering it brings them down at once, instead of
+        // waiting for the next cycle or a manual Run Accrual. It never goes below what has already been taken or is
+        // held by pending requests (so closing cannot turn negative), and the row is stamped for the current cycle so
+        // the daily accrual does not credit it again.
+        const now = new Date();
+        const started = joiningDate <= now;
+        const due = started
+          ? expectedAccrualToDate(updated, joiningDate, year, now)
+          : 0;
+        const floor = Math.max(
+          0,
+          row.availed + row.encashed + row.pending - row.opening - row.adjusted,
+        );
+        credited = Math.max(due, floor);
+        lastAccrualPeriod = started
+          ? computeAccrualPeriodKey(updated.accrualFrequency, now)
+          : null;
       } else {
         // Same mode as before: preserve days credited by accrual runs on top
         // of the upfront grant; otherwise the row's credited is purely the

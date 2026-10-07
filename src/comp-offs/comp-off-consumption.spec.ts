@@ -1,8 +1,10 @@
 import {
   CompOffRow,
   consumeCompOff,
+  financialYearEnd,
   releaseCompOff,
   sumAvailable,
+  sumAvailableOn,
 } from './comp-off-consumption';
 
 function row(overrides: Partial<CompOffRow>): CompOffRow {
@@ -175,5 +177,41 @@ describe('sumAvailable', () => {
 
   it('is 0 for an empty list', () => {
     expect(sumAvailable([])).toBe(0);
+  });
+});
+
+describe('financialYearEnd', () => {
+  it('ends an April-March year on 31 March of the following year', () => {
+    expect(financialYearEnd('2026-04-01', 4)).toBe('2027-03-31');
+    expect(financialYearEnd('2026-10-03', 4)).toBe('2027-03-31');
+    expect(financialYearEnd('2026-12-31', 4)).toBe('2027-03-31');
+  });
+
+  it('ends the same financial year on 31 March for dates in January to March', () => {
+    expect(financialYearEnd('2026-01-15', 4)).toBe('2026-03-31');
+    expect(financialYearEnd('2026-03-31', 4)).toBe('2026-03-31');
+  });
+
+  it('treats a January start as a calendar year', () => {
+    expect(financialYearEnd('2026-06-10', 1)).toBe('2026-12-31');
+  });
+
+  it('handles other start months and falls back to April for an invalid one', () => {
+    expect(financialYearEnd('2026-07-20', 7)).toBe('2027-06-30');
+    expect(financialYearEnd('2026-05-20', 7)).toBe('2026-06-30');
+    expect(financialYearEnd('2026-10-03', 0)).toBe('2027-03-31');
+  });
+});
+
+describe('sumAvailableOn', () => {
+  const rows = [
+    row({ id: 'a', daysEarned: 2, expiryDate: '2027-03-31' }),
+    row({ id: 'b', daysEarned: 1, expiryDate: '2026-12-31' }),
+    row({ id: 'c', daysEarned: 1, expiryDate: null }),
+  ];
+  it('counts only rows still valid on the given date', () => {
+    expect(sumAvailableOn(rows, '2026-11-01')).toBe(4);
+    expect(sumAvailableOn(rows, '2027-02-01')).toBe(3);
+    expect(sumAvailableOn(rows, '2027-04-01')).toBe(1);
   });
 });
