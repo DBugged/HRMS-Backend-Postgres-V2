@@ -202,6 +202,7 @@ export class EmployeesService {
 
     await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
     await this.assertOrgReferences(dto, organizationId);
+    await this.assertContactNumberUnique(dto.contactNumber, organizationId);
 
     const generatedPassword = generatePolicyPassword();
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
@@ -844,6 +845,11 @@ export class EmployeesService {
     const clean = stripLockedFields(updateFields, actor.role);
     await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
     await this.assertOrgReferences(clean, organizationId);
+    await this.assertContactNumberUnique(
+      clean.contactNumber,
+      organizationId,
+      id,
+    );
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
     // decides whether HR/Admin *may* touch `role` at all (vs. a plain
@@ -1402,6 +1408,52 @@ export class EmployeesService {
           'The specified reporting manager was not found.',
         );
       }
+    }
+  }
+
+  // contactNumber is stored in two different shapes depending on who last
+  // saved it — plain 10-digit from the admin Add/Edit Employee form, or
+  // "+91 xxxxxxxxxx" from self-service My Profile's PhoneInput (see
+  // EmployeeFullProfile.tsx's PHONE_KEYS comment for the same split) — so
+  // an exact-string duplicate check would miss "+91 9876543210" matching
+  // an existing plain "9876543210". Compare by the trailing 10 digits
+  // instead, which is what actually identifies an Indian mobile number
+  // regardless of which form last wrote it.
+  private normalizeContactNumber(value: string): string {
+    return value.replace(/\D/g, '').slice(-10);
+  }
+
+  // One contact number belongs to one person — same reasoning as the PAN/
+  // UAN uniqueness check in employee-profile.service.ts, but contactNumber
+  // lives as a plain column on User (not inside the encrypted personalData
+  // blob), so this can query it directly instead of decrypting every row.
+  // Scoped to this organization only, matching that same PAN/UAN
+  // precedent — two different orgs' employees aren't the same tenant's
+  // data and were never checked against each other for any other
+  // identifier either.
+  private async assertContactNumberUnique(
+    contactNumber: string | undefined,
+    organizationId: string,
+    excludeId?: string,
+  ): Promise<void> {
+    if (!contactNumber) return;
+    const normalized = this.normalizeContactNumber(contactNumber);
+    if (normalized.length !== 10) return;
+    const others = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        contactNumber: { not: '' },
+        ...(excludeId && { id: { not: excludeId } }),
+      },
+      select: { contactNumber: true },
+    });
+    const clash = others.some(
+      (u) => this.normalizeContactNumber(u.contactNumber) === normalized,
+    );
+    if (clash) {
+      throw new ConflictException(
+        'This contact number is already in use by another employee.',
+      );
     }
   }
 

@@ -784,6 +784,83 @@ describe('Employees + Departments (e2e)', () => {
     });
   });
 
+  describe('contactNumber uniqueness', () => {
+    it('rejects a duplicate contact number on create', async () => {
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Contact Owner',
+          email: 'employees-e2e-contact-owner@example.test',
+          contactNumber: '9123456789',
+        })
+        .expect(201);
+
+      const res = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Contact Duplicate',
+          email: 'employees-e2e-contact-dup@example.test',
+          contactNumber: '9123456789',
+        })
+        .expect(409);
+      expect((res.body as { message: string }).message).toMatch(
+        /already in use/,
+      );
+    });
+
+    it('rejects a duplicate contact number on update, even in a different stored format (+91 vs plain 10-digit)', async () => {
+      await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Contact Format Owner',
+          email: 'employees-e2e-contact-fmt-owner@example.test',
+          contactNumber: '+91 9988776655',
+        })
+        .expect(201);
+
+      const other = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Contact Format Other',
+          email: 'employees-e2e-contact-fmt-other@example.test',
+        })
+        .expect(201);
+      const otherId = (other.body as EmployeeBody).employee.id;
+
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${otherId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ contactNumber: '9988776655' })
+        .expect(409);
+      expect((res.body as { message: string }).message).toMatch(
+        /already in use/,
+      );
+    });
+
+    it('allows keeping your own unchanged contact number on update', async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: 'Contact Self Update',
+          email: 'employees-e2e-contact-self@example.test',
+          contactNumber: '9876500001',
+        })
+        .expect(201);
+      const id = (created.body as EmployeeBody).employee.id;
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ contactNumber: '9876500001', employeeCategory: 'Contract' })
+        .expect(200);
+    });
+  });
+
   describe('list sorting (server-side sortBy/sortOrder)', () => {
     it('sorts by name asc/desc and rejects a non-whitelisted sortBy', async () => {
       const asc = await request(app.getHttpServer())
