@@ -1719,6 +1719,22 @@ describe('Attendance (e2e)', () => {
       expect(body.regularization.status).toBe('approved');
       expect(body.regularization.reviewComments).toBe('Looks right');
 
+      // The attendance list names the reviewer, so the table can say "Approved by …".
+      const listed = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ from: date, to: date })
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      const listedRow = (
+        listed.body as {
+          data: {
+            id: string;
+            regularization: { reviewedByName?: string | null };
+          }[];
+        }
+      ).data.find((r) => r.id === attendanceId);
+      expect(listedRow?.regularization.reviewedByName).toBeTruthy();
+
       // R1: the review decision is audited.
       const audit = await prisma.auditLog.findFirst({
         where: { action: 'REGULARIZATION_APPROVED', targetId: attendanceId },

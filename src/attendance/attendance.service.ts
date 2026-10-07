@@ -299,6 +299,17 @@ interface RegularizationState {
   reviewComments: string;
 }
 
+// Adds the reviewer's display name next to the stored reviewedBy id, so the UI can say "Approved by …" without
+// a second lookup. Rows with no review are returned untouched.
+function withReviewerName(
+  regularization: unknown,
+  nameById: Map<string, string>,
+): unknown {
+  const reg = regularization as RegularizationState | null;
+  if (!reg || !reg.reviewedBy) return regularization;
+  return { ...reg, reviewedByName: nameById.get(reg.reviewedBy) ?? null };
+}
+
 // Untyped, client-parsed spreadsheet cells — coerces only actual
 // strings/numbers/booleans rather than blindly calling String() on an
 // arbitrary unknown, same reasoning as HolidaysService's asString.
@@ -1636,6 +1647,26 @@ export class AttendanceService {
         : Promise.resolve([]),
     ]);
 
+    // Reviewer names for the Regularization column ("Approved by …"); regularization.reviewedBy is just an id.
+    const reviewerIds = [
+      ...new Set(
+        result.data
+          .map(
+            (r) =>
+              (r.regularization as unknown as RegularizationState | null)
+                ?.reviewedBy,
+          )
+          .filter((id): id is string => !!id),
+      ),
+    ];
+    const reviewers = reviewerIds.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { organizationId, id: { in: reviewerIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const reviewerNameById = new Map(reviewers.map((u) => [u.id, u.name]));
+
     const leavesByEmployee = new Map<string, typeof leaves>();
     for (const leave of leaves) {
       const arr = leavesByEmployee.get(leave.employeeId) ?? [];
@@ -1705,6 +1736,10 @@ export class AttendanceService {
           ),
           checkinInsideGeoFence,
           checkoutInsideGeoFence,
+          regularization: withReviewerName(
+            record.regularization,
+            reviewerNameById,
+          ),
           ...(holidayName !== undefined && { holidayName }),
           ...(leaveTypeName !== undefined && { leaveTypeName }),
         };
