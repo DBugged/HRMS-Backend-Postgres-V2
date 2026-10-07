@@ -17,8 +17,10 @@ import {
 } from '../common/dept-scope';
 import {
   formatDateDisplay,
-  formatDateTimeDisplay,
+  formatTimeInZone,
+  resolveOrgTimeContext,
 } from '../payroll/format-date';
+import { dateStrInOrgTz } from '../common/org-date';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportColumn } from './report-export';
 import {
@@ -92,12 +94,26 @@ export class ReportsService {
     });
     assertWithinReportLimit(records);
 
+    // Punch times are instants: print them as clock times in the ORG's timezone (the Date column already says which
+    // day), not the server's. A check-out on a later calendar day than the check-in (night shift) keeps its date.
+    const { timezone, timeFormat } = await resolveOrgTimeContext(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const punch = (t: Date | null, since: Date | null) => {
+      if (!t) return '';
+      const time = formatTimeInZone(t, timezone, timeFormat);
+      return since &&
+        dateStrInOrgTz(timezone, t) !== dateStrInOrgTz(timezone, since)
+        ? `${formatDateDisplay(dateStrInOrgTz(timezone, t))} ${time}`
+        : time;
+    };
     const rows = records.map((r) => ({
       employeeId: r.employee.employeeId,
       name: r.employee.name,
       date: formatDateDisplay(r.date),
-      inTime: formatDateTimeDisplay(r.inTime),
-      outTime: formatDateTimeDisplay(r.outTime),
+      inTime: punch(r.inTime, r.inTime),
+      outTime: punch(r.outTime, r.inTime),
       workHours: (r.workDurationMinutes / 60).toFixed(2),
       status: r.status,
     }));

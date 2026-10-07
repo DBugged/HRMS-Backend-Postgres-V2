@@ -16,6 +16,7 @@ import { Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CUSTOM_REPORT_SOURCES } from './custom-report-sources';
+import { resolveOrgTimeContext } from '../payroll/format-date';
 import { CustomReportQueryDto } from './dto/custom-report-query.dto';
 import { ReportColumn } from './report-export';
 
@@ -88,10 +89,14 @@ export class CustomReportService {
       organizationId,
       this.scopedPrisma,
     );
+    const timeCtx = await resolveOrgTimeContext(
+      this.scopedPrisma,
+      organizationId,
+    );
     const rows = records.map((record) => {
       const row: Record<string, unknown> = {};
       requestedColumns.forEach((c) => {
-        row[c] = src.columns[c].get(record);
+        row[c] = src.columns[c].get(record, timeCtx);
       });
       return row;
     });

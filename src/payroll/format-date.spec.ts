@@ -2,6 +2,7 @@ import {
   formatDateDisplay,
   formatDateTimeDisplay,
   resolveOrgDateTimeFormat,
+  formatTimeInZone,
 } from './format-date';
 
 describe('formatDateDisplay', () => {
@@ -104,5 +105,45 @@ describe('resolveOrgDateTimeFormat', () => {
     await expect(
       resolveOrgDateTimeFormat(scopedPrisma as any, 'org-1'),
     ).resolves.toEqual({ dateFormat: 'YYYY-MM-DD', timeFormat: '24' });
+  });
+});
+
+describe('formatTimeInZone', () => {
+  // 04:00 UTC == 09:30 IST == 13:00 Tokyo; the SERVER zone must not matter.
+  const instant = new Date('2026-05-04T04:00:00.000Z');
+
+  it('prints the clock time in the given timezone, not the server zone', () => {
+    expect(formatTimeInZone(instant, 'Asia/Kolkata', '12')).toBe('09:30 AM');
+    expect(formatTimeInZone(instant, 'Asia/Kolkata', '24')).toBe('09:30');
+    expect(formatTimeInZone(instant, 'Asia/Tokyo', '12')).toBe('01:00 PM');
+  });
+
+  it('handles midnight and noon in both formats', () => {
+    expect(
+      formatTimeInZone(
+        new Date('2026-05-03T18:30:00.000Z'),
+        'Asia/Kolkata',
+        '12',
+      ),
+    ).toBe('12:00 AM');
+    expect(
+      formatTimeInZone(
+        new Date('2026-05-03T18:30:00.000Z'),
+        'Asia/Kolkata',
+        '24',
+      ),
+    ).toBe('00:00');
+    expect(
+      formatTimeInZone(
+        new Date('2026-05-04T06:30:00.000Z'),
+        'Asia/Kolkata',
+        '12',
+      ),
+    ).toBe('12:00 PM');
+  });
+
+  it('returns the fallback for an empty value', () => {
+    expect(formatTimeInZone(null, 'Asia/Kolkata')).toBe('');
+    expect(formatTimeInZone(undefined, 'Asia/Kolkata', '12', '-')).toBe('-');
   });
 });

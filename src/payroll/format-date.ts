@@ -123,3 +123,42 @@ export async function resolveOrgDateTimeFormat(
       : DEFAULT_TIME_FORMAT,
   };
 }
+
+// A clock time ("09:30 AM" / "09:30") as observed in the org's timezone. The Date getters used elsewhere in this
+// file read the SERVER's local zone, which is wrong for punch times whenever the server runs in a different zone
+// from the org (e.g. UTC server, IST org: every time came out 5h30m early).
+export function formatTimeInZone(
+  value: unknown,
+  timezone: string,
+  timeFormat: TimeFormatPattern = DEFAULT_TIME_FORMAT,
+  fallback = '',
+): string {
+  const d = toDateObject(value);
+  if (!d) return fallback;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: timeFormat === '24' ? 'h23' : 'h12',
+  })
+    .format(d)
+    .replace(/\b(am|pm)\b/i, (m) => m.toUpperCase());
+}
+
+// The org's timezone and time format, for exports that print punch times.
+export async function resolveOrgTimeContext(
+  scopedPrisma: Pick<ExtendedPrismaClient, 'organization'>,
+  organizationId: string,
+): Promise<{ timezone: string; timeFormat: TimeFormatPattern }> {
+  const org = await scopedPrisma.organization.findFirst({
+    where: { id: organizationId },
+    select: { timezone: true, policies: true },
+  });
+  const policies = (org?.policies ?? {}) as { timeFormat?: unknown };
+  return {
+    timezone: org?.timezone || 'Asia/Kolkata',
+    timeFormat: isTimeFormatPattern(policies.timeFormat)
+      ? policies.timeFormat
+      : DEFAULT_TIME_FORMAT,
+  };
+}

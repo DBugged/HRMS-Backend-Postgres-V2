@@ -9,7 +9,11 @@ import {
   EMPLOYEE_RELATION_ORDER_BY,
 } from '../common/employee-order';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { formatDateDisplay } from '../payroll/format-date';
+import {
+  formatDateDisplay,
+  formatTimeInZone,
+  type TimeFormatPattern,
+} from '../payroll/format-date';
 
 // Ad-hoc report builder — HR picks a data source, a subset of its allowed
 // columns, and a few generic filters (department/date range/status), and
@@ -17,6 +21,11 @@ import { formatDateDisplay } from '../payroll/format-date';
 // Deliberately small: an allow-listed column set per source rather than an
 // arbitrary query builder, so this can't be used to pull columns beyond
 // what these sources already expose elsewhere in the product.
+
+export interface ReportTimeContext {
+  timezone: string;
+  timeFormat: TimeFormatPattern;
+}
 
 export interface CustomReportFilters {
   department?: string;
@@ -27,7 +36,8 @@ export interface CustomReportFilters {
 
 interface CustomReportColumn<Row> {
   header: string;
-  get: (row: Row) => unknown;
+  // `ctx` carries the org's timezone/time format so punch times print in the org's clock, not the server's.
+  get: (row: Row, ctx: ReportTimeContext) => unknown;
 }
 
 interface CustomReportSource<Row> {
@@ -96,11 +106,12 @@ const attendanceSource: CustomReportSource<
     status: { header: 'Status', get: (r) => r.status },
     inTime: {
       header: 'In Time',
-      get: (r) => (r.inTime ? r.inTime.toLocaleTimeString() : ''),
+      get: (r, ctx) => formatTimeInZone(r.inTime, ctx.timezone, ctx.timeFormat),
     },
     outTime: {
       header: 'Out Time',
-      get: (r) => (r.outTime ? r.outTime.toLocaleTimeString() : ''),
+      get: (r, ctx) =>
+        formatTimeInZone(r.outTime, ctx.timezone, ctx.timeFormat),
     },
   },
   fetch: async (filters, organizationId, prisma) => {
