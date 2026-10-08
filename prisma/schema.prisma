@@ -3495,6 +3495,14 @@ model PushDevice {
   platform   String @default("")
   deviceName String @default("")
 
+  // Reported by the app at login/device-register time; used for support and staged rollouts, not enforced.
+  appVersion  String?
+  buildNumber String?
+  deviceType  String?
+  deviceModel String?
+  os          String?
+  osVersion   String?
+
   lastSeenAt DateTime @default(now())
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt

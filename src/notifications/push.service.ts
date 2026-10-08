@@ -52,15 +52,31 @@ export class PushService {
   // One token belongs to one install. If another account (even in another organisation) signed in on this phone
   // before, that row is re-pointed here — otherwise the previous user's alerts would keep landing on this phone.
   async register(
-    actor: Actor,
+    actor: Pick<Actor, 'id'>,
     organizationId: string,
-    dto: { token: string; platform: string; deviceName?: string },
+    dto: {
+      token: string;
+      platform: string;
+      deviceName?: string;
+      appVersion?: string;
+      buildNumber?: string;
+      deviceType?: string;
+      deviceModel?: string;
+      os?: string;
+      osVersion?: string;
+    },
   ) {
     const data = {
       organizationId,
       userId: actor.id,
       platform: dto.platform,
       deviceName: dto.deviceName ?? '',
+      appVersion: dto.appVersion,
+      buildNumber: dto.buildNumber,
+      deviceType: dto.deviceType,
+      deviceModel: dto.deviceModel,
+      os: dto.os,
+      osVersion: dto.osVersion,
       lastSeenAt: new Date(),
     };
     // Deliberately unscoped: the token's previous owner may be in a different organisation.

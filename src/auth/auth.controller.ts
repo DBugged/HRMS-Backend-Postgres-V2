@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
+import { PushService } from '../notifications/push.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
@@ -40,7 +41,10 @@ const AUTH_THROTTLE_LIMIT = Number(process.env.AUTH_THROTTLE_LIMIT ?? 5);
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly pushService: PushService,
+  ) {}
 
   // Public: the password rules (length limits + common-password list) the
   // server enforces, so the web and mobile checklists match it exactly —
@@ -89,6 +93,23 @@ export class AuthController {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
+    // Mobile piggybacks its push-token/device registration onto login so it
+    // doesn't need a second call right after signing in. A bad/missing
+    // fcmToken must never fail the login itself.
+    if (dto.fcmToken) {
+      await this.pushService
+        .register(result.user, result.user.organizationId, {
+          token: dto.fcmToken,
+          platform: dto.os ?? '',
+          appVersion: dto.appVersion,
+          buildNumber: dto.buildNumber,
+          deviceType: dto.deviceType,
+          deviceModel: dto.deviceModel,
+          os: dto.os,
+          osVersion: dto.osVersion,
+        })
+        .catch(() => undefined);
+    }
     setRefreshCookie(res, result.refreshToken);
     return result;
   }
