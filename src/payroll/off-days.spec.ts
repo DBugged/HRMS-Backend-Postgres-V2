@@ -14,8 +14,14 @@ const SAT_SUN = [6, 0];
 
 describe('monthBounds / employmentWindow', () => {
   it('gives the first and last day of the month', () => {
-    expect(monthBounds(9, 2026)).toEqual({ from: '2026-09-01', to: '2026-09-30' });
-    expect(monthBounds(2, 2028)).toEqual({ from: '2028-02-01', to: '2028-02-29' });
+    expect(monthBounds(9, 2026)).toEqual({
+      from: '2026-09-01',
+      to: '2026-09-30',
+    });
+    expect(monthBounds(2, 2028)).toEqual({
+      from: '2028-02-01',
+      to: '2028-02-29',
+    });
   });
 
   it('counts the whole month for someone who joined earlier', () => {
@@ -23,35 +29,76 @@ describe('monthBounds / employmentWindow', () => {
       from: '2026-09-01',
       to: '2026-09-30',
       daysBeforeJoining: 0,
+      daysNotElapsed: 0,
     });
   });
 
   it('starts at the joining date inside the joining month', () => {
-    expect(employmentWindow(new Date('2026-10-05T00:00:00.000Z'), 10, 2026)).toEqual({
+    expect(
+      employmentWindow(new Date('2026-10-05T00:00:00.000Z'), 10, 2026),
+    ).toEqual({
       from: '2026-10-05',
       to: '2026-10-31',
       daysBeforeJoining: 4,
+      daysNotElapsed: 0,
     });
   });
 
   it('treats a month before the joining date as entirely before joining', () => {
     expect(employmentWindow('2026-10-01', 9, 2026).daysBeforeJoining).toBe(30);
   });
+
+  it('stops at today while the month is still running', () => {
+    expect(employmentWindow('2024-04-04', 10, 2026, '2026-10-08')).toEqual({
+      from: '2026-10-01',
+      to: '2026-10-08',
+      daysBeforeJoining: 0,
+      daysNotElapsed: 23,
+    });
+  });
+
+  it('counts both the days before joining and the days not yet elapsed', () => {
+    const w = employmentWindow('2026-10-05', 10, 2026, '2026-10-08');
+    expect(w).toMatchObject({
+      from: '2026-10-05',
+      to: '2026-10-08',
+      daysBeforeJoining: 4,
+      daysNotElapsed: 23,
+    });
+  });
+
+  it('ignores a through date that is on or after the end of the month', () => {
+    expect(
+      employmentWindow('2024-04-04', 9, 2026, '2026-10-08').daysNotElapsed,
+    ).toBe(0);
+    expect(employmentWindow('2024-04-04', 9, 2026, '2026-09-30').to).toBe(
+      '2026-09-30',
+    );
+  });
 });
 
 describe('offDayCalendar / missingOffDayRows', () => {
   it('finds weekly offs and holidays and skips dates that already have a row', () => {
-    const cal = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, ['2026-09-14', '2026-09-12']);
+    const cal = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, [
+      '2026-09-14',
+      '2026-09-12',
+    ]);
     expect(cal.weeklyOffDates.size).toBe(8);
     // 12 Sep is a Saturday: counted once, as a weekly off, not also as a holiday.
     expect([...cal.holidayDates]).toEqual(['2026-09-14']);
     const rows = missingOffDayRows(cal, new Set(['2026-09-05', '2026-09-14']));
     expect(rows).toHaveLength(7);
-    expect(rows.every((r) => r.status === AttendanceStatus.WEEKLY_OFF)).toBe(true);
+    expect(rows.every((r) => r.status === AttendanceStatus.WEEKLY_OFF)).toBe(
+      true,
+    );
   });
 
   it('pays unmarked weekends: 22 worked weekdays + 8 weekend days = 30 payable, no LOP', () => {
-    const worked: { status: AttendanceStatus; isLate: boolean; date: string }[] = [];
+    const worked: {
+      status: AttendanceStatus;
+      isLate: boolean;
+      date: string;
+    }[] = [];
     for (let d = 1; d <= 30; d++) {
       const date = `2026-09-${String(d).padStart(2, '0')}`;
       const dow = new Date(`${date}T00:00:00.000Z`).getUTCDay();
@@ -60,7 +107,10 @@ describe('offDayCalendar / missingOffDayRows', () => {
       }
     }
     const cal = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, []);
-    const rows = [...worked, ...missingOffDayRows(cal, new Set(worked.map((r) => r.date)))];
+    const rows = [
+      ...worked,
+      ...missingOffDayRows(cal, new Set(worked.map((r) => r.date))),
+    ];
     const summary = computeAttendanceSummary(rows, [], [], 9, 2026);
     expect(summary.payableDays).toBe(30);
     expect(summary.lopDays).toBe(0);
@@ -96,11 +146,19 @@ describe('splitLeavesAroundOffDays', () => {
   it('leaves a leave alone when its type applies the sandwich rule', () => {
     const out = splitLeavesAroundOffDays([leave(true)], off);
     expect(out).toHaveLength(1);
-    expect([out[0].startDate, out[0].endDate]).toEqual(['2026-09-04', '2026-09-07']);
+    expect([out[0].startDate, out[0].endDate]).toEqual([
+      '2026-09-04',
+      '2026-09-07',
+    ]);
   });
 
   it('leaves half-day leaves alone', () => {
-    const half = { ...leave(false), startDate: '2026-09-04', endDate: '2026-09-04', isHalfDay: true };
+    const half = {
+      ...leave(false),
+      startDate: '2026-09-04',
+      endDate: '2026-09-04',
+      isHalfDay: true,
+    };
     expect(splitLeavesAroundOffDays([half], off)).toEqual([half]);
   });
 
@@ -129,12 +187,79 @@ describe('dropLeaveRowsOnOffDays', () => {
   });
 
   it('keeps them when the leave applies the sandwich rule', () => {
-    const kept = dropLeaveRowsOnOffDays(rows, cal, [{ ...leave, sandwichApplies: true }]);
+    const kept = dropLeaveRowsOnOffDays(rows, cal, [
+      { ...leave, sandwichApplies: true },
+    ]);
     expect(kept).toHaveLength(4);
   });
 
   it('only touches ON_LEAVE rows', () => {
     const present = [{ status: AttendanceStatus.PRESENT, date: '2026-09-12' }];
     expect(dropLeaveRowsOnOffDays(present, cal, [leave])).toHaveLength(1);
+  });
+});
+
+describe('a month still running (month to date)', () => {
+  it('pays and counts only the days that have happened', () => {
+    // 8 Oct 2026 (Thursday): worked every weekday so far, Saturday 3rd and Sunday 4th are weekly offs.
+    const w = employmentWindow('2024-04-04', 10, 2026, '2026-10-08');
+    const cal = offDayCalendar(w.from, w.to, SAT_SUN, []);
+    const worked = [
+      '2026-10-01',
+      '2026-10-02',
+      '2026-10-05',
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+    ].map((date) => ({
+      status: AttendanceStatus.PRESENT,
+      isLate: false as const,
+      date,
+    }));
+    const rows = [
+      ...worked,
+      ...missingOffDayRows(cal, new Set(worked.map((r) => r.date))),
+    ];
+    const summary = computeAttendanceSummary(
+      rows,
+      [],
+      [],
+      10,
+      2026,
+      w.daysBeforeJoining + w.daysNotElapsed,
+    );
+    expect(summary.payableDays).toBe(8);
+    expect(summary.lopDays).toBe(0);
+    expect(summary.totalDaysInMonth).toBe(31);
+  });
+
+  it('counts a missed day so far as LOP but never the days to come', () => {
+    const w = employmentWindow('2024-04-04', 10, 2026, '2026-10-08');
+    const cal = offDayCalendar(w.from, w.to, SAT_SUN, []);
+    const worked = [
+      '2026-10-01',
+      '2026-10-05',
+      '2026-10-06',
+      '2026-10-07',
+      '2026-10-08',
+    ].map((date) => ({
+      status: AttendanceStatus.PRESENT,
+      isLate: false as const,
+      date,
+    }));
+    const rows = [
+      ...worked,
+      ...missingOffDayRows(cal, new Set(worked.map((r) => r.date))),
+    ];
+    const summary = computeAttendanceSummary(
+      rows,
+      [],
+      [],
+      10,
+      2026,
+      w.daysBeforeJoining + w.daysNotElapsed,
+    );
+    expect(summary.payableDays).toBe(7);
+    expect(summary.lopDays).toBe(1); // 2 Oct, a Friday nobody marked
   });
 });

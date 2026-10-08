@@ -63,6 +63,11 @@ export interface AttendanceSummary {
   // status existed), but called out separately so payroll can warn HR
   // instead of silently paying out a day that's still pending resolution.
   incompleteDays: number;
+  // Days of the month before the employee joined, and days that have not happened yet (a month still running). Both
+  // are outside LOP and outside the paid days; saved on the run so screens can show why payable + LOP is short of the
+  // days in the month. Absent on runs calculated before they were recorded.
+  daysBeforeJoining?: number;
+  daysNotElapsed?: number;
 }
 
 export function computeAttendanceSummary(
@@ -71,8 +76,9 @@ export function computeAttendanceSummary(
   overtimeRows: OvertimeRowLike[],
   month: number,
   year: number,
-  // Days of the month before the employee joined: not unpaid leave, just days they were not employed, so they are
-  // kept out of LOP (the salary is prorated to the days from the joining date either way).
+  // Days of the month outside the employee's employment so far - before they joined, or not happened yet in a month
+  // still running: not unpaid leave, so they are kept out of LOP (the salary is prorated to the days actually
+  // payable either way).
   daysBeforeJoining = 0,
 ): AttendanceSummary {
   const totalDaysInMonth = daysInMonth(month, year);

@@ -1991,6 +1991,12 @@ export class AttendanceService {
   // leave is cancelled/edited — only reverts dates >= today, and only rows
   // this same integration wrote (source === SYSTEM), never a row since
   // regularized/imported/punched over.
+  //
+  // The leave stamp is simply removed. It used to be turned into an ABSENT row, which for a day that has not happened
+  // yet is wrong twice over: nobody has been absent, and a weekend or holiday inside the leave became an absence
+  // (unpaid in payroll) instead of the paid day off it is. A day with no row is handled like any other upcoming day:
+  // the daily job writes its weekly off / holiday / absent once it has passed, and payroll pays weekly offs and
+  // holidays from the calendar in the meantime.
   async revertAttendanceForLeave(
     tx: Prisma.TransactionClient,
     leave: Leave,
@@ -2003,19 +2009,13 @@ export class AttendanceService {
     );
     if (dates.length === 0) return;
 
-    // Only reverts rows this integration itself wrote (source ===
-    // SYSTEM) — folded straight into the query instead of a per-date
-    // findFirst + a JS source check.
-    await tx.attendance.updateMany({
+    await tx.attendance.deleteMany({
       where: {
         organizationId,
         employeeId: leave.employeeId,
         date: { in: dates },
         source: AttendanceSource.SYSTEM,
-      },
-      data: {
-        status: AttendanceStatus.ABSENT,
-        source: AttendanceSource.FACE_API,
+        status: { in: [AttendanceStatus.ON_LEAVE, AttendanceStatus.HALF_DAY] },
       },
     });
   }

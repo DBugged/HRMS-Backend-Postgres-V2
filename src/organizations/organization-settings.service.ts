@@ -583,6 +583,13 @@ export class OrganizationSettingsService {
       );
     }
 
+    if (section === 'policies' && data.orgPayrollAttendancePrefs) {
+      await this.ensureDefaultWorkSchedule(
+        organizationId,
+        data.orgPayrollAttendancePrefs as Record<string, unknown>,
+      );
+    }
+
     if (section === 'policies') {
       // PayrollSettingsService.getOrCreate overlays currency/currency
       // Symbol/financialYearStartMonth from this same policies JSON on
@@ -592,6 +599,61 @@ export class OrganizationSettingsService {
     }
 
     return this.withSignedUrls(await this.findOrThrow(organizationId));
+  }
+
+  // The shift times and weekly-off days given while setting the organization up are the organization's first work
+  // schedule: when there are none yet, one is created from them so the Work Schedules screen does not start empty and
+  // the same details are not asked for again. An organization that already has schedules is left alone.
+  private async ensureDefaultWorkSchedule(
+    organizationId: string,
+    prefs: Record<string, unknown>,
+  ) {
+    const start = prefs.defaultShiftStartTime;
+    const end = prefs.defaultShiftEndTime;
+    const time = /^([01]\d|2[0-3]):[0-5]\d$/;
+    if (typeof start !== 'string' || typeof end !== 'string') return;
+    if (!time.test(start) || !time.test(end)) return;
+    if (
+      (await this.prisma.workSchedule.count({ where: { organizationId } })) > 0
+    ) {
+      return;
+    }
+    const minutes = (t: string) =>
+      Number(t.slice(0, 2)) * 60 + Number(t.slice(3));
+    let length = minutes(end) - minutes(start);
+    if (length <= 0) length += 24 * 60;
+    if (length > 12 * 60) return; // longer than a shift may be; leave it for the admin to set up
+    // The weekly-off days: as picked, else what the chosen work week means (Monday-Friday = Saturday and Sunday off).
+    const byWorkWeek: Record<string, number[]> = {
+      'monday-friday': [0, 6],
+      'monday-saturday': [0],
+      'sunday-thursday': [5, 6],
+    };
+    const weekend = Array.isArray(prefs.weekendDays)
+      ? (prefs.weekendDays as unknown[]).filter(
+          (d): d is number =>
+            Number.isInteger(d) && (d as number) >= 0 && (d as number) <= 6,
+        )
+      : (byWorkWeek[String(prefs.defaultWorkWeek)] ?? [0]);
+    const workingDays = [0, 1, 2, 3, 4, 5, 6].filter(
+      (d) => !weekend.includes(d),
+    );
+    if (workingDays.length === 0) return;
+    const breakMinutes = Number(prefs.defaultBreakMinutes);
+    await this.prisma.workSchedule.create({
+      data: {
+        organizationId,
+        name: 'Default schedule',
+        workingDays,
+        startTime: start,
+        endTime: end,
+        breakMinutes:
+          Number.isFinite(breakMinutes) && breakMinutes >= 0
+            ? breakMinutes
+            : 60,
+        alternateWeeklyOffs: [],
+      },
+    });
   }
 
   async completeSetup(organizationId: string, actorId: string) {

@@ -99,6 +99,13 @@ export class HolidaysService {
     const name = dto.name.trim();
     const year = new Date(dto.date).getFullYear();
 
+    // A holiday on a date that has passed could never be edited or deleted afterwards (the attendance and payroll
+    // already calculated against that day are kept as they were), so it is not accepted in the first place.
+    if (dto.date < todayInOrgTz(await this.getOrgTimezone(organizationId))) {
+      throw new BadRequestException(
+        "A holiday can't be added for a date that has already passed - attendance and payroll for that day are already recorded. Add holidays before they happen.",
+      );
+    }
     await this.assertNoDuplicate(organizationId, dto.date, name);
 
     const holiday = await this.scopedPrisma.holiday.create({
@@ -301,6 +308,7 @@ export class HolidaysService {
     const existingKeys = new Set(
       existing.map((h) => `${h.date}|${h.name.trim().toLowerCase()}`),
     );
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
 
     dto.rows.forEach((row, i) => {
       const rowNum = (row.rowNum as number) || i + 2;
@@ -328,6 +336,17 @@ export class HolidaysService {
           name,
           date: row.date,
           error: 'Invalid or missing Holiday Date (expected YYYY-MM-DD)',
+        });
+        return;
+      }
+
+      if (date < today) {
+        failed.push({
+          row: rowNum,
+          name,
+          date,
+          error:
+            "Holiday date has already passed - past holidays can't be added",
         });
         return;
       }

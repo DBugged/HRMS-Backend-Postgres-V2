@@ -183,6 +183,18 @@ describe('India-only phone numbers in personal data', () => {
       assertValidIdentifiers({ emergencyContact1Number: '+44 20 7946 0958' }),
     ).toThrow(/Indian \(\+91\)/);
   });
+
+  it('rejects a plain number that starts with 0 or is not a mobile number', () => {
+    expect(() =>
+      assertValidIdentifiers({ motherContact: '0123456789' }),
+    ).toThrow(/Mother's contact number/);
+    expect(() =>
+      assertValidIdentifiers({ emergencyContact2Number: '5123456789' }),
+    ).toThrow(/Emergency contact 2 number/);
+    expect(() =>
+      assertValidIdentifiers({ motherContact: '6123456789' }),
+    ).not.toThrow();
+  });
 });
 
 describe('assertValidDates', () => {

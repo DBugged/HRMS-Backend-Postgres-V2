@@ -107,6 +107,11 @@ export class CreateEmployeeDto {
     message:
       'contactNumber must be an Indian number (+91) — only India is supported.',
   })
+  // A plain number is a 10-digit Indian mobile, which starts with 6-9 (a leading 0 is not a valid mobile number).
+  @Matches(/^(?![0-9]+$)|^[6-9][0-9]{9}$/, {
+    message:
+      'contactNumber must be a 10-digit mobile number starting with 6, 7, 8 or 9.',
+  })
   contactNumber?: string;
 
   // Optional at this DTO/type level for the same reason as personalEmail —

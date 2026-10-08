@@ -46,28 +46,28 @@ const IDENTIFIER_PATTERNS: Record<
     label: 'ESIC number',
     example: '1234567890',
   },
-  // Plain 10-digit phone numbers — the employee's own Contact Number lives
+  // Plain 10-digit Indian mobile numbers (they start with 6-9, never 0) — the employee's own Contact Number lives
   // on the User row (validated by @Matches on Create/UpdateEmployeeDto
   // instead), but these family/emergency contact numbers live in
   // personalData like the identifiers above, so they go through the same
   // validator.
   fatherContact: {
-    pattern: /^[0-9]{10}$/,
+    pattern: /^[6-9][0-9]{9}$/,
     label: "Father's contact number",
     example: '9876543210',
   },
   motherContact: {
-    pattern: /^[0-9]{10}$/,
+    pattern: /^[6-9][0-9]{9}$/,
     label: "Mother's contact number",
     example: '9876543210',
   },
   emergencyContact1Number: {
-    pattern: /^[0-9]{10}$/,
+    pattern: /^[6-9][0-9]{9}$/,
     label: 'Emergency contact 1 number',
     example: '9876543210',
   },
   emergencyContact2Number: {
-    pattern: /^[0-9]{10}$/,
+    pattern: /^[6-9][0-9]{9}$/,
     label: 'Emergency contact 2 number',
     example: '9876543210',
   },

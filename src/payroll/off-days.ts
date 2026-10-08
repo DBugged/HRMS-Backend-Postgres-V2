@@ -28,30 +28,58 @@ export function monthBounds(
   year: number,
 ): { from: string; to: string } {
   const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return { from: `${year}-${pad(month)}-01`, to: `${year}-${pad(month)}-${pad(last)}` };
+  return {
+    from: `${year}-${pad(month)}-01`,
+    to: `${year}-${pad(month)}-${pad(last)}`,
+  };
 }
 
 /**
- * The first day of the month the employee counts for: the joining date when they joined inside the month, the first
- * of the month otherwise. `daysBeforeJoining` is how many days of the month fall before that (the whole month when
- * they joined after it ended). Those days are not unpaid leave, just days the person was not employed.
+ * The days of the month the employee counts for. `from` is the joining date when they joined inside the month (else the
+ * first of the month); `to` is the last day that has actually happened - the month's end, or `through` (today) while
+ * the month is still running. `daysBeforeJoining` is how many days of the month fall before `from` (the whole month
+ * when they joined after it ended) and `daysNotElapsed` how many fall after `to`. Neither kind is unpaid leave: they
+ * are days the person was not employed yet, or that have not happened yet, so they stay out of LOP and out of the
+ * paid weekly offs.
  */
 export function employmentWindow(
   joiningDate: Date | string,
   month: number,
   year: number,
-): { from: string; to: string; daysBeforeJoining: number } {
-  const { from, to } = monthBounds(month, year);
+  through?: string,
+): {
+  from: string;
+  to: string;
+  daysBeforeJoining: number;
+  daysNotElapsed: number;
+} {
+  const { from, to: monthEnd } = monthBounds(month, year);
   const joined =
     typeof joiningDate === 'string'
       ? joiningDate.slice(0, 10)
       : joiningDate.toISOString().slice(0, 10);
-  if (joined <= from) return { from, to, daysBeforeJoining: 0 };
-  if (joined > to) {
-    const total = Number(to.slice(8, 10));
-    return { from: joined, to, daysBeforeJoining: total };
+  const to = through !== undefined && through < monthEnd ? through : monthEnd;
+  const daysNotElapsed =
+    to < monthEnd
+      ? Number(monthEnd.slice(8, 10)) - Math.max(0, dayOfMonth(to, from))
+      : 0;
+  if (joined <= from) return { from, to, daysBeforeJoining: 0, daysNotElapsed };
+  if (joined > monthEnd) {
+    const total = Number(monthEnd.slice(8, 10));
+    return { from: joined, to, daysBeforeJoining: total, daysNotElapsed: 0 };
   }
-  return { from: joined, to, daysBeforeJoining: Number(joined.slice(8, 10)) - 1 };
+  return {
+    from: joined,
+    to,
+    daysBeforeJoining: Number(joined.slice(8, 10)) - 1,
+    daysNotElapsed,
+  };
+}
+
+// Day of the month (1-31) of `date` when it falls inside the month starting at `monthStart`, 0 when it is before it.
+function dayOfMonth(date: string, monthStart: string): number {
+  if (date < monthStart) return 0;
+  return Number(date.slice(8, 10));
 }
 
 export interface OffDayCalendar {
@@ -145,7 +173,9 @@ export function splitLeavesAroundOffDays<T extends LeaveRowWithSandwich>(
  * are not leave days (splitLeavesAroundOffDays cuts them out), so the ON_LEAVE row is dropped here and the day goes back
  * to being the paid off day it is. Rows on dates a sandwich leave covers are kept.
  */
-export function dropLeaveRowsOnOffDays<T extends { status: AttendanceStatus; date: string }>(
+export function dropLeaveRowsOnOffDays<
+  T extends { status: AttendanceStatus; date: string },
+>(
   rows: T[],
   calendar: OffDayCalendar,
   leaves: { startDate: string; endDate: string; sandwichApplies?: boolean }[],

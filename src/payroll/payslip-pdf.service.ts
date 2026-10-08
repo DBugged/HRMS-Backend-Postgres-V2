@@ -401,8 +401,14 @@ export class PayslipPdfService {
     // Prefer the snapshot taken at calculation; older runs (no snapshot) fall back to the live values.
     const deptName = run.departmentName || run.employee.department?.name || '-';
     const designation = run.designation || run.employee.designation || '-';
-    const earnings = run.earnings as PayrollLine[];
-    const deductions = run.deductions as PayrollLine[];
+    // Lines that came to nothing this month (Overtime Pay 0, ESI 0...) are left off the printed payslip; the totals
+    // still include them. A payslip with only such lines keeps them so the tables are not empty.
+    const nonZero = (lines: PayrollLine[]) => {
+      const kept = lines.filter((l) => Number(l.amount) !== 0);
+      return kept.length > 0 ? kept : lines;
+    };
+    const earnings = nonZero(run.earnings as PayrollLine[]);
+    const deductions = nonZero(run.deductions as PayrollLine[]);
     const employerContributions = run.employerContributions as PayrollLine[];
 
     const rowCount = Math.max(earnings.length, deductions.length, 1);
@@ -592,7 +598,7 @@ export class PayslipPdfService {
         width: 220,
         align: 'right',
       });
-      const payDate = run.paidAt ? formatDateDisplay(run.paidAt) : '-';
+      const payDate = run.paidAt ? formatDateDisplay(run.paidAt) : 'Pending';
       const periodStart = formatDateDisplay(
         `${run.year}-${String(run.month).padStart(2, '0')}-01`,
       );
@@ -928,7 +934,8 @@ export class PayslipPdfService {
 
     return {
       buffer,
-      filename: `payslip-${run.employee.employeeId}-${run.month}-${run.year}.pdf`,
+      // Employee code first so a downloaded file says whose it is: DP-0006-August.pdf.
+      filename: `${run.employee.employeeId}-${MONTHS[run.month]}.pdf`,
     };
   }
 

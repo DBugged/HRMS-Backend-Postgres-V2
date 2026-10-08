@@ -198,6 +198,8 @@ export class EmployeeProfileService {
     const patch = { ...dto.personalData };
     if (!HR_ROLES.includes(actor.role)) {
       delete patch.personalEmail;
+      // The company, not the employee, decides what an employee's CTC is.
+      delete patch.currentCTC;
     }
     assertValidIdentifiers(patch);
     assertValidDates(patch);
@@ -215,7 +217,10 @@ export class EmployeeProfileService {
       });
       const clash = others.some((o) => {
         const v = (o.personalData as Record<string, unknown> | null)?.[key];
-        return typeof v === 'string' && v.trim().toUpperCase() === value.trim().toUpperCase();
+        return (
+          typeof v === 'string' &&
+          v.trim().toUpperCase() === value.trim().toUpperCase()
+        );
       });
       if (clash) {
         throw new BadRequestException(
@@ -223,11 +228,7 @@ export class EmployeeProfileService {
         );
       }
     }
-    const merged = mergePersonalData(
-      before,
-      patch,
-      mandatoryDocumentsUploaded,
-    );
+    const merged = mergePersonalData(before, patch, mandatoryDocumentsUploaded);
 
     await this.scopedPrisma.user.updateMany({
       where: { id, organizationId },
@@ -288,7 +289,8 @@ export class EmployeeProfileService {
     if (
       actor.role === Role.MANAGER &&
       actor.id !== id &&
-      (actor.departmentId === null || employee.departmentId !== actor.departmentId)
+      (actor.departmentId === null ||
+        employee.departmentId !== actor.departmentId)
     ) {
       throw new ForbiddenException(
         'You can only view profiles of employees in your own department.',
