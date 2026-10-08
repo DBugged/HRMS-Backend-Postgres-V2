@@ -2182,6 +2182,16 @@ export class PayrollService {
         unlockedById: actor.id,
         unlockedAt: new Date(),
         unlockReason: dto.reason.trim(),
+        // Back to Calculated means none of the later steps have happened any more: leaving their dates behind showed
+        // an old Pay Date on the payslip of a run that is not paid (the audit log keeps the history).
+        verifiedAt: null,
+        verifiedById: null,
+        approvedAt: null,
+        approvedById: null,
+        lockedAt: null,
+        lockedById: null,
+        paidAt: null,
+        paidById: null,
         // A corrected payslip is a new payslip: allow the e-mail to go out again when it is re-paid.
         payslipEmailSentAt: null,
       },

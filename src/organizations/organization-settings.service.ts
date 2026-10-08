@@ -10,6 +10,7 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import * as crypto from 'crypto';
@@ -584,10 +585,17 @@ export class OrganizationSettingsService {
     }
 
     if (section === 'policies' && data.orgPayrollAttendancePrefs) {
-      await this.ensureDefaultWorkSchedule(
-        organizationId,
-        data.orgPayrollAttendancePrefs as Record<string, unknown>,
-      );
+      // A convenience on top of the save that has already succeeded: if it cannot be created, the settings stay saved.
+      try {
+        await this.ensureDefaultWorkSchedule(
+          organizationId,
+          data.orgPayrollAttendancePrefs as Record<string, unknown>,
+        );
+      } catch (err) {
+        new Logger(OrganizationSettingsService.name).warn(
+          `Default work schedule not created for ${organizationId}: ${(err as Error).message}`,
+        );
+      }
     }
 
     if (section === 'policies') {
@@ -647,9 +655,10 @@ export class OrganizationSettingsService {
         workingDays,
         startTime: start,
         endTime: end,
+        // Whole minutes (the column is an integer, while the setting allows e.g. 1.5).
         breakMinutes:
           Number.isFinite(breakMinutes) && breakMinutes >= 0
-            ? breakMinutes
+            ? Math.round(breakMinutes)
             : 60,
         alternateWeeklyOffs: [],
       },
