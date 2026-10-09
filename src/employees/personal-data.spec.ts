@@ -1,5 +1,6 @@
 import {
   areMandatoryDocumentsUploaded,
+  assertValidAddress,
   assertValidDates,
   assertValidIdentifiers,
   isProfileComplete,
@@ -246,6 +247,28 @@ describe('assertValidDates', () => {
           { startDate: '2018-01-01', endDate: '2020-01-01' },
         ],
       }),
+    ).not.toThrow();
+  });
+});
+
+describe('assertValidAddress', () => {
+  it('accepts a normal address and an empty one', () => {
+    expect(() =>
+      assertValidAddress({ currentAddress: '12 Main Road, Surat, Gujarat' }),
+    ).not.toThrow();
+    expect(() => assertValidAddress({ currentAddress: '   ' })).not.toThrow();
+    expect(() => assertValidAddress({ name: 'x' })).not.toThrow();
+  });
+
+  it('rejects an address that is too short or longer than 250 characters', () => {
+    expect(() => assertValidAddress({ currentAddress: 'Surat' })).toThrow(
+      /too short/,
+    );
+    expect(() =>
+      assertValidAddress({ currentAddress: 'a'.repeat(251) }),
+    ).toThrow(/at most 250/);
+    expect(() =>
+      assertValidAddress({ currentAddress: 'a'.repeat(250) }),
     ).not.toThrow();
   });
 });

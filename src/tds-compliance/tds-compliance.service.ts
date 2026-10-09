@@ -246,9 +246,18 @@ export class TdsComplianceService {
     const lateChallans = challans.filter((c) => c.depositDate > dueDate);
     const shortfall = Math.max(0, totalTds - deposited);
     let status:
-      'NO_TDS' | 'PENDING' | 'OVERDUE' | 'PARTIAL' | 'DEPOSITED' | 'EXCESS';
-    if (totalTds === 0 && deposited === 0) status = 'NO_TDS';
-    else if (deposited > totalTds) status = 'EXCESS';
+      | 'NO_TDS'
+      | 'REFUND'
+      | 'PENDING'
+      | 'OVERDUE'
+      | 'PARTIAL'
+      | 'DEPOSITED'
+      | 'EXCESS';
+    // A negative total is excess TDS handed back to leavers at their final settlement: nothing is due to deposit, and
+    // with no challan recorded it is not an "excess deposit" either.
+    if (totalTds <= 0 && deposited === 0) {
+      status = totalTds < 0 ? 'REFUND' : 'NO_TDS';
+    } else if (deposited > totalTds) status = 'EXCESS';
     else if (deposited >= totalTds) status = 'DEPOSITED';
     else if (todayStr() > dueDate) status = 'OVERDUE';
     else status = deposited > 0 ? 'PARTIAL' : 'PENDING';

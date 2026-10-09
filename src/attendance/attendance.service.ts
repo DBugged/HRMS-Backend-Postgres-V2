@@ -1638,7 +1638,9 @@ export class AttendanceService {
                     select: ATTENDANCE_LIST_EMPLOYEE_SELECT,
                   },
                 },
-                orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
+                // Newest day first, then by employee. Ordering by employee first made every page a slice of one
+                // person's whole history, so a month's records started mid-month and jumped between months.
+                orderBy: [{ date: 'desc' }, ...EMPLOYEE_RELATION_ORDER_BY],
                 skip: skip(query.page, query.limit),
                 take: query.limit,
               }),
@@ -1929,8 +1931,8 @@ export class AttendanceService {
 
     const merged: AttendanceListRow[] = [...realRows, ...synthetic].sort(
       (a, b) =>
-        compareEmployees(a.employee, b.employee) ||
-        (a.date < b.date ? 1 : a.date > b.date ? -1 : 0),
+        (a.date < b.date ? 1 : a.date > b.date ? -1 : 0) ||
+        compareEmployees(a.employee, b.employee),
     );
     const total = merged.length;
     const start = skip(query.page, query.limit);

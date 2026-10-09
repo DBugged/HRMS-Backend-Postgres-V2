@@ -3,6 +3,7 @@ import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import * as QRCode from 'qrcode';
 import { PayrollRunStatus, PayrollTemplate } from '@prisma/client';
+import type { TaxDetails } from './tax-engine';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
@@ -170,6 +171,8 @@ interface PayslipRun {
   earnings: unknown;
   deductions: unknown;
   employerContributions: unknown;
+  // Income-tax working saved at calculation (absent on older runs and the dummy preview).
+  taxDetails?: unknown;
   employee: {
     employeeId: string;
     name: string;
@@ -644,6 +647,14 @@ export class PayslipPdfService {
             : '-',
         ],
       ];
+      const td = run.taxDetails as TaxDetails | null | undefined;
+      if (td && typeof td === 'object' && td.financialYear) {
+        empFields.push(['Financial Year', td.financialYear]);
+        empFields.push([
+          'Tax Regime',
+          td.regime === 'OLD' ? 'Old regime' : 'New regime',
+        ]);
+      }
       // PF Number/ESIC Number still have no data source anywhere in the
       // app (no such field is collected) — those two rows stay '-' until
       // one exists. PAN/UAN/Bank read from personalData below.
@@ -863,6 +874,82 @@ export class PayslipPdfService {
           text(val, MARGIN + i * statW, y + 10, { width: statW - 10 });
         });
         y += 30;
+      }
+
+      // ── Income tax projection ───────────────────────────────────────────
+      // How this month's TDS was arrived at: the year's projected income, what is deducted from it, the tax on the
+      // slabs and what is still to be withheld. Skipped for runs with no saved tax working (older runs, no income tax).
+      if (td && typeof td === 'object' && td.financialYear) {
+        const taxRows: [string, string, boolean?][] = [
+          ['Projected gross income for the year', money(td.grossAnnualIncome)],
+        ];
+        const exempt = (td.exemptions?.hra || 0) + (td.exemptions?.lta || 0);
+        if (exempt > 0)
+          taxRows.push(['Less: exemptions (HRA / LTA)', `- ${money(exempt)}`]);
+        const deductionTotal = Object.values(td.deductions || {}).reduce(
+          (sum, v) => sum + (Number(v) || 0),
+          0,
+        );
+        if (deductionTotal > 0)
+          taxRows.push([
+            'Less: standard / other deductions',
+            `- ${money(deductionTotal)}`,
+          ]);
+        taxRows.push(['Taxable income', money(td.taxableIncome), true]);
+        taxRows.push(['Tax on slabs', money(td.taxBeforeCess)]);
+        if (td.rebate > 0)
+          taxRows.push(['Less: rebate u/s 87A', `- ${money(td.rebate)}`]);
+        if (td.surcharge > 0) taxRows.push(['Surcharge', money(td.surcharge)]);
+        taxRows.push(['Health & education cess', money(td.cess)]);
+        if (td.relief89 > 0)
+          taxRows.push(['Less: relief u/s 89', `- ${money(td.relief89)}`]);
+        taxRows.push([
+          'Total tax for the year (rounded to Rs. 10)',
+          money(td.totalAnnualTax),
+          true,
+        ]);
+        const deductedTillNow = (td.ytdTDS || 0) + (td.monthlyTDS || 0);
+        if (td.previousEmployerTDS > 0)
+          taxRows.push([
+            'TDS deducted by previous employer',
+            money(td.previousEmployerTDS),
+          ]);
+        taxRows.push(['TDS deducted till this month', money(deductedTillNow)]);
+        taxRows.push([
+          'Balance tax to be deducted',
+          money(
+            Math.max(
+              0,
+              td.totalAnnualTax -
+                (td.previousEmployerTDS || 0) -
+                deductedTillNow,
+            ),
+          ),
+        ]);
+        const rowPitch = 11.5;
+        const blockH = 18 + taxRows.length * rowPitch;
+        if (y + blockH > PAGE_H - 100) {
+          doc.addPage();
+          y = MARGIN;
+        }
+        doc.font(fonts.bold).fontSize(9).fillColor(INK_900);
+        text(
+          `INCOME TAX PROJECTION FOR FY ${td.financialYear} (${td.regime === 'OLD' ? 'OLD' : 'NEW'} REGIME)`,
+          MARGIN,
+          y,
+        );
+        y += 15;
+        const tableW = Math.min(300, CONTENT_W);
+        taxRows.forEach(([label, value, strong]) => {
+          doc
+            .font(strong ? fonts.bold : fonts.regular)
+            .fontSize(7.4)
+            .fillColor(strong ? INK_900 : INK_600);
+          text(label, MARGIN, y, { width: tableW - 90 });
+          text(value, MARGIN + tableW - 90, y, { width: 90, align: 'right' });
+          y += rowPitch;
+        });
+        y += 8;
       }
 
       // ── Footer ──────────────────────────────────────────────────────────

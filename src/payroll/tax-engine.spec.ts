@@ -163,8 +163,8 @@ describe('calculateTax', () => {
     expect(result.taxBeforeCess).toBe(21100);
     expect(result.rebate).toBe(0); // taxable income exceeds the old-regime 87A limit (5L)
     expect(result.cess).toBe(844);
-    expect(result.totalAnnualTax).toBe(21944);
-    expect(result.monthlyTDS).toBe(1829);
+    expect(result.totalAnnualTax).toBe(21940); // 21,944 rounded to the nearest 10 (s.288B)
+    expect(result.monthlyTDS).toBe(1828);
   });
 
   it('OLD regime with no declaration: no old-regime-only exemptions/deductions apply', () => {
@@ -500,28 +500,57 @@ describe('home-loan interest, 80TTA and section 89 relief (audit gaps)', () => {
       rebate87AAmount: c.rebate87AAmount,
     };
   };
-  const base = { month: 4, year: 2026, currentMonthGross: 2400000, recurringMonthlyGross: 0 };
+  const base = {
+    month: 4,
+    year: 2026,
+    currentMonthGross: 2400000,
+    recurringMonthlyGross: 0,
+  };
 
   it('24(b) is capped at 2,00,000 and 80TTA at 10,000 — old regime only', () => {
     const decl = { homeLoanInterest: 350000, section80TTA: 25000 };
-    const old = calculateTax({ ...base, declaration: decl, taxSlabConfig: mk(TaxRegime.OLD) });
+    const old = calculateTax({
+      ...base,
+      declaration: decl,
+      taxSlabConfig: mk(TaxRegime.OLD),
+    });
     expect(old.deductions.homeLoanInterest).toBe(200000);
     expect(old.deductions.section80TTA).toBe(10000);
-    const plain = calculateTax({ ...base, declaration: null, taxSlabConfig: mk(TaxRegime.OLD) });
+    const plain = calculateTax({
+      ...base,
+      declaration: null,
+      taxSlabConfig: mk(TaxRegime.OLD),
+    });
     expect(plain.taxableIncome - old.taxableIncome).toBe(210000);
-    const neu = calculateTax({ ...base, declaration: decl, taxSlabConfig: mk(TaxRegime.NEW) });
+    const neu = calculateTax({
+      ...base,
+      declaration: decl,
+      taxSlabConfig: mk(TaxRegime.NEW),
+    });
     expect(neu.deductions.homeLoanInterest).toBe(0);
     expect(neu.deductions.section80TTA).toBe(0);
   });
 
   it('section 89 relief reduces the tax after cess in either regime, never below zero', () => {
     for (const regime of [TaxRegime.OLD, TaxRegime.NEW]) {
-      const without = calculateTax({ ...base, declaration: null, taxSlabConfig: mk(regime) });
-      const withRelief = calculateTax({ ...base, declaration: { section89Relief: 12000 }, taxSlabConfig: mk(regime) });
+      const without = calculateTax({
+        ...base,
+        declaration: null,
+        taxSlabConfig: mk(regime),
+      });
+      const withRelief = calculateTax({
+        ...base,
+        declaration: { section89Relief: 12000 },
+        taxSlabConfig: mk(regime),
+      });
       expect(withRelief.relief89).toBe(12000);
       expect(withRelief.totalAnnualTax).toBe(without.totalAnnualTax - 12000);
     }
-    const huge = calculateTax({ ...base, declaration: { section89Relief: 99999999 }, taxSlabConfig: mk(TaxRegime.NEW) });
+    const huge = calculateTax({
+      ...base,
+      declaration: { section89Relief: 99999999 },
+      taxSlabConfig: mk(TaxRegime.NEW),
+    });
     expect(huge.totalAnnualTax).toBe(0);
   });
 });
@@ -560,12 +589,20 @@ describe('refund of excess TDS on exit (audit)', () => {
   });
 
   it('never refunds more than this employer withheld', () => {
-    const r = calculateTax({ ...base, ytdTDS: 1000, declaration: { previousEmployerTDS: 500000 }, refundExcess: true });
+    const r = calculateTax({
+      ...base,
+      ytdTDS: 1000,
+      declaration: { previousEmployerTDS: 500000 },
+      refundExcess: true,
+    });
     expect(r.monthlyTDS).toBe(-1000);
   });
 
   it('is ignored outside a final month', () => {
-    expect(calculateTax({ ...base, finalMonth: false, refundExcess: true }).monthlyTDS).toBeGreaterThanOrEqual(0);
+    expect(
+      calculateTax({ ...base, finalMonth: false, refundExcess: true })
+        .monthlyTDS,
+    ).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -588,5 +625,51 @@ describe('old regime senior citizen exemption', () => {
     expect(run(null)).toBe(base);
     expect(base - run(65)).toBe(2500);
     expect(base - run(82)).toBe(12500);
+  });
+
+  it('rounds the tax payable to the nearest 10 rupees and and withholds exactly that over the year (NEW regime)', () => {
+    const taxSlabConfig = {
+      regime: TaxRegime.NEW,
+      ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+    };
+    // 1,83,190 a month: tax 2,30,820 + cess 9,233 = 2,40,053 -> 2,40,050
+    let ytdGross = 0;
+    let ytdTDS = 0;
+    const months: number[][] = [
+      [4, 2026],
+      [5, 2026],
+      [6, 2026],
+      [7, 2026],
+      [8, 2026],
+      [9, 2026],
+      [10, 2026],
+      [11, 2026],
+      [12, 2026],
+      [1, 2027],
+      [2, 2027],
+      [3, 2027],
+    ];
+    const deducted: number[] = [];
+    for (const [month, year] of months) {
+      const r = calculateTax({
+        month,
+        year,
+        currentMonthGross: 183190,
+        recurringMonthlyGross: 183190,
+        ytdGross,
+        ytdTDS,
+        basicAnnual: 1200000,
+        declaration: null,
+        taxSlabConfig,
+        financialYearStartMonth: 4,
+      });
+      expect(r.totalAnnualTax).toBe(240050);
+      deducted.push(r.monthlyTDS);
+      ytdGross += 183190;
+      ytdTDS += r.monthlyTDS;
+    }
+    // The balance is re-spread over the months left each time, so a month may differ by Rs. 1 from a flat 20,004.
+    expect(deducted.every((v) => v === 20004 || v === 20005)).toBe(true);
+    expect(ytdTDS).toBe(240050);
   });
 });

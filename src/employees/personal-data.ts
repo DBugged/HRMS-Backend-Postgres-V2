@@ -85,7 +85,30 @@ const PHONE_KEYS = new Set([
 // merging a personalData patch onto the stored blob. Only checks fields
 // actually present in this patch (a partial edit that doesn't touch PAN
 // isn't re-validated against a possibly-already-invalid stored value).
+// A postal address typed into one box: readable and printable on letters and exit documents (mirrors the frontend's
+// src/utils/addressValidation.ts - the browser check is only a convenience, this is the one that holds).
+export const ADDRESS_MIN_LENGTH = 10;
+export const ADDRESS_MAX_LENGTH = 250;
+
+export function assertValidAddress(patch: Record<string, unknown>): void {
+  const value = patch.currentAddress;
+  if (typeof value !== 'string') return;
+  const address = value.trim();
+  if (address === '') return;
+  if (address.length < ADDRESS_MIN_LENGTH) {
+    throw new BadRequestException(
+      `Current Address is too short - enter the full address (at least ${ADDRESS_MIN_LENGTH} characters).`,
+    );
+  }
+  if (address.length > ADDRESS_MAX_LENGTH) {
+    throw new BadRequestException(
+      `Current Address can be at most ${ADDRESS_MAX_LENGTH} characters (now ${address.length}).`,
+    );
+  }
+}
+
 export function assertValidIdentifiers(patch: Record<string, unknown>): void {
+  assertValidAddress(patch);
   for (const [key, { pattern, label, example }] of Object.entries(
     IDENTIFIER_PATTERNS,
   )) {

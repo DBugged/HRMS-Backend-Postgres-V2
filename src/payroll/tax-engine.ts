@@ -368,7 +368,8 @@ export function calculateTax({
     taxBeforeRelief,
     Math.max(0, Math.round(declaration?.section89Relief || 0)),
   );
-  const totalAnnualTax = taxBeforeRelief - relief89;
+  // Section 288B: the tax payable is rounded off to the nearest ten rupees.
+  const totalAnnualTax = Math.round((taxBeforeRelief - relief89) / 10) * 10;
   // Credit everything already withheld this year — this employer's YTD TDS
   // and whatever the previous employer deducted.
   const owed = totalAnnualTax - ytdTDS - previousEmployerTDS;
