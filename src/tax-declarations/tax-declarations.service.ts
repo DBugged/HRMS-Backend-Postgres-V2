@@ -171,6 +171,22 @@ export class TaxDeclarationsService {
       where: { organizationId, employeeId, financialYear: dto.financialYear },
     });
 
+    // Tax a previous employer deducted cannot be more than the income it paid - without this check a typo (or a
+    // deliberate inflated figure) is credited against this year's tax and the employee's TDS drops too low.
+    if (
+      dto.previousEmployerIncome !== undefined ||
+      dto.previousEmployerTDS !== undefined
+    ) {
+      const income =
+        dto.previousEmployerIncome ?? existing?.previousEmployerIncome ?? 0;
+      const tds = dto.previousEmployerTDS ?? existing?.previousEmployerTDS ?? 0;
+      if (tds > income) {
+        throw new BadRequestException(
+          `Tax deducted by the previous employer (${tds}) cannot be more than the income paid by it (${income}).`,
+        );
+      }
+    }
+
     if (isOwnDeclaration) {
       // Locked once submitted — the whole point of "submit" is that it's
       // final; further self-edits (including re-submitting) are rejected

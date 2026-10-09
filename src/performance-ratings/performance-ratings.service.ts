@@ -36,6 +36,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { getFinancialYear } from '../payroll-settings/financial-year';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 
 type Actor = Omit<User, 'password'>;
@@ -193,6 +194,23 @@ export class PerformanceRatingsService {
       include: { reportingManager: { select: { role: true } } },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
+
+    // A rating is for a financial year that has started: not a future one.
+    const settings = await this.scopedPrisma.payrollSettings.findFirst({
+      where: { organizationId },
+      select: { financialYearStartMonth: true },
+    });
+    const now = new Date();
+    const currentFy = getFinancialYear(
+      now.getUTCMonth() + 1,
+      now.getUTCFullYear(),
+      settings?.financialYearStartMonth ?? 4,
+    );
+    if (dto.financialYear > currentFy) {
+      throw new BadRequestException(
+        `A rating cannot be given for FY ${dto.financialYear} - that financial year has not started yet (current: ${currentFy}).`,
+      );
+    }
 
     if (actor.role === Role.MANAGER) {
       if (employee.id === actor.id) {

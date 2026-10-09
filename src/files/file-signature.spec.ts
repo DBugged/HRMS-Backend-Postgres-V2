@@ -138,3 +138,17 @@ describe('branding is JPEG and PNG only', () => {
     }
   });
 });
+
+import { contentMatchesExtension } from './file-signature';
+describe('contentMatchesExtension', () => {
+  it('rejects an executable named .pdf', () => {
+    expect(
+      contentMatchesExtension(Buffer.from('MZ\x90\x00\x03'), 'a.pdf'),
+    ).toBe(false);
+  });
+  it('accepts real PDF bytes', () => {
+    expect(contentMatchesExtension(Buffer.from('%PDF-1.7'), 'a.PDF')).toBe(
+      true,
+    );
+  });
+});

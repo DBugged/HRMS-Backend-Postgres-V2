@@ -172,3 +172,23 @@ export function contentMatchesDeclaredType(
   if (declaredMime.startsWith('video/')) return kind === 'video';
   return false;
 }
+
+// The kind of file an extension claims to be, so a ".pdf" cannot carry an executable or a ".png" a PDF.
+export function extensionKind(
+  originalName: string,
+): 'pdf' | 'image' | 'video' | null {
+  const ext = path.extname(originalName ?? '').toLowerCase();
+  if (ext === '.pdf') return 'pdf';
+  if (IMAGE_EXTENSIONS.includes(ext)) return 'image';
+  if (VIDEO_EXTENSIONS.includes(ext)) return 'video';
+  return null;
+}
+
+/** True when the file's real bytes are the kind its extension says (a renamed exe/script fails). */
+export function contentMatchesExtension(
+  head: Buffer,
+  originalName: string,
+): boolean {
+  const claimed = extensionKind(originalName);
+  return claimed === null || sniffKind(head) === claimed;
+}

@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
@@ -19,6 +20,12 @@ import {
 } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 import { NormalizeEmail, Trim } from '../../common/normalize-input';
+import { IsReasonableJoiningDate } from '../../common/is-reasonable-joining-date.validator';
+import {
+  PERSON_NAME_MAX_LENGTH,
+  PERSON_NAME_MESSAGE,
+  PERSON_NAME_PATTERN,
+} from '../../common/person-name';
 
 // Note: employeeId is deliberately not editable through this DTO at all
 // (not even by HR/Admin) — unlike the old system, which technically
@@ -33,7 +40,8 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsString()
   @IsNotEmpty()
-  @MaxLength(255)
+  @MaxLength(PERSON_NAME_MAX_LENGTH)
+  @Matches(PERSON_NAME_PATTERN, { message: `name ${PERSON_NAME_MESSAGE}` })
   name?: string;
 
   // Locked for self-update — see employee-field-lock.ts.
@@ -88,6 +96,7 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   designation?: string;
 
   // Locked for self-update (see employee-field-lock.ts) but, unlike
@@ -124,7 +133,7 @@ export class UpdateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsValidCalendarDateString()
+  @IsReasonableJoiningDate()
   joiningDate?: string;
 
   @ApiPropertyOptional({ enum: Role })

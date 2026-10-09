@@ -683,6 +683,23 @@ export class AttendanceService {
     return { status, workDurationMinutes, isLate, isEarlyOut };
   }
 
+  // Present / Half-day / Absent from the worked span, using the employee's shift thresholds (break is unpaid) — so a
+  // regularized 1-hour day is not counted as a full Present day.
+  private async statusForWorkedMinutes(
+    employeeId: string,
+    organizationId: string,
+    minutes: number,
+  ): Promise<AttendanceStatus> {
+    const cfg = await this.resolveEmployeeShiftConfig(
+      employeeId,
+      organizationId,
+    );
+    const hours = Math.max(0, minutes - cfg.breakMinutes) / 60;
+    if (hours >= cfg.minHoursForPresent) return AttendanceStatus.PRESENT;
+    if (hours >= cfg.minHoursForHalfDay) return AttendanceStatus.HALF_DAY;
+    return AttendanceStatus.ABSENT;
+  }
+
   // Below this overshoot, a punch-out isn't worth a review-queue entry —
   // clocking out 5-10 minutes late is noise, not overtime.
   private static readonly AUTO_OVERTIME_MIN_MINUTES = 30;
@@ -1057,6 +1074,11 @@ export class AttendanceService {
       where: { id: dto.employeeId, organizationId },
     });
     if (!user) throw new NotFoundException('Employee not found.');
+    if (!user.isActive) {
+      throw new BadRequestException(
+        'This employee is inactive. Attendance cannot be added for an inactive employee.',
+      );
+    }
 
     const punchTime = dto.punchTime ? new Date(dto.punchTime) : new Date();
     assertNotInFuture(punchTime, 'A punch time');
@@ -1093,6 +1115,11 @@ export class AttendanceService {
           'In and Out times must belong to the same shift day.',
         );
       }
+    }
+    if (attendanceDate < utcDateStrOf(user.joiningDate)) {
+      throw new BadRequestException(
+        `The date ${attendanceDate} is before this employee's joining date (${utcDateStrOf(user.joiningDate)}).`,
+      );
     }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
@@ -1353,8 +1380,35 @@ export class AttendanceService {
       workArrangementReviewComments: null,
     };
 
-    const dateStr =
-      dto.date ?? todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const dateStr = dto.date ?? todayStr;
+    if (dto.date) {
+      if (dateStr < addDaysStr(todayStr, -31)) {
+        throw new BadRequestException(
+          'The date is too far in the past. A work arrangement can be set for the last 31 days or up to 60 days ahead.',
+        );
+      }
+      if (dateStr > addDaysStr(todayStr, 60)) {
+        throw new BadRequestException(
+          'The date is too far ahead. A work arrangement can be set up to 60 days ahead.',
+        );
+      }
+      const me = await this.scopedPrisma.user.findFirst({
+        where: { id: actor.id, organizationId },
+        select: { joiningDate: true },
+      });
+      if (me && dateStr < utcDateStrOf(me.joiningDate)) {
+        throw new BadRequestException(
+          `The date is before your joining date (${utcDateStrOf(me.joiningDate)}).`,
+        );
+      }
+      await assertPayrollPeriodUnlocked(
+        this.scopedPrisma,
+        organizationId,
+        actor.id,
+        dateStr,
+      );
+    }
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
     });
@@ -2056,6 +2110,24 @@ export class AttendanceService {
         'The requested Out time',
       );
     }
+    if (!dto.requestedInTime && !dto.requestedOutTime) {
+      throw new BadRequestException(
+        'Enter the In time, the Out time, or both for the regularization.',
+      );
+    }
+    if (dto.requestedInTime && dto.requestedOutTime) {
+      const spanMs =
+        new Date(dto.requestedOutTime).getTime() -
+        new Date(dto.requestedInTime).getTime();
+      if (!(spanMs > 0)) {
+        throw new BadRequestException('Out time must be after In time.');
+      }
+      if (spanMs > 24 * 3600000) {
+        throw new BadRequestException(
+          'In and Out times cannot be more than 24 hours apart.',
+        );
+      }
+    }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       organizationId,
@@ -2124,7 +2196,11 @@ export class AttendanceService {
             (requestedOutTime.getTime() - requestedInTime.getTime()) / 60000,
           ),
         );
-        status = AttendanceStatus.PRESENT;
+        status = await this.statusForWorkedMinutes(
+          actor.id,
+          organizationId,
+          workDurationMinutes,
+        );
       }
       source = AttendanceSource.REGULARIZED;
     }
@@ -2264,11 +2340,20 @@ export class AttendanceService {
       // forever despite being approved, since workDurationMinutes can't be
       // computed without both.
       if (inTime && outTime) {
+        if (outTime.getTime() <= inTime.getTime()) {
+          throw new BadRequestException(
+            'The requested Out time is not after the In time, so this cannot be approved. Reject it and ask the employee to send it again.',
+          );
+        }
         data.workDurationMinutes = Math.max(
           0,
           Math.round((outTime.getTime() - inTime.getTime()) / 60000),
         );
-        data.status = AttendanceStatus.PRESENT;
+        data.status = await this.statusForWorkedMinutes(
+          row.employeeId,
+          organizationId,
+          data.workDurationMinutes,
+        );
       } else if (inTime || outTime) {
         data.status = AttendanceStatus.PRESENT;
       }
@@ -2422,7 +2507,9 @@ export class AttendanceService {
     const rows = batch.rows as unknown as ImportRow[];
     const employeeCodes = [
       ...new Set(
-        rows.map((r) => asString(r.employeeId).trim()).filter(Boolean),
+        rows
+          .map((r) => asString(r.employeeId).trim().toUpperCase())
+          .filter(Boolean),
       ),
     ];
     const employees = employeeCodes.length
@@ -2458,7 +2545,7 @@ export class AttendanceService {
     const failed: { row: number; error: string }[] = [];
     rows.forEach((row, i) => {
       const rowNum = i + 1;
-      const empCode = asString(row.employeeId).trim();
+      const empCode = asString(row.employeeId).trim().toUpperCase();
       if (!empCode) {
         failed.push({ row: rowNum, error: 'employeeId is required' });
         return;
@@ -2531,6 +2618,32 @@ export class AttendanceService {
         failed.push({
           row: rowNum,
           error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss, interpreted as UTC)`,
+        });
+        return;
+      }
+      if (inRaw && outRaw) {
+        const spanMs =
+          (parseImportTimestampUtc(outRaw)?.getTime() ?? 0) -
+          (parseImportTimestampUtc(inRaw)?.getTime() ?? 0);
+        if (spanMs <= 0) {
+          failed.push({
+            row: rowNum,
+            error: 'outTime must be after inTime',
+          });
+          return;
+        }
+        if (spanMs > 24 * 3600000) {
+          failed.push({
+            row: rowNum,
+            error: 'inTime and outTime are more than 24 hours apart',
+          });
+          return;
+        }
+      }
+      if (!inRaw && outRaw) {
+        failed.push({
+          row: rowNum,
+          error: 'inTime is required when outTime is given',
         });
         return;
       }
@@ -2666,7 +2779,9 @@ export class AttendanceService {
     const rows = batch.rows as unknown as ImportRow[];
     const employeeCodes = [
       ...new Set(
-        rows.map((r) => asString(r.employeeId).trim()).filter(Boolean),
+        rows
+          .map((r) => asString(r.employeeId).trim().toUpperCase())
+          .filter(Boolean),
       ),
     ];
     const employees = employeeCodes.length
@@ -2725,7 +2840,7 @@ export class AttendanceService {
     // sequential findFirst calls, which was most of this loop's latency.
     const rowKeys = rows
       .map((row) => {
-        const empId = byCode.get(asString(row.employeeId).trim());
+        const empId = byCode.get(asString(row.employeeId).trim().toUpperCase());
         const date = asString(row.date).trim();
         return empId && date ? { empId, date } : null;
       })
@@ -2815,7 +2930,7 @@ export class AttendanceService {
 
     for (const [i, row] of rows.entries()) {
       const rowNum = i + 1;
-      const empCode = asString(row.employeeId).trim();
+      const empCode = asString(row.employeeId).trim().toUpperCase();
       const empId = byCode.get(empCode);
       const date = asString(row.date).trim();
       if (!empId || !date) {

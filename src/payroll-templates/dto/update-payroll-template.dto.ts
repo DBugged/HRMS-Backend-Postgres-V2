@@ -1,9 +1,8 @@
-import { PartialType } from '@nestjs/swagger';
+import { OmitType, PartialType } from '@nestjs/swagger';
 import { CreatePayrollTemplateDto } from './create-payroll-template.dto';
 
-// isDefault is deliberately NOT included — only POST /:id/set-default can
-// flip it, matching the old controller's explicit stripping of isDefault
-// from PUT payloads.
+// isDefault is deliberately NOT part of an update — only POST /:id/set-default can flip it (so there is always exactly
+// one default template; PUT used to accept isDefault:false and leave the organization with none).
 export class UpdatePayrollTemplateDto extends PartialType(
-  CreatePayrollTemplateDto,
+  OmitType(CreatePayrollTemplateDto, ['isDefault'] as const),
 ) {}

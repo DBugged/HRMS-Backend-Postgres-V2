@@ -651,6 +651,11 @@ export class AuthService {
       throw new BadRequestException('Current password is incorrect.');
     }
 
+    if (dto.newPassword === dto.currentPassword) {
+      throw new BadRequestException(
+        'The new password must be different from your current password.',
+      );
+    }
     const wasFirstTimeChange = user.mustChangePassword;
     const hashedPassword = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
     // Revoke every active refresh token on a voluntary password change too,

@@ -1,3 +1,4 @@
+import { IsFinancialYear } from '../../common/is-financial-year.validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
@@ -20,6 +21,7 @@ export class QueryPerformanceRatingDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsFinancialYear()
   financialYear?: string;
 
   @ApiPropertyOptional({ enum: PerformanceRatingStatus })

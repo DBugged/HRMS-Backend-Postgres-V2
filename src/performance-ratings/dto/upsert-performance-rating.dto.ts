@@ -1,3 +1,4 @@
+import { IsFinancialYear } from '../../common/is-financial-year.validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsInt,
@@ -6,6 +7,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -17,6 +19,7 @@ export class UpsertPerformanceRatingDto {
   @ApiProperty({ example: '2026-27' })
   @IsNotEmpty()
   @IsString()
+  @IsFinancialYear()
   financialYear!: string;
 
   @ApiProperty({ description: '1-5' })
@@ -34,5 +37,6 @@ export class UpsertPerformanceRatingDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   notes?: string;
 }

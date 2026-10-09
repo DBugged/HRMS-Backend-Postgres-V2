@@ -8,19 +8,26 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
   MaxLength,
   ValidateIf,
 } from 'class-validator';
 import { Gender, Role, SelfieRequirement } from '@prisma/client';
-import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 import { NormalizeEmail, Trim } from '../../common/normalize-input';
+import { IsReasonableJoiningDate } from '../../common/is-reasonable-joining-date.validator';
+import {
+  PERSON_NAME_MAX_LENGTH,
+  PERSON_NAME_MESSAGE,
+  PERSON_NAME_PATTERN,
+} from '../../common/person-name';
 
 export class CreateEmployeeDto {
   @ApiProperty({ example: 'Jane Employee' })
   @Trim()
   @IsNotEmpty()
   @IsString()
-  @MaxLength(255)
+  @MaxLength(PERSON_NAME_MAX_LENGTH)
+  @Matches(PERSON_NAME_PATTERN, { message: `name ${PERSON_NAME_MESSAGE}` })
   name!: string;
 
   @ApiProperty({ example: 'jane@acme.test' })
@@ -81,6 +88,7 @@ export class CreateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   designation?: string;
 
   @ApiPropertyOptional()
@@ -118,7 +126,7 @@ export class CreateEmployeeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
-  @IsValidCalendarDateString()
+  @IsReasonableJoiningDate()
   joiningDate?: string;
 
   @ApiPropertyOptional({

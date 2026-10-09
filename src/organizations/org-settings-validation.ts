@@ -187,8 +187,24 @@ function validatePolicies(p: Record<string, unknown>) {
   );
   checkNumber(p, 'defaultNoticeDays', 'policies.defaultNoticeDays', {
     min: 0,
+    max: 365,
     integer: true,
   });
+  const ALLOWED_DATE_FORMATS = ['DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD'];
+  if (
+    typeof p.dateFormat === 'string' &&
+    !ALLOWED_DATE_FORMATS.includes(p.dateFormat)
+  ) {
+    bad(
+      `policies.dateFormat must be one of ${ALLOWED_DATE_FORMATS.join(', ')}.`,
+    );
+  }
+  if (
+    typeof p.timeFormat === 'string' &&
+    !['12', '24'].includes(p.timeFormat)
+  ) {
+    bad('policies.timeFormat must be "12" or "24".');
+  }
   if (p.timezone !== undefined && !isIanaTimeZone(p.timezone)) {
     bad('timezone must be a valid IANA timezone (e.g. Asia/Kolkata).');
   }
@@ -269,17 +285,108 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
   }
 }
 
+const NUMBERING_TOKENS = /^(YYYYMM|DD_MM_YYYY|MM_YYYY|YYYY|MM|DD|\d+)$/;
+
 function validateDocumentNumbering(n: Record<string, unknown>) {
   for (const [type, entry] of Object.entries(n)) {
     if (!isPlainObject(entry)) {
       bad(`documentNumbering.${type} must be an object.`);
     }
-    if (
-      entry.format !== undefined &&
-      (typeof entry.format !== 'string' || !entry.format.trim())
-    ) {
-      bad(`documentNumbering.${type}.format must be a non-empty string.`);
+    const where = `documentNumbering.${type}`;
+    if (entry.format !== undefined) {
+      if (typeof entry.format !== 'string' || !entry.format.trim()) {
+        bad(`${where}.format must be a non-empty string.`);
+      }
+      const format = entry.format;
+      if (format.length > 60)
+        bad(`${where}.format can be at most 60 characters.`);
+      // Every {token} must be a known one, and exactly one must be the running counter ({00001}) - without it every
+      // document would get the same number.
+      const tokens = [...format.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
+      if (tokens.some((t) => !NUMBERING_TOKENS.test(t))) {
+        bad(
+          `${where}.format has an unknown {token}. Use {YYYY}, {MM}, {DD}, {YYYYMM}, {MM_YYYY}, {DD_MM_YYYY} and one counter like {00001}.`,
+        );
+      }
+      if (tokens.filter((t) => /^\d+$/.test(t)).length !== 1) {
+        bad(
+          `${where}.format must contain exactly one counter such as {00001}.`,
+        );
+      }
+      if (/[{}]/.test(format.replace(/\{[^}]*\}/g, ''))) {
+        bad(`${where}.format has an unmatched brace.`);
+      }
+      if (!/^[A-Za-z0-9\-_/. {}]+$/.test(format)) {
+        bad(
+          `${where}.format may only contain letters, digits, - _ / . spaces and {tokens}.`,
+        );
+      }
     }
+    if (
+      entry.resetRule !== undefined &&
+      !['never', 'monthly', 'yearly'].includes(entry.resetRule as string)
+    ) {
+      bad(`${where}.resetRule must be never, monthly or yearly.`);
+    }
+    if (entry.counter !== undefined) {
+      const c = entry.counter;
+      if (
+        typeof c !== 'number' ||
+        !Number.isInteger(c) ||
+        c < 0 ||
+        c > 999999999
+      ) {
+        bad(`${where}.counter must be a whole number from 0 to 999999999.`);
+      }
+    }
+    if (
+      entry.label !== undefined &&
+      (typeof entry.label !== 'string' ||
+        entry.label.length > 100 ||
+        /[<>]/.test(entry.label))
+    ) {
+      bad(`${where}.label must be plain text of at most 100 characters.`);
+    }
+  }
+}
+
+function validateSignatories(list: Record<string, unknown>[]) {
+  if (list.length > 10) bad('signatories can have at most 10 entries.');
+  list.forEach((sig, i) => {
+    const at = `signatories[${i + 1}]`;
+    const name = typeof sig.name === 'string' ? sig.name.trim() : '';
+    if (!name) bad(`${at}.name is required.`);
+    if (name.length > 100 || /[<>]/.test(name)) {
+      bad(`${at}.name must be plain text of at most 100 characters.`);
+    }
+    const designation = sig.designation;
+    if (
+      designation !== undefined &&
+      designation !== null &&
+      (typeof designation !== 'string' ||
+        designation.length > 100 ||
+        /[<>]/.test(designation))
+    ) {
+      bad(`${at}.designation must be plain text of at most 100 characters.`);
+    }
+    const url = sig.signatureUrl;
+    // A signature image is one of the organization's own uploaded files - never an address on someone else's server.
+    if (
+      url !== undefined &&
+      url !== null &&
+      (typeof url !== 'string' ||
+        /^[a-z][a-z0-9+.-]*:/i.test(url) ||
+        url.startsWith('//') ||
+        url.includes('..'))
+    ) {
+      bad(`${at}.signatureUrl must be an image uploaded to this organization.`);
+    }
+  });
+  if (
+    list.length > 0 &&
+    list.filter((s) => s.isPrimary === true).length !== 1
+  ) {
+    bad('Exactly one signatory must be marked as the primary signatory.');
   }
 }
 
@@ -352,6 +459,7 @@ export function validateSectionData(data: Record<string, unknown>) {
     if (!data.signatories.every(isPlainObject)) {
       bad('signatories must be an array of objects.');
     }
+    validateSignatories(data.signatories as Record<string, unknown>[]);
   }
   if (isPlainObject(data.policies)) validatePolicies(data.policies);
   if (isPlainObject(data.orgPayrollAttendancePrefs)) {

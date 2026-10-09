@@ -8,6 +8,7 @@ import { signFileToken } from './file-token';
 import {
   ALLOWED_MIME_TYPES,
   contentMatchesDeclaredType,
+  contentMatchesExtension,
   matchesJpegOrPng,
 } from './file-signature';
 
@@ -32,7 +33,10 @@ export class FilesService {
         fs.closeSync(fd);
       }
       const bytes = head.subarray(0, read);
-      if (!contentMatchesDeclaredType(bytes, file.mimetype)) {
+      if (
+        !contentMatchesDeclaredType(bytes, file.mimetype) ||
+        !contentMatchesExtension(bytes, file.originalname)
+      ) {
         fs.rmSync(file.path, { force: true });
         throw new BadRequestException(
           'The file is empty or its contents do not match its type.',

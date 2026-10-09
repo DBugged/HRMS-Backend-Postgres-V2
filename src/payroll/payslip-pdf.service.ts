@@ -1037,8 +1037,33 @@ export class PayslipPdfService {
       });
     }
     if (!template) {
+      // The first template starts from the organization's own company details instead of the "Your Company Name"
+      // placeholder, so a payslip never goes out under a made-up name.
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: {
+          companyName: true,
+          registeredAddress: true,
+          contactEmail: true,
+          website: true,
+          phone: true,
+          companyLogoUrl: true,
+        },
+      });
       template = await this.scopedPrisma.payrollTemplate.create({
-        data: { organizationId, name: 'Default Template', isDefault: true },
+        data: {
+          organizationId,
+          name: 'Default Template',
+          isDefault: true,
+          ...(org?.companyName?.trim() && {
+            companyName: org.companyName.trim(),
+          }),
+          companyAddress: org?.registeredAddress || null,
+          companyEmail: org?.contactEmail || null,
+          companyWebsite: org?.website || null,
+          companyContactNumber: org?.phone || null,
+          companyLogoUrl: org?.companyLogoUrl || null,
+        },
       });
     }
     return template;

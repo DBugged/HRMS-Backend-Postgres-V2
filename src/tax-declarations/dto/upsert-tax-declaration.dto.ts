@@ -1,3 +1,4 @@
+import { IsFinancialYear } from '../../common/is-financial-year.validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
@@ -38,6 +39,7 @@ export class UpsertTaxDeclarationDto {
   @ApiProperty({ example: '2026-27' })
   @IsNotEmpty()
   @IsString()
+  @IsFinancialYear()
   financialYear!: string;
 
   @ApiPropertyOptional({ enum: TaxRegime, default: TaxRegime.NEW })

@@ -725,6 +725,32 @@ export class EmployeesService {
     return { created, failed };
   }
 
+  // The directory list is open to every role, so someone who is not HR/Admin sees only the public directory fields of
+  // a colleague - never their personal data (date of birth, address, family, CTC, bank/ID numbers, document links) or
+  // phone number. A person's own row, and anything HR/Admin asks for, is complete.
+  private forViewer<T extends Record<string, unknown>>(
+    safe: T,
+    rowId: string,
+    actor: Actor,
+  ): T {
+    if (actor.role === Role.ADMIN || actor.role === Role.HR) return safe;
+    if (rowId === actor.id) return safe;
+    const {
+      personalData,
+      contactNumber: _contactNumber,
+      officialEmail: _officialEmail,
+      ...rest
+    } = safe;
+    // Only the "profile complete" flag the directory column shows.
+    const completed = !!(personalData as Record<string, unknown> | null)
+      ?.profileCompleted;
+    return {
+      ...rest,
+      personalData: { profileCompleted: completed },
+      contactNumber: null,
+    } as unknown as T;
+  }
+
   async findAll(
     query: ListEmployeesQueryDto,
     actor: Actor,
@@ -784,7 +810,9 @@ export class EmployeesService {
     ]);
 
     return {
-      data: rows.map((r) => toSafe(r, maskFor(actor, r.id))),
+      data: rows.map((r) =>
+        this.forViewer(toSafe(r, maskFor(actor, r.id)), r.id, actor),
+      ),
       total,
       page: query.page,
       limit: query.limit,
@@ -894,6 +922,16 @@ export class EmployeesService {
       throw new BadRequestException(
         'You cannot deactivate your own account — ask another Admin or HR to do it.',
       );
+    }
+
+    // The organization must always keep an active Admin: nobody can demote or deactivate the last one (this used to
+    // be possible through PATCH even though the deactivate route refused it, leaving a company nobody could administer).
+    if (
+      before.role === Role.ADMIN &&
+      ((clean.role !== undefined && clean.role !== Role.ADMIN) ||
+        clean.isActive === false)
+    ) {
+      await this.assertAnotherActiveAdminRemains(id, organizationId);
     }
 
     // A deactivated employee's record is frozen except for reactivating
@@ -1336,6 +1374,25 @@ export class EmployeesService {
     }
   }
 
+  private async assertAnotherActiveAdminRemains(
+    id: string,
+    organizationId: string,
+  ) {
+    const others = await this.scopedPrisma.user.count({
+      where: {
+        organizationId,
+        role: Role.ADMIN,
+        isActive: true,
+        id: { not: id },
+      },
+    });
+    if (others === 0) {
+      throw new BadRequestException(
+        'This is the only active Admin. Make another employee an Admin first, then change or deactivate this one.',
+      );
+    }
+  }
+
   async deactivate(
     id: string,
     dto: DeactivateEmployeeDto,
@@ -1347,7 +1404,10 @@ export class EmployeesService {
         'You cannot deactivate your own account — ask another Admin or HR to do it.',
       );
     }
-    await this.findByIdOrThrow(id, organizationId);
+    const target = await this.findByIdOrThrow(id, organizationId);
+    if (target.role === Role.ADMIN) {
+      await this.assertAnotherActiveAdminRemains(id, organizationId);
+    }
     await reassignDirectReportsBeforeDeactivation(
       {
         scopedPrisma: this.scopedPrisma,

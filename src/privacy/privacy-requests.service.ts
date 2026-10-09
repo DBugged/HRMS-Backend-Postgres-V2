@@ -21,6 +21,9 @@ import { DataRequest, DataRequestStatus, Prisma, Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { paginate } from '../common/pagination';
+import { isValidIndianMobile } from '../common/indian-mobile';
+import { isValidPersonName, PERSON_NAME_MESSAGE } from '../common/person-name';
+import { assertValidAddress } from '../employees/personal-data';
 import { signFileToken } from '../files/file-token';
 import { deleteStoredFile } from '../files/delete-stored-file';
 import { PrivacyAuditService } from './privacy-audit.service';
@@ -98,6 +101,36 @@ const MASKED_KEYS = [
   'passportNumber',
 ];
 const OMITTED_KEYS = ['cancelledChequeUrl'];
+
+// The same rules a normal profile edit follows, so an approved privacy request can never store something the profile
+// screens would refuse (a 4-digit phone number, a one-letter address, a name with symbols).
+function assertCorrectionValue(key: string, value: string): void {
+  const text = value.trim();
+  if (text === '') {
+    throw new BadRequestException(`Value for "${key}" cannot be empty.`);
+  }
+  if (
+    key === 'phone' ||
+    key === 'contactNumber' ||
+    key === 'emergencyContact1Number' ||
+    key === 'emergencyContact2Number'
+  ) {
+    if (!isValidIndianMobile(text)) {
+      throw new BadRequestException(
+        `"${key}" must be a 10-digit mobile number starting with 6, 7, 8 or 9 (optionally with +91).`,
+      );
+    }
+  } else if (key === 'currentAddress') {
+    assertValidAddress({ currentAddress: text });
+  } else if (
+    key === 'emergencyContact1Name' ||
+    key === 'emergencyContact2Name'
+  ) {
+    if (!isValidPersonName(text)) {
+      throw new BadRequestException(`"${key}" ${PERSON_NAME_MESSAGE}.`);
+    }
+  }
+}
 
 const OPEN_STATUSES: DataRequestStatus[] = [
   'SUBMITTED',
@@ -255,7 +288,8 @@ export class PrivacyRequestsService {
             `Value for "${k}" must be text of at most 500 characters.`,
           );
         }
-        clean[k] = v;
+        assertCorrectionValue(k, v);
+        clean[k] = v.trim();
       }
       payload.fields = clean;
     } else if (dto.fields) {
@@ -712,6 +746,12 @@ export class PrivacyRequestsService {
     const columnUpdates: Record<string, string> = {};
     const pdUpdates: Record<string, string> = {};
     for (const [k, v] of Object.entries(fields)) {
+      if (
+        k in AUTO_APPLY_USER_COLUMNS ||
+        (AUTO_APPLY_PERSONAL_DATA as readonly string[]).includes(k)
+      ) {
+        assertCorrectionValue(k, v);
+      }
       if (k in AUTO_APPLY_USER_COLUMNS) {
         columnUpdates[AUTO_APPLY_USER_COLUMNS[k]] = v;
         applied.push(k);
@@ -720,6 +760,21 @@ export class PrivacyRequestsService {
         applied.push(k);
       } else {
         controlled.push(k);
+      }
+    }
+    if (columnUpdates.contactNumber) {
+      const taken = await this.scopedPrisma.user.findFirst({
+        where: {
+          organizationId: r.organizationId,
+          id: { not: r.userId },
+          contactNumber: columnUpdates.contactNumber,
+        },
+        select: { id: true },
+      });
+      if (taken) {
+        throw new BadRequestException(
+          'This contact number is already in use by another employee.',
+        );
       }
     }
     if (applied.length) {
