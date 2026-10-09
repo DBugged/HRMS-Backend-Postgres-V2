@@ -16,6 +16,7 @@
 // with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
 // email goes to the employee's personalEmail, not their login email, since by process() time the account is
 // already deactivated.
+import { todayInOrgTz } from '../common/org-date';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -196,9 +197,49 @@ export class SettlementsService {
     });
     if (!employee) throw new NotFoundException('Employee not found.');
 
+    // Someone who has already left (account closed) or whose final settlement is already processed or paid is not
+    // settled a second time: a second draft here is how an exit could end up paid twice.
+    if (!employee.isActive) {
+      throw new BadRequestException(
+        'This employee has already left (their account is inactive), so a final settlement cannot be calculated for them again.',
+      );
+    }
+    const alreadySettled = await this.scopedPrisma.settlement.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        status: { in: [SettlementStatus.PROCESSED, SettlementStatus.PAID] },
+      },
+      select: { status: true },
+    });
+    if (alreadySettled) {
+      throw new BadRequestException(
+        `This employee's final settlement has already been ${alreadySettled.status.toLowerCase()}, so it cannot be calculated again.`,
+      );
+    }
+
     const lwd = new Date(dto.lastWorkingDay);
     if (Number.isNaN(lwd.getTime())) {
       throw new BadRequestException('lastWorkingDay is not a valid date.');
+    }
+    // The last working day has to be a real day of employment that has come: not before they joined, and not still to
+    // come (pay for days not yet worked would be settled early). Calculate on or after the last working day.
+    const lwdDate = dto.lastWorkingDay.slice(0, 10);
+    const joinedOn = employee.joiningDate.toISOString().slice(0, 10);
+    if (lwdDate < joinedOn) {
+      throw new BadRequestException(
+        `The last working day (${lwdDate}) cannot be before the joining date (${joinedOn}).`,
+      );
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    if (lwdDate > today) {
+      throw new BadRequestException(
+        `The last working day (${lwdDate}) has not come yet. Calculate the final settlement on or after the last working day.`,
+      );
     }
     const month = lwd.getMonth() + 1;
     const year = lwd.getFullYear();
@@ -586,7 +627,8 @@ export class SettlementsService {
       },
       _sum: { amount: true },
     });
-    return agg._sum.amount ?? 0;
+    // Rupees and paise: summing claims must not leave floating-point tails (2233.5688).
+    return Math.round((agg._sum.amount ?? 0) * 100) / 100;
   }
 
   // Locks in the settlement: creates the linked PayrollRun (isFinalSettlement)
@@ -602,6 +644,21 @@ export class SettlementsService {
     if (settlement.status !== SettlementStatus.DRAFT) {
       throw new BadRequestException(
         'Only a draft settlement can be processed.',
+      );
+    }
+    // One final settlement per person: say so plainly rather than letting the database's unique key reject the second
+    // payroll run with a generic "record already exists".
+    const earlierFinal = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId: settlement.employeeId,
+        isFinalSettlement: true,
+      },
+      select: { month: true, year: true },
+    });
+    if (earlierFinal) {
+      throw new BadRequestException(
+        `A final settlement has already been processed for this employee (${earlierFinal.month}/${earlierFinal.year}). Only one can exist.`,
       );
     }
     // Same guard payroll applies before LOCK (payroll.service.ts's

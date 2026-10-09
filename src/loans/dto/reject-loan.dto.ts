@@ -1,9 +1,11 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsNotEmpty, IsString } from 'class-validator';
 
 export class RejectLoanDto {
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty({
+    description: 'Why the request is rejected (shown to the employee)',
+  })
   @IsString()
-  reason?: string;
+  @IsNotEmpty()
+  reason!: string;
 }

@@ -16,6 +16,7 @@ import {
   NotificationCategory,
   Prisma,
   Reimbursement,
+  ReimbursementCategory,
   ReimbursementStatus,
   Role,
   User,
@@ -41,6 +42,9 @@ import { todayInOrgTz } from '../common/org-date';
 type Actor = Omit<User, 'password'>;
 
 const EXTERNAL_URL_RE = /^https?:\/\//i;
+
+// How far back an expense may be claimed.
+const MAX_CLAIM_AGE_DAYS = 365;
 
 @Injectable()
 export class ReimbursementsService {
@@ -153,6 +157,17 @@ export class ReimbursementsService {
     if (dto.claimDate > latestAllowed) {
       throw new BadRequestException('The claim date cannot be in the future.');
     }
+    // ...and not one from years ago: a claim older than a year is no longer something to reimburse.
+    const earliestAllowed = new Date(Date.now() - MAX_CLAIM_AGE_DAYS * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    if (dto.claimDate < earliestAllowed) {
+      throw new BadRequestException(
+        `A claim cannot be older than ${MAX_CLAIM_AGE_DAYS} days. Raise it with HR if it is genuinely older.`,
+      );
+    }
+    // A missing (or null) category is "Other", not an error.
+    const category = dto.category ?? ReimbursementCategory.OTHER;
     // Application-level duplicate-submission guard — this had none at all
     // (reproduced live: firing the identical claim twice at once created 2
     // fully independent, each individually approvable/payable rows — a
@@ -167,7 +182,7 @@ export class ReimbursementsService {
       where: {
         organizationId,
         employeeId: actor.id,
-        category: dto.category,
+        category,
         amount: dto.amount,
         claimDate: dto.claimDate,
         status: { not: ReimbursementStatus.REJECTED },
@@ -183,7 +198,7 @@ export class ReimbursementsService {
       data: {
         organizationId,
         employeeId: actor.id,
-        category: dto.category,
+        category,
         amount: dto.amount,
         claimDate: dto.claimDate,
         description: dto.description ?? '',
@@ -285,6 +300,20 @@ export class ReimbursementsService {
       throw new BadRequestException(
         'Payment mode (cash, cheque, or transfer) is required to mark a claim as paid.',
       );
+    }
+    // A payout is recorded after it happened: not in the future, and not before the expense itself.
+    if (dto.status === 'PAID' && dto.paidDate) {
+      const todayForPaidDate = todayInOrgTz(
+        await this.getOrgTimezone(organizationId),
+      );
+      if (dto.paidDate > todayForPaidDate) {
+        throw new BadRequestException('The paid date cannot be in the future.');
+      }
+      if (dto.paidDate < claim.claimDate) {
+        throw new BadRequestException(
+          'The paid date cannot be before the claim date.',
+        );
+      }
     }
 
     // Guarded compare-and-swap: the claim's pre-checked status is

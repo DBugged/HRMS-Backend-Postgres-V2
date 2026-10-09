@@ -3,7 +3,8 @@ import {
   IsEnum,
   IsNumber,
   IsOptional,
-  IsPositive,
+  Min,
+  MaxLength,
   IsString,
   Max,
 } from 'class-validator';
@@ -22,8 +23,9 @@ export class CreateReimbursementDto {
   category?: ReimbursementCategory;
 
   @ApiProperty()
-  @IsNumber()
-  @IsPositive()
+  // Rupees and paise: more than two decimals is a typing error, and ₹0.001 is not a claim.
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
   @Max(MAX_REIMBURSEMENT_AMOUNT)
   amount!: number;
 
@@ -34,6 +36,7 @@ export class CreateReimbursementDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   description?: string;
 
   @ApiPropertyOptional()

@@ -11,6 +11,11 @@ import {
   Min,
 } from 'class-validator';
 import { LoanType } from '@prisma/client';
+import {
+  MAX_LOAN_INTEREST_RATE,
+  MAX_LOAN_PRINCIPAL,
+  MAX_LOAN_TENURE_MONTHS,
+} from '../loan-limits';
 
 export class CreateLoanDto {
   @ApiProperty()
@@ -23,19 +28,22 @@ export class CreateLoanDto {
   loanType?: LoanType;
 
   @ApiProperty()
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
+  @Max(MAX_LOAN_PRINCIPAL)
   principal!: number;
 
   @ApiPropertyOptional({ description: 'Annual %' })
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(MAX_LOAN_INTEREST_RATE)
   interestRate?: number;
 
   @ApiProperty()
   @IsInt()
   @IsPositive()
+  @Max(MAX_LOAN_TENURE_MONTHS)
   tenureMonths!: number;
 
   @ApiProperty()
@@ -46,6 +54,8 @@ export class CreateLoanDto {
 
   @ApiProperty()
   @IsInt()
+  @Min(2000)
+  @Max(2100)
   startYear!: number;
 
   @ApiPropertyOptional()

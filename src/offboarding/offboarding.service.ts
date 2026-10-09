@@ -24,6 +24,7 @@ import {
   OffboardingStatus,
   OrgListType,
   Prisma,
+  ResignationStatus,
   SettlementStatus,
   User,
 } from '@prisma/client';
@@ -567,6 +568,21 @@ export class OffboardingService {
             },
           });
         }
+      }
+      // The resignation that started this case no longer stands: the employee is back in service, so it is closed
+      // too (not left saying "approved, leaving on <date>").
+      if (count > 0 && wasOpen) {
+        await tx.resignation.updateMany({
+          where: {
+            organizationId,
+            offboardingCaseId: id,
+            status: ResignationStatus.APPROVED,
+          },
+          data: {
+            status: ResignationStatus.WITHDRAWN,
+            decisionNote: 'Offboarding was cancelled.',
+          },
+        });
       }
     });
     return this.findOne(id, organizationId);

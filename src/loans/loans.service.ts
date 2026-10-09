@@ -15,16 +15,21 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  CalcType,
   LoanStatus,
   LoanType,
   NotificationCategory,
+  PayrollRunStatus,
   Prisma,
   Role,
+  SalaryComponentType,
   User,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { calculateEmi, splitRepayment } from './loan-math';
+import { calculateEmi, payoffAmount, splitRepayment } from './loan-math';
+import { emiCapError, loanStartError } from './loan-limits';
+import { resolveCurrentRows } from '../employee-salary-components/salary-structure-math';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { CreateLoanDto } from './dto/create-loan.dto';
@@ -70,6 +75,104 @@ export class LoansService {
         'A salary advance is interest-free — set 0%, or use Loan instead if interest applies.',
       );
     }
+  }
+
+  // What the employee takes home in a normal month, the base for the EMI cap. From their latest payroll runs: the
+  // best of the last three (net pay with any loan EMI added back), so one short month does not understate it. With no
+  // payroll yet, the fixed earnings of their current salary structure.
+  private async netMonthlySalary(
+    employeeId: string,
+    organizationId: string,
+  ): Promise<number> {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        isFinalSettlement: false,
+        status: { not: PayrollRunStatus.DRAFT },
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      take: 3,
+    });
+    const nets = runs
+      .map((r) => {
+        const emi = (
+          (r.deductions ?? []) as unknown as { code: string; amount: number }[]
+        )
+          .filter((d) => d.code === 'LOAN_EMI')
+          .reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+        return r.netPay + emi;
+      })
+      .filter((n) => n > 0);
+    if (nets.length > 0) return Math.max(...nets);
+
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
+      where: { organizationId, employeeId, isEnabled: true },
+      include: { component: { select: { type: true } } },
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    const total = resolveCurrentRows(rows, today)
+      .filter(
+        (r) =>
+          r.component.type === SalaryComponentType.EARNING &&
+          r.valueType === CalcType.FIXED &&
+          (r.fixedAmount ?? 0) > 0,
+      )
+      .reduce(
+        (sum, r) =>
+          sum +
+          (r.amountBasis === 'ANNUAL'
+            ? (r.fixedAmount ?? 0) / 12
+            : (r.fixedAmount ?? 0)),
+        0,
+      );
+    return Math.round(total);
+  }
+
+  // The rules every sanctioned loan/advance must pass, whether HR creates it or approves a request: a sensible first
+  // EMI month, an HR/Admin employee's loan only by an Admin, and total EMIs within 30% of net monthly salary.
+  private async assertSanctionAllowed(params: {
+    employee: User;
+    actor: Actor;
+    emiAmount: number;
+    startMonth: number;
+    startYear: number;
+    organizationId: string;
+    excludeLoanId?: string;
+  }): Promise<void> {
+    const { employee, actor, emiAmount, organizationId } = params;
+    const startProblem = loanStartError(params.startMonth, params.startYear);
+    if (startProblem) throw new BadRequestException(startProblem);
+
+    if (
+      (employee.role === Role.HR || employee.role === Role.ADMIN) &&
+      actor.role !== Role.ADMIN
+    ) {
+      throw new ForbiddenException(
+        'A loan or advance for an HR or Admin employee has to be sanctioned by an Admin.',
+      );
+    }
+
+    const net = await this.netMonthlySalary(employee.id, organizationId);
+    if (net <= 0) {
+      throw new BadRequestException(
+        'This employee has no salary on record (no payroll yet and no salary structure), so the loan limit cannot be checked. Set their salary structure first.',
+      );
+    }
+    const existing = await this.scopedPrisma.loan.findMany({
+      where: {
+        organizationId,
+        employeeId: employee.id,
+        status: LoanStatus.ACTIVE,
+        outstandingBalance: { gt: 0 },
+        ...(params.excludeLoanId ? { id: { not: params.excludeLoanId } } : {}),
+      },
+      select: { emiAmount: true },
+    });
+    const totalEmi =
+      existing.reduce((sum, l) => sum + l.emiAmount, 0) + emiAmount;
+    const capProblem = emiCapError(totalEmi, net);
+    if (capProblem) throw new BadRequestException(capProblem);
   }
 
   async findAll(query: QueryLoanDto, actor: Actor, organizationId: string) {
@@ -135,6 +238,14 @@ export class LoansService {
       dto.interestRate ?? 0,
       dto.tenureMonths,
     );
+    await this.assertSanctionAllowed({
+      employee: employeeRow,
+      actor,
+      emiAmount,
+      startMonth: dto.startMonth,
+      startYear: dto.startYear,
+      organizationId,
+    });
 
     const loan = await this.scopedPrisma.loan.create({
       data: {
@@ -217,6 +328,19 @@ export class LoansService {
   // ever goes ACTIVE — emiAmount below is purely an indicative estimate
   // for the request, not what the employee will actually be held to.
   async request(dto: RequestLoanDto, actor: Actor, organizationId: string) {
+    const alreadyPending = await this.scopedPrisma.loan.findFirst({
+      where: {
+        organizationId,
+        employeeId: actor.id,
+        status: LoanStatus.PENDING,
+      },
+      select: { id: true },
+    });
+    if (alreadyPending) {
+      throw new BadRequestException(
+        'You already have a loan/advance request waiting for a decision. Wait for it to be reviewed, or ask HR to reject it, before requesting another.',
+      );
+    }
     const now = new Date();
     const emiAmount = calculateEmi(dto.principal, 0, dto.tenureMonths);
 
@@ -308,6 +432,15 @@ export class LoansService {
     this.assertAdvanceIsInterestFree(loan.loanType, interestRate);
     const tenureMonths = dto.tenureMonths ?? loan.tenureMonths;
     const emiAmount = calculateEmi(loan.principal, interestRate, tenureMonths);
+    await this.assertSanctionAllowed({
+      employee,
+      actor,
+      emiAmount,
+      startMonth: dto.startMonth,
+      startYear: dto.startYear,
+      organizationId,
+      excludeLoanId: id,
+    });
 
     // Guarded compare-and-swap: PENDING re-asserted in the write's own
     // `where`, not just the pre-check above, so two concurrent approve()
@@ -626,6 +759,32 @@ export class LoansService {
       throw new BadRequestException(
         'Only an active loan can have a repayment recorded against it.',
       );
+    }
+
+    // A repayment entered by hand (the payroll lock passes its run id and has already capped its own EMI): it cannot be
+    // more than what is still owed, and not a second one for a month that already has a repayment (a salary EMI or an
+    // earlier entry), which is how a month used to get charged twice.
+    if (!dto.payrollRun) {
+      const owed = payoffAmount(loan.outstandingBalance, loan.interestRate);
+      if (dto.amount > owed) {
+        throw new BadRequestException(
+          `This is more than is still owed on the loan (${owed}). Enter ${owed} or less.`,
+        );
+      }
+      const sameMonth = await this.scopedPrisma.loanRepayment.findFirst({
+        where: {
+          organizationId,
+          loanId: id,
+          month: dto.month,
+          year: dto.year,
+        },
+        select: { id: true },
+      });
+      if (sameMonth) {
+        throw new ConflictException(
+          `A repayment for ${dto.month}/${dto.year} is already recorded on this loan.`,
+        );
+      }
     }
 
     let principalComponent = 0;

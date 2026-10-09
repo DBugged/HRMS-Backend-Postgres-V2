@@ -6,8 +6,10 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  Max,
 } from 'class-validator';
 import { LoanType } from '@prisma/client';
+import { MAX_LOAN_PRINCIPAL, MAX_LOAN_TENURE_MONTHS } from '../loan-limits';
 
 // Self-service — the employee requesting for themselves, so no
 // employeeId/interestRate/startMonth/startYear here (unlike
@@ -19,13 +21,15 @@ export class RequestLoanDto {
   loanType?: LoanType;
 
   @ApiProperty()
-  @IsNumber()
+  @IsNumber({ maxDecimalPlaces: 2 })
   @IsPositive()
+  @Max(MAX_LOAN_PRINCIPAL)
   principal!: number;
 
   @ApiProperty()
   @IsInt()
   @IsPositive()
+  @Max(MAX_LOAN_TENURE_MONTHS)
   tenureMonths!: number;
 
   @ApiPropertyOptional()

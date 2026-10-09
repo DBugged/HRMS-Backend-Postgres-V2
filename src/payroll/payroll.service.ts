@@ -2175,6 +2175,11 @@ export class PayrollService {
       );
     }
 
+    // Unlocking takes this run's loan EMIs back. That is only possible while they are the loan's latest repayment; if
+    // something was recorded after them the balance cannot be restored safely, and the unlock used to go ahead anyway
+    // leaving the loan charged. Refuse it instead, saying why.
+    await this.assertLoanRepaymentsReversible(run, organizationId);
+
     await this.scopedPrisma.payrollRun.updateMany({
       where: { id, organizationId },
       data: {
@@ -2218,6 +2223,26 @@ export class PayrollService {
       await this.notifyPayslipWithdrawn(run, organizationId);
     }
     return updated;
+  }
+
+  private async assertLoanRepaymentsReversible(
+    run: PayrollRun,
+    organizationId: string,
+  ): Promise<void> {
+    const repayments = await this.scopedPrisma.loanRepayment.findMany({
+      where: { organizationId, payrollRunId: run.id },
+    });
+    for (const repayment of repayments) {
+      const latest = await this.scopedPrisma.loanRepayment.findFirst({
+        where: { organizationId, loanId: repayment.loanId },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (latest && latest.id !== repayment.id) {
+        throw new BadRequestException(
+          `This payroll cannot be unlocked: the loan EMI of ${repayment.amount} taken in it cannot be reversed because a later repayment (${latest.month}/${latest.year}, ${latest.amount}) was recorded on the same loan. Unlock the later payroll first.`,
+        );
+      }
+    }
   }
 
   // Tells the employee that a payslip they already received has been withdrawn for correction. Never fails the unlock

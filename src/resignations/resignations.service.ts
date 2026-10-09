@@ -36,6 +36,12 @@ import {
 import { ListResignationsQueryDto } from './dto/list-resignations-query.dto';
 import { todayInOrgTz } from '../common/org-date';
 
+function addDaysToDateStr(date: string, days: number): string {
+  const d = new Date(`${date}T00:00:00.000Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
 type Actor = Omit<User, 'password'>;
 
 const HR_ROLES: Role[] = [Role.HR, Role.ADMIN];
@@ -78,16 +84,42 @@ export class ResignationsService {
     if (dto.requestedLwd < submittedOn) {
       throw new BadRequestException('requestedLwd cannot be before today.');
     }
+    // The last working day has to leave room for the notice period (the employee's own figure, else the company's
+    // default), and cannot be years away.
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { policies: true },
+    });
+    const defaultNotice = Number(
+      (org?.policies as { defaultNoticeDays?: number } | null)
+        ?.defaultNoticeDays ?? 0,
+    );
+    const notice =
+      dto.noticePeriodDays ?? (defaultNotice > 0 ? defaultNotice : 0);
+    const earliestLwd = addDaysToDateStr(submittedOn, notice);
+    if (dto.requestedLwd < earliestLwd) {
+      throw new BadRequestException(
+        `With a notice period of ${notice} day(s), the last working day cannot be before ${earliestLwd}.`,
+      );
+    }
+    if (dto.requestedLwd > addDaysToDateStr(submittedOn, 365)) {
+      throw new BadRequestException(
+        'The last working day cannot be more than a year from today.',
+      );
+    }
+    // One resignation at a time: a pending one, or one already approved (its offboarding is under way).
     const open = await this.scopedPrisma.resignation.findFirst({
       where: {
         organizationId,
         employeeId: actor.id,
-        status: ResignationStatus.PENDING,
+        status: { in: [ResignationStatus.PENDING, ResignationStatus.APPROVED] },
       },
     });
     if (open) {
       throw new BadRequestException(
-        'You already have a pending resignation request.',
+        open.status === ResignationStatus.APPROVED
+          ? 'Your resignation has already been approved.'
+          : 'You already have a pending resignation request.',
       );
     }
     const openCase = await this.scopedPrisma.offboardingCase.findFirst({
