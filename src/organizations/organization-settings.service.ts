@@ -495,7 +495,11 @@ export class OrganizationSettingsService {
       }
     }
 
-    if (section === 'registration' || section === 'contact') {
+    if (
+      section === 'registration' ||
+      section === 'contact' ||
+      section === 'profile'
+    ) {
       const error = validateOrgFields(data);
       if (error) throw new BadRequestException(error);
     }
