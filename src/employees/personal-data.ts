@@ -42,6 +42,13 @@ const IDENTIFIER_PATTERNS: Record<
     label: 'bank account number',
     example: '123456789012',
   },
+  // EPFO member account: region (2 letters) / office (3 letters) / establishment (7 digits) / extension (3 digits) /
+  // account (7 digits), written with or without the slashes.
+  pfNumber: {
+    pattern: /^[A-Z]{2}\/?[A-Z]{2,3}\/?[0-9]{7}\/?[0-9]{3}\/?[0-9]{7}$/,
+    label: 'PF number',
+    example: 'MH/BAN/1234567/000/0001234',
+  },
   esicNumber: {
     pattern: /^[0-9]{10}$/,
     label: 'ESIC number',

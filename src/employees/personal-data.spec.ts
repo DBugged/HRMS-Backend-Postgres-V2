@@ -272,3 +272,24 @@ describe('assertValidAddress', () => {
     ).not.toThrow();
   });
 });
+
+describe('assertValidIdentifiers: PF number', () => {
+  it('accepts the EPFO member account with or without slashes', () => {
+    expect(() =>
+      assertValidIdentifiers({ pfNumber: 'MH/BAN/1234567/000/0001234' }),
+    ).not.toThrow();
+    expect(() =>
+      assertValidIdentifiers({ pfNumber: 'MHBAN12345670000001234' }),
+    ).not.toThrow();
+  });
+
+  it('rejects anything else', () => {
+    expect(() => assertValidIdentifiers({ pfNumber: 'abc' })).toThrow(
+      /Invalid PF number/,
+    );
+    expect(() =>
+      assertValidIdentifiers({ pfNumber: 'MH/BAN/123/000/0001234' }),
+    ).toThrow(/Invalid PF number/);
+    expect(() => assertValidIdentifiers({ pfNumber: '' })).not.toThrow();
+  });
+});

@@ -20,6 +20,7 @@ import {
   PayrollRunStatus,
   Role,
   User,
+  EmploymentStatus,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -34,6 +35,32 @@ import { LetterTemplatesService } from '../letter-templates/letter-templates.ser
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+
+// Hiring-stage letters are for someone joining or working with the company. Once an employee is serving notice or has
+// left (resigned, released, terminated, absconded - or their account is inactive) they can no longer be issued one.
+const HIRING_LETTER_KEYS = new Set([
+  'offerLetter',
+  'appointmentLetter',
+  'confirmationLetter',
+]);
+const LEAVING_STATUSES: EmploymentStatus[] = [
+  EmploymentStatus.NOTICE_PERIOD,
+  EmploymentStatus.RESIGNED,
+  EmploymentStatus.RELEASED,
+  EmploymentStatus.TERMINATED,
+  EmploymentStatus.ABSCONDED,
+];
+const HIRING_LETTER_BLOCKED_REASON =
+  'Not available once the employee has resigned, is serving notice or has left the organization.';
+function hiringLetterBlocked(
+  key: string,
+  employee: { employmentStatus: EmploymentStatus; isActive: boolean },
+): boolean {
+  return (
+    HIRING_LETTER_KEYS.has(key) &&
+    (!employee.isActive || LEAVING_STATUSES.includes(employee.employmentStatus))
+  );
+}
 
 type Actor = Omit<User, 'password'>;
 
@@ -116,7 +143,7 @@ export class LettersService {
   > {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: employeeId, organizationId },
-      select: { departmentId: true },
+      select: { departmentId: true, employmentStatus: true, isActive: true },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     // Self-view (My Letters) always bypasses the department check below —
@@ -207,16 +234,19 @@ export class LettersService {
       // to this — see the constant's own comment.
       const employeeGateBlocked =
         actor.role === Role.EMPLOYEE && !accessEnabled;
+      const leavingBlocked = hiringLetterBlocked(t.key, employee);
       return {
         key: t.key,
         name: t.name,
         dataProfile: t.dataProfile,
-        unlocked: gate.unlocked && !employeeGateBlocked,
-        reason: employeeGateBlocked
-          ? 'Not yet made available to you — contact HR.'
-          : gate.unlocked
-            ? null
-            : gate.reason,
+        unlocked: gate.unlocked && !employeeGateBlocked && !leavingBlocked,
+        reason: leavingBlocked
+          ? HIRING_LETTER_BLOCKED_REASON
+          : employeeGateBlocked
+            ? 'Not yet made available to you — contact HR.'
+            : gate.unlocked
+              ? null
+              : gate.reason,
         // Present for every key (not just restricted ones) so a
         // privileged caller's UI can render the "Visible to employee"
         // toggle everywhere, not only on the 3 disciplinary keys.
@@ -251,6 +281,9 @@ export class LettersService {
       include: { department: { select: { name: true } } },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
+    if (hiringLetterBlocked(key, employee)) {
+      throw new BadRequestException(HIRING_LETTER_BLOCKED_REASON);
+    }
 
     // Same view-scoping rule as EmployeeTimelineService.assertCanView — HR/
     // ADMIN see anyone, a MANAGER only their own department, an EMPLOYEE

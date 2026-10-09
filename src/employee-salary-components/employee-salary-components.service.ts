@@ -225,7 +225,9 @@ export class EmployeeSalaryComponentsService {
     // never happened). A partial success still returns the per-row `failed` report.
     if (created.length === 0 && failed.length > 0) {
       throw new BadRequestException(
-        failed.map((f) => `${f.componentCode ?? 'row ' + f.row}: ${f.error}`).join(' | '),
+        failed
+          .map((f) => `${f.componentCode ?? 'row ' + f.row}: ${f.error}`)
+          .join(' | '),
       );
     }
 
@@ -256,41 +258,57 @@ export class EmployeeSalaryComponentsService {
         effectiveTo: null,
       },
     });
-    // A revision must start after the row it closes out — otherwise effectiveTo (= day before `from`) would
-    // land before that row's own effectiveFrom, corrupting the history. Same-day or backdated edits are
-    // rejected (split-period revisions are out of scope).
-    if (current && from <= current.effectiveFrom) {
+    // A revision starts after the row it closes out. On the SAME day it corrects that row in place (a salary entered
+    // by mistake can be fixed straight away, without waiting a day); a date before it would corrupt the history, so
+    // that is refused. Either way a month that is already paid is never touched.
+    if (current && from < current.effectiveFrom) {
       throw new BadRequestException(
-        `effectiveFrom (${from}) must be after the current revision's effectiveFrom (${current.effectiveFrom}) for ${component.code}.`,
+        `The new salary cannot start before the current one (${current.effectiveFrom}) for ${component.code}. Use ${current.effectiveFrom} to correct it, or a later date to revise it.`,
       );
     }
     await this.assertNoFinalizedPayrollFrom(employeeId, from, organizationId);
-    if (current) {
+    const sameDay = !!current && from === current.effectiveFrom;
+    if (current && !sameDay) {
       await this.scopedPrisma.employeeSalaryComponent.updateMany({
         where: { id: current.id, organizationId },
         data: { effectiveTo: dayBefore(from) },
       });
     }
 
-    const created = await this.scopedPrisma.employeeSalaryComponent.create({
-      data: {
-        organizationId,
-        employeeId,
-        componentId: component.id,
-        componentCode: component.code,
-        valueType: dto.valueType ?? component.calcType,
-        fixedAmount: dto.fixedAmount ?? null,
-        percentageValue: dto.percentageValue ?? null,
-        percentageOf: dto.percentageOf ?? null,
-        formula: dto.formula ?? null,
-        amountBasis: dto.amountBasis ?? 'MONTHLY',
-        isEnabled: dto.isEnabled ?? true,
-        effectiveFrom: from,
-        effectiveTo: null,
-        revisionNote: dto.revisionNote ?? '',
-        createdById: actorId,
-      },
-    });
+    const values = {
+      valueType: dto.valueType ?? component.calcType,
+      fixedAmount: dto.fixedAmount ?? null,
+      percentageValue: dto.percentageValue ?? null,
+      percentageOf: dto.percentageOf ?? null,
+      formula: dto.formula ?? null,
+      amountBasis: dto.amountBasis ?? 'MONTHLY',
+      isEnabled: dto.isEnabled ?? true,
+      revisionNote: dto.revisionNote ?? '',
+    };
+    let created: EmployeeSalaryComponent;
+    if (sameDay && current) {
+      await this.scopedPrisma.employeeSalaryComponent.updateMany({
+        where: { id: current.id, organizationId },
+        data: values,
+      });
+      created =
+        await this.scopedPrisma.employeeSalaryComponent.findFirstOrThrow({
+          where: { id: current.id, organizationId },
+        });
+    } else {
+      created = await this.scopedPrisma.employeeSalaryComponent.create({
+        data: {
+          organizationId,
+          employeeId,
+          componentId: component.id,
+          componentCode: component.code,
+          ...values,
+          effectiveFrom: from,
+          effectiveTo: null,
+          createdById: actorId,
+        },
+      });
+    }
 
     // A compensation change — same sensitivity class as EMPLOYEE_UPDATED's
     // role/department/isActive transitions (see EmployeesService.update),

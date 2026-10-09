@@ -95,6 +95,8 @@ export class EmployeeProfileService {
       where: { id, organizationId },
       include: {
         department: { select: { id: true, name: true } },
+        // The profile header shows the work location by name.
+        workLocation: { select: { id: true, name: true, state: true } },
         reportingManager: {
           select: { id: true, name: true, employeeId: true },
         },
@@ -203,29 +205,41 @@ export class EmployeeProfileService {
     }
     assertValidIdentifiers(patch);
     assertValidDates(patch);
-    // One PAN / UAN belongs to one person. Compared after decryption (the values are encrypted at rest, so SQL
-    // cannot do it) within this organisation only.
-    for (const [key, label] of [
+    // One PAN / UAN / Aadhaar / ESIC / PF / bank account / passport number belongs to one person. Compared after
+    // decryption (the values are encrypted at rest, so SQL cannot do it) within this organisation only, ignoring
+    // spaces, dashes, slashes and letter case.
+    const UNIQUE_IDENTIFIERS = [
       ['panNumber', 'PAN'],
       ['uanNumber', 'UAN'],
-    ] as const) {
-      const value = patch[key];
-      if (typeof value !== 'string' || value.trim() === '') continue;
+      ['aadharNumber', 'Aadhaar number'],
+      ['esicNumber', 'ESIC number'],
+      ['pfNumber', 'PF number'],
+      ['bankAccountNo', 'bank account number'],
+      ['passportNumber', 'passport number'],
+    ] as const;
+    const canonical = (v: unknown) =>
+      typeof v === 'string' ? v.replace(/[\s\-/]/g, '').toUpperCase() : '';
+    const keysInPatch = UNIQUE_IDENTIFIERS.filter(
+      ([key]) => canonical(patch[key]) !== '',
+    );
+    if (keysInPatch.length > 0) {
       const others = await this.scopedPrisma.user.findMany({
         where: { organizationId, id: { not: id } },
         select: { personalData: true },
       });
-      const clash = others.some((o) => {
-        const v = (o.personalData as Record<string, unknown> | null)?.[key];
-        return (
-          typeof v === 'string' &&
-          v.trim().toUpperCase() === value.trim().toUpperCase()
+      for (const [key, label] of keysInPatch) {
+        const wanted = canonical(patch[key]);
+        const clash = others.some(
+          (o) =>
+            canonical(
+              (o.personalData as Record<string, unknown> | null)?.[key],
+            ) === wanted,
         );
-      });
-      if (clash) {
-        throw new BadRequestException(
-          `This ${label} is already recorded for another employee.`,
-        );
+        if (clash) {
+          throw new BadRequestException(
+            `This ${label} is already recorded for another employee.`,
+          );
+        }
       }
     }
     const merged = mergePersonalData(before, patch, mandatoryDocumentsUploaded);
