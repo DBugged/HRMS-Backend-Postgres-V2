@@ -1,3 +1,4 @@
+import { IsIndianMobile } from '../../common/indian-mobile';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
@@ -47,6 +48,7 @@ export class CreatePayrollTemplateDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   companyContactNumber?: string;
 
   @ApiPropertyOptional()

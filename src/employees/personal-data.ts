@@ -1,3 +1,4 @@
+import { isValidIndianMobile } from '../common/indian-mobile';
 import { BadRequestException } from '@nestjs/common';
 import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
@@ -94,20 +95,16 @@ export function assertValidIdentifiers(patch: Record<string, unknown>): void {
     const normalized =
       key === 'aadharNumber' ? value.replace(/\s+/g, '') : value.trim();
     if (normalized === '') continue;
-    // The phone-type fields accept an existing "+<dialcode> <national>"
-    // value without complaint (same leniency as the frontend's phoneError)
-    // — a value with any non-digit character is assumed to already be a
-    // deliberately-formatted international number from elsewhere, not a
-    // stray format this check should reject. Only a purely numeric value
-    // gets held to the exact-10-digits rule.
-    if (PHONE_KEYS.has(key) && !/^[0-9]+$/.test(normalized)) {
-      // India only: a number that carries a country code must carry +91.
-      if (
-        normalized.startsWith('+') &&
-        !/^\+91/.test(normalized.replace(/[\s-]/g, ''))
-      ) {
+    // Phone fields: an Indian mobile number, written plain or with +91 (see common/indian-mobile.ts).
+    if (PHONE_KEYS.has(key)) {
+      if (!isValidIndianMobile(normalized)) {
+        if (/^\+(?!\s*91)/.test(normalized)) {
+          throw new BadRequestException(
+            `Invalid ${label} — only Indian (+91) numbers are supported.`,
+          );
+        }
         throw new BadRequestException(
-          `Invalid ${label} — only Indian (+91) numbers are supported.`,
+          `Invalid ${label} — must be a 10-digit mobile number starting with 6, 7, 8 or 9 (optionally with +91).`,
         );
       }
       continue;

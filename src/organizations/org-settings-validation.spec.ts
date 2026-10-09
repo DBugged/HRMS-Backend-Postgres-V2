@@ -41,7 +41,19 @@ describe('India-only organization settings', () => {
     expect(() => validateSectionData({ mobile: '+1 415 555 2671' })).toThrow(
       /Indian number/,
     );
-    expect(() => validateSectionData({ phone: '+911234567890' })).not.toThrow();
+    expect(() => validateSectionData({ phone: '+919876543210' })).not.toThrow();
+  });
+
+  it('rejects an Indian number that starts with 0 or is not a 10-digit mobile', () => {
+    expect(() => validateSectionData({ phone: '+91 099999 99999' })).toThrow(
+      /mobile number/,
+    );
+    expect(() => validateSectionData({ phone: '+911234567890' })).toThrow(
+      /mobile number/,
+    );
+    expect(() => validateSectionData({ mobile: '98765' })).toThrow(
+      /mobile number/,
+    );
   });
 
   it('accepts Maharashtra or a blank state, rejects any other state', () => {

@@ -5,6 +5,7 @@
 // bare string and permanently corrupt the org's config). Normalizes numeric-string inputs to numbers.
 // Important: validation only looks at the keys actually present in the incoming body — legacy stored data
 // is never re-validated on an unrelated save.
+import { isValidIndianMobile } from '../common/indian-mobile';
 import { BadRequestException } from '@nestjs/common';
 import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
 import { SUPPORTED_STATES, isSupportedState } from '../common/indian-states';
@@ -160,12 +161,16 @@ export const INDIA_COUNTRY = 'India';
 export const INDIA_TIMEZONE = 'Asia/Kolkata';
 export const INDIA_CURRENCY = 'INR';
 
-// A phone number that carries a country code must carry India's (+91); plain national numbers are left as they are.
+// Phone numbers are Indian mobile numbers: 10 digits starting 6-9, optionally with +91 (see common/indian-mobile.ts).
 export function assertIndianPhone(field: string, value: unknown): void {
-  if (typeof value !== 'string') return;
-  const v = value.trim();
-  if (v.startsWith('+') && !/^\+91/.test(v.replace(/[\s-]/g, ''))) {
-    bad(`${field} must be an Indian number (+91) — only India is supported.`);
+  if (typeof value !== 'string' || value.trim() === '') return;
+  if (!isValidIndianMobile(value)) {
+    if (/^\+(?!\s*91)/.test(value.trim())) {
+      bad(`${field} must be an Indian number (+91) — only India is supported.`);
+    }
+    bad(
+      `${field} must be a 10-digit Indian mobile number starting with 6, 7, 8 or 9 (optionally with +91).`,
+    );
   }
 }
 

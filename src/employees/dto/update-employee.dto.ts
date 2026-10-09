@@ -1,3 +1,4 @@
+import { IsIndianMobile } from '../../common/indian-mobile';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
@@ -9,7 +10,6 @@ import {
   IsUUID,
   MaxLength,
   ValidateIf,
-  Matches,
 } from 'class-validator';
 import {
   EmploymentStatus,
@@ -111,16 +111,8 @@ export class UpdateEmployeeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
-  // India only: a number that carries a country code must carry +91.
-  @Matches(/^(?!\+(?!\s*91))/, {
-    message:
-      'contactNumber must be an Indian number (+91) — only India is supported.',
-  })
-  // A plain number is a 10-digit Indian mobile, which starts with 6-9 (a leading 0 is not a valid mobile number).
-  @Matches(/^(?![0-9]+$)|^[6-9][0-9]{9}$/, {
-    message:
-      'contactNumber must be a 10-digit mobile number starting with 6, 7, 8 or 9.',
-  })
+  // Indian mobile (10 digits, first digit 6-9, optional +91) - same rule as the PhoneInput on every screen.
+  @IsIndianMobile()
   contactNumber?: string;
 
   // Self-editable — feeds LeaveType.applicableGenders eligibility filtering

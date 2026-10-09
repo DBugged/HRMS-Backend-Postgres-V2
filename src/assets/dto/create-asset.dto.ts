@@ -1,3 +1,4 @@
+import { IsIndianMobile } from '../../common/indian-mobile';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { AssetCondition, AssetInventoryStatus } from '@prisma/client';
 import {
@@ -79,6 +80,7 @@ export class CreateAssetDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   vendorContact?: string;
 
   @ApiPropertyOptional()
@@ -146,6 +148,7 @@ export class CreateAssetDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   supportContact?: string;
 
   @ApiPropertyOptional()
@@ -156,6 +159,7 @@ export class CreateAssetDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsIndianMobile()
   supportPhone?: string;
 
   @ApiPropertyOptional()

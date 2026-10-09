@@ -982,6 +982,27 @@ describe('Employees + Departments (e2e)', () => {
         .expect(400);
     });
 
+    it('rejects a contact number that starts with 0 or is not a 10-digit mobile', async () => {
+      const emp = await createEmp('phone');
+      for (const contactNumber of [
+        '0987654321',
+        '+91 099999 99999',
+        '98765',
+        '5123456789',
+      ]) {
+        await request(app.getHttpServer())
+          .patch(`/employees/${emp.id}`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ contactNumber })
+          .expect(400);
+      }
+      await request(app.getHttpServer())
+        .patch(`/employees/${emp.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ contactNumber: '+91 98765 43210' })
+        .expect(200);
+    });
+
     it('rejects an employee as their own reporting manager', async () => {
       await request(app.getHttpServer())
         .patch(`/employees/${aId}`)
