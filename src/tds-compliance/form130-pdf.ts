@@ -3,6 +3,7 @@
 //   is the one generated on TRACES from the filed quarterly statements — the footer says so on every page.
 import PDFDocument from 'pdfkit';
 import type { TdsComplianceService } from './tds-compliance.service';
+import { detectRasterExtension } from '../reports/report-export';
 
 type Form130Data = Awaited<ReturnType<TdsComplianceService['form130Data']>>;
 
@@ -31,7 +32,10 @@ const dmy = (iso: string) => {
   return `${d}/${m}/${y}`;
 };
 
-export function renderForm130(data: Form130Data): Promise<Buffer> {
+export function renderForm130(
+  data: Form130Data,
+  logoBuffer?: Buffer | null,
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
       size: 'A4',
@@ -113,6 +117,19 @@ export function renderForm130(data: Form130Data): Promise<Buffer> {
       y += 6;
     };
 
+    // Org Report Logo, top-right. pdfkit only decodes PNG/JPEG/GIF, so anything else is skipped.
+    let titleW = CONTENT_W;
+    if (logoBuffer && detectRasterExtension(logoBuffer)) {
+      try {
+        doc.image(logoBuffer, MARGIN + CONTENT_W - 48, MARGIN, {
+          fit: [48, 48],
+          align: 'right',
+        });
+        titleW = CONTENT_W - 60;
+      } catch {
+        /* unreadable image - issue the certificate without it */
+      }
+    }
     doc
       .font('Helvetica-Bold')
       .fontSize(15)
@@ -121,7 +138,7 @@ export function renderForm130(data: Form130Data): Promise<Buffer> {
         `${data.formName} — Certificate of Tax Deducted at Source on Salary`,
         MARGIN,
         y,
-        { width: CONTENT_W },
+        { width: titleW },
       );
     y += 22;
     doc

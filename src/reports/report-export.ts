@@ -20,7 +20,7 @@ export type ReportFormat = 'xlsx' | 'csv' | 'pdf';
 // since branding uploads accept any image type (an SVG or WEBP Report Logo
 // is valid to upload, just not embeddable here). Returns null for anything
 // else, and every caller treats that as "skip the logo" rather than erroring.
-function detectRasterExtension(buffer: Buffer): 'png' | 'jpeg' | 'gif' | null {
+export function detectRasterExtension(buffer: Buffer): 'png' | 'jpeg' | 'gif' | null {
   if (
     buffer.length >= 8 &&
     buffer

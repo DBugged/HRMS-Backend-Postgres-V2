@@ -33,3 +33,17 @@ export async function sendReportBranded(
     watermarkEnabled: org?.watermarkLogo ?? false,
   });
 }
+
+// The org's Report Logo bytes for single-document PDFs (e.g. Form 130) that are not routed through sendReport().
+export async function loadReportLogo(
+  scopedPrisma: Pick<ExtendedPrismaClient, 'organization'>,
+  organizationId: string,
+): Promise<Buffer | null> {
+  const org = await scopedPrisma.organization.findFirst({
+    where: { id: organizationId },
+    select: { reportLogoUrl: true },
+  });
+  return org?.reportLogoUrl
+    ? await readStoredFile(org.reportLogoUrl).catch(() => null)
+    : null;
+}

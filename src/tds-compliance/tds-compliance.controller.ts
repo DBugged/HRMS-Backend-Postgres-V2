@@ -32,6 +32,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { sendReportBranded } from '../reports/report-branding';
 import { TdsComplianceService } from './tds-compliance.service';
 import { renderForm130 } from './form130-pdf';
+import { loadReportLogo } from '../reports/report-branding';
 import {
   ChallanListQueryDto,
   CreateChallanDto,
@@ -197,7 +198,8 @@ export class TdsComplianceController {
       c,
       c.organizationId,
     );
-    const pdf = await renderForm130(data);
+    const logo = await loadReportLogo(this.scopedPrisma, c.organizationId);
+    const pdf = await renderForm130(data, logo);
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${data.formName.replace(' ', '')}_${data.employee.code}_${q.financialYear}.pdf"`,
