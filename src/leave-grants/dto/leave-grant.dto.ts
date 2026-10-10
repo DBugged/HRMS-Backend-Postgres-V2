@@ -154,6 +154,14 @@ export class RejectGrantRequestDto {
 
 export class QueryGrantRequestsDto {
   @ApiPropertyOptional({
+    description:
+      'HR/Admin only: limit to one employee (everyone else always sees their own).',
+  })
+  @IsOptional()
+  @IsUUID()
+  employeeId?: string;
+
+  @ApiPropertyOptional({
     enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
   })
   @IsOptional()

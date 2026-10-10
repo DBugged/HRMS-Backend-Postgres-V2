@@ -337,6 +337,34 @@ describe('Event-based leave grants (e2e)', () => {
       expect(after.credited).toBe(before.credited);
     });
 
+    it("HR can list one employee's requests, and an employee only ever sees their own", async () => {
+      const hr = await request(app.getHttpServer())
+        .get('/leave-grants/requests')
+        .query({ employeeId })
+        .set(auth(adminToken))
+        .expect(200);
+      expect(
+        (hr.body as { employeeId: string }[]).every(
+          (r) => r.employeeId === employeeId,
+        ),
+      ).toBe(true);
+      const adminId = (
+        await prisma.user.findFirstOrThrow({
+          where: { email: 'grants-e2e-admin@example.test' },
+        })
+      ).id;
+      const own = await request(app.getHttpServer())
+        .get('/leave-grants/requests')
+        .query({ employeeId: adminId })
+        .set(auth(employeeToken))
+        .expect(200);
+      expect(
+        (own.body as { employeeId: string }[]).every(
+          (r) => r.employeeId === employeeId,
+        ),
+      ).toBe(true);
+    });
+
     it('another organization cannot see or decide it', async () => {
       const list = await request(app.getHttpServer())
         .get('/leave-grants/requests')

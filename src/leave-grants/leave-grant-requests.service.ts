@@ -57,7 +57,12 @@ export class LeaveGrantRequestsService {
     return this.scopedPrisma.leaveGrantRequest.findMany({
       where: {
         organizationId,
-        ...(isHr ? {} : { employeeId: caller.id }),
+        // Everyone else sees only their own requests; HR/Admin see all, or one employee's when asked.
+        ...(isHr
+          ? query.employeeId
+            ? { employeeId: query.employeeId }
+            : {}
+          : { employeeId: caller.id }),
         ...(query.status && {
           status: query.status as
             'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED',
