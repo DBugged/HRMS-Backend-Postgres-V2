@@ -118,7 +118,7 @@ describe('Event-based leave grants (e2e)', () => {
 
   afterAll(async () => {
     await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE "leave_grants", "leave_balances", "leave_types", "refresh_tokens", "users", "departments", "organizations" RESTART IDENTITY CASCADE',
+      'TRUNCATE TABLE "leave_grant_requests", "leave_grants", "leave_balances", "leave_types", "refresh_tokens", "users", "departments", "organizations" RESTART IDENTITY CASCADE',
     );
     await app.close();
   });
@@ -287,5 +287,127 @@ describe('Event-based leave grants (e2e)', () => {
         where: { employeeId, leaveTypeId: eventTypeId },
       }),
     ).toBe(3);
+  });
+
+  describe('employee grant requests', () => {
+    const asEmp = (m: 'post' | 'get', url: string, body?: object) => {
+      const r = request(app.getHttpServer())[m](url).set(auth(employeeToken));
+      return body ? r.send(body) : r;
+    };
+    let requestId: string;
+
+    it('an employee files a request, and cannot ask above the policy maximum', async () => {
+      await asEmp('post', '/leave-grants/requests', {
+        leaveTypeId: eventTypeId,
+        eventDate: day(8, 10),
+        days: 500,
+        reason: 'too many',
+      }).expect(400);
+      const res = await asEmp('post', '/leave-grants/requests', {
+        leaveTypeId: eventTypeId,
+        eventDate: day(8, 10),
+        days: 30,
+        reason: 'Child born',
+      }).expect(201);
+      requestId = (res.body as { id: string }).id;
+      expect((res.body as { status: string }).status).toBe('PENDING');
+    });
+
+    it('a second open request for the same event is refused', async () => {
+      await asEmp('post', '/leave-grants/requests', {
+        leaveTypeId: eventTypeId,
+        eventDate: day(8, 10),
+        days: 30,
+        reason: 'again',
+      }).expect(409);
+    });
+
+    it('the request does not touch the balance and only HR can approve', async () => {
+      const before = await prisma.leaveBalance.findFirstOrThrow({
+        where: { employeeId, leaveTypeId: eventTypeId, year },
+      });
+      await asEmp(
+        'post',
+        `/leave-grants/requests/${requestId}/approve`,
+        {},
+      ).expect(403);
+      const after = await prisma.leaveBalance.findFirstOrThrow({
+        where: { employeeId, leaveTypeId: eventTypeId, year },
+      });
+      expect(after.credited).toBe(before.credited);
+    });
+
+    it('another organization cannot see or decide it', async () => {
+      const list = await request(app.getHttpServer())
+        .get('/leave-grants/requests')
+        .set(auth(otherAdminToken))
+        .expect(200);
+      expect(list.body).toEqual([]);
+      await request(app.getHttpServer())
+        .post(`/leave-grants/requests/${requestId}/approve`)
+        .set(auth(otherAdminToken))
+        .send({})
+        .expect(404);
+    });
+
+    it('HR approves with fewer days: one grant is created and the balance credited once, even if approved twice at once', async () => {
+      const before = await prisma.leaveBalance.findFirstOrThrow({
+        where: { employeeId, leaveTypeId: eventTypeId, year },
+      });
+      const results = await Promise.all(
+        [1, 2].map(() =>
+          request(app.getHttpServer())
+            .post(`/leave-grants/requests/${requestId}/approve`)
+            .set(auth(adminToken))
+            .send({ days: 25 }),
+        ),
+      );
+      expect(results.filter((r) => r.status === 201)).toHaveLength(1);
+      const after = await prisma.leaveBalance.findFirstOrThrow({
+        where: { employeeId, leaveTypeId: eventTypeId, year },
+      });
+      expect(after.credited - before.credited).toBe(25);
+      const reqRow = await prisma.leaveGrantRequest.findFirstOrThrow({
+        where: { id: requestId },
+      });
+      expect(reqRow.status).toBe('APPROVED');
+      expect(reqRow.grantId).not.toBeNull();
+    });
+
+    it('rejecting needs a reason, a decided request cannot be decided again, and cancelling works for the owner', async () => {
+      const r2 = await asEmp('post', '/leave-grants/requests', {
+        leaveTypeId: eventTypeId,
+        eventDate: day(9, 20),
+        days: 10,
+        reason: 'second',
+      }).expect(201);
+      const id2 = (r2.body as { id: string }).id;
+      await request(app.getHttpServer())
+        .post(`/leave-grants/requests/${id2}/reject`)
+        .set(auth(adminToken))
+        .send({})
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`/leave-grants/requests/${id2}/reject`)
+        .set(auth(adminToken))
+        .send({ note: 'No document' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/leave-grants/requests/${id2}/approve`)
+        .set(auth(adminToken))
+        .send({})
+        .expect(409);
+      const r3 = await asEmp('post', '/leave-grants/requests', {
+        leaveTypeId: eventTypeId,
+        eventDate: day(9, 20),
+        days: 10,
+        reason: 'third',
+      }).expect(201);
+      await asEmp(
+        'post',
+        `/leave-grants/requests/${(r3.body as { id: string }).id}/cancel`,
+        {},
+      ).expect(201);
+    });
   });
 });

@@ -15,9 +15,14 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { LeaveGrantsService } from './leave-grants.service';
+import { LeaveGrantRequestsService } from './leave-grant-requests.service';
 import {
+  ApproveGrantRequestDto,
+  CreateGrantRequestDto,
   CreateLeaveGrantDto,
+  QueryGrantRequestsDto,
   QueryLeaveGrantsDto,
+  RejectGrantRequestDto,
   ReverseLeaveGrantDto,
 } from './dto/leave-grant.dto';
 
@@ -27,7 +32,55 @@ type Caller = Omit<User, 'password'>;
 @ApiBearerAuth('access-token')
 @Controller('leave-grants')
 export class LeaveGrantsController {
-  constructor(private readonly service: LeaveGrantsService) {}
+  constructor(
+    private readonly service: LeaveGrantsService,
+    private readonly requests: LeaveGrantRequestsService,
+  ) {}
+
+  // Static `requests` routes come before the `:id` route so Nest does not read "requests" as an id.
+  // No @Roles(): any employee lists their own requests (HR/Admin see everyone's) and files one for themselves.
+  @Get('requests')
+  listRequests(
+    @Query() query: QueryGrantRequestsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.requests.list(query, caller, caller.organizationId);
+  }
+
+  @Post('requests')
+  createRequest(
+    @Body() dto: CreateGrantRequestDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.requests.create(dto, caller, caller.organizationId);
+  }
+
+  @Post('requests/:id/cancel')
+  cancelRequest(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.requests.cancel(id, caller, caller.organizationId);
+  }
+
+  @Post('requests/:id/approve')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.HR)
+  approveRequest(
+    @Param('id') id: string,
+    @Body() dto: ApproveGrantRequestDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.requests.approve(id, dto, caller, caller.organizationId);
+  }
+
+  @Post('requests/:id/reject')
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.HR)
+  rejectRequest(
+    @Param('id') id: string,
+    @Body() dto: RejectGrantRequestDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.requests.reject(id, dto, caller, caller.organizationId);
+  }
 
   @Get()
   list(@Query() query: QueryLeaveGrantsDto, @CurrentUser() caller: Caller) {

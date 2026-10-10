@@ -253,6 +253,7 @@ model Organization {
   tdsStatements                 TdsStatement[]
   leaveEncashments              LeaveEncashment[]
   leaveGrants                   LeaveGrant[]
+  leaveGrantRequests            LeaveGrantRequest[]
   payrollRuns                   PayrollRun[]
   reimbursements                Reimbursement[]
   loans                         Loan[]
@@ -539,6 +540,8 @@ model User {
   leaveGrants                      LeaveGrant[]                   @relation("LeaveGrantEmployee")
   leaveGrantsMade                  LeaveGrant[]                   @relation("LeaveGrantGrantedBy")
   leaveGrantsReversed              LeaveGrant[]                   @relation("LeaveGrantReversedBy")
+  leaveGrantRequests               LeaveGrantRequest[]            @relation("LeaveGrantRequestEmployee")
+  leaveGrantRequestsDecided        LeaveGrantRequest[]            @relation("LeaveGrantRequestDecidedBy")
   leaveEncashmentsApproved         LeaveEncashment[]              @relation("LeaveEncashmentApprovedBy")
   payrollRuns                      PayrollRun[]                   @relation("PayrollRunEmployee")
   payrollRunsCalculated            PayrollRun[]                   @relation("PayrollRunCalculatedBy")
@@ -1060,6 +1063,7 @@ model LeaveType {
   leaves           Leave[]
   leaveEncashments LeaveEncashment[]
   leaveGrants      LeaveGrant[]
+  grantRequests    LeaveGrantRequest[]
 
   @@unique([organizationId, name])
   @@unique([organizationId, code])
@@ -1978,6 +1982,47 @@ model LeaveGrant {
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, employeeId, leaveTypeId])
   @@map("leave_grants")
+}
+
+enum LeaveGrantRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+// An employee's request for an event-based leave grant. HR/Admin approve it (which creates the LeaveGrant through the
+// same checks as a manual grant) or reject it; it never touches a balance by itself.
+model LeaveGrantRequest {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId  String
+  employee    User      @relation("LeaveGrantRequestEmployee", fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Holiday.date.
+  eventDate   String
+  days        Float
+  reason      String
+  documentRef String?
+
+  status       LeaveGrantRequestStatus @default(PENDING)
+  decidedById  String?
+  decidedBy    User?                   @relation("LeaveGrantRequestDecidedBy", fields: [decidedById], references: [id])
+  decidedAt    DateTime?
+  decisionNote String?
+  // The grant an approval created.
+  grantId      String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, status])
+  @@index([organizationId, employeeId])
+  @@map("leave_grant_requests")
 }
 
 enum LeaveEncashmentStatus {

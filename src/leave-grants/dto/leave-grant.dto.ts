@@ -86,3 +86,77 @@ export class QueryLeaveGrantsDto {
   @IsUUID()
   leaveTypeId?: string;
 }
+
+export class CreateGrantRequestDto {
+  @ApiProperty()
+  @IsUUID()
+  leaveTypeId!: string;
+
+  @ApiProperty({
+    example: '2026-10-01',
+    description: 'The qualifying event (childbirth, adoption...).',
+  })
+  @Matches(ISO_DATE)
+  eventDate!: string;
+
+  @ApiProperty({
+    description: 'Days asked for (not above the leave type maximum).',
+  })
+  @IsNumber()
+  @Min(0.5)
+  days!: number;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  reason!: string;
+
+  @ApiPropertyOptional({
+    description: 'Uploaded supporting PDF key, or a reference.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  documentRef?: string;
+}
+
+export class ApproveGrantRequestDto {
+  @ApiPropertyOptional({
+    description: 'Approve a different number of days than requested.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0.5)
+  days?: number;
+
+  @ApiPropertyOptional({
+    description: 'When the leave starts counting; defaults to the event date.',
+  })
+  @IsOptional()
+  @Matches(ISO_DATE)
+  effectiveDate?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  note?: string;
+}
+
+export class RejectGrantRequestDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  note!: string;
+}
+
+export class QueryGrantRequestsDto {
+  @ApiPropertyOptional({
+    enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
+  })
+  @IsOptional()
+  @IsString()
+  status?: string;
+}
