@@ -290,6 +290,8 @@ export class LeavesService {
           encashment: Prisma.JsonValue;
           // Profiles/dashboards sum only types with this on.
           countInTotalBalance: boolean;
+          // Lets My Leave treat an event-based type (built from HR grants) differently from a yearly one.
+          allocationType: AllocationType;
         };
       })[] = [];
       for (const leaveType of balanceEligible) {
@@ -308,6 +310,7 @@ export class LeavesService {
             code: leaveType.code,
             encashment: leaveType.encashment,
             countInTotalBalance: leaveType.countInTotalBalance,
+            allocationType: leaveType.allocationType,
           },
         });
       }
