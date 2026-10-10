@@ -9,6 +9,7 @@ import {
   EMPLOYEE_RELATION_ORDER_BY,
 } from '../common/employee-order';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
 import {
   formatDateDisplay,
   formatTimeInZone,
@@ -58,7 +59,8 @@ export type AnyCustomReportSource = CustomReportSource<never> & {
   columns: Record<string, CustomReportColumn<never>>;
 };
 
-const FETCH_LIMIT = 5000;
+// Same cap as every other report: fetch one past it and refuse, rather than silently truncating the export.
+const FETCH_LIMIT = REPORT_ROW_LIMIT + 1;
 
 const employeesSource: CustomReportSource<
   Prisma.UserGetPayload<{ include: { department: { select: { name: true } } } }>
@@ -124,12 +126,14 @@ const attendanceSource: CustomReportSource<
     if (filters.status) where.status = filters.status as AttendanceStatus;
     if (filters.department)
       where.employee = { departmentId: filters.department };
-    return prisma.attendance.findMany({
+    const rows = await prisma.attendance.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
       orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
       take: FETCH_LIMIT,
     });
+    assertWithinReportLimit(rows);
+    return rows;
   },
 };
 
@@ -164,7 +168,7 @@ const leavesSource: CustomReportSource<
     if (filters.status) where.status = filters.status as LeaveStatus;
     if (filters.department)
       where.employee = { departmentId: filters.department };
-    return prisma.leave.findMany({
+    const rows = await prisma.leave.findMany({
       where,
       include: {
         employee: { select: { name: true, employeeId: true } },
@@ -173,6 +177,8 @@ const leavesSource: CustomReportSource<
       orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { startDate: 'desc' }],
       take: FETCH_LIMIT,
     });
+    assertWithinReportLimit(rows);
+    return rows;
   },
 };
 
@@ -187,16 +193,40 @@ const payrollSource: CustomReportSource<
     employeeName: { header: 'Employee Name', get: (r) => r.employee.name },
     month: { header: 'Month', get: (r) => r.month },
     year: { header: 'Year', get: (r) => r.year },
+    type: {
+      header: 'Type',
+      get: (r) => (r.isFinalSettlement ? 'Final Settlement' : 'Regular'),
+    },
     grossSalary: { header: 'Gross Salary', get: (r) => r.grossSalary },
     netPay: { header: 'Net Pay', get: (r) => r.netPay },
     status: { header: 'Status', get: (r) => r.status },
   },
   fetch: async (filters, organizationId, prisma) => {
     const where: Prisma.PayrollRunWhereInput = { organizationId };
-    if (filters.status) where.status = filters.status as PayrollRunStatus;
+    // Draft runs are not payroll yet; a status filter, when given, narrows within the rest.
+    where.status = filters.status
+      ? (filters.status as PayrollRunStatus)
+      : { not: PayrollRunStatus.DRAFT };
+    // From/To are dates; a run belongs to a month, so include every run whose month overlaps the range.
+    const fromKey = filters.from ? filters.from.slice(0, 7) : undefined;
+    const toKey = filters.to ? filters.to.slice(0, 7) : undefined;
+    if (fromKey || toKey) {
+      const months: { month: number; year: number }[] = [];
+      let [y, m] = (fromKey ?? '2000-01').split('-').map(Number);
+      const [ey, em] = (toKey ?? '2100-12').split('-').map(Number);
+      while ((y < ey || (y === ey && m <= em)) && months.length < 1200) {
+        months.push({ month: m, year: y });
+        m += 1;
+        if (m > 12) {
+          m = 1;
+          y += 1;
+        }
+      }
+      where.OR = months.length ? months : [{ month: 0, year: 0 }];
+    }
     if (filters.department)
       where.employee = { departmentId: filters.department };
-    return prisma.payrollRun.findMany({
+    const rows = await prisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
       orderBy: [
@@ -206,6 +236,8 @@ const payrollSource: CustomReportSource<
       ],
       take: FETCH_LIMIT,
     });
+    assertWithinReportLimit(rows);
+    return rows;
   },
 };
 
