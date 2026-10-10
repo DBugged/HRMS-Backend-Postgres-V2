@@ -15,6 +15,7 @@ import {
 } from '../common/employee-order';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Logger,
   Inject,
@@ -176,6 +177,13 @@ function assertNotOwnPayroll(
     );
   }
 }
+
+// Statuses in which a run's figures may still be rewritten (by calculate or a manual adjustment).
+const EDITABLE_RUN_STATUSES: PayrollRunStatus[] = [
+  PayrollRunStatus.DRAFT,
+  PayrollRunStatus.CALCULATED,
+  PayrollRunStatus.VERIFIED,
+];
 
 // A final-settlement run is created, approved and paid by the Settlements workflow together with the Settlement
 // record; moving it through the generic payroll endpoints would leave the two disagreeing.
@@ -1650,13 +1658,30 @@ export class PayrollService {
             : null,
         };
         if (run) {
-          await this.scopedPrisma.payrollRun.updateMany({
-            where: { id: run.id, organizationId },
+          // Re-asserts the editable statuses in the write itself: the status check above ran on a snapshot taken
+          // before the loop, so an approve/lock/pay that landed in between must not be overwritten (and flipped
+          // back to CALCULATED) with this recalculation.
+          const { count } = await this.scopedPrisma.payrollRun.updateMany({
+            where: {
+              id: run.id,
+              organizationId,
+              status: { in: EDITABLE_RUN_STATUSES },
+            },
             data,
           });
           run = await this.scopedPrisma.payrollRun.findFirstOrThrow({
             where: { id: run.id, organizationId },
           });
+          if (count === 0) {
+            results.push(run);
+            skipped.push({
+              employeeId: employee.id,
+              name: employee.name,
+              code: employee.employeeId,
+              reason: `Payroll run is ${run.status} — not recalculated.`,
+            });
+            return;
+          }
         } else {
           try {
             run = await this.scopedPrisma.payrollRun.create({
@@ -1696,10 +1721,25 @@ export class PayrollService {
                 },
               });
               if (!winner) throw createErr;
-              await this.scopedPrisma.payrollRun.updateMany({
-                where: { id: winner.id, organizationId },
-                data,
-              });
+              const { count: winnerCount } =
+                await this.scopedPrisma.payrollRun.updateMany({
+                  where: {
+                    id: winner.id,
+                    organizationId,
+                    status: { in: EDITABLE_RUN_STATUSES },
+                  },
+                  data,
+                });
+              if (winnerCount === 0) {
+                results.push(winner);
+                skipped.push({
+                  employeeId: employee.id,
+                  name: employee.name,
+                  code: employee.employeeId,
+                  reason: `Payroll run is ${winner.status} — not recalculated.`,
+                });
+                return;
+              }
               run = await this.scopedPrisma.payrollRun.findFirstOrThrow({
                 where: { id: winner.id, organizationId },
               });
@@ -2077,10 +2117,17 @@ export class PayrollService {
       }
     }
 
-    await this.scopedPrisma.payrollRun.updateMany({
-      where: { id, organizationId },
+    // The status was read at the top, before a possibly long recalculation; re-assert it in the write so a run that
+    // was approved/locked/paid meanwhile is never overwritten and sent back to CALCULATED.
+    const { count: adjusted } = await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId, status: { in: EDITABLE_RUN_STATUSES } },
       data,
     });
+    if (adjusted === 0) {
+      throw new ConflictException(
+        'This payroll run was approved, locked or paid while you were editing it, so the changes were not saved.',
+      );
+    }
     const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
       where: { id, organizationId },
     });
