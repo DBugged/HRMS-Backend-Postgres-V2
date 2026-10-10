@@ -128,6 +128,15 @@ describe('round', () => {
   it('none leaves the value untouched', () => {
     expect(round(100.123456, 'none', 0)).toBe(100.123456);
   });
+
+  it('does not move exact paise values by a cent (binary-float noise)', () => {
+    expect(round(1.1, 'up', 2)).toBe(1.1);
+    expect(round(0.29, 'down', 2)).toBe(0.29);
+    expect(round(1.005, 'nearest', 2)).toBe(1.01);
+    expect(round(4.35, 'up', 2)).toBe(4.35);
+    expect(round(4.351, 'up', 2)).toBe(4.36);
+    expect(round(4.359, 'down', 2)).toBe(4.35);
+  });
 });
 
 describe('clampLeaveDaysToRange / daysInRange', () => {
