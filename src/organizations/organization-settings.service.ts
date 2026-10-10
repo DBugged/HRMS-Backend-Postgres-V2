@@ -693,7 +693,12 @@ export class OrganizationSettingsService {
       (d) => !weekend.includes(d),
     );
     if (workingDays.length === 0) return;
-    const breakMinutes = Number(prefs.defaultBreakMinutes);
+    // The schedule's break comes from the organization's Default Break. Not set yet = nothing to create from (it used
+    // to invent 60 here, and 0 on the web side): the admin sets the break first.
+    const rawBreak = prefs.defaultBreakMinutes;
+    if (rawBreak === undefined || rawBreak === null || rawBreak === '') return;
+    const breakMinutes = Number(rawBreak);
+    if (!Number.isFinite(breakMinutes) || breakMinutes < 0) return;
     await this.prisma.workSchedule.create({
       data: {
         organizationId,
@@ -702,10 +707,7 @@ export class OrganizationSettingsService {
         startTime: start,
         endTime: end,
         // Whole minutes (the column is an integer, while the setting allows e.g. 1.5).
-        breakMinutes:
-          Number.isFinite(breakMinutes) && breakMinutes >= 0
-            ? Math.round(breakMinutes)
-            : 60,
+        breakMinutes: Math.round(breakMinutes),
         alternateWeeklyOffs: [],
       },
     });
