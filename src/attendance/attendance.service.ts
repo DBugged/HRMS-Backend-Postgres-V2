@@ -275,6 +275,19 @@ async function assertPayrollPeriodUnlocked(
       `This attendance date (${dateStr}) falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before changing this attendance.`,
     );
   }
+  // A VERIFIED/APPROVED run was signed off on the old attendance and can no longer be recalculated once approved:
+  // send it back to CALCULATED so it is recalculated and re-approved against the corrected attendance.
+  await db.payrollRun.updateMany({
+    where: {
+      organizationId,
+      employeeId,
+      month,
+      year,
+      isFinalSettlement: false,
+      status: { in: [PayrollRunStatus.VERIFIED, PayrollRunStatus.APPROVED] },
+    },
+    data: { status: PayrollRunStatus.CALCULATED },
+  });
 }
 
 function addDaysStr(dateStr: string, days: number): string {
@@ -3105,10 +3118,10 @@ export class AttendanceService {
       where: {
         organizationId,
         isActive: true,
-        // Same roles payroll pays (see PayrollService): an HR user left out here never got the weekly-off / holiday /
+        // Same roles payroll pays (see PayrollService): a user left out here never got the weekly-off / holiday /
         // absent rows the nightly sweep writes, and payroll counts a day with no row as LOP — so their weekends and
-        // holidays went unpaid. Admin is not on payroll, so is not swept.
-        role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR] },
+        // holidays went unpaid. An Admin is on payroll like anyone else, so is swept too.
+        role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN] },
       },
       select: { id: true },
     });
@@ -3169,7 +3182,11 @@ export class AttendanceService {
 
     const [users, org] = await Promise.all([
       this.scopedPrisma.user.findMany({
-        where: { organizationId, isActive: true, role: Role.HR },
+        where: {
+          organizationId,
+          isActive: true,
+          role: { in: [Role.HR, Role.ADMIN] },
+        },
         include: { department: true },
         orderBy: { employeeId: 'asc' },
       }),

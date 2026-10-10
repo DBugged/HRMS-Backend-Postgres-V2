@@ -414,7 +414,7 @@ describe('splitEmployerPf', () => {
 });
 
 describe('flat LWF with no wages (audit B5)', () => {
-  it('is not deducted in a month with zero gross earnings', () => {
+  it('is not deducted from the employee in a month with zero gross earnings, but the employer share is kept', () => {
     const ctx = {
       GROSS_EARNINGS: 0,
       BASIC: 0,
@@ -424,7 +424,8 @@ describe('flat LWF with no wages (audit B5)', () => {
     };
     const d = deriveStatutoryContext(ctx, settings(), false);
     expect(d.LWF_EMPLOYEE_AMOUNT).toBe(0);
-    expect(d.LWF_EMPLOYER_AMOUNT).toBe(0);
+    // Not overridden: the employer's statutory share still comes through from the base context.
+    expect(d.LWF_EMPLOYER_AMOUNT).toBeUndefined();
   });
 
   it('leaves LWF alone when there are wages', () => {
@@ -440,5 +441,69 @@ describe('flat LWF with no wages (audit B5)', () => {
       deriveStatutoryContext(ctx, settings({ pfIncludeArrears: true }), false)
         .PF_WAGES,
     ).toBe(15000);
+  });
+});
+
+describe('splitEmployerPf for a member past pension age', () => {
+  it('puts the whole employer share in EPF when EPS is no longer applicable', () => {
+    const ctx = { PF_WAGES: 15000 };
+    expect(
+      splitEmployerPf(1800, ctx, settings(), { epsEligible: false }),
+    ).toEqual({
+      eps: 0,
+      epf: 1800,
+    });
+    expect(splitEmployerPf(1800, ctx, settings()).eps).toBeGreaterThan(0);
+  });
+});
+
+describe('ESI/bonus judged on the monthly rate; daily-wage exemption', () => {
+  const base = { TOTAL_DAYS_IN_MONTH: 30 };
+
+  it('keeps a joiner covered/uncovered by the full-month wage rate, not the prorated pay', () => {
+    // Earned 8,000 this month, but the structure pays 25,000 a month: above the 21,000 ceiling -> not covered.
+    const d = deriveStatutoryContext(
+      {
+        ...base,
+        GROSS_EARNINGS: 8000,
+        ESI_WAGES: 8000,
+        FULL_MONTH_ESI_WAGES: 25000,
+      },
+      settings(),
+      false,
+    );
+    expect(d.ESI_APPLICABLE).toBe(0);
+  });
+
+  it('exposes the full-month Basic + DA as BASIC_DA_RATE for bonus eligibility', () => {
+    const d = deriveStatutoryContext(
+      {
+        ...base,
+        GROSS_EARNINGS: 10000,
+        BASIC: 10000,
+        DA: 0,
+        FULL_MONTH_BASIC_DA: 25000,
+      },
+      settings(),
+      false,
+    );
+    expect(d.BASIC_DA).toBe(10000);
+    expect(d.BASIC_DA_RATE).toBe(25000);
+  });
+
+  it('exempts the employee share when the average daily wage is 176 or less', () => {
+    // 5,280 / 30 = 176
+    const exempt = deriveStatutoryContext(
+      { ...base, GROSS_EARNINGS: 5280, ESI_WAGES: 5280 },
+      settings(),
+      false,
+    );
+    expect(exempt.ESI_EMPLOYEE_RATE).toBe(0);
+    const paying = deriveStatutoryContext(
+      { ...base, GROSS_EARNINGS: 6000, ESI_WAGES: 6000 },
+      settings(),
+      false,
+    );
+    expect(paying.ESI_EMPLOYEE_RATE).toBeUndefined();
   });
 });

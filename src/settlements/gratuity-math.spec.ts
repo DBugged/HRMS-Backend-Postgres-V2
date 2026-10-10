@@ -1,4 +1,5 @@
 import {
+  calendarYearsOfService,
   GRATUITY_STATUTORY_CAP,
   calculateGratuity,
   completedYearsOfService,
@@ -107,5 +108,32 @@ describe('gratuity payout deadline', () => {
         new Date('2027-01-01'),
       ).overdue,
     ).toBe(true);
+  });
+});
+
+describe('calendarYearsOfService', () => {
+  it('counts exactly five years as five (not 4.9993 of a 365.25-day year)', () => {
+    expect(calendarYearsOfService('2020-10-07', '2025-10-06')).toBe(5);
+    expect(calendarYearsOfService('2020-10-01', '2025-09-30')).toBe(5);
+  });
+
+  it('is under five the day before the anniversary minus one', () => {
+    expect(calendarYearsOfService('2020-10-07', '2025-10-05')).toBeLessThan(5);
+  });
+
+  it('adds months as a fraction of a year', () => {
+    expect(calendarYearsOfService('2020-01-01', '2020-06-30')).toBeCloseTo(
+      0.5,
+      5,
+    );
+  });
+});
+
+describe('calculateGratuity - death or disablement', () => {
+  it('pays below five years only when the exit is death/disablement', () => {
+    expect(calculateGratuity(26000, 2.4)).toBe(0);
+    expect(
+      calculateGratuity(26000, 2.4, { exemptFromMinimumService: true }),
+    ).toBe(Math.round(26000 * (15 / 26) * 2));
   });
 });

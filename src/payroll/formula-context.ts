@@ -127,29 +127,52 @@ export function deriveStatutoryContext(
   const wages = (useRule: boolean, base: number) =>
     useRule ? Math.max(base, floor) : base;
   // LWF is a flat per-period amount, not a % of wages. With no wages for the period (a month of full LOP) there is
-  // nothing to deduct from, and charging it produced a negative net pay.
+  // nothing to deduct from the employee, and charging it produced a negative net pay. The employer's own share is not
+  // taken from the employee's pay and is still due for the period, so it is kept.
   const noWages = (context.GROSS_EARNINGS ?? 0) <= 0;
   return {
-    ...(noWages ? { LWF_EMPLOYEE_AMOUNT: 0, LWF_EMPLOYER_AMOUNT: 0 } : {}),
+    ...(noWages ? { LWF_EMPLOYEE_AMOUNT: 0 } : {}),
     BASIC_DA: basicDa,
     PF_WAGES: wages(settings.pfUseWagesRule, pfBase),
     GRATUITY_WAGES: wages(settings.gratuityUseWagesRule, basicDa),
     NPS_WAGES: basicDa,
+    // Coverage and bonus eligibility are decided on the monthly wage RATE (what the structure pays for a full
+    // month), not on what a part month happened to earn: a joiner or a month of LOP must not drop an employee out
+    // of (or into) ESI / the bonus. The caller supplies the full-month figures; absent, the actual wages are used.
     ESI_APPLICABLE:
-      (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) <=
-        settings.esiWageCeiling || hadEsiThisPeriod
+      (context.FULL_MONTH_ESI_WAGES ??
+        context.ESI_WAGES ??
+        context.GROSS_EARNINGS ??
+        0) <= settings.esiWageCeiling || hadEsiThisPeriod
         ? 1
         : 0,
+    BASIC_DA_RATE: context.FULL_MONTH_BASIC_DA ?? basicDa,
+    // ESI: an employee whose average daily wage is Rs 176 or less pays no employee share (the employer's share is
+    // still due). Average daily wage = the period's ESI wages / days in the period.
+    ...((context.TOTAL_DAYS_IN_MONTH ?? 0) > 0 &&
+    (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) > 0 &&
+    (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) /
+      (context.TOTAL_DAYS_IN_MONTH as number) <=
+      ESI_DAILY_WAGE_EXEMPTION
+      ? { ESI_EMPLOYEE_RATE: 0 }
+      : {}),
   };
 }
 
+// ESIC: employees whose average daily wage is at or below this are exempt from the employee contribution.
+export const ESI_DAILY_WAGE_EXEMPTION = 176;
+
 // The EPS (pension) / EPF split of the employer's PF for the ECR: EPS is its rate on PF wages up to the ceiling,
-// EPF is the remainder of whatever the employer PF line came to, so the two always add back to the line.
+// EPF is the remainder of whatever the employer PF line came to, so the two always add back to the line. A member
+// who is no longer eligible for the pension scheme (pension age reached - 58) gets no EPS: the whole employer
+// share goes to EPF.
 export function splitEmployerPf(
   employerPfAmount: number,
   context: Record<string, number>,
   settings: OverlaidSettings,
+  opts: { epsEligible?: boolean } = {},
 ): { eps: number; epf: number } {
+  if (opts.epsEligible === false) return { eps: 0, epf: employerPfAmount };
   const wages = Math.min(context.PF_WAGES ?? 0, settings.pfWageCeiling);
   const eps = Math.min(
     employerPfAmount,
@@ -157,6 +180,24 @@ export function splitEmployerPf(
   );
   return { eps, epf: employerPfAmount - eps };
 }
+
+// Age in whole years on `dateStr` (YYYY-MM-DD) for a YYYY-MM-DD date of birth; null when the DOB is unknown.
+export function ageOnDate(dob: unknown, dateStr: string): number | null {
+  if (typeof dob !== 'string') return null;
+  const born = new Date(dob);
+  const on = new Date(`${dateStr}T00:00:00.000Z`);
+  if (Number.isNaN(born.getTime()) || Number.isNaN(on.getTime())) return null;
+  let age = on.getUTCFullYear() - born.getUTCFullYear();
+  const beforeBirthday =
+    on.getUTCMonth() < born.getUTCMonth() ||
+    (on.getUTCMonth() === born.getUTCMonth() &&
+      on.getUTCDate() < born.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age;
+}
+
+// EPS membership ends at 58 (the pension age).
+export const EPS_PENSION_AGE = 58;
 
 export function buildBaseContext(
   attendance: AttendanceSummary,

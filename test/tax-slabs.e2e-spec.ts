@@ -114,6 +114,28 @@ describe('Tax Slabs (e2e)', () => {
       .expect(400);
   });
 
+  it('rejects overlapping bands, a bad rate and a mid-list open-ended band', async () => {
+    const send = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/tax-slabs')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ financialYear: '2031-32', regime: 'NEW', ...body });
+    await send({
+      slabs: [
+        { from: 0, to: 500000, rate: 0 },
+        { from: 400000, to: null, rate: 10 },
+      ],
+    }).expect(400);
+    await send({ slabs: [{ from: 0, to: null, rate: 150 }] }).expect(400);
+    await send({
+      slabs: [
+        { from: 0, to: null, rate: 0 },
+        { from: 100, to: 200, rate: 5 },
+      ],
+    }).expect(400);
+    await send({ cessRate: 500 }).expect(400);
+  });
+
   it('upserts a tax slab config by (financialYear, regime)', async () => {
     const created = await request(app.getHttpServer())
       .post('/tax-slabs')

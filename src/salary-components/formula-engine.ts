@@ -67,6 +67,7 @@ export const SYSTEM_VARS = [
   // Statutory wage bases and inputs added with the Labour Codes / ESI / Bonus work — see
   // payroll/formula-context.ts (buildBaseContext + deriveStatutoryContext).
   'BASIC_DA',
+  'BASIC_DA_RATE',
   'PF_WAGES',
   'GRATUITY_WAGES',
   'NPS_WAGES',

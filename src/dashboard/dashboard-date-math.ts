@@ -17,7 +17,8 @@ export const MONTH_LABELS = [
   'Nov',
   'Dec',
 ];
-const FY_START_MONTH = 4; // April
+// Default financial-year start month (April); callers pass the organization's own financialYearStartMonth.
+export const DEFAULT_FY_START_MONTH = 4;
 
 export interface MonthYear {
   month: number;
@@ -26,16 +27,20 @@ export interface MonthYear {
 
 // 12 {month, year} entries for the financial year `fysBack` FYs before the
 // current one.
-export function buildFyMonths(fysBack: number, now = new Date()): MonthYear[] {
+export function buildFyMonths(
+  fysBack: number,
+  now = new Date(),
+  fyStartMonth: number = DEFAULT_FY_START_MONTH,
+): MonthYear[] {
   const currentFyStartYear =
-    now.getMonth() + 1 >= FY_START_MONTH
+    now.getMonth() + 1 >= fyStartMonth
       ? now.getFullYear()
       : now.getFullYear() - 1;
   const fyStartYear = currentFyStartYear - fysBack;
   const months: MonthYear[] = [];
   for (let i = 0; i < 12; i++) {
-    const month = ((FY_START_MONTH - 1 + i) % 12) + 1;
-    const year = FY_START_MONTH + i <= 12 ? fyStartYear : fyStartYear + 1;
+    const month = ((fyStartMonth - 1 + i) % 12) + 1;
+    const year = fyStartMonth + i <= 12 ? fyStartYear : fyStartYear + 1;
     months.push({ month, year });
   }
   return months;
@@ -47,11 +52,12 @@ export type DashboardRange =
 export function monthsForRange(
   range: DashboardRange,
   now = new Date(),
+  fyStartMonth: number = DEFAULT_FY_START_MONTH,
 ): MonthYear[] {
-  if (range === 'previous_year') return buildFyMonths(1, now);
+  if (range === 'previous_year') return buildFyMonths(1, now, fyStartMonth);
   if (range === 'this_quarter' || range === 'previous_quarter') {
-    const prevFY = buildFyMonths(1, now);
-    const curFY = buildFyMonths(0, now);
+    const prevFY = buildFyMonths(1, now, fyStartMonth);
+    const curFY = buildFyMonths(0, now, fyStartMonth);
     const all = [...prevFY, ...curFY];
     const fyMonthIndex = curFY.findIndex(
       (m) => m.month === now.getMonth() + 1 && m.year === now.getFullYear(),
@@ -61,7 +67,7 @@ export function monthsForRange(
     if (range === 'previous_quarter') globalStart -= 3;
     return all.slice(globalStart, globalStart + 3);
   }
-  return buildFyMonths(0, now); // this_year
+  return buildFyMonths(0, now, fyStartMonth); // this_year
 }
 
 // Days from `today` until the next occurrence of (month, day), wrapping

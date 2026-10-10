@@ -673,3 +673,83 @@ describe('old regime senior citizen exemption', () => {
     expect(ytdTDS).toBe(240050);
   });
 });
+
+describe('deduction caps (audit T-2/T-3/T-5)', () => {
+  const oldCfg = {
+    regime: TaxRegime.OLD,
+    ...getDefaultTaxSlabConfig(TaxRegime.OLD),
+  };
+  const run = (over: Record<string, unknown>, declaration: object | null) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: 100000,
+      basicAnnual: 600000,
+      hraReceivedAnnual: 0,
+      declaration: declaration as never,
+      taxSlabConfig: oldCfg,
+      ...over,
+    });
+
+  it('caps the standard deduction at the salary actually earned', () => {
+    const r = run(
+      { currentMonthGross: 20000, employmentMonthsInFY: 1, finalMonth: true },
+      { otherIncome: 1500000 },
+    );
+    expect(r.deductions.standard).toBe(20000);
+  });
+
+  it('allows 80D up to 1,00,000 for a senior citizen, 75,000 otherwise', () => {
+    const decl = { section80D: 100000 };
+    expect(run({ ageAtFYEnd: 40 }, decl).deductions.section80D).toBe(75000);
+    expect(run({ ageAtFYEnd: 65 }, decl).deductions.section80D).toBe(100000);
+  });
+
+  it('allows 50,000 of savings/deposit interest for a senior (80TTB), 10,000 otherwise', () => {
+    const decl = { section80TTA: 50000 };
+    expect(run({ ageAtFYEnd: 40 }, decl).deductions.section80TTA).toBe(10000);
+    expect(run({ ageAtFYEnd: 70 }, decl).deductions.section80TTA).toBe(50000);
+  });
+
+  it('limits the LTA exemption to LTA actually paid', () => {
+    const decl = { ltaClaimed: 90000 };
+    expect(run({ ltaReceivedAnnual: 30000 }, decl).exemptions.lta).toBe(30000);
+    expect(run({ ltaReceivedAnnual: 0 }, decl).exemptions.lta).toBe(0);
+  });
+
+  it('limits 80G to 10% of adjusted total income', () => {
+    const r = run({}, { section80G: 5000000 });
+    expect(r.deductions.section80G).toBeLessThanOrEqual(
+      Math.floor((r.grossAnnualIncome - r.deductions.standard) * 0.1),
+    );
+    expect(r.taxableIncome).toBeGreaterThan(0);
+  });
+});
+
+describe('surcharge marginal relief for a senior citizen (old regime, above 50L)', () => {
+  const oldCfg = {
+    regime: TaxRegime.OLD,
+    ...getDefaultTaxSlabConfig(TaxRegime.OLD),
+  };
+  const taxFor = (age: number | null, annual: number) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: annual,
+      finalMonth: true,
+      declaration: null,
+      taxSlabConfig: oldCfg,
+      ageAtFYEnd: age,
+    });
+
+  it('caps the extra tax at the income above 50L measured on the senior tax at 50L', () => {
+    // Age 85, taxable 50,00,001: tax at 50L on senior slabs is 12,50,000 + ... capped at (tax@50L + 1).
+    const r = taxFor(85, 5000001 + 50000); // + standard deduction 50,000
+    expect(r.taxableIncome).toBe(5000001);
+    const atThreshold = taxFor(85, 5000000 + 50000);
+    // Crossing the threshold by one rupee must cost about one rupee (plus cess), not the whole surcharge.
+    expect(r.totalAnnualTax - atThreshold.totalAnnualTax).toBeLessThanOrEqual(
+      30,
+    );
+  });
+});

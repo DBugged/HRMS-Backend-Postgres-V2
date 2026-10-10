@@ -106,10 +106,14 @@ export function round(
   roundingDecimals: number,
 ): number {
   const factor = 10 ** (roundingDecimals || 0);
-  if (roundingRule === 'up') return Math.ceil(value * factor) / factor;
-  if (roundingRule === 'down') return Math.floor(value * factor) / factor;
   if (roundingRule === 'none') return value;
-  return Math.round(value * factor) / factor; // nearest (default)
+  // value * factor carries binary-float noise (1.1 * 100 = 110.00000000000001, 1.005 * 100 = 100.49999999999999):
+  // ceil/floor/round of that raw product moved exact paise values by a cent (up(1.10, 2) gave 1.11, down(0.29, 2)
+  // gave 0.28, nearest(1.005, 2) gave 1.00). Trimming it to 15 significant digits removes the noise first.
+  const scaled = Number((value * factor).toPrecision(15));
+  if (roundingRule === 'up') return Math.ceil(scaled) / factor;
+  if (roundingRule === 'down') return Math.floor(scaled) / factor;
+  return Math.round(scaled) / factor; // nearest (default)
 }
 
 // A flat 30-day month for converting a monthly salary figure into a daily

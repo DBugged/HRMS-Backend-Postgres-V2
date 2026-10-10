@@ -137,6 +137,35 @@ describe('Tax Declarations (e2e)', () => {
     expect((res.body as DeclarationBody).status).toBe('VERIFIED');
   });
 
+  it("a MANAGER cannot verify or set Section 89 relief on someone else's declaration", async () => {
+    const create = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Tax Manager',
+        email: 'taxdecl-e2e-mgr@example.test',
+        role: 'MANAGER',
+      });
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'taxdecl-e2e-mgr@example.test',
+        password: (create.body as { generatedPassword: string })
+          .generatedPassword,
+      });
+    const managerToken = (login.body as AuthBody).accessToken;
+    await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({
+        employeeId,
+        financialYear: '2026-27',
+        status: 'VERIFIED',
+        section89Relief: 100000,
+      })
+      .expect(403);
+  });
+
   it("HR editing their OWN declaration (by passing their own id) cannot self-verify, even though they're HR", async () => {
     const res = await request(app.getHttpServer())
       .post('/tax-declarations')

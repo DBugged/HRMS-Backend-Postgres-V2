@@ -4,6 +4,10 @@
 // assertManagerDeptScope.
 // Important: rateMultiplier is fixed per type at creation and not recalculated later, so a later change to
 // RATE_MULTIPLIERS only affects new records, not historical ones.
+import {
+  assertPayrollMonthsUnlocked,
+  reopenSignedOffPayrollMonths,
+} from '../payroll/payroll-period-guard';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import { OVERTIME_PAY_OFF_MESSAGE, isOvertimePayEnabled } from './overtime-pay';
 import {
@@ -287,6 +291,21 @@ export class OvertimeService {
         'This overtime record has already been reviewed.',
       );
     }
+    // Approved overtime is paid through payroll for its month: reviewing it after that month is locked/paid would
+    // never reach the payslip, and a signed-off run must be recalculated to pick it up.
+    const overtimeMonth = [
+      {
+        month: Number(record.date.slice(5, 7)),
+        year: Number(record.date.slice(0, 4)),
+      },
+    ];
+    await assertPayrollMonthsUnlocked(
+      this.scopedPrisma,
+      organizationId,
+      record.employeeId,
+      overtimeMonth,
+      'overtime',
+    );
 
     // Guarded compare-and-swap — see LoansService.approve()'s comment for
     // the general reasoning.
@@ -296,6 +315,15 @@ export class OvertimeService {
     });
     if (count === 0) {
       throw new ConflictException('This overtime record was already reviewed.');
+    }
+
+    if (dto.status === OvertimeStatus.APPROVED) {
+      await reopenSignedOffPayrollMonths(
+        this.scopedPrisma,
+        organizationId,
+        record.employeeId,
+        overtimeMonth,
+      );
     }
 
     const updated = await this.scopedPrisma.overtimeRecord.findFirstOrThrow({

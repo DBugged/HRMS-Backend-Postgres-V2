@@ -254,6 +254,37 @@ export class SalaryComponentsService {
         'This is a built-in salary component — its name cannot be changed.',
       );
     }
+    // A statutory built-in (PF, ESI, PT, TDS, LWF, ...) is calculated from Statutory Compliance. Letting its
+    // classification or formula be edited here would change TDS/PF behaviour org-wide with no versioning, so only
+    // presentation fields (payslip visibility, order, default) stay editable.
+    if (existing.isSystemDefault && existing.statutoryKey) {
+      const locked = [
+        'type',
+        'calcType',
+        'percentageOf',
+        'percentageValue',
+        'formula',
+        'isTaxable',
+        'includeInGross',
+        'includeInNet',
+        'includeInCTC',
+        'isEmployerContribution',
+        'isStatutory',
+        'statutoryKey',
+        'payFrequency',
+        'isActive',
+      ] as const;
+      const changed = locked.filter(
+        (key) =>
+          dto[key] !== undefined &&
+          (dto[key] as unknown) !== (existing as Record<string, unknown>)[key],
+      );
+      if (changed.length > 0) {
+        throw new ConflictException(
+          `${existing.name} is a built-in statutory component — ${changed.join(', ')} cannot be changed here. Use Statutory Compliance.`,
+        );
+      }
+    }
     const calcType = dto.calcType ?? existing.calcType;
     const percentageValue =
       dto.percentageValue ?? existing.percentageValue ?? undefined;
@@ -342,7 +373,26 @@ export class SalaryComponentsService {
         module: 'PAYROLL',
         organizationId,
         targetId: id,
-        details: { code: existing.code },
+        // What actually changed, before and after.
+        details: {
+          code: existing.code,
+          changes: Object.fromEntries(
+            Object.entries(dto)
+              .filter(
+                ([key, value]) =>
+                  value !== undefined &&
+                  JSON.stringify(value) !==
+                    JSON.stringify((existing as Record<string, unknown>)[key]),
+              )
+              .map(([key, value]) => [
+                key,
+                {
+                  before: (existing as Record<string, unknown>)[key],
+                  after: value,
+                },
+              ]),
+          ),
+        },
       });
     }
 

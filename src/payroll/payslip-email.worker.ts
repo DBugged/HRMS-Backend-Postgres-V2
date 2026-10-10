@@ -1,3 +1,4 @@
+import { PayrollRunStatus } from '@prisma/client';
 import {
   Inject,
   Injectable,
@@ -65,6 +66,9 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
       where: { id: runId, organizationId },
     });
     if (!run) return; // Run (or its org) no longer exists — nothing to send.
+    // Re-checked at delivery time: the job may have waited in the queue while the run was unlocked and recalculated.
+    // The email says "paid", so only a run that is still PAID may go out - never a reopened draft's payslip.
+    if (run.status !== PayrollRunStatus.PAID) return;
     // Idempotent per run: BullMQ redelivers a job whose worker crashed (or
     // whose ack was lost) after the email already went out — without this
     // check, that redelivery would resend an already-delivered payslip.

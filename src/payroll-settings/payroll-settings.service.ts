@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import { PayrollSettings, Prisma, StatutoryModule } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -34,6 +34,43 @@ const STATUTORY_SWITCHES = [
   ['gratuityEnabled', StatutoryModule.GRATUITY],
   ['bonusEnabled', StatutoryModule.BONUS],
 ] as const;
+
+// A Professional Tax ladder must be a list of {upTo, amount} bands: ascending positive upper bounds, non-negative
+// amounts, and only the last (open-ended) band may have upTo = null.
+function assertValidPtSlabs(slabs: unknown): void {
+  if (!Array.isArray(slabs)) {
+    throw new BadRequestException('ptSlabs must be a list of bands.');
+  }
+  let previous = 0;
+  slabs.forEach((band: { upTo?: unknown; amount?: unknown }, index) => {
+    const amount = band?.amount;
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount < 0) {
+      throw new BadRequestException(
+        `ptSlabs band ${index + 1}: amount must be a number of 0 or more.`,
+      );
+    }
+    const upTo = band?.upTo;
+    const isLast = index === slabs.length - 1;
+    if (upTo === null || upTo === undefined) {
+      if (!isLast) {
+        throw new BadRequestException(
+          `ptSlabs band ${index + 1}: only the last band can be open-ended (upTo empty).`,
+        );
+      }
+      return;
+    }
+    if (
+      typeof upTo !== 'number' ||
+      !Number.isFinite(upTo) ||
+      upTo <= previous
+    ) {
+      throw new BadRequestException(
+        `ptSlabs band ${index + 1}: upTo must be a number greater than the previous band's.`,
+      );
+    }
+    previous = upTo;
+  });
+}
 
 @Injectable()
 export class PayrollSettingsService {
@@ -143,6 +180,7 @@ export class PayrollSettingsService {
     organizationId: string,
   ): Promise<PayrollSettings> {
     const before = await this.getOrCreate(organizationId);
+    if (dto.ptSlabs !== undefined) assertValidPtSlabs(dto.ptSlabs);
     // The overtime pay multipliers feed only the Overtime Pay component. While it is off they are locked: the screen
     // sends the whole settings object on every save, so rather than reject a save that merely carries the unchanged
     // rates, any rate in the request is dropped and the stored values are kept for when it is turned back on.
@@ -182,7 +220,25 @@ export class PayrollSettingsService {
       action: 'PAYROLL_SETTINGS_UPDATED',
       module: 'PAYROLL',
       organizationId,
-      details: { ...effective },
+      // Before/after for every field that actually changed, not just the new values.
+      details: {
+        ...effective,
+        changes: Object.fromEntries(
+          Object.entries(effective)
+            .filter(
+              ([key, value]) =>
+                JSON.stringify(value) !==
+                JSON.stringify((before as Record<string, unknown>)[key]),
+            )
+            .map(([key, value]) => [
+              key,
+              {
+                before: (before as Record<string, unknown>)[key],
+                after: value,
+              },
+            ]),
+        ),
+      },
     });
 
     return this.getOrCreate(organizationId);

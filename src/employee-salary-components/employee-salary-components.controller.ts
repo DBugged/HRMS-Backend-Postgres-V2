@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { ForbiddenException } from '@nestjs/common';
 import { Role, User } from '@prisma/client';
 import { EmployeeSalaryComponentsService } from './employee-salary-components.service';
 import { SetComponentValueDto } from './dto/set-component-value.dto';
@@ -21,6 +22,17 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
+
+// Nobody - HR or Admin - sets or revises their OWN salary structure; it has to be done by someone else. An Admin can
+// still calculate and approve payroll for everyone, including themself: the structure is the part that must be
+// changed by a second person, otherwise one account could raise its own pay and then pay it.
+function assertNotOwnSalary(caller: Caller, employeeId: string): void {
+  if (caller.id === employeeId) {
+    throw new ForbiddenException(
+      'You cannot change your own salary structure. Another HR user or Admin must do it.',
+    );
+  }
+}
 
 @ApiTags('employee-salary')
 @ApiBearerAuth('access-token')
@@ -68,6 +80,7 @@ export class EmployeeSalaryComponentsController {
     @Body() dto: SetComponentValueDto,
     @CurrentUser() caller: Caller,
   ) {
+    assertNotOwnSalary(caller, id);
     return this.employeeSalaryComponentsService.setComponentValue(
       id,
       dto,
@@ -84,6 +97,7 @@ export class EmployeeSalaryComponentsController {
     @Body() dto: BulkSetStructureDto,
     @CurrentUser() caller: Caller,
   ) {
+    assertNotOwnSalary(caller, id);
     return this.employeeSalaryComponentsService.bulkSetStructure(
       id,
       dto,

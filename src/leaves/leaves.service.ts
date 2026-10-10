@@ -65,6 +65,11 @@ import {
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
 import { todayInOrgTz } from '../common/org-date';
+import {
+  assertPayrollMonthsUnlocked,
+  monthsBetween,
+  reopenSignedOffPayrollMonths,
+} from '../payroll/payroll-period-guard';
 
 type Actor = Omit<User, 'password'>;
 
@@ -150,6 +155,16 @@ export class LeavesService {
   ) {}
 
   async apply(dto: ApplyLeaveDto, actor: Actor, organizationId: string) {
+    // A leave for a month whose payroll is already locked/paid could never take effect in that payslip.
+    if (dto.startDate && dto.endDate) {
+      await assertPayrollMonthsUnlocked(
+        this.scopedPrisma,
+        organizationId,
+        actor.id,
+        monthsBetween(dto.startDate, dto.endDate),
+        'leave',
+      );
+    }
     return this.createLeaveInternal(dto, actor, organizationId);
   }
 
@@ -562,6 +577,18 @@ export class LeavesService {
     reviewedById: string | null,
     organizationId: string,
   ) {
+    // Approving a leave rewrites attendance and balances for its dates: refuse when one of those months is already
+    // locked/paid, and send a signed-off run back for recalculation (see payroll-period-guard.ts).
+    const leaveMonths = monthsBetween(leave.startDate, leave.endDate);
+    if (decision === 'APPROVED') {
+      await assertPayrollMonthsUnlocked(
+        this.scopedPrisma,
+        organizationId,
+        leave.employeeId,
+        leaveMonths,
+        'leave',
+      );
+    }
     await this.scopedPrisma.$transaction(async (tx) => {
       // status: PENDING re-asserted here (not just in whatever check the
       // caller already ran) so a second concurrent call — double-click, a
@@ -588,6 +615,12 @@ export class LeavesService {
           tx,
           leave,
           organizationId,
+        );
+        await reopenSignedOffPayrollMonths(
+          tx,
+          organizationId,
+          leave.employeeId,
+          leaveMonths,
         );
         if (isCompOffType(leaveType)) {
           await this.compOffService.consumeForLeave(

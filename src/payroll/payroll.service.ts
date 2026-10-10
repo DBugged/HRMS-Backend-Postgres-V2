@@ -15,6 +15,7 @@ import {
 } from '../common/employee-order';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Logger,
   Inject,
@@ -105,6 +106,8 @@ import {
   buildBaseContext,
   deriveStatutoryContext,
   splitEmployerPf,
+  ageOnDate,
+  EPS_PENSION_AGE,
 } from './formula-context';
 import {
   calculateTax,
@@ -160,6 +163,39 @@ const PAYROLL_HISTORY_ACTIONS = [
   'PAYROLL_PAID',
   'PAYROLL_UNLOCKED',
 ];
+
+// Separation of duties: a non-Admin (HR) can never change or sign off their OWN payslip. An Admin is exempt, the
+// same carve-out assertNotSelfApproval makes for leave and loans.
+function assertNotOwnPayroll(
+  actor: { id: string; role: Role },
+  employeeId: string,
+  action: string,
+): void {
+  if (actor.role !== Role.ADMIN && actor.id === employeeId) {
+    throw new ForbiddenException(
+      `You cannot ${action} your own payslip. Another HR user or an Admin must do it.`,
+    );
+  }
+}
+
+// Statuses in which a run's figures may still be rewritten (by calculate or a manual adjustment).
+const EDITABLE_RUN_STATUSES: PayrollRunStatus[] = [
+  PayrollRunStatus.DRAFT,
+  PayrollRunStatus.CALCULATED,
+  PayrollRunStatus.VERIFIED,
+];
+
+// A final-settlement run is created, approved and paid by the Settlements workflow together with the Settlement
+// record; moving it through the generic payroll endpoints would leave the two disagreeing.
+function assertNotFinalSettlementRun(run: {
+  isFinalSettlement: boolean;
+}): void {
+  if (run.isFinalSettlement) {
+    throw new BadRequestException(
+      'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+    );
+  }
+}
 
 const TRANSITIONS: Record<PayrollTransitionAction, TransitionConfig> = {
   verify: {
@@ -602,6 +638,9 @@ export class PayrollService {
     );
     attendanceSummary.daysBeforeJoining = employed.daysBeforeJoining;
     attendanceSummary.daysNotElapsed = employed.daysNotElapsed;
+    // Payable days before a manual LOP correction replaces them (a month split by a mid-month revision is paid
+    // segment by segment from raw attendance, so the correction has to be carried into the segments as well).
+    const computedPayableDays = attendanceSummary.payableDays;
     if (options?.lopDaysOverride !== undefined) {
       // Inverse of computeAttendanceSummary's own lopDays formula —
       // payableDays moves opposite LOP so everything downstream (formula
@@ -745,6 +784,13 @@ export class PayrollService {
             leaves,
             totalDaysInMonth,
             roundAmount,
+            payableDaysOverride:
+              options?.lopDaysOverride !== undefined
+                ? {
+                    computed: computedPayableDays,
+                    corrected: attendanceSummary.payableDays,
+                  }
+                : undefined,
           });
 
     const financialYear = getFinancialYear(
@@ -867,10 +913,30 @@ export class PayrollService {
         earningsLines
           .filter(
             (l) =>
-              l.component && l.component.payFrequency !== PayFrequency.MONTHLY,
+              l.component &&
+              // The bonus is a periodic payment whichever pay frequency it was seeded/configured with.
+              (l.component.payFrequency !== PayFrequency.MONTHLY ||
+                l.code === 'BONUS'),
           )
           .reduce((s, l) => s + l.amount, 0),
     );
+    // What the structure pays for a FULL month (no LOP/joining proration): ESI coverage and bonus eligibility are
+    // judged on this rate, not on a part month's earnings.
+    const fullMonthLines = this.recurringMonthlyEarnings(
+      earningComponents,
+      overridesByCode,
+      baseContext,
+      roundAmount,
+    );
+    if (fullMonthLines) {
+      afterEarnings.FULL_MONTH_ESI_WAGES = fullMonthLines.reduce(
+        (sum, l) => sum + l.amount,
+        0,
+      );
+      afterEarnings.FULL_MONTH_BASIC_DA = fullMonthLines
+        .filter((l) => l.code === 'BASIC' || l.code === 'DA')
+        .reduce((sum, l) => sum + l.amount, 0);
+    }
     // Wage bases and the ESI coverage flag — all depend on this month's gross, so they're derived here.
     Object.assign(
       afterEarnings,
@@ -956,9 +1022,46 @@ export class PayrollService {
           ? storedDeclaration
           : null;
       const regime = declaration?.regimeChosen ?? TaxRegime.NEW;
-      const taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
+      let taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
         where: { organizationId, financialYear, regime, isActive: true },
       });
+      // A new financial year starts on 1 April with no slab rows of its own. Carry the organization's most recent
+      // earlier configuration for this regime forward (slabs are normally unchanged year to year) instead of failing
+      // every employee's April run; HR can still edit the new year's slabs afterwards.
+      if (!taxSlabConfig) {
+        const previous = await this.scopedPrisma.taxSlabConfig.findFirst({
+          where: {
+            organizationId,
+            regime,
+            isActive: true,
+            financialYear: { lt: financialYear },
+          },
+          orderBy: { financialYear: 'desc' },
+        });
+        if (previous) {
+          try {
+            taxSlabConfig = await this.scopedPrisma.taxSlabConfig.create({
+              data: {
+                organizationId,
+                financialYear,
+                regime,
+                slabs: previous.slabs as Prisma.InputJsonValue,
+                standardDeduction: previous.standardDeduction,
+                cessRate: previous.cessRate,
+                surchargeSlabs:
+                  previous.surchargeSlabs as Prisma.InputJsonValue,
+                rebate87ALimit: previous.rebate87ALimit,
+                rebate87AAmount: previous.rebate87AAmount,
+              },
+            });
+          } catch {
+            // A concurrent run created it first - read that one.
+            taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
+              where: { organizationId, financialYear, regime, isActive: true },
+            });
+          }
+        }
+      }
       // Income tax is on for the org but there's nothing to compute it
       // against. This used to silently skip TDS (paying the month with zero
       // tax withheld); it now fails this employee so the run's failures[]
@@ -1054,6 +1157,13 @@ export class PayrollService {
         ytdTDS,
         basicAnnual: basicMonthly * employmentMonths,
         hraReceivedAnnual: hraMonthly * employmentMonths,
+        // The LTA exemption is limited to LTA the employer actually pays (0 when the structure has none).
+        ltaReceivedAnnual:
+          roundAmount(
+            recurringResults?.find((e) => e.code === 'LTA')?.amount ??
+              earningsLines.find((e) => e.code === 'LTA')?.amount ??
+              0,
+          ) * employmentMonths,
         declaration,
         taxSlabConfig: {
           regime: taxSlabConfig.regime,
@@ -1222,7 +1332,15 @@ export class PayrollService {
         amount: e.amount,
         ...(e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER
           ? {
-              breakup: splitEmployerPf(e.amount, afterEarnings, settings),
+              breakup: splitEmployerPf(e.amount, afterEarnings, settings, {
+                epsEligible: !(
+                  (ageOnDate(
+                    (employee.personalData as Record<string, unknown> | null)
+                      ?.dob,
+                    periodDate,
+                  ) ?? 0) >= EPS_PENSION_AGE
+                ),
+              }),
               wages: Math.min(
                 afterEarnings.PF_WAGES ?? 0,
                 settings.pfWageCeiling,
@@ -1540,13 +1658,30 @@ export class PayrollService {
             : null,
         };
         if (run) {
-          await this.scopedPrisma.payrollRun.updateMany({
-            where: { id: run.id, organizationId },
+          // Re-asserts the editable statuses in the write itself: the status check above ran on a snapshot taken
+          // before the loop, so an approve/lock/pay that landed in between must not be overwritten (and flipped
+          // back to CALCULATED) with this recalculation.
+          const { count } = await this.scopedPrisma.payrollRun.updateMany({
+            where: {
+              id: run.id,
+              organizationId,
+              status: { in: EDITABLE_RUN_STATUSES },
+            },
             data,
           });
           run = await this.scopedPrisma.payrollRun.findFirstOrThrow({
             where: { id: run.id, organizationId },
           });
+          if (count === 0) {
+            results.push(run);
+            skipped.push({
+              employeeId: employee.id,
+              name: employee.name,
+              code: employee.employeeId,
+              reason: `Payroll run is ${run.status} — not recalculated.`,
+            });
+            return;
+          }
         } else {
           try {
             run = await this.scopedPrisma.payrollRun.create({
@@ -1586,10 +1721,25 @@ export class PayrollService {
                 },
               });
               if (!winner) throw createErr;
-              await this.scopedPrisma.payrollRun.updateMany({
-                where: { id: winner.id, organizationId },
-                data,
-              });
+              const { count: winnerCount } =
+                await this.scopedPrisma.payrollRun.updateMany({
+                  where: {
+                    id: winner.id,
+                    organizationId,
+                    status: { in: EDITABLE_RUN_STATUSES },
+                  },
+                  data,
+                });
+              if (winnerCount === 0) {
+                results.push(winner);
+                skipped.push({
+                  employeeId: employee.id,
+                  name: employee.name,
+                  code: employee.employeeId,
+                  reason: `Payroll run is ${winner.status} — not recalculated.`,
+                });
+                return;
+              }
               run = await this.scopedPrisma.payrollRun.findFirstOrThrow({
                 where: { id: winner.id, organizationId },
               });
@@ -1783,7 +1933,7 @@ export class PayrollService {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 500,
     });
 
     const targetIds = [
@@ -1822,6 +1972,8 @@ export class PayrollService {
       where: { id, organizationId },
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
+    assertNotOwnPayroll(actor, run.employeeId, 'edit');
     if (
       run.status === PayrollRunStatus.APPROVED ||
       run.status === PayrollRunStatus.LOCKED ||
@@ -1901,6 +2053,13 @@ export class PayrollService {
       deductions.reduce((s, d) => s + Number(d.amount || 0), 0),
     );
     const netPay = roundTwo(grossSalary - totalDeductions);
+    // A manual edit can't take the payslip below zero: a negative net would only be caught later, at verify, after the
+    // numbers had already been saved (and shown) as if they were fine.
+    if (netPay < 0) {
+      throw new BadRequestException(
+        `These edits would make the net pay negative (${netPay}). Reduce the deductions or increase the earnings.`,
+      );
+    }
     // ctcMonthly = grossSalary + employer contributions. Employer
     // contributions aren't part of this DTO directly, but a recalculation
     // refreshes them too (PF/ESI employer-side amounts move with payable
@@ -1942,10 +2101,33 @@ export class PayrollService {
         recalculated.heldVariablePay as unknown as Prisma.InputJsonValue;
     }
 
-    await this.scopedPrisma.payrollRun.updateMany({
-      where: { id, organizationId },
+    // An edited TDS line must not leave the stored tax breakdown (shown as "This month's TDS") disagreeing with the
+    // payslip: keep the engine's annual figures, but show the TDS actually on the payslip and flag it as manual.
+    if (!recalculated && dto.deductions) {
+      const tdsLine = deductions.find(
+        (d) => d.code === SALARY_COMPONENT_CODES.INCOME_TAX,
+      );
+      const storedTax = run.taxDetails as Record<string, unknown> | null;
+      if (storedTax && tdsLine) {
+        data.taxDetails = {
+          ...storedTax,
+          monthlyTDS: Number(tdsLine.amount),
+          manuallyAdjusted: true,
+        } as unknown as Prisma.InputJsonValue;
+      }
+    }
+
+    // The status was read at the top, before a possibly long recalculation; re-assert it in the write so a run that
+    // was approved/locked/paid meanwhile is never overwritten and sent back to CALCULATED.
+    const { count: adjusted } = await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId, status: { in: EDITABLE_RUN_STATUSES } },
       data,
     });
+    if (adjusted === 0) {
+      throw new ConflictException(
+        'This payroll run was approved, locked or paid while you were editing it, so the changes were not saved.',
+      );
+    }
     const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
       where: { id, organizationId },
     });
@@ -2009,7 +2191,12 @@ export class PayrollService {
       actor,
       organizationId,
     );
-    await this.afterLock(run, organizationId);
+    const lockFailure = await this.afterLockOrRevert(run, organizationId);
+    if (lockFailure) {
+      throw new ConflictException(
+        `${lockFailure} The payroll was moved back to Approved - lock it again to retry.`,
+      );
+    }
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'PAYROLL_LOCKED',
@@ -2143,9 +2330,55 @@ export class PayrollService {
       organizationId,
     );
     if (dto.action === 'lock') {
-      for (const run of updated) await this.afterLock(run, organizationId);
+      // One failing run must not stop the rest: each run's side effects are applied on their own, and a run whose
+      // side effects fail is returned to APPROVED (reported as skipped) instead of staying LOCKED half-processed.
+      const confirmed: PayrollRun[] = [];
+      for (const run of updated) {
+        const failure = await this.afterLockOrRevert(run, organizationId);
+        if (failure) {
+          skipped.push({
+            id: run.id,
+            status: 'lock_side_effects_failed',
+            reason: `${failure} It was moved back to Approved - lock it again to retry.`,
+          });
+        } else {
+          confirmed.push(run);
+        }
+      }
+      return {
+        updatedCount: confirmed.length,
+        skipped,
+        runs: confirmed,
+      };
     }
     return { updatedCount: updated.length, skipped, runs: updated };
+  }
+
+  // Lock = status change + its side effects (encashments marked processed, loan EMIs charged). The transition has
+  // already committed by the time this runs, so a failure here would leave a LOCKED payslip that no loan balance or
+  // encashment reflects (and which can't be locked again). The run is put back to APPROVED instead, so the whole
+  // lock fails together and can simply be retried (afterLock is idempotent per loan and run). Returns the failure
+  // message, or null on success.
+  private async afterLockOrRevert(
+    run: PayrollRun,
+    organizationId: string,
+  ): Promise<string | null> {
+    try {
+      await this.afterLock(run, organizationId);
+      return null;
+    } catch (err) {
+      await this.scopedPrisma.payrollRun.updateMany({
+        where: { id: run.id, organizationId, status: PayrollRunStatus.LOCKED },
+        data: {
+          status: PayrollRunStatus.APPROVED,
+          lockedAt: null,
+          lockedById: null,
+        },
+      });
+      return `Locking ${run.month}/${run.year} failed while applying its loan/encashment effects: ${
+        err instanceof Error ? err.message : 'unknown error'
+      }.`;
+    }
   }
 
   // Reverts a Locked/Paid run back to Calculated so it can be corrected
@@ -2160,6 +2393,8 @@ export class PayrollService {
       where: { id, organizationId },
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
+    assertNotOwnPayroll(actor, run.employeeId, 'unlock');
     if (
       run.status !== PayrollRunStatus.LOCKED &&
       run.status !== PayrollRunStatus.PAID
@@ -2405,11 +2640,31 @@ export class PayrollService {
     }
 
     const updated: PayrollRun[] = [];
+    // A run for a month that has not started yet (one calculated before the period guard existed) can never be
+    // signed off or paid.
+    const orgToday = await this.orgToday(organizationId);
     // Encashments already claimed by a run locked earlier in this same batch (they only turn PROCESSED after the batch).
     const claimedEncashments = new Set<string>();
     for (const run of runs) {
       if (!config.fromStatuses.includes(run.status)) {
         skipped.push({ id: run.id, status: run.status });
+        continue;
+      }
+      if (run.isFinalSettlement) {
+        skipped.push({
+          id: run.id,
+          status: 'final_settlement',
+          reason:
+            'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+        });
+        continue;
+      }
+      if (`${run.year}-${String(run.month).padStart(2, '0')}-01` > orgToday) {
+        skipped.push({
+          id: run.id,
+          status: 'future_period',
+          reason: `Payroll for ${run.month}/${run.year} cannot be moved forward yet - that month has not started.`,
+        });
         continue;
       }
       // A payroll run that would pay a negative amount (e.g. a full-LOP
@@ -2422,6 +2677,34 @@ export class PayrollService {
       //
       // A NaN/Infinity figure is blocked the same way — `NaN < 0` is false, so
       // the negative check alone let a non-numeric payslip through to paid.
+      // Separation of duties (Admin exempt): nobody but an Admin signs off their own payslip, and approval / payment
+      // must come from someone other than the person who calculated, verified or approved the run.
+      if (actor.role !== Role.ADMIN) {
+        let blocked: string | null = null;
+        if (run.employeeId === actor.id) {
+          blocked = `You cannot ${config.toStatus === PayrollRunStatus.VERIFIED ? 'verify' : config.toStatus === PayrollRunStatus.APPROVED ? 'approve' : config.toStatus === PayrollRunStatus.LOCKED ? 'lock' : 'pay'} your own payslip. Another HR user or an Admin must do it.`;
+        } else if (
+          config.toStatus === PayrollRunStatus.APPROVED &&
+          (run.calculatedById === actor.id || run.verifiedById === actor.id)
+        ) {
+          blocked =
+            'This run must be approved by someone other than the person who calculated or verified it.';
+        } else if (
+          config.toStatus === PayrollRunStatus.PAID &&
+          run.approvedById === actor.id
+        ) {
+          blocked =
+            'This run must be paid by someone other than the person who approved it.';
+        }
+        if (blocked) {
+          skipped.push({
+            id: run.id,
+            status: 'separation_of_duties',
+            reason: blocked,
+          });
+          continue;
+        }
+      }
       const badField = nonFiniteMoneyField(run);
       if (badField) {
         skipped.push({
@@ -2902,6 +3185,9 @@ export class PayrollService {
     leaves: LeaveRowWithType[];
     totalDaysInMonth: number;
     roundAmount: (n: number) => number;
+    // A manual LOP correction: the month's payable days were corrected from `computed` to `corrected`. Each
+    // segment's payable days are scaled by the same ratio so the earnings follow the correction.
+    payableDaysOverride?: { computed: number; corrected: number };
   }): ResolvedLine[] {
     const combined = new Map<string, ResolvedLine>();
     const lastIndex = args.segments.length - 1;
@@ -2926,12 +3212,22 @@ export class PayrollService {
         if (!applicableCodes.has(c.code)) context[c.code] = 0;
       }
       const calendarDays = daysInRange(segment.start, segment.end);
-      const payableDays = payableDaysInRange(
+      let payableDays = payableDaysInRange(
         args.attendanceRows,
         args.leaves,
         segment.start,
         segment.end,
       );
+      if (args.payableDaysOverride) {
+        const { computed, corrected } = args.payableDaysOverride;
+        payableDays =
+          computed > 0
+            ? Math.min(calendarDays, (payableDays * corrected) / computed)
+            : Math.min(
+                calendarDays,
+                (calendarDays * corrected) / args.totalDaysInMonth,
+              );
+      }
       const { results } = this.resolveGroup(
         applicable.filter(
           (c) =>

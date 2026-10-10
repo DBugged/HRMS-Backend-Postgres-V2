@@ -26,7 +26,8 @@ import { TaxDeclarationStatus, TaxRegime } from '@prisma/client';
 // 80CCD(1B)/80D do.
 const SECTION_80C_CAP = 150000;
 const SECTION_80CCD1B_CAP = 50000;
-const SECTION_80D_CAP = 75000;
+// 25,000 self/family + 25,000 parents, each 50,000 for a senior citizen: 1,00,000 is the most any employee can claim.
+const SECTION_80D_CAP = 100000;
 
 export class UpsertTaxDeclarationDto {
   @ApiPropertyOptional({

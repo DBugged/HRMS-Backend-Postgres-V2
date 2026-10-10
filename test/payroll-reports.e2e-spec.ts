@@ -98,6 +98,11 @@ describe('Payroll Reports (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ name: 'Plain Employee', email: 'prpt-e2e-emp@example.test' });
     employeeId = (empCreate.body as EmployeeCreateBody).employee.id;
+    // Payroll skips anyone who joined after the month ended, so back-date the joiner into the test period.
+    await prisma.user.update({
+      where: { id: employeeId },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
 
     // BASIC is auto-seeded on every new org (see LeaveTypesService/
     // SalaryComponentsService.seedDefaults) — only the per-employee
@@ -176,15 +181,26 @@ describe('Payroll Reports (e2e)', () => {
     }
   });
 
-  it('the salary register includes the calculated BASIC-only run', async () => {
-    const res = await request(app.getHttpServer())
-      .get('/reports/payroll/salary-register')
-      .query({ month: MONTH, year: YEAR, format: 'csv' })
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(200);
-    const csv = res.text;
+  it('the salary register leaves out an unapproved run and includes it once approved', async () => {
+    const pull = async () =>
+      (
+        await request(app.getHttpServer())
+          .get('/reports/payroll/salary-register')
+          .query({ month: MONTH, year: YEAR, format: 'csv' })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).text;
+    // CALCULATED figures can still change, so they are not in the register (or any statutory report).
+    expect(await pull()).not.toContain('BASIC');
+
+    await prisma.payrollRun.updateMany({
+      where: { employeeId, month: MONTH, year: YEAR },
+      data: { status: 'APPROVED' },
+    });
+    const csv = await pull();
     expect(csv).toContain('BASIC');
     expect(csv).toContain('30000');
+    expect(csv).toContain('Regular');
   });
 
   it('form16 requires financialYear', async () => {

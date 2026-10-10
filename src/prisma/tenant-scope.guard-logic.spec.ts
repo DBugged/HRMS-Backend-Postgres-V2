@@ -59,6 +59,14 @@ describe('evaluateTenantScope', () => {
           ).toThrow(/missing organizationId scope/);
         });
 
+        it('throws when organizationId is present but undefined (Prisma would drop the filter)', () => {
+          expect(() =>
+            evaluateTenantScope(model, operation, {
+              where: { id: 'x', organizationId: undefined },
+            }),
+          ).toThrow(/missing organizationId scope/);
+        });
+
         it('throws when where is entirely absent', () => {
           expect(() => evaluateTenantScope(model, operation, {})).toThrow(
             /missing organizationId scope/,

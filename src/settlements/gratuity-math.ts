@@ -55,13 +55,36 @@ export function completedYearsOfService(yearsOfService: number): number {
 export function calculateGratuity(
   basicMonthly: number,
   yearsOfService: number,
-  opts: { fixedTerm?: boolean } = {},
+  opts: { fixedTerm?: boolean; exemptFromMinimumService?: boolean } = {},
 ): number {
   const required = opts.fixedTerm
     ? YEARS_FOR_FIXED_TERM_GRATUITY
     : YEARS_FOR_GRATUITY_ELIGIBILITY;
-  if (yearsOfService < required) return 0;
+  // Death or disablement: the minimum-service condition does not apply (Payment of Gratuity Act s.4(1) proviso).
+  if (!opts.exemptFromMinimumService && yearsOfService < required) return 0;
   const raw =
     basicMonthly * (15 / 26) * completedYearsOfService(yearsOfService);
   return Math.min(Math.round(raw), GRATUITY_STATUTORY_CAP);
+}
+
+// Whole calendar years plus the fraction of the next, from the joining date through the last working day inclusive.
+export function calendarYearsOfService(
+  joinedOn: string,
+  lastWorkingDay: string,
+): number {
+  const end = new Date(`${lastWorkingDay}T00:00:00.000Z`);
+  end.setUTCDate(end.getUTCDate() + 1);
+  const [jy, jm, jd] = joinedOn.split('-').map(Number);
+  let years = end.getUTCFullYear() - jy;
+  let months = end.getUTCMonth() + 1 - jm;
+  let days = end.getUTCDate() - jd;
+  if (days < 0) {
+    months -= 1;
+    days += 30;
+  }
+  if (months < 0) {
+    years -= 1;
+    months += 12;
+  }
+  return years + (months + days / 30) / 12;
 }

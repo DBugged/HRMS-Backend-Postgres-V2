@@ -94,10 +94,11 @@ export function buildEcr(
 
     const gross = rupees(m.grossWages);
     const epfWages = Math.min(rupees(m.epfWages), gross);
-    const epsWages = Math.min(epfWages, opts.wageCeiling);
     const edliWages = Math.min(epfWages, opts.wageCeiling);
     const epf = rupees(m.epfContribution);
     const eps = Math.min(rupees(m.epsContribution), epf);
+    // A member with no EPS contribution (past pension age) has no EPS wages either.
+    const epsWages = eps > 0 ? Math.min(epfWages, opts.wageCeiling) : 0;
     const diff = epf - eps;
     const ncp = Math.max(0, Math.min(opts.daysInMonth, Math.round(m.ncpDays)));
 
