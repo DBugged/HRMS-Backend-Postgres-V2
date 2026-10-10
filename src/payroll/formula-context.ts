@@ -127,10 +127,11 @@ export function deriveStatutoryContext(
   const wages = (useRule: boolean, base: number) =>
     useRule ? Math.max(base, floor) : base;
   // LWF is a flat per-period amount, not a % of wages. With no wages for the period (a month of full LOP) there is
-  // nothing to deduct from, and charging it produced a negative net pay.
+  // nothing to deduct from the employee, and charging it produced a negative net pay. The employer's own share is not
+  // taken from the employee's pay and is still due for the period, so it is kept.
   const noWages = (context.GROSS_EARNINGS ?? 0) <= 0;
   return {
-    ...(noWages ? { LWF_EMPLOYEE_AMOUNT: 0, LWF_EMPLOYER_AMOUNT: 0 } : {}),
+    ...(noWages ? { LWF_EMPLOYEE_AMOUNT: 0 } : {}),
     BASIC_DA: basicDa,
     PF_WAGES: wages(settings.pfUseWagesRule, pfBase),
     GRATUITY_WAGES: wages(settings.gratuityUseWagesRule, basicDa),

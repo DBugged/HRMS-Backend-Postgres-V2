@@ -414,7 +414,7 @@ describe('splitEmployerPf', () => {
 });
 
 describe('flat LWF with no wages (audit B5)', () => {
-  it('is not deducted in a month with zero gross earnings', () => {
+  it('is not deducted from the employee in a month with zero gross earnings, but the employer share is kept', () => {
     const ctx = {
       GROSS_EARNINGS: 0,
       BASIC: 0,
@@ -424,7 +424,8 @@ describe('flat LWF with no wages (audit B5)', () => {
     };
     const d = deriveStatutoryContext(ctx, settings(), false);
     expect(d.LWF_EMPLOYEE_AMOUNT).toBe(0);
-    expect(d.LWF_EMPLOYER_AMOUNT).toBe(0);
+    // Not overridden: the employer's statutory share still comes through from the base context.
+    expect(d.LWF_EMPLOYER_AMOUNT).toBeUndefined();
   });
 
   it('leaves LWF alone when there are wages', () => {
