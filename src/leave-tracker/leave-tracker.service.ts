@@ -200,11 +200,15 @@ export class LeaveTrackerService {
     // grid can show it in a cell's tooltip without overloading the cell
     // code's own type. Only present for a day with real punch duration.
     const hours: Record<string, Record<number, number>> = {};
+    // The same figure in whole minutes: clients show worked time as "8h 30m", and a decimal-hours value can't
+    // give back the exact minute (8.33h -> 8h 20m vs the real 8h 19m).
+    const minutes: Record<string, Record<number, number>> = {};
     for (const row of attendanceRows) {
       const day = Number(row.date.slice(8, 10));
       if (row.workDurationMinutes > 0) {
         (hours[row.employeeId] ??= {})[day] =
           Math.round((row.workDurationMinutes / 60) * 100) / 100;
+        (minutes[row.employeeId] ??= {})[day] = row.workDurationMinutes;
       }
       let code: LeaveTrackerCellCode;
       if (row.status === AttendanceStatus.HOLIDAY) {
@@ -273,6 +277,7 @@ export class LeaveTrackerService {
       days,
       cells,
       hours,
+      minutes,
     };
   }
 

@@ -51,6 +51,15 @@ export interface ReportPayload {
   filename: string;
 }
 
+// Worked time as hours and minutes ("8h 30m"), exact to the minute, instead of a decimal ("8.50").
+function formatWorkedMinutes(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes || 0));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
+
 @Injectable()
 export class ReportsService {
   constructor(
@@ -114,7 +123,7 @@ export class ReportsService {
       date: formatDateDisplay(r.date),
       inTime: punch(r.inTime, r.inTime),
       outTime: punch(r.outTime, r.inTime),
-      workHours: (r.workDurationMinutes / 60).toFixed(2),
+      workHours: formatWorkedMinutes(r.workDurationMinutes),
       status: r.status,
     }));
 
@@ -124,7 +133,7 @@ export class ReportsService {
       { header: 'Date', key: 'date', width: 15 },
       { header: 'In Time', key: 'inTime', width: 25 },
       { header: 'Out Time', key: 'outTime', width: 25 },
-      { header: 'Work Hours', key: 'workHours', width: 12 },
+      { header: 'Work Duration', key: 'workHours', width: 14 },
       { header: 'Status', key: 'status', width: 15 },
     ];
 
