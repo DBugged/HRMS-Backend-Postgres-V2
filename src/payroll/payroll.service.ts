@@ -175,6 +175,18 @@ function assertNotOwnPayroll(
   }
 }
 
+// A final-settlement run is created, approved and paid by the Settlements workflow together with the Settlement
+// record; moving it through the generic payroll endpoints would leave the two disagreeing.
+function assertNotFinalSettlementRun(run: {
+  isFinalSettlement: boolean;
+}): void {
+  if (run.isFinalSettlement) {
+    throw new BadRequestException(
+      'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+    );
+  }
+}
+
 const TRANSITIONS: Record<PayrollTransitionAction, TransitionConfig> = {
   verify: {
     fromStatuses: [PayrollRunStatus.CALCULATED],
@@ -1880,6 +1892,7 @@ export class PayrollService {
       where: { id, organizationId },
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
     assertNotOwnPayroll(actor, run.employeeId, 'edit');
     if (
       run.status === PayrollRunStatus.APPROVED ||
@@ -2242,6 +2255,7 @@ export class PayrollService {
       where: { id, organizationId },
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
     assertNotOwnPayroll(actor, run.employeeId, 'unlock');
     if (
       run.status !== PayrollRunStatus.LOCKED &&
@@ -2496,6 +2510,15 @@ export class PayrollService {
     for (const run of runs) {
       if (!config.fromStatuses.includes(run.status)) {
         skipped.push({ id: run.id, status: run.status });
+        continue;
+      }
+      if (run.isFinalSettlement) {
+        skipped.push({
+          id: run.id,
+          status: 'final_settlement',
+          reason:
+            'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+        });
         continue;
       }
       if (`${run.year}-${String(run.month).padStart(2, '0')}-01` > orgToday) {
