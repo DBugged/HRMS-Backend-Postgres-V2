@@ -161,6 +161,20 @@ interface PreviousEmploymentEntry {
 // age display derived from it) exactly as entered. Throws on the first bad
 // date found in `patch`, same "only fields actually present" scoping as
 // assertValidIdentifiers above.
+// An employee must be at least this old (HR record rule for every employee, whoever enters the date).
+export const MIN_EMPLOYEE_AGE_YEARS = 18;
+
+/** The latest date of birth allowed today, as YYYY-MM-DD (18th birthday is today). 29 Feb falls back to 28 Feb. */
+export function latestAllowedDateOfBirth(now: Date = new Date()): string {
+  const y = now.getUTCFullYear() - MIN_EMPLOYEE_AGE_YEARS;
+  const m = now.getUTCMonth();
+  const d = Math.min(
+    now.getUTCDate(),
+    new Date(Date.UTC(y, m + 1, 0)).getUTCDate(),
+  );
+  return new Date(Date.UTC(y, m, d)).toISOString().slice(0, 10);
+}
+
 export function assertValidDates(patch: Record<string, unknown>): void {
   if ('dateOfBirth' in patch) {
     const value = patch.dateOfBirth;
@@ -172,6 +186,11 @@ export function assertValidDates(patch: Record<string, unknown>): void {
       }
       if (value > new Date().toISOString().slice(0, 10)) {
         throw new BadRequestException('Date of birth cannot be in the future.');
+      }
+      if (value > latestAllowedDateOfBirth()) {
+        throw new BadRequestException(
+          `An employee must be at least ${MIN_EMPLOYEE_AGE_YEARS} years old.`,
+        );
       }
     }
   }

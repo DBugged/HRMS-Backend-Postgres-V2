@@ -2,6 +2,7 @@ import {
   areMandatoryDocumentsUploaded,
   assertValidAddress,
   assertValidDates,
+  latestAllowedDateOfBirth,
   assertValidIdentifiers,
   isProfileComplete,
   signPersonalDataFileUrls,
@@ -326,5 +327,28 @@ describe('signPersonalDataFileUrls refreshes a stale completed flag', () => {
       'org-1',
     );
     expect(out.profileCompleted).toBe(false);
+  });
+});
+
+describe('minimum age of 18', () => {
+  it('computes the latest allowed date of birth, including 29 Feb', () => {
+    expect(latestAllowedDateOfBirth(new Date('2026-10-11T10:00:00Z'))).toBe(
+      '2008-10-11',
+    );
+    expect(latestAllowedDateOfBirth(new Date('2028-02-29T10:00:00Z'))).toBe(
+      '2010-02-28',
+    );
+  });
+  it('rejects a date of birth under 18 and accepts exactly 18', () => {
+    const latest = latestAllowedDateOfBirth();
+    expect(() => assertValidDates({ dateOfBirth: latest })).not.toThrow();
+    const tooYoung = new Date(latest + 'T00:00:00Z');
+    tooYoung.setUTCDate(tooYoung.getUTCDate() + 1);
+    expect(() =>
+      assertValidDates({ dateOfBirth: tooYoung.toISOString().slice(0, 10) }),
+    ).toThrow('at least 18');
+    expect(() => assertValidDates({ dateOfBirth: '2016-05-01' })).toThrow(
+      'at least 18',
+    );
   });
 });
