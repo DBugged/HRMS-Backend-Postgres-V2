@@ -136,13 +136,31 @@ export function deriveStatutoryContext(
     PF_WAGES: wages(settings.pfUseWagesRule, pfBase),
     GRATUITY_WAGES: wages(settings.gratuityUseWagesRule, basicDa),
     NPS_WAGES: basicDa,
+    // Coverage and bonus eligibility are decided on the monthly wage RATE (what the structure pays for a full
+    // month), not on what a part month happened to earn: a joiner or a month of LOP must not drop an employee out
+    // of (or into) ESI / the bonus. The caller supplies the full-month figures; absent, the actual wages are used.
     ESI_APPLICABLE:
-      (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) <=
-        settings.esiWageCeiling || hadEsiThisPeriod
+      (context.FULL_MONTH_ESI_WAGES ??
+        context.ESI_WAGES ??
+        context.GROSS_EARNINGS ??
+        0) <= settings.esiWageCeiling || hadEsiThisPeriod
         ? 1
         : 0,
+    BASIC_DA_RATE: context.FULL_MONTH_BASIC_DA ?? basicDa,
+    // ESI: an employee whose average daily wage is Rs 176 or less pays no employee share (the employer's share is
+    // still due). Average daily wage = the period's ESI wages / days in the period.
+    ...((context.TOTAL_DAYS_IN_MONTH ?? 0) > 0 &&
+    (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) > 0 &&
+    (context.ESI_WAGES ?? context.GROSS_EARNINGS ?? 0) /
+      (context.TOTAL_DAYS_IN_MONTH as number) <=
+      ESI_DAILY_WAGE_EXEMPTION
+      ? { ESI_EMPLOYEE_RATE: 0 }
+      : {}),
   };
 }
+
+// ESIC: employees whose average daily wage is at or below this are exempt from the employee contribution.
+export const ESI_DAILY_WAGE_EXEMPTION = 176;
 
 // The EPS (pension) / EPF split of the employer's PF for the ECR: EPS is its rate on PF wages up to the ceiling,
 // EPF is the remainder of whatever the employer PF line came to, so the two always add back to the line. A member

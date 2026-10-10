@@ -320,15 +320,15 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     displayOrder: 46,
   },
   {
-    // Payment of Bonus Act (Chapter VIII, Code on Wages) monthly accrual: only for employees whose Basic + DA is
-    // within the eligibility ceiling, on the wage base capped at the calculation ceiling. Paid out annually, so
+    // Payment of Bonus Act (Chapter VIII, Code on Wages) monthly accrual: only for employees whose monthly Basic + DA
+    // rate (BASIC_DA_RATE - full month, not LOP/joining prorated) is within the eligibility ceiling, on the wage base capped at the calculation ceiling. Paid out annually, so
     // like gratuity it is an employer accrual, not an earning.
     name: 'Statutory Bonus (Accrual)',
     code: 'BONUS_ACCRUAL',
     type: SalaryComponentType.EARNING,
     calcType: CalcType.FORMULA,
     formula:
-      'IF(BASIC_DA <= BONUS_ELIGIBILITY_CEILING, ROUND(MIN(BASIC_DA, BONUS_CALC_CEILING) * BONUS_RATE / 100, 0), 0)',
+      'IF(BASIC_DA_RATE <= BONUS_ELIGIBILITY_CEILING, ROUND(MIN(BASIC_DA, BONUS_CALC_CEILING) * BONUS_RATE / 100, 0), 0)',
     isStatutory: true,
     statutoryKey: StatutoryKey.BONUS,
     isEmployerContribution: true,

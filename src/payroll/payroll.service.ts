@@ -895,10 +895,30 @@ export class PayrollService {
         earningsLines
           .filter(
             (l) =>
-              l.component && l.component.payFrequency !== PayFrequency.MONTHLY,
+              l.component &&
+              // The bonus is a periodic payment whichever pay frequency it was seeded/configured with.
+              (l.component.payFrequency !== PayFrequency.MONTHLY ||
+                l.code === 'BONUS'),
           )
           .reduce((s, l) => s + l.amount, 0),
     );
+    // What the structure pays for a FULL month (no LOP/joining proration): ESI coverage and bonus eligibility are
+    // judged on this rate, not on a part month's earnings.
+    const fullMonthLines = this.recurringMonthlyEarnings(
+      earningComponents,
+      overridesByCode,
+      baseContext,
+      roundAmount,
+    );
+    if (fullMonthLines) {
+      afterEarnings.FULL_MONTH_ESI_WAGES = fullMonthLines.reduce(
+        (sum, l) => sum + l.amount,
+        0,
+      );
+      afterEarnings.FULL_MONTH_BASIC_DA = fullMonthLines
+        .filter((l) => l.code === 'BASIC' || l.code === 'DA')
+        .reduce((sum, l) => sum + l.amount, 0);
+    }
     // Wage bases and the ESI coverage flag — all depend on this month's gross, so they're derived here.
     Object.assign(
       afterEarnings,
