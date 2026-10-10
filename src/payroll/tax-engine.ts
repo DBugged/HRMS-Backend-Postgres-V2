@@ -62,6 +62,11 @@ export function applySurchargeWithMarginalRelief(
   taxableIncome: number,
   surchargeSlabs: TaxSlab[],
   incomeSlabs: TaxSlab[],
+  // Prices the tax at the threshold. Defaults to the slabs as they stand; the caller passes its own where the
+  // taxpayer's tax is not the plain slab tax (the old regime's higher exemption for a senior / super-senior
+  // citizen), so the relief cap is measured on the same basis as the tax being capped.
+  taxAt: (income: number) => number = (income) =>
+    applySlabs(income, incomeSlabs),
 ): number {
   const plain = applySurcharge(tax, taxableIncome, surchargeSlabs);
   if (plain <= 0) return plain;
@@ -75,7 +80,7 @@ export function applySurchargeWithMarginalRelief(
   // The surcharge rate in force just below the threshold (0 for the first band).
   const lower = surchargeSlabs.find((s) => (s.to ?? Infinity) === threshold);
   const lowerRate = lower ? lower.rate : 0;
-  const taxAtThreshold = applySlabs(threshold, incomeSlabs);
+  const taxAtThreshold = taxAt(threshold);
   const maxTotal =
     taxAtThreshold * (1 + lowerRate / 100) + (taxableIncome - threshold);
   return Math.max(0, Math.min(plain, maxTotal - tax));
@@ -388,6 +393,20 @@ export function calculateTax({
     taxableIncome,
     taxSlabConfig.surchargeSlabs,
     taxSlabConfig.slabs,
+    (income) => {
+      let t = applySlabs(income, taxSlabConfig.slabs);
+      if (regime === TaxRegime.OLD) {
+        // Same senior / super-senior adjustment as the tax itself (the higher basic exemption).
+        const limit = oldRegimeExemptionLimit(ageAtFYEnd);
+        if (limit > 250000) {
+          t = Math.max(
+            0,
+            t - applySlabs(Math.min(income, limit), taxSlabConfig.slabs),
+          );
+        }
+      }
+      return t;
+    },
   );
   const cess =
     ((taxAfterRebate + surcharge) * (taxSlabConfig.cessRate || 0)) / 100;

@@ -725,3 +725,31 @@ describe('deduction caps (audit T-2/T-3/T-5)', () => {
     expect(r.taxableIncome).toBeGreaterThan(0);
   });
 });
+
+describe('surcharge marginal relief for a senior citizen (old regime, above 50L)', () => {
+  const oldCfg = {
+    regime: TaxRegime.OLD,
+    ...getDefaultTaxSlabConfig(TaxRegime.OLD),
+  };
+  const taxFor = (age: number | null, annual: number) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: annual,
+      finalMonth: true,
+      declaration: null,
+      taxSlabConfig: oldCfg,
+      ageAtFYEnd: age,
+    });
+
+  it('caps the extra tax at the income above 50L measured on the senior tax at 50L', () => {
+    // Age 85, taxable 50,00,001: tax at 50L on senior slabs is 12,50,000 + ... capped at (tax@50L + 1).
+    const r = taxFor(85, 5000001 + 50000); // + standard deduction 50,000
+    expect(r.taxableIncome).toBe(5000001);
+    const atThreshold = taxFor(85, 5000000 + 50000);
+    // Crossing the threshold by one rupee must cost about one rupee (plus cess), not the whole surcharge.
+    expect(r.totalAnnualTax - atThreshold.totalAnnualTax).toBeLessThanOrEqual(
+      30,
+    );
+  });
+});
