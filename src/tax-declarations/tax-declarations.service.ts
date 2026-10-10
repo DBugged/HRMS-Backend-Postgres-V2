@@ -154,6 +154,17 @@ export class TaxDeclarationsService {
     // someone else's declaration may set status; editing your own never
     // can, regardless of your role.
     const isOwnDeclaration = employeeId === actor.id;
+    // Writing someone else's declaration (marking it VERIFIED, setting Section 89 relief, correcting figures) is an
+    // HR/Admin job - a manager may read their department's declarations but never change one.
+    if (
+      !isOwnDeclaration &&
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.HR
+    ) {
+      throw new ForbiddenException(
+        "Only HR or an Admin can change another employee's tax declaration.",
+      );
+    }
     if (!isOwnDeclaration) {
       await assertManagerDeptScope(
         this.scopedPrisma,
