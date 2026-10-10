@@ -24,10 +24,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { approvalStep, checkGrantRequest } from './leave-grant-rules';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
-import {
-  assertManagerScopeOrDelegate,
-  assertNotOwnRequest,
-} from '../common/dept-scope';
+import { assertManagerScopeOrDelegate } from '../common/dept-scope';
 import { LeaveGrantsService } from './leave-grants.service';
 import {
   ApproveGrantRequestDto,
@@ -235,8 +232,14 @@ export class LeaveGrantRequestsService {
     if (request.status !== 'PENDING') {
       throw new ConflictException('This request has already been decided.');
     }
-    // Nobody decides their own request; a manager only acts on their own team (or as a delegate).
-    assertNotOwnRequest(caller, request.employeeId);
+    // A manager only acts on their own team (or as a delegate), and nobody but an Admin decides their own request
+    // (assertManagerScopeOrDelegate refuses the self-review); an Admin's own is audit-logged as a self-approval.
+    await this.auditLog.logSelfApproval(caller, {
+      module: 'LEAVE',
+      targetId: id,
+      employeeId: request.employeeId,
+      request: 'Event leave grant request',
+    });
     await assertManagerScopeOrDelegate(
       this.scopedPrisma,
       this.delegation,
@@ -394,7 +397,12 @@ export class LeaveGrantRequestsService {
       where: { id, organizationId },
     });
     if (!request) throw new NotFoundException('Request not found.');
-    assertNotOwnRequest(caller, request.employeeId);
+    await this.auditLog.logSelfApproval(caller, {
+      module: 'LEAVE',
+      targetId: id,
+      employeeId: request.employeeId,
+      request: 'Event leave grant request',
+    });
     await assertManagerScopeOrDelegate(
       this.scopedPrisma,
       this.delegation,

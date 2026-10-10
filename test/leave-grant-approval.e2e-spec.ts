@@ -249,4 +249,48 @@ describe('Event leave grant approval flow (e2e)', () => {
       ),
     ).toBe(true);
   });
+
+  it('an Admin may approve their own request; HR may not', async () => {
+    const own = (
+      await request(app.getHttpServer())
+        .post('/leave-grants/requests')
+        .set(auth(adminToken))
+        .send({
+          leaveTypeId: oneLevelTypeId,
+          eventDate: day(6, 1),
+          days: 5,
+          reason: 'Admin event',
+        })
+        .expect(201)
+    ).body as Created;
+    const res = await request(app.getHttpServer())
+      .post(`/leave-grants/requests/${own.id}/approve`)
+      .set(auth(adminToken))
+      .send({})
+      .expect(201);
+    expect((res.body as Created).status).toBe('APPROVED');
+
+    const hrOwn = (
+      await request(app.getHttpServer())
+        .post('/leave-grants/requests')
+        .set(auth(hrToken))
+        .send({
+          leaveTypeId: oneLevelTypeId,
+          eventDate: day(6, 2),
+          days: 5,
+          reason: 'HR event',
+        })
+        .expect(201)
+    ).body as Created;
+    await request(app.getHttpServer())
+      .post(`/leave-grants/requests/${hrOwn.id}/approve`)
+      .set(auth(hrToken))
+      .send({})
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/leave-grants/requests/${hrOwn.id}/approve`)
+      .set(auth(adminToken))
+      .send({})
+      .expect(201);
+  });
 });

@@ -52,7 +52,6 @@ import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   assertManagerScopeOrDelegate,
-  assertNotOwnRequest,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -470,8 +469,8 @@ export class LeavesService {
       );
     }
 
-    // Nobody reviews their own leave, an Admin included: someone else (another Admin, or HR) has to decide it.
-    assertNotOwnRequest(actor, leave.employeeId);
+    // An Admin may approve or reject their own leave (it is audit-logged as a self-approval above); HR and managers
+    // cannot - assertManagerScopeOrDelegate below refuses a self-review from anyone but an Admin.
 
     // A rejection or return has to say why - the employee sees this text on the request and in the notification.
     if (
