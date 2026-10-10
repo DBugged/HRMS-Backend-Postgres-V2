@@ -275,6 +275,19 @@ async function assertPayrollPeriodUnlocked(
       `This attendance date (${dateStr}) falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before changing this attendance.`,
     );
   }
+  // A VERIFIED/APPROVED run was signed off on the old attendance and can no longer be recalculated once approved:
+  // send it back to CALCULATED so it is recalculated and re-approved against the corrected attendance.
+  await db.payrollRun.updateMany({
+    where: {
+      organizationId,
+      employeeId,
+      month,
+      year,
+      isFinalSettlement: false,
+      status: { in: [PayrollRunStatus.VERIFIED, PayrollRunStatus.APPROVED] },
+    },
+    data: { status: PayrollRunStatus.CALCULATED },
+  });
 }
 
 function addDaysStr(dateStr: string, days: number): string {
