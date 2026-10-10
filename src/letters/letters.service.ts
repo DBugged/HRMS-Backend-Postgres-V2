@@ -284,6 +284,19 @@ export class LettersService {
     if (hiringLetterBlocked(key, employee)) {
       throw new BadRequestException(HIRING_LETTER_BLOCKED_REASON);
     }
+    // Payroll and settlement letters carry gross/net/CTC and full-and-final amounts. A manager may issue the
+    // department's plain letters, but never another person's pay figures (the same rule that keeps a manager out of
+    // their reports' payslips); HR, Admin and the employee themself are unaffected.
+    if (
+      actor.role === Role.MANAGER &&
+      employeeId !== actor.id &&
+      (template.dataProfile === LetterDataProfile.PAYROLL ||
+        template.dataProfile === LetterDataProfile.SETTLEMENT)
+    ) {
+      throw new ForbiddenException(
+        "Only HR or an Admin can issue a letter that contains an employee's pay figures.",
+      );
+    }
 
     // Same view-scoping rule as EmployeeTimelineService.assertCanView — HR/
     // ADMIN see anyone, a MANAGER only their own department, an EMPLOYEE
