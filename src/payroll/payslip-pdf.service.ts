@@ -689,7 +689,10 @@ export class PayslipPdfService {
       doc.roundedRect(attX, y, attW, cardH, 8).fillAndStroke('#ffffff', BORDER);
       doc.font(fonts.bold).fontSize(8.5).fillColor(primary);
       text('ATTENDANCE SUMMARY', attX + 10, y + 9, { width: attW - 20 });
-      const a = run.attendanceSummary as Record<string, number | undefined>;
+      const a = (run.attendanceSummary ?? {}) as Record<
+        string,
+        number | undefined
+      >;
       // Weekly Offs and Holidays are the days actually paid as such (attendance rows plus the calendar's weekly offs and
       // holidays, see payroll/off-days.ts). Older runs saved before those counts existed show the figures they have.
       // A half day is worth half a day's pay: the other half shows as "Half-day deduction" instead of being folded into
