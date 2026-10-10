@@ -60,6 +60,7 @@ import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 import {
   calculateGratuity,
+  calendarYearsOfService,
   gratuityPayoutStatus,
   isFixedTermEmployeeType,
 } from './gratuity-math';
@@ -241,8 +242,10 @@ export class SettlementsService {
         `The last working day (${lwdDate}) has not come yet. Calculate the final settlement on or after the last working day.`,
       );
     }
-    const month = lwd.getMonth() + 1;
-    const year = lwd.getFullYear();
+    // Read from the date string, not lwd's local-time getters: the string parses as UTC midnight, which is the
+    // previous day on a server west of UTC and would settle the wrong month.
+    const month = Number(lwdDate.slice(5, 7));
+    const year = Number(lwdDate.slice(0, 4));
 
     await this.assertNoOpenRegularRun(
       dto.employeeId,
@@ -431,14 +434,27 @@ export class SettlementsService {
       : settings.gratuityEnabled;
     let gratuityAmount = 0;
     if (gratuityEnabled) {
-      const yearsOfService =
-        (lwd.getTime() - employee.joiningDate.getTime()) /
-        (1000 * 60 * 60 * 24 * 365.25);
+      // Service is counted in calendar terms up to and including the last working day, so exactly five years
+      // (joined 2020-10-07, left 2025-10-06 or later) is five years, not 4.9993 of a 365.25-day year.
+      const yearsOfService = calendarYearsOfService(
+        employee.joiningDate.toISOString().slice(0, 10),
+        lwdDate,
+      );
+      // Gratuity is on Basic + Dearness Allowance (the wages used by monthly accrual), not Basic alone.
+      const daMonthly =
+        await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
+          dto.employeeId,
+          'DA',
+          dto.lastWorkingDay,
+          organizationId,
+        );
       // Completed years (part-year over six months rounds up) and the
       // 20-lakh statutory ceiling — see gratuity-math.ts.
-      gratuityAmount = calculateGratuity(basicMonthly, yearsOfService, {
-        fixedTerm: isFixedTermEmployeeType(employee.employeeType),
-      });
+      gratuityAmount = calculateGratuity(
+        basicMonthly + daMonthly,
+        yearsOfService,
+        { fixedTerm: isFixedTermEmployeeType(employee.employeeType) },
+      );
     }
 
     const reimbursementAmount = await this.sumApprovedReimbursements(
@@ -672,9 +688,11 @@ export class SettlementsService {
       );
     }
 
-    const lwd = new Date(settlement.lastWorkingDay);
-    const month = lwd.getMonth() + 1;
-    const year = lwd.getFullYear();
+    const lwdStr = new Date(settlement.lastWorkingDay)
+      .toISOString()
+      .slice(0, 10);
+    const month = Number(lwdStr.slice(5, 7));
+    const year = Number(lwdStr.slice(0, 4));
 
     // The LWD month's regular run may have moved since calculate(): still
     // open -> can't tell who pays the salary yet; now locked/paid while this
