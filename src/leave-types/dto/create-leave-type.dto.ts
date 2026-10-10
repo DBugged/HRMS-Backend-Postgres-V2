@@ -65,15 +65,21 @@ export class CreateLeaveTypeDto {
   @IsNumber()
   annualQuota?: number;
 
+  // Retired: every quota is granted upfront (prorated for a mid-year joiner). Still accepted so an older client that
+  // sends it does not get a 400, but the value is ignored.
   @ApiPropertyOptional({
     enum: AccrualFrequency,
-    default: AccrualFrequency.YEARLY,
+    deprecated: true,
+    description: 'Ignored. Leave quotas are granted upfront.',
   })
   @IsOptional()
   @IsEnum(AccrualFrequency)
   accrualFrequency?: AccrualFrequency;
 
-  @ApiPropertyOptional({ default: 0 })
+  @ApiPropertyOptional({
+    deprecated: true,
+    description: 'Ignored. Leave quotas are granted upfront.',
+  })
   @IsOptional()
   @IsNumber()
   accrualAmountPerCycle?: number;

@@ -68,11 +68,12 @@ import { todayInOrgTz } from '../common/org-date';
 
 type Actor = Omit<User, 'password'>;
 
-// The only two actions LeaveTypesService.runAccrual/runCarryForward ever
-// write — same fixed list the old system's getCreditHistory filtered on.
+// The balance-changing actions LeaveTypesService writes (older accrual entries stay on record) — same fixed list the
+// old system's getCreditHistory filtered on.
 const CREDIT_HISTORY_ACTIONS = [
   'LEAVE_ACCRUAL_RUN',
   'LEAVE_ACCRUAL_REPAIRED',
+  'LEAVE_BALANCES_RECALCULATED',
   'LEAVE_TYPE_POLICY_CHANGED',
   'LEAVE_CARRYFORWARD_RUN',
 ];
@@ -214,7 +215,12 @@ export class LeavesService {
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
             leaveType: {
-              select: { id: true, name: true, code: true, approvalLevels: true },
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                approvalLevels: true,
+              },
             },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
