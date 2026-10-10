@@ -145,12 +145,16 @@ export function deriveStatutoryContext(
 }
 
 // The EPS (pension) / EPF split of the employer's PF for the ECR: EPS is its rate on PF wages up to the ceiling,
-// EPF is the remainder of whatever the employer PF line came to, so the two always add back to the line.
+// EPF is the remainder of whatever the employer PF line came to, so the two always add back to the line. A member
+// who is no longer eligible for the pension scheme (pension age reached - 58) gets no EPS: the whole employer
+// share goes to EPF.
 export function splitEmployerPf(
   employerPfAmount: number,
   context: Record<string, number>,
   settings: OverlaidSettings,
+  opts: { epsEligible?: boolean } = {},
 ): { eps: number; epf: number } {
+  if (opts.epsEligible === false) return { eps: 0, epf: employerPfAmount };
   const wages = Math.min(context.PF_WAGES ?? 0, settings.pfWageCeiling);
   const eps = Math.min(
     employerPfAmount,
@@ -158,6 +162,24 @@ export function splitEmployerPf(
   );
   return { eps, epf: employerPfAmount - eps };
 }
+
+// Age in whole years on `dateStr` (YYYY-MM-DD) for a YYYY-MM-DD date of birth; null when the DOB is unknown.
+export function ageOnDate(dob: unknown, dateStr: string): number | null {
+  if (typeof dob !== 'string') return null;
+  const born = new Date(dob);
+  const on = new Date(`${dateStr}T00:00:00.000Z`);
+  if (Number.isNaN(born.getTime()) || Number.isNaN(on.getTime())) return null;
+  let age = on.getUTCFullYear() - born.getUTCFullYear();
+  const beforeBirthday =
+    on.getUTCMonth() < born.getUTCMonth() ||
+    (on.getUTCMonth() === born.getUTCMonth() &&
+      on.getUTCDate() < born.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return age;
+}
+
+// EPS membership ends at 58 (the pension age).
+export const EPS_PENSION_AGE = 58;
 
 export function buildBaseContext(
   attendance: AttendanceSummary,

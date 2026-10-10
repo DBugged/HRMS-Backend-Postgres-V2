@@ -105,6 +105,8 @@ import {
   buildBaseContext,
   deriveStatutoryContext,
   splitEmployerPf,
+  ageOnDate,
+  EPS_PENSION_AGE,
 } from './formula-context';
 import {
   calculateTax,
@@ -1292,7 +1294,15 @@ export class PayrollService {
         amount: e.amount,
         ...(e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER
           ? {
-              breakup: splitEmployerPf(e.amount, afterEarnings, settings),
+              breakup: splitEmployerPf(e.amount, afterEarnings, settings, {
+                epsEligible: !(
+                  (ageOnDate(
+                    (employee.personalData as Record<string, unknown> | null)
+                      ?.dob,
+                    periodDate,
+                  ) ?? 0) >= EPS_PENSION_AGE
+                ),
+              }),
               wages: Math.min(
                 afterEarnings.PF_WAGES ?? 0,
                 settings.pfWageCeiling,

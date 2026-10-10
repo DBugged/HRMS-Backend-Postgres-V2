@@ -443,3 +443,16 @@ describe('flat LWF with no wages (audit B5)', () => {
     ).toBe(15000);
   });
 });
+
+describe('splitEmployerPf for a member past pension age', () => {
+  it('puts the whole employer share in EPF when EPS is no longer applicable', () => {
+    const ctx = { PF_WAGES: 15000 };
+    expect(
+      splitEmployerPf(1800, ctx, settings(), { epsEligible: false }),
+    ).toEqual({
+      eps: 0,
+      epf: 1800,
+    });
+    expect(splitEmployerPf(1800, ctx, settings()).eps).toBeGreaterThan(0);
+  });
+});
