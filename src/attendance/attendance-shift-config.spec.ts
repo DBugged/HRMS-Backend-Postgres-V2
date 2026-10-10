@@ -165,3 +165,32 @@ describe('enumerateDateStrings', () => {
     ]);
   });
 });
+
+import { statusForWorkedMinutes } from './attendance-shift-config';
+describe('statusForWorkedMinutes', () => {
+  const cfg = {
+    breakMinutes: 60,
+    minHoursForPresent: 8,
+    minHoursForHalfDay: 4,
+  };
+  const at = (h: number, m = 0) => statusForWorkedMinutes(h * 60 + m, cfg);
+  it('Half-Day counts the hours on the clock, not hours after the break', () => {
+    expect(at(4)).toBe('HALF_DAY'); // exactly the minimum
+    expect(at(4, 15)).toBe('HALF_DAY'); // used to be Absent with a 60-minute break
+    expect(at(5, 30)).toBe('HALF_DAY');
+  });
+  it('under the Half-Day minimum is Absent', () => {
+    expect(at(3, 59)).toBe('ABSENT');
+    expect(at(0)).toBe('ABSENT');
+  });
+  it('Present needs the full hours after the break', () => {
+    expect(at(8)).toBe('HALF_DAY'); // 8h on the clock is 7h after a 1h break
+    expect(at(8, 59)).toBe('HALF_DAY');
+    expect(at(9)).toBe('PRESENT');
+  });
+  it('with no break it is the plain hours', () => {
+    const none = { ...cfg, breakMinutes: 0 };
+    expect(statusForWorkedMinutes(480, none)).toBe('PRESENT');
+    expect(statusForWorkedMinutes(240, none)).toBe('HALF_DAY');
+  });
+});

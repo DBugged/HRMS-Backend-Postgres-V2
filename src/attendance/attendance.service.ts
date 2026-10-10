@@ -64,6 +64,7 @@ import {
   resolveShiftConfig,
   type OrganizationAttendancePrefs,
   type ShiftConfig,
+  statusForWorkedMinutes,
 } from './attendance-shift-config';
 import { IngestPunchDto } from './dto/ingest-punch.dto';
 import { ManualPunchDto } from './dto/manual-punch.dto';
@@ -643,19 +644,12 @@ export class AttendanceService {
           shiftEnd.getTime() - outTime.getTime() >
           shiftConfig.earlyOutThresholdMinutes * 60000;
 
-        // Break time is unpaid — doesn't count toward Present/Half-Day
-        // thresholds, only the raw punch-in-to-punch-out span still does
-        // (workDurationMinutes itself stays the full span, unadjusted,
-        // since that's what's actually displayed/exported elsewhere).
-        const hours =
-          Math.max(0, workDurationMinutes - shiftConfig.breakMinutes) / 60;
-        if (hours >= shiftConfig.minHoursForPresent) {
-          status = AttendanceStatus.PRESENT;
-        } else if (hours >= shiftConfig.minHoursForHalfDay) {
-          status = AttendanceStatus.HALF_DAY;
-        } else {
-          status = AttendanceStatus.ABSENT;
-        }
+        // Present is judged on hours after the unpaid break, Half-Day on the hours on the clock (see
+        // statusForWorkedMinutes). workDurationMinutes itself stays the full span, since that's what's displayed.
+        status =
+          AttendanceStatus[
+            statusForWorkedMinutes(workDurationMinutes, shiftConfig)
+          ];
       }
     } else {
       const approvedLeave =
@@ -707,10 +701,7 @@ export class AttendanceService {
       employeeId,
       organizationId,
     );
-    const hours = Math.max(0, minutes - cfg.breakMinutes) / 60;
-    if (hours >= cfg.minHoursForPresent) return AttendanceStatus.PRESENT;
-    if (hours >= cfg.minHoursForHalfDay) return AttendanceStatus.HALF_DAY;
-    return AttendanceStatus.ABSENT;
+    return AttendanceStatus[statusForWorkedMinutes(minutes, cfg)];
   }
 
   // Below this overshoot, a punch-out isn't worth a review-queue entry —

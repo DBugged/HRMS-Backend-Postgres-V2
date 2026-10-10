@@ -201,3 +201,25 @@ export function enumerateDateStrings(
   }
   return dates;
 }
+
+/**
+ * Present / Half-Day / Absent for a day worked `minutes` from first punch-in to last punch-out.
+ *   - Present needs the full hours AFTER the unpaid break (a 9-hour span with a 1-hour break is 8 working hours).
+ *   - Half-Day needs the minimum hours on the clock, with the break NOT taken off: a short day (say 4 hours 15
+ *     minutes) is not one where a full lunch hour was taken, and taking it off used to turn exactly the hours the
+ *     employee was shown as having worked into "Absent".
+ * Both comparisons are whole minutes, so 4:00 against a 4-hour minimum counts.
+ */
+export function statusForWorkedMinutes(
+  minutes: number,
+  config: Pick<
+    ShiftConfig,
+    'breakMinutes' | 'minHoursForPresent' | 'minHoursForHalfDay'
+  >,
+): 'PRESENT' | 'HALF_DAY' | 'ABSENT' {
+  const afterBreak = Math.max(0, minutes - config.breakMinutes);
+  if (afterBreak >= Math.round(config.minHoursForPresent * 60))
+    return 'PRESENT';
+  if (minutes >= Math.round(config.minHoursForHalfDay * 60)) return 'HALF_DAY';
+  return 'ABSENT';
+}
