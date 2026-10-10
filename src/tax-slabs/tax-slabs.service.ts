@@ -113,6 +113,27 @@ export class TaxSlabsService {
     }
   }
 
+  // Slabs of a financial year that already has a locked or paid payroll run can't be changed in place: those payslips
+  // were computed from them and would silently stop matching the configuration.
+  private async assertFinancialYearNotFinalized(
+    financialYear: string,
+    organizationId: string,
+  ) {
+    const finalized = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        financialYear,
+        status: { in: ['LOCKED', 'PAID'] },
+      },
+      select: { id: true },
+    });
+    if (finalized) {
+      throw new BadRequestException(
+        `Payroll for FY ${financialYear} is already locked or paid, so its tax slabs can no longer be changed. Unlock the affected payroll first.`,
+      );
+    }
+  }
+
   async upsert(
     dto: UpsertTaxSlabDto,
     organizationId: string,
@@ -142,6 +163,10 @@ export class TaxSlabsService {
         regime: dto.regime,
       },
     });
+    await this.assertFinancialYearNotFinalized(
+      dto.financialYear,
+      organizationId,
+    );
 
     const data = {
       ...(dto.slabs !== undefined && {
@@ -190,7 +215,31 @@ export class TaxSlabsService {
         module: 'PAYROLL',
         organizationId,
         targetId: result.id,
-        details: { financialYear: dto.financialYear, regime: dto.regime },
+        details: {
+          financialYear: dto.financialYear,
+          regime: dto.regime,
+          // Before/after of what this save actually changed.
+          before: existing
+            ? {
+                slabs: existing.slabs,
+                standardDeduction: existing.standardDeduction,
+                cessRate: existing.cessRate,
+                surchargeSlabs: existing.surchargeSlabs,
+                rebate87ALimit: existing.rebate87ALimit,
+                rebate87AAmount: existing.rebate87AAmount,
+                isActive: existing.isActive,
+              }
+            : null,
+          after: {
+            slabs: result.slabs,
+            standardDeduction: result.standardDeduction,
+            cessRate: result.cessRate,
+            surchargeSlabs: result.surchargeSlabs,
+            rebate87ALimit: result.rebate87ALimit,
+            rebate87AAmount: result.rebate87AAmount,
+            isActive: result.isActive,
+          },
+        },
       });
     }
 
