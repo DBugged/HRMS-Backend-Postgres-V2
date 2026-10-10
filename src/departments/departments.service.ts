@@ -3,6 +3,7 @@
 // mapped); assignHead() folds a role promotion (to MANAGER) into the same call as head assignment.
 // Important: assignHead() refuses to promote a user who already holds ADMIN/HR (NON_DEMOTABLE_ROLES) since
 // that would silently demote their real role to MANAGER — mirrors the frontend's own NON_DEMOTABLE_ROLES list.
+import { shiftConsistencyError } from '../attendance/shift-hours';
 import { orgAttendanceDefaults } from './org-attendance-sync';
 import {
   BadRequestException,
@@ -293,6 +294,40 @@ export class DepartmentsService {
           breakMinutes: schedule.breakMinutes,
         };
       }
+    }
+
+    // Shift, break and Present/Half-Day minimums must agree with each other (break shorter than the shift, Present
+    // hours within the working time left after the break). Only judged when one of them is being changed, so an
+    // unrelated edit (name, description) is never blocked by a department that predates this check.
+    const merged = { ...existing, ...rest, ...scheduleFields } as Record<
+      string,
+      unknown
+    >;
+    const SHIFT_FIELDS = [
+      'shiftStartTime',
+      'shiftEndTime',
+      'breakMinutes',
+      'minHoursForPresent',
+      'minHoursForHalfDay',
+      'crossesMidnight',
+    ];
+    const touched = { ...rest, ...scheduleFields } as Record<string, unknown>;
+    if (
+      SHIFT_FIELDS.some(
+        (f) =>
+          touched[f] !== undefined &&
+          touched[f] !== (existing as unknown as Record<string, unknown>)[f],
+      )
+    ) {
+      const problem = shiftConsistencyError({
+        startTime: String(merged.shiftStartTime),
+        endTime: String(merged.shiftEndTime),
+        breakMinutes: Number(merged.breakMinutes),
+        minHoursForPresent: Number(merged.minHoursForPresent),
+        minHoursForHalfDay: Number(merged.minHoursForHalfDay),
+        crossesMidnight: Boolean(merged.crossesMidnight),
+      });
+      if (problem) throw new BadRequestException(problem);
     }
 
     await this.scopedPrisma.department.updateMany({

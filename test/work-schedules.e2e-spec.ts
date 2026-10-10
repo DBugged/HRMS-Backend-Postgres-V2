@@ -80,6 +80,7 @@ describe('Work Schedules (e2e)', () => {
         workingDays: [1, 2, 3, 4, 5],
         startTime: '09:30',
         endTime: '18:30',
+        breakMinutes: 60,
       })
       .expect(201);
     const scheduleId = (schedule.body as WorkScheduleBody).id;

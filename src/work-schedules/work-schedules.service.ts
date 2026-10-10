@@ -4,6 +4,7 @@
 //   alternateWeeklyOffs/breakMinutes onto each selected department's own shiftStartTime/shiftEndTime/
 //   weeklyOffs/breakMinutes (what AttendanceService actually reads — see attendance-shift-config.ts) and
 //   sets Department.workScheduleId for traceability, replace semantics (exact target set).
+import { shiftConsistencyError } from '../attendance/shift-hours';
 import {
   BadRequestException,
   ConflictException,
@@ -79,6 +80,16 @@ function validateShiftLength(startTime: string, endTime: string) {
   }
 }
 
+// The break (0 = none) must be shorter than the shift it sits in.
+function validateBreak(
+  startTime: string,
+  endTime: string,
+  breakMinutes: number,
+) {
+  const problem = shiftConsistencyError({ startTime, endTime, breakMinutes });
+  if (problem) throw new BadRequestException(problem);
+}
+
 @Injectable()
 export class WorkSchedulesService {
   constructor(
@@ -114,6 +125,7 @@ export class WorkSchedulesService {
     const alternateWeeklyOffs = dto.alternateWeeklyOffs ?? [];
     validateNoOverlap(dto.workingDays, alternateWeeklyOffs);
     validateShiftLength(dto.startTime, dto.endTime);
+    validateBreak(dto.startTime, dto.endTime, dto.breakMinutes);
 
     const schedule = await this.scopedPrisma.workSchedule.create({
       data: {
@@ -122,7 +134,7 @@ export class WorkSchedulesService {
         workingDays: dto.workingDays,
         startTime: dto.startTime,
         endTime: dto.endTime,
-        breakMinutes: dto.breakMinutes ?? 60,
+        breakMinutes: dto.breakMinutes,
         alternateWeeklyOffs:
           alternateWeeklyOffs as unknown as Prisma.InputJsonValue,
         isActive: dto.isActive ?? true,
@@ -164,6 +176,17 @@ export class WorkSchedulesService {
       validateShiftLength(
         dto.startTime ?? existing.startTime,
         dto.endTime ?? existing.endTime,
+      );
+    }
+    if (
+      dto.startTime !== undefined ||
+      dto.endTime !== undefined ||
+      dto.breakMinutes !== undefined
+    ) {
+      validateBreak(
+        dto.startTime ?? existing.startTime,
+        dto.endTime ?? existing.endTime,
+        dto.breakMinutes ?? existing.breakMinutes,
       );
     }
 
