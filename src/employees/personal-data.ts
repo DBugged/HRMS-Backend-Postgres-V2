@@ -214,6 +214,11 @@ export function signPersonalDataFileUrls(
   organizationId: string,
 ): Record<string, unknown> {
   const signed = { ...personalData };
+  // A stored "complete" flag can be stale (saved before the required-field list grew, or a field was cleared since):
+  // what is shown must reflect the data as it is now.
+  if (signed.profileCompleted === true && !isProfileComplete(signed)) {
+    signed.profileCompleted = false;
+  }
   if (
     typeof signed.cancelledChequeUrl === 'string' &&
     signed.cancelledChequeUrl
@@ -243,20 +248,30 @@ export function signPersonalDataFileUrls(
   return signed;
 }
 
-// Ported from the old system's updatePersonalData: profileCompleted flips
-// true once these fields are all truthy — an intentionally small subset
-// of the full personal-data shape, not "every field filled in". Started as
-// 8 fields; maritalStatus added on top, mirroring Profile.tsx's
-// REQUIRED_PD_KEYS (the two lists are kept in step by hand, same as
-// before this field — no shared source of truth exists between them).
+// profileCompleted is true only once every field the My Profile form marks as required is filled in (the same list as
+// Profile.tsx's REQUIRED_PD_KEYS, kept in step by hand - there is no shared source of truth between them) AND the
+// mandatory documents are uploaded. It used to check a 9-field subset, so a profile showed "Complete" while the form
+// itself still asked for family, emergency, experience and bank-holder details.
 const REQUIRED_FOR_COMPLETION = [
   'fullNameAsPerGovtId',
   'dateOfBirth',
   'gender',
   'maritalStatus',
+  'bloodGroup',
   'currentAddress',
   'fatherName',
+  'fatherContact',
+  'motherName',
+  'motherContact',
+  'emergencyContact1Name',
   'emergencyContact1Number',
+  'emergencyContact2Name',
+  'emergencyContact2Number',
+  'totalExperience',
+  'currentOrganization',
+  'relevantExperience',
+  'bankAccountHolderName',
+  'bankName',
   'bankAccountNo',
   'bankIFSC',
 ] as const;

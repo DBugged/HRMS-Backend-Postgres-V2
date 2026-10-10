@@ -4,6 +4,7 @@ import {
   assertValidDates,
   assertValidIdentifiers,
   isProfileComplete,
+  signPersonalDataFileUrls,
   mergePersonalData,
 } from './personal-data';
 
@@ -12,9 +13,21 @@ const COMPLETE_FIELDS = {
   dateOfBirth: '1990-01-01',
   gender: 'Female',
   maritalStatus: 'Single',
+  bloodGroup: 'O+',
   currentAddress: '123 Main St',
   fatherName: 'John Doe',
+  fatherContact: '9876543210',
+  motherName: 'Jane Roe',
+  motherContact: '9876543211',
+  emergencyContact1Name: 'Sam Doe',
   emergencyContact1Number: '+91 98765 43210',
+  emergencyContact2Name: 'Amy Doe',
+  emergencyContact2Number: '9876543212',
+  totalExperience: '5',
+  currentOrganization: 'Acme',
+  relevantExperience: 'Payroll',
+  bankAccountHolderName: 'Jane Doe',
+  bankName: 'HDFC',
   bankAccountNo: '123456789',
   bankIFSC: 'HDFC0001234',
 };
@@ -36,13 +49,25 @@ describe('isProfileComplete', () => {
     );
   });
 
-  it('is true once all 8 required fields are present', () => {
+  it('is true once every required field is present', () => {
     expect(isProfileComplete(COMPLETE_FIELDS)).toBe(true);
+  });
+
+  it('is false when a family, experience or bank-holder field is missing', () => {
+    for (const key of [
+      'bloodGroup',
+      'motherContact',
+      'emergencyContact2Name',
+      'totalExperience',
+      'bankAccountHolderName',
+    ]) {
+      expect(isProfileComplete({ ...COMPLETE_FIELDS, [key]: '' })).toBe(false);
+    }
   });
 
   it('ignores fields outside the required set', () => {
     expect(
-      isProfileComplete({ ...COMPLETE_FIELDS, bloodGroup: undefined }),
+      isProfileComplete({ ...COMPLETE_FIELDS, personalEmail: undefined }),
     ).toBe(true);
   });
 });
@@ -291,5 +316,15 @@ describe('assertValidIdentifiers: PF number', () => {
       assertValidIdentifiers({ pfNumber: 'MH/BAN/123/000/0001234' }),
     ).toThrow(/Invalid PF number/);
     expect(() => assertValidIdentifiers({ pfNumber: '' })).not.toThrow();
+  });
+});
+
+describe('signPersonalDataFileUrls refreshes a stale completed flag', () => {
+  it('reports not complete when the stored flag is true but a required field is empty', () => {
+    const out = signPersonalDataFileUrls(
+      { ...COMPLETE_FIELDS, bloodGroup: '', profileCompleted: true },
+      'org-1',
+    );
+    expect(out.profileCompleted).toBe(false);
   });
 });
