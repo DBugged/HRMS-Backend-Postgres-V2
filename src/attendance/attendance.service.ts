@@ -90,6 +90,7 @@ import {
 } from '../payroll/format-date';
 import {
   todayInOrgTz,
+  dateStrInOrgTz,
   yesterdayInOrgTz,
   dayRangeInOrgTz,
 } from '../common/org-date';
@@ -2016,6 +2017,7 @@ export class AttendanceService {
           ...ATTENDANCE_LIST_EMPLOYEE_SELECT,
           joiningDate: true,
           departmentId: true,
+          createdAt: true,
         },
       }),
       this.scopedPrisma.attendance.findMany({
@@ -2034,21 +2036,31 @@ export class AttendanceService {
     const synthetic: AttendanceListRow[] = [];
     for (const employee of employees) {
       const joiningDateStr = employee.joiningDate.toISOString().slice(0, 10);
+      // Blank rows start on the day the employee was added to the system, never earlier: an employee added today
+      // with a past joining date used to get a screenful of blank Absent rows from that date, while one joining today
+      // got none. (The joining date still bounds the range; payroll proration is not affected - this is the list only.)
+      const addedDateStr = dateStrInOrgTz(
+        org?.timezone ?? 'Asia/Kolkata',
+        employee.createdAt,
+      );
       const shiftConfig = resolveShiftConfig(employee.department, orgPrefs);
       // The public row shape carries only the fields ATTENDANCE_LIST_EMPLOYEE_SELECT
       // picks — joiningDate/departmentId above are for this loop's own use only.
       const {
         joiningDate: _joiningDate,
         departmentId: _departmentId,
+        createdAt: _createdAt,
         ...publicEmployee
       } = employee;
       void _joiningDate;
       void _departmentId;
+      void _createdAt;
 
       for (const dateStr of rangeDays) {
         if (existingKeys.has(`${employee.id}|${dateStr}`)) continue;
         if (dateStr >= today) continue; // today isn't over; future never touched
         if (dateStr < joiningDateStr) continue; // not yet an employee
+        if (dateStr < addedDateStr) continue; // added to the system later than this day
 
         const { status, workDurationMinutes, isLate, isEarlyOut } =
           await this.deriveDayOutcome(this.scopedPrisma, {

@@ -1360,9 +1360,26 @@ describe('Attendance (e2e)', () => {
       const newEmployeeId = (created.body as EmployeeCreateBody).employee.id;
       // Employees are created with joiningDate = now; backdate so the whole
       // window below counts as "already an employee".
+      // A just-added employee gets no blank rows for days before they were added, even with a past joining date.
       await prisma.user.update({
         where: { id: newEmployeeId },
         data: { joiningDate: new Date(`${offsetDate(-30)}T00:00:00.000Z`) },
+      });
+      const justAdded = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({
+          employeeId: newEmployeeId,
+          from: offsetDate(-9),
+          to: offsetDate(-1),
+        })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect((justAdded.body as { data: unknown[] }).data).toHaveLength(0);
+
+      // Added to the system 30 days ago: blank rows exist for the window.
+      await prisma.user.update({
+        where: { id: newEmployeeId },
+        data: { createdAt: new Date(`${offsetDate(-30)}T00:00:00.000Z`) },
       });
 
       const from = offsetDate(-9);
