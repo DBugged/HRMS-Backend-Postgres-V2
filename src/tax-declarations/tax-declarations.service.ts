@@ -165,6 +165,25 @@ export class TaxDeclarationsService {
         "Only HR or an Admin can change another employee's tax declaration.",
       );
     }
+    // Investment figures (80C, HRA, regime, other income, ...) are the employee's own declaration: HR/Admin see them
+    // read-only. What they may still do on someone else's record is the HR work - set the status (verify / reopen)
+    // and Section 89 relief (from the Form 10E they computed).
+    if (!isOwnDeclaration) {
+      const HR_ONLY_KEYS = new Set([
+        'employeeId',
+        'financialYear',
+        'status',
+        'section89Relief',
+      ]);
+      const touched = Object.entries(dto as unknown as Record<string, unknown>)
+        .filter(([k, v]) => v !== undefined && !HR_ONLY_KEYS.has(k))
+        .map(([k]) => k);
+      if (touched.length > 0) {
+        throw new ForbiddenException(
+          "An employee's investment declaration is view-only for HR and Admin - the employee enters it themselves. You can verify it or set Section 89 relief.",
+        );
+      }
+    }
     if (!isOwnDeclaration) {
       await assertManagerDeptScope(
         this.scopedPrisma,

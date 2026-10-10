@@ -137,6 +137,25 @@ describe('Tax Declarations (e2e)', () => {
     expect((res.body as DeclarationBody).status).toBe('VERIFIED');
   });
 
+  it("HR/Admin cannot enter or change another employee's investment figures (view-only), only status and Section 89 relief", async () => {
+    await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ employeeId, financialYear: '2026-27', section80C: 150000 })
+      .expect(403);
+    await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ employeeId, financialYear: '2026-27', regimeChosen: 'OLD' })
+      .expect(403);
+    const res = await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ employeeId, financialYear: '2026-27', section89Relief: 1000 })
+      .expect(201);
+    expect((res.body as DeclarationBody).section80C).toBe(50000); // untouched
+  });
+
   it("a MANAGER cannot verify or set Section 89 relief on someone else's declaration", async () => {
     const create = await request(app.getHttpServer())
       .post('/employees')
@@ -185,7 +204,7 @@ describe('Tax Declarations (e2e)', () => {
     await request(app.getHttpServer())
       .post('/tax-declarations')
       .set('Authorization', `Bearer ${hrToken}`)
-      .send({ employeeId, financialYear: '2026-27', section80C: 75000 })
+      .send({ employeeId, financialYear: '2026-27', section89Relief: 2000 })
       .expect(201);
 
     const count = await prisma.employeeTaxDeclaration.count({
