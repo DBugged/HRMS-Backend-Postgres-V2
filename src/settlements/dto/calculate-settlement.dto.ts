@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsUUID, Min } from 'class-validator';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CalculateSettlementDto {
@@ -28,4 +28,12 @@ export class CalculateSettlementDto {
   @IsNumber()
   @Min(0)
   noticePeriodRecovery?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Exit is due to death or disablement - gratuity is then payable without the five-year minimum service (s.4(1) proviso).',
+  })
+  @IsOptional()
+  @IsBoolean()
+  deathOrDisablement?: boolean;
 }

@@ -128,3 +128,12 @@ describe('calendarYearsOfService', () => {
     );
   });
 });
+
+describe('calculateGratuity - death or disablement', () => {
+  it('pays below five years only when the exit is death/disablement', () => {
+    expect(calculateGratuity(26000, 2.4)).toBe(0);
+    expect(
+      calculateGratuity(26000, 2.4, { exemptFromMinimumService: true }),
+    ).toBe(Math.round(26000 * (15 / 26) * 2));
+  });
+});

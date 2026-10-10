@@ -448,13 +448,35 @@ export class SettlementsService {
           dto.lastWorkingDay,
           organizationId,
         );
+      let gratuityWages = basicMonthly + daMonthly;
+      // Where the organization has switched the Labour Codes' wages rule on for gratuity, wages are at least 50% of
+      // total remuneration - taken from the employee's latest full regular payslip.
+      const wagesRule =
+        (
+          gratuityVersion?.config as
+            { applyFiftyPercentRule?: boolean } | undefined
+        )?.applyFiftyPercentRule === true;
+      if (wagesRule) {
+        const latest = await this.scopedPrisma.payrollRun.findFirst({
+          where: {
+            organizationId,
+            employeeId: dto.employeeId,
+            isFinalSettlement: false,
+          },
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+          select: { grossSalary: true },
+        });
+        gratuityWages = Math.max(
+          gratuityWages,
+          (latest?.grossSalary ?? 0) * 0.5,
+        );
+      }
       // Completed years (part-year over six months rounds up) and the
       // 20-lakh statutory ceiling — see gratuity-math.ts.
-      gratuityAmount = calculateGratuity(
-        basicMonthly + daMonthly,
-        yearsOfService,
-        { fixedTerm: isFixedTermEmployeeType(employee.employeeType) },
-      );
+      gratuityAmount = calculateGratuity(gratuityWages, yearsOfService, {
+        fixedTerm: isFixedTermEmployeeType(employee.employeeType),
+        exemptFromMinimumService: dto.deathOrDisablement === true,
+      });
     }
 
     const reimbursementAmount = await this.sumApprovedReimbursements(

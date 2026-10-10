@@ -55,12 +55,13 @@ export function completedYearsOfService(yearsOfService: number): number {
 export function calculateGratuity(
   basicMonthly: number,
   yearsOfService: number,
-  opts: { fixedTerm?: boolean } = {},
+  opts: { fixedTerm?: boolean; exemptFromMinimumService?: boolean } = {},
 ): number {
   const required = opts.fixedTerm
     ? YEARS_FOR_FIXED_TERM_GRATUITY
     : YEARS_FOR_GRATUITY_ELIGIBILITY;
-  if (yearsOfService < required) return 0;
+  // Death or disablement: the minimum-service condition does not apply (Payment of Gratuity Act s.4(1) proviso).
+  if (!opts.exemptFromMinimumService && yearsOfService < required) return 0;
   const raw =
     basicMonthly * (15 / 26) * completedYearsOfService(yearsOfService);
   return Math.min(Math.round(raw), GRATUITY_STATUTORY_CAP);
