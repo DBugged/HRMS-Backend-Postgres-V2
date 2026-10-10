@@ -64,9 +64,15 @@ export class LeaveGrantsService {
     dto: CreateLeaveGrantDto,
     caller: Caller,
     organizationId: string,
+    // allowSelfGrant: a request that needs no approval grants the requester's own leave.
+    opts: { allowSelfGrant?: boolean } = {},
   ) {
     // HR cannot grant leave to themselves; an Admin can (the grant is audit-logged with the same actor and target).
-    if (caller.id === dto.employeeId && caller.role !== Role.ADMIN) {
+    if (
+      caller.id === dto.employeeId &&
+      caller.role !== Role.ADMIN &&
+      !opts.allowSelfGrant
+    ) {
       throw new ForbiddenException(
         'You cannot grant leave to yourself. Ask another HR or Admin user.',
       );

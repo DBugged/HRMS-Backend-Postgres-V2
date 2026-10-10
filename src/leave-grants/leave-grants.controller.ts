@@ -60,9 +60,10 @@ export class LeaveGrantsController {
     return this.requests.cancel(id, caller, caller.organizationId);
   }
 
+  // Decided by a manager (their team), HR or Admin, following the leave type's Approval Levels.
   @Post('requests/:id/approve')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.HR)
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   approveRequest(
     @Param('id') id: string,
     @Body() dto: ApproveGrantRequestDto,
@@ -73,7 +74,7 @@ export class LeaveGrantsController {
 
   @Post('requests/:id/reject')
   @UseGuards(RolesGuard)
-  @Roles(Role.ADMIN, Role.HR)
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   rejectRequest(
     @Param('id') id: string,
     @Body() dto: RejectGrantRequestDto,

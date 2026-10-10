@@ -2017,6 +2017,11 @@ model LeaveGrantRequest {
   // The grant an approval created.
   grantId      String?
 
+  // Two-level leave types: the reporting manager's sign-off, recorded before HR/Admin give the final decision.
+  level1ApprovedById String?
+  level1ApprovedAt   DateTime?
+  level1Comments     String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

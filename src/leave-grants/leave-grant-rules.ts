@@ -97,3 +97,42 @@ export function checkGrantRequest(
   }
   return null;
 }
+
+export type ApprovalStep =
+  { step: 'LEVEL1' } | { step: 'FINAL' } | { step: 'DENIED'; message: string };
+
+/**
+ * Which step an approval click is, from the leave type's Approval Levels (the same rule the leave review uses):
+ *  - 1 level: the manager, HR or Admin gives the one (final) approval.
+ *  - 2 levels: the manager's approval is only the level-1 sign-off; HR/Admin give the final one and cannot skip
+ *    level 1 while a manager who could give it exists (so a request never sticks when there is nobody above).
+ * Rejecting is always a final decision and is not routed through here.
+ */
+export function approvalStep(input: {
+  role: string;
+  approvalLevels: number;
+  level1Done: boolean;
+  levelOneApproverExists: boolean;
+}): ApprovalStep {
+  const manager = input.role === 'MANAGER';
+  if (input.approvalLevels !== 2) {
+    return { step: 'FINAL' };
+  }
+  if (manager) {
+    return input.level1Done
+      ? {
+          step: 'DENIED',
+          message:
+            'You have already given level-1 approval; HR/Admin give the final approval.',
+        }
+      : { step: 'LEVEL1' };
+  }
+  if (!input.level1Done && input.levelOneApproverExists) {
+    return {
+      step: 'DENIED',
+      message:
+        "This leave type needs level-1 approval from the employee's manager first. It is still waiting for them.",
+    };
+  }
+  return { step: 'FINAL' };
+}

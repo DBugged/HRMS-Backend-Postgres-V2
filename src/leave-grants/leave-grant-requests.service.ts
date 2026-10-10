@@ -22,7 +22,12 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { checkGrantRequest } from './leave-grant-rules';
+import { approvalStep, checkGrantRequest } from './leave-grant-rules';
+import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
+import {
+  assertManagerScopeOrDelegate,
+  assertNotOwnRequest,
+} from '../common/dept-scope';
 import { LeaveGrantsService } from './leave-grants.service';
 import {
   ApproveGrantRequestDto,
@@ -34,7 +39,15 @@ import {
 type Caller = Omit<User, 'password'>;
 
 const INCLUDE = {
-  leaveType: { select: { id: true, name: true, code: true } },
+  leaveType: {
+    select: {
+      id: true,
+      name: true,
+      code: true,
+      approvalLevels: true,
+      requiresApproval: true,
+    },
+  },
   employee: { select: { id: true, name: true, employeeId: true } },
   decidedBy: { select: { id: true, name: true } },
 } as const;
@@ -46,6 +59,7 @@ export class LeaveGrantRequestsService {
     private readonly grants: LeaveGrantsService,
     private readonly notifications: NotificationsService,
     private readonly auditLog: AuditLogService,
+    private readonly delegation: ApprovalDelegationService,
   ) {}
 
   async list(
@@ -54,15 +68,38 @@ export class LeaveGrantRequestsService {
     organizationId: string,
   ) {
     const isHr = caller.role === Role.ADMIN || caller.role === Role.HR;
+    let employeeFilter: Prisma.LeaveGrantRequestWhereInput = {
+      employeeId: caller.id,
+    };
+    if (isHr) {
+      // HR/Admin see everyone's, or one employee's when asked.
+      employeeFilter = query.employeeId ? { employeeId: query.employeeId } : {};
+    } else if (caller.role === Role.MANAGER) {
+      // A manager sees their own and their team's (direct reports and their department).
+      const team = await this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          OR: [
+            { reportingManagerId: caller.id },
+            ...(caller.departmentId
+              ? [{ departmentId: caller.departmentId }]
+              : []),
+          ],
+        },
+        select: { id: true },
+      });
+      const ids = [caller.id, ...team.map((u) => u.id)];
+      employeeFilter = {
+        employeeId:
+          query.employeeId && ids.includes(query.employeeId)
+            ? query.employeeId
+            : { in: ids },
+      };
+    }
     return this.scopedPrisma.leaveGrantRequest.findMany({
       where: {
         organizationId,
-        // Everyone else sees only their own requests; HR/Admin see all, or one employee's when asked.
-        ...(isHr
-          ? query.employeeId
-            ? { employeeId: query.employeeId }
-            : {}
-          : { employeeId: caller.id }),
+        ...employeeFilter,
         ...(query.status && {
           status: query.status as
             'PENDING' | 'APPROVED' | 'REJECTED' | 'CANCELLED',
@@ -150,12 +187,22 @@ export class LeaveGrantRequestsService {
       }
       throw err;
     }
+    // A leave type that needs no approval grants straight away (the same rule as a leave application).
+    if (!leaveType.requiresApproval) {
+      return this.finalize(created.id, caller, organizationId, {
+        days: created.days,
+        note: 'Auto-approved: this leave type needs no approval.',
+        allowSelfGrant: true,
+      });
+    }
+    // The reporting manager is told first (HR/Admin when there is none), as for leave applications.
     await this.notifications.notifyReviewers({
       organizationId,
       requester: employee,
       title: 'Event Leave Requested',
       message: `${employee.name} requested ${dto.days} day(s) of ${leaveType.name} for an event on ${dto.eventDate}.`,
       category: NotificationCategory.LEAVE,
+      managerFirst: true,
     });
     return created;
   }
@@ -182,11 +229,96 @@ export class LeaveGrantRequestsService {
   ) {
     const request = await this.scopedPrisma.leaveGrantRequest.findFirst({
       where: { id, organizationId },
+      include: INCLUDE,
     });
     if (!request) throw new NotFoundException('Request not found.');
-    if (request.employeeId === caller.id && caller.role !== Role.ADMIN) {
-      throw new ForbiddenException('You cannot approve your own request.');
+    if (request.status !== 'PENDING') {
+      throw new ConflictException('This request has already been decided.');
     }
+    // Nobody decides their own request; a manager only acts on their own team (or as a delegate).
+    assertNotOwnRequest(caller, request.employeeId);
+    await assertManagerScopeOrDelegate(
+      this.scopedPrisma,
+      this.delegation,
+      caller,
+      organizationId,
+      request.employeeId,
+    );
+
+    const step = approvalStep({
+      role: caller.role,
+      approvalLevels: request.leaveType.approvalLevels,
+      level1Done: request.level1ApprovedById !== null,
+      levelOneApproverExists: await this.levelOneApproverExists(
+        request.employeeId,
+        organizationId,
+      ),
+    });
+    if (step.step === 'DENIED') throw new ForbiddenException(step.message);
+
+    if (step.step === 'LEVEL1') {
+      // Level-1 sign-off only: the request stays pending for HR/Admin's final decision.
+      const claimed = await this.scopedPrisma.leaveGrantRequest.updateMany({
+        where: {
+          id,
+          organizationId,
+          status: 'PENDING',
+          level1ApprovedById: null,
+        },
+        data: {
+          level1ApprovedById: caller.id,
+          level1ApprovedAt: new Date(),
+          level1Comments: dto.note?.trim() || null,
+        },
+      });
+      if (claimed.count === 0) {
+        throw new ConflictException(
+          'This request has already been signed off.',
+        );
+      }
+      await this.auditLog.log({
+        actorId: caller.id,
+        action: 'LEAVE_GRANT_REQUEST_LEVEL1_APPROVED',
+        module: 'LEAVE',
+        organizationId,
+        targetId: id,
+        details: { employeeId: request.employeeId },
+      });
+      await this.notifications.notifyReviewers({
+        organizationId,
+        requester: { id: request.employeeId, reportingManagerId: null },
+        title: 'Event Leave Awaiting Final Approval',
+        message: `${request.employee.name}'s event leave request for ${request.leaveType.name} has level-1 approval and needs your final decision.`,
+        category: NotificationCategory.LEAVE,
+      });
+      return this.scopedPrisma.leaveGrantRequest.findFirstOrThrow({
+        where: { id, organizationId },
+        include: INCLUDE,
+      });
+    }
+
+    return this.finalize(id, caller, organizationId, {
+      days: dto.days ?? request.days,
+      effectiveDate: dto.effectiveDate,
+      note: dto.note,
+    });
+  }
+
+  // The final approval: claims the request, then creates the grant through the one grant path.
+  private async finalize(
+    id: string,
+    caller: Caller,
+    organizationId: string,
+    input: {
+      days: number;
+      effectiveDate?: string;
+      note?: string;
+      allowSelfGrant?: boolean;
+    },
+  ) {
+    const request = await this.scopedPrisma.leaveGrantRequest.findFirstOrThrow({
+      where: { id, organizationId },
+    });
     // Claim the request first so two reviewers (or a double click) cannot both approve it.
     const claimed = await this.scopedPrisma.leaveGrantRequest.updateMany({
       where: { id, organizationId, status: 'PENDING' },
@@ -206,14 +338,15 @@ export class LeaveGrantRequestsService {
           employeeId: request.employeeId,
           leaveTypeId: request.leaveTypeId,
           eventDate: request.eventDate,
-          effectiveDate: dto.effectiveDate,
-          days: dto.days ?? request.days,
+          effectiveDate: input.effectiveDate,
+          days: input.days,
           reason: request.reason,
           documentRef: request.documentRef ?? undefined,
           idempotencyKey: `request:${id}`,
         },
         caller,
         organizationId,
+        { allowSelfGrant: input.allowSelfGrant },
       );
     } catch (err) {
       // The grant was refused (eligibility, maximum, a grant already exists...): the request is still open.
@@ -225,7 +358,7 @@ export class LeaveGrantRequestsService {
     }
     await this.scopedPrisma.leaveGrantRequest.updateMany({
       where: { id, organizationId },
-      data: { grantId: grant.id, decisionNote: dto.note?.trim() || null },
+      data: { grantId: grant.id, decisionNote: input.note?.trim() || null },
     });
     await this.auditLog.log({
       actorId: caller.id,
@@ -261,9 +394,14 @@ export class LeaveGrantRequestsService {
       where: { id, organizationId },
     });
     if (!request) throw new NotFoundException('Request not found.');
-    if (request.employeeId === caller.id && caller.role !== Role.ADMIN) {
-      throw new ForbiddenException('You cannot decide your own request.');
-    }
+    assertNotOwnRequest(caller, request.employeeId);
+    await assertManagerScopeOrDelegate(
+      this.scopedPrisma,
+      this.delegation,
+      caller,
+      organizationId,
+      request.employeeId,
+    );
     const flipped = await this.scopedPrisma.leaveGrantRequest.updateMany({
       where: { id, organizationId, status: 'PENDING' },
       data: {
@@ -294,6 +432,40 @@ export class LeaveGrantRequestsService {
       where: { id, organizationId },
       include: INCLUDE,
     });
+  }
+
+  // Whether a manager who could give level-1 approval exists for this employee (a manager above them, or one in
+  // their department). Used so HR/Admin are never blocked waiting for a sign-off nobody can give.
+  private async levelOneApproverExists(
+    employeeId: string,
+    organizationId: string,
+  ): Promise<boolean> {
+    const applicant = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { role: true, reportingManagerId: true, departmentId: true },
+    });
+    if (!applicant) return false;
+    if (applicant.role === Role.ADMIN || applicant.role === Role.HR) {
+      return false;
+    }
+    const scope: Prisma.UserWhereInput[] = [];
+    if (applicant.reportingManagerId) {
+      scope.push({ id: applicant.reportingManagerId });
+    }
+    if (applicant.departmentId) {
+      scope.push({ departmentId: applicant.departmentId });
+    }
+    if (scope.length === 0) return false;
+    const count = await this.scopedPrisma.user.count({
+      where: {
+        organizationId,
+        isActive: true,
+        role: Role.MANAGER,
+        id: { not: employeeId },
+        OR: scope,
+      },
+    });
+    return count > 0;
   }
 
   private async notifyEmployee(

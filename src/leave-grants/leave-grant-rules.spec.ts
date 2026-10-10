@@ -1,6 +1,7 @@
 import { AllocationType } from '@prisma/client';
 import { computeUpfrontCredit } from '../leave-balances/leave-balance-math';
 import {
+  approvalStep,
   checkGrantRequest,
   readEventGrantConfig,
   type GrantRuleType,
@@ -129,5 +130,38 @@ describe('event-based balance behaviour', () => {
       minIntervalDays: 0,
       effectiveFrom: null,
     });
+  });
+});
+
+describe('approvalStep', () => {
+  const base = {
+    approvalLevels: 1,
+    level1Done: false,
+    levelOneApproverExists: true,
+  };
+  it('one level: the manager, HR or Admin approves finally', () => {
+    expect(approvalStep({ ...base, role: 'MANAGER' })).toEqual({
+      step: 'FINAL',
+    });
+    expect(approvalStep({ ...base, role: 'HR' })).toEqual({ step: 'FINAL' });
+  });
+  it('two levels: the manager only signs off level 1, once', () => {
+    const two = { ...base, approvalLevels: 2 };
+    expect(approvalStep({ ...two, role: 'MANAGER' })).toEqual({
+      step: 'LEVEL1',
+    });
+    expect(
+      approvalStep({ ...two, role: 'MANAGER', level1Done: true }).step,
+    ).toBe('DENIED');
+  });
+  it('two levels: HR cannot skip level 1 while a manager exists, but can when there is none', () => {
+    const two = { ...base, approvalLevels: 2 };
+    expect(approvalStep({ ...two, role: 'HR' }).step).toBe('DENIED');
+    expect(approvalStep({ ...two, role: 'HR', level1Done: true })).toEqual({
+      step: 'FINAL',
+    });
+    expect(
+      approvalStep({ ...two, role: 'ADMIN', levelOneApproverExists: false }),
+    ).toEqual({ step: 'FINAL' });
   });
 });
