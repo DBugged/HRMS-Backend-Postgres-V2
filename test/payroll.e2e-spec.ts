@@ -2025,7 +2025,7 @@ describe('Payroll (e2e)', () => {
         .expect(201);
     });
 
-    it('blocks HR from changing their own salary structure', async () => {
+    it('blocks HR (and an Admin) from changing their own salary structure', async () => {
       const server = app.getHttpServer();
       const line = {
         componentCode: 'BASIC',
@@ -2041,6 +2041,16 @@ describe('Payroll (e2e)', () => {
         .post(`/employee-salary/${hrId}/structure/bulk`)
         .set('Authorization', `Bearer ${hrToken}`)
         .send({ lines: [line] })
+        .expect(403);
+      const adminId = (
+        await prisma.user.findFirstOrThrow({
+          where: { email: 'pay-e2e-admin@example.test' },
+        })
+      ).id;
+      await request(server)
+        .post(`/employee-salary/${adminId}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(line)
         .expect(403);
     });
   });

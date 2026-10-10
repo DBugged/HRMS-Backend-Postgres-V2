@@ -23,12 +23,13 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
-// An HR user cannot set or revise their own salary (an Admin can) - otherwise one HR user could raise their own pay
-// and then run it through payroll.
+// Nobody - HR or Admin - sets or revises their OWN salary structure; it has to be done by someone else. An Admin can
+// still calculate and approve payroll for everyone, including themself: the structure is the part that must be
+// changed by a second person, otherwise one account could raise its own pay and then pay it.
 function assertNotOwnSalary(caller: Caller, employeeId: string): void {
-  if (caller.role !== Role.ADMIN && caller.id === employeeId) {
+  if (caller.id === employeeId) {
     throw new ForbiddenException(
-      'You cannot change your own salary structure. Another HR user or an Admin must do it.',
+      'You cannot change your own salary structure. Another HR user or Admin must do it.',
     );
   }
 }
