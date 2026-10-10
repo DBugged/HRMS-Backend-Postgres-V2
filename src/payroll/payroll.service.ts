@@ -630,6 +630,9 @@ export class PayrollService {
     );
     attendanceSummary.daysBeforeJoining = employed.daysBeforeJoining;
     attendanceSummary.daysNotElapsed = employed.daysNotElapsed;
+    // Payable days before a manual LOP correction replaces them (a month split by a mid-month revision is paid
+    // segment by segment from raw attendance, so the correction has to be carried into the segments as well).
+    const computedPayableDays = attendanceSummary.payableDays;
     if (options?.lopDaysOverride !== undefined) {
       // Inverse of computeAttendanceSummary's own lopDays formula —
       // payableDays moves opposite LOP so everything downstream (formula
@@ -773,6 +776,13 @@ export class PayrollService {
             leaves,
             totalDaysInMonth,
             roundAmount,
+            payableDaysOverride:
+              options?.lopDaysOverride !== undefined
+                ? {
+                    computed: computedPayableDays,
+                    corrected: attendanceSummary.payableDays,
+                  }
+                : undefined,
           });
 
     const financialYear = getFinancialYear(
@@ -3077,6 +3087,9 @@ export class PayrollService {
     leaves: LeaveRowWithType[];
     totalDaysInMonth: number;
     roundAmount: (n: number) => number;
+    // A manual LOP correction: the month's payable days were corrected from `computed` to `corrected`. Each
+    // segment's payable days are scaled by the same ratio so the earnings follow the correction.
+    payableDaysOverride?: { computed: number; corrected: number };
   }): ResolvedLine[] {
     const combined = new Map<string, ResolvedLine>();
     const lastIndex = args.segments.length - 1;
@@ -3101,12 +3114,22 @@ export class PayrollService {
         if (!applicableCodes.has(c.code)) context[c.code] = 0;
       }
       const calendarDays = daysInRange(segment.start, segment.end);
-      const payableDays = payableDaysInRange(
+      let payableDays = payableDaysInRange(
         args.attendanceRows,
         args.leaves,
         segment.start,
         segment.end,
       );
+      if (args.payableDaysOverride) {
+        const { computed, corrected } = args.payableDaysOverride;
+        payableDays =
+          computed > 0
+            ? Math.min(calendarDays, (payableDays * corrected) / computed)
+            : Math.min(
+                calendarDays,
+                (calendarDays * corrected) / args.totalDaysInMonth,
+              );
+      }
       const { results } = this.resolveGroup(
         applicable.filter(
           (c) =>
