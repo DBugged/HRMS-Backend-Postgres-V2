@@ -144,6 +144,9 @@ export interface CalculateTaxInput {
   ytdTDS?: number;
   basicAnnual?: number;
   hraReceivedAnnual?: number;
+  // Leave Travel Allowance actually paid in the year (from the salary structure). The LTA exemption can never
+  // exceed what was paid; when omitted, the declared figure is used as before.
+  ltaReceivedAnnual?: number;
   declaration: DeclarationLike | null;
   taxSlabConfig: TaxSlabConfigLike;
   financialYearStartMonth?: number;
@@ -211,6 +214,7 @@ export function calculateTax({
   ytdTDS = 0,
   basicAnnual = 0,
   hraReceivedAnnual = 0,
+  ltaReceivedAnnual,
   declaration,
   taxSlabConfig,
   financialYearStartMonth = 4,
@@ -249,9 +253,16 @@ export function calculateTax({
   const grossAnnualIncome =
     ytdGross + projectedRemainingGross + previousEmployerIncome + otherIncome;
 
+  // The standard deduction is a deduction from salary: it can't exceed the salary actually earned this year (this
+  // employer's salary plus the previous employer's), so a part-year joiner or a near-zero salary doesn't shelter
+  // other income with a full standard deduction.
+  const salaryIncome = Math.max(
+    0,
+    ytdGross + projectedRemainingGross + previousEmployerIncome,
+  );
   const exemptions = { hra: 0, lta: 0 };
   const deductions = {
-    standard: taxSlabConfig.standardDeduction || 0,
+    standard: Math.min(taxSlabConfig.standardDeduction || 0, salaryIncome),
     section80C: 0,
     section80CCD1B: 0,
     section80CCD2: 0,
@@ -273,34 +284,38 @@ export function calculateTax({
         12,
       isMetroCity: !!declaration.isMetroCity,
     });
-    exemptions.lta = declaration.ltaClaimed || 0;
+    // LTA is exempt only up to what the employer actually paid.
+    exemptions.lta =
+      ltaReceivedAnnual === undefined
+        ? declaration.ltaClaimed || 0
+        : Math.min(declaration.ltaClaimed || 0, Math.max(0, ltaReceivedAnnual));
     deductions.section80C = Math.min(declaration.section80C || 0, 150000);
     deductions.section80CCD1B = Math.min(
       declaration.section80CCD1B || 0,
       50000,
     );
-    // Section 80D statutory ceiling. The Act allows 25,000 for self/family
-    // plus 25,000 for parents, each rising to 50,000 where the person
-    // covered is a senior citizen — so 100,000 is only reachable when the
-    // EMPLOYEE themselves is a senior citizen, which the payroll case
-    // essentially never is. Nothing in the schema records anyone's age, so
-    // the cap here is the highest a non-senior employee can legitimately
-    // claim: 25,000 for self/family + 50,000 for senior parents.
-    //
-    // Exact per-employee handling needs senior-citizen status captured on
-    // the declaration; until then this errs toward the statute instead of
-    // the old flat 100,000, which over-relieved everyone.
-    deductions.section80D = Math.min(declaration.section80D || 0, 75000);
+    // Section 80D ceiling: 25,000 self/family + 25,000 parents, each 50,000 where the person covered is a senior
+    // citizen. For a non-senior employee the most they can claim is 25,000 + 50,000 (senior parents) = 75,000; a
+    // senior employee can reach 50,000 + 50,000 = 1,00,000.
+    const isSenior = (ageAtFYEnd ?? 0) >= 60;
+    deductions.section80D = Math.min(
+      declaration.section80D || 0,
+      isSenior ? 100000 : 75000,
+    );
     deductions.section80E = declaration.section80E || 0;
-    deductions.section80G = declaration.section80G || 0;
+    deductions.section80G = declaration.section80G || 0; // capped below, against adjusted total income
     // 24(b): interest on a self-occupied home loan — set off against income, at most 2,00,000 a year (old regime
     // only; the new regime allows no such deduction).
     deductions.homeLoanInterest = Math.min(
       declaration.homeLoanInterest || 0,
       200000,
     );
-    // 80TTA: savings-account interest, at most 10,000.
-    deductions.section80TTA = Math.min(declaration.section80TTA || 0, 10000);
+    // 80TTA: savings-account interest, at most 10,000. A senior citizen claims 80TTB instead (interest on deposits
+    // of any kind, at most 50,000) and cannot claim 80TTA.
+    deductions.section80TTA = Math.min(
+      declaration.section80TTA || 0,
+      (ageAtFYEnd ?? 0) >= 60 ? 50000 : 10000,
+    );
     deductions.other = declaration.otherDeductions || 0;
   }
 
@@ -316,6 +331,21 @@ export function calculateTax({
   );
 
   const totalExemptions = exemptions.hra + exemptions.lta;
+  // Section 80G donations are limited to 10% of adjusted total income (income after every other deduction): an
+  // uncapped figure could take taxable income to zero.
+  if (deductions.section80G > 0) {
+    const withoutDonations = Object.entries(deductions)
+      .filter(([key]) => key !== 'section80G')
+      .reduce((sum, [, v]) => sum + v, 0);
+    const adjustedIncome = Math.max(
+      0,
+      grossAnnualIncome - totalExemptions - withoutDonations,
+    );
+    deductions.section80G = Math.min(
+      deductions.section80G,
+      Math.floor(adjustedIncome * 0.1),
+    );
+  }
   const totalDeductions = Object.values(deductions).reduce((s, v) => s + v, 0);
 
   const taxableIncome = Math.max(

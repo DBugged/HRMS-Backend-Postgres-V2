@@ -1105,6 +1105,13 @@ export class PayrollService {
         ytdTDS,
         basicAnnual: basicMonthly * employmentMonths,
         hraReceivedAnnual: hraMonthly * employmentMonths,
+        // The LTA exemption is limited to LTA the employer actually pays (0 when the structure has none).
+        ltaReceivedAnnual:
+          roundAmount(
+            recurringResults?.find((e) => e.code === 'LTA')?.amount ??
+              earningsLines.find((e) => e.code === 'LTA')?.amount ??
+              0,
+          ) * employmentMonths,
         declaration,
         taxSlabConfig: {
           regime: taxSlabConfig.regime,
