@@ -12,6 +12,8 @@ interface DepartmentWriter {
 }
 
 const FIELDS = [
+  'shiftStartTime',
+  'shiftEndTime',
   'lateInThresholdMinutes',
   'earlyOutThresholdMinutes',
   'minHoursForPresent',
@@ -20,10 +22,11 @@ const FIELDS = [
 ] as const;
 
 /**
- * Late-in / early-out thresholds, minimum hours for Present / Half Day and the break time default from
- * Organization Settings, and each department may still override them. When the org defaults change, a department
+ * Shift start/end, late-in / early-out thresholds, minimum hours for Present / Half Day and the break time default
+ * from Organization Settings, and each department may still override them. When the org defaults change, a department
  * still sitting on the OLD org value (i.e. never customised) follows the new one; a department someone edited
- * keeps its own value. Break time of a department with a Work Schedule belongs to that schedule and is left alone.
+ * keeps its own value. Shift hours and break time of a department with a Work Schedule belong to that schedule and
+ * are left alone.
  */
 export async function cascadeOrgAttendanceDefaults(
   db: DepartmentWriter,
@@ -39,7 +42,12 @@ export async function cascadeOrgAttendanceDefaults(
       where: {
         organizationId,
         [field]: before[field],
-        ...(field === 'breakMinutes' ? { workScheduleId: null } : {}),
+        // Break time and shift hours of a department with a Work Schedule belong to that schedule.
+        ...(field === 'breakMinutes' ||
+        field === 'shiftStartTime' ||
+        field === 'shiftEndTime'
+          ? { workScheduleId: null }
+          : {}),
       },
       data: { [field]: after[field] },
     });
