@@ -26,6 +26,7 @@ import { ReportPayload } from './reports.service';
 import { formatDateTimeDisplay } from '../payroll/format-date';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
+import { dayRangeInOrgTz } from '../common/org-date';
 
 interface PayrollLine {
   code: string;
@@ -762,10 +763,21 @@ export class PayrollReportsService {
       organizationId,
       module: AuditModule.PAYROLL,
     };
+    // From/To are calendar days in the organization's time zone: From starts at the beginning of that day and To
+    // runs through the END of its day (a bare `lte: new Date('2026-10-31')` is midnight UTC, dropping the day).
     if (query.from || query.to) {
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { timezone: true },
+      });
+      const timezone = org?.timezone ?? 'Asia/Kolkata';
       where.createdAt = {
-        ...(query.from && { gte: new Date(query.from) }),
-        ...(query.to && { lte: new Date(query.to) }),
+        ...(query.from && {
+          gte: dayRangeInOrgTz(query.from.slice(0, 10), timezone).gte,
+        }),
+        ...(query.to && {
+          lt: dayRangeInOrgTz(query.to.slice(0, 10), timezone).lt,
+        }),
       };
     }
 
