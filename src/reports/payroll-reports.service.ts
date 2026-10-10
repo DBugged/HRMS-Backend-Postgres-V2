@@ -39,25 +39,28 @@ interface TaxDetailsShape {
   totalAnnualTax?: number;
 }
 
-const FINALIZED_STATUSES: PayrollRunStatus[] = [
-  PayrollRunStatus.CALCULATED,
-  PayrollRunStatus.VERIFIED,
-  PayrollRunStatus.APPROVED,
-  PayrollRunStatus.LOCKED,
-  PayrollRunStatus.PAID,
-];
+// Reports (salary register, statutory returns, tax, bank file) are built only from runs that have been signed off,
+// so a statutory challan or the register can never be generated from figures that can still change and always
+// reconcile with the bank transfer file.
 const PAID_OUT_STATUSES: PayrollRunStatus[] = [
   PayrollRunStatus.APPROVED,
   PayrollRunStatus.LOCKED,
   PayrollRunStatus.PAID,
 ];
+const FINALIZED_STATUSES = PAID_OUT_STATUSES;
 
 const linesOf = (json: unknown): PayrollLine[] =>
   (json as PayrollLine[] | null) ?? [];
 const findLine = (lines: unknown, code: string): PayrollLine | undefined =>
   linesOf(lines).find((l) => l.code === code);
+// Sum of every line with this code: one payslip can carry several (e.g. one LOAN_EMI per active loan), and a
+// report column must add up to the payslip's totals, not show only the first.
 const lineAmount = (lines: unknown, code: string): number =>
-  findLine(lines, code)?.amount ?? 0;
+  linesOf(lines)
+    .filter((l) => l.code === code)
+    .reduce((sum, l) => sum + (l.amount ?? 0), 0);
+const runType = (r: { isFinalSettlement: boolean }): string =>
+  r.isFinalSettlement ? 'Final Settlement' : 'Regular';
 
 @Injectable()
 export class PayrollReportsService {
@@ -69,9 +72,10 @@ export class PayrollReportsService {
     query: PayrollReportQueryDto,
     organizationId: string,
   ) {
+    // Final-settlement runs are included: a leaver's last pay (and its statutory lines) belongs in the same
+    // register, bank file and returns as the regular run; rows carry a Type to tell them apart.
     const where: Prisma.PayrollRunWhereInput = {
       organizationId,
-      isFinalSettlement: false,
       status: { in: FINALIZED_STATUSES },
     };
     if (query.month) where.month = query.month;
@@ -113,6 +117,7 @@ export class PayrollReportsService {
         name: r.employee.name,
         month: r.month,
         year: r.year,
+        type: runType(r),
       };
       earningCodes.forEach((code) => {
         row[`e_${code}`] = lineAmount(r.earnings, code);
@@ -131,6 +136,7 @@ export class PayrollReportsService {
       { header: 'Name', key: 'name', width: 22 },
       { header: 'Month', key: 'month', width: 8 },
       { header: 'Year', key: 'year', width: 8 },
+      { header: 'Type', key: 'type', width: 16 },
       ...earningCodes.map((code) => ({
         header: code,
         key: `e_${code}`,
@@ -164,7 +170,10 @@ export class PayrollReportsService {
     organizationId: string,
   ): Promise<ReportPayload> {
     const runs = await this.fetchRuns(query, organizationId);
-    const paidRuns = runs.filter((r) => PAID_OUT_STATUSES.includes(r.status));
+    // Only runs with something to transfer: a settlement that nets to a recovery (zero or negative) has no payout.
+    const paidRuns = runs.filter(
+      (r) => PAID_OUT_STATUSES.includes(r.status) && r.netPay > 0,
+    );
     const employeeIds = [...new Set(paidRuns.map((r) => r.employeeId))];
     const personalDataById = new Map(
       employeeIds.length
@@ -186,6 +195,7 @@ export class PayrollReportsService {
       bankAccountNo: bankField(r.employeeId, 'bankAccountNo'),
       bankIFSC: bankField(r.employeeId, 'bankIFSC'),
       bankName: bankField(r.employeeId, 'bankName'),
+      type: runType(r),
       netPay: r.netPay,
     }));
 
@@ -195,6 +205,7 @@ export class PayrollReportsService {
       { header: 'Account Number', key: 'bankAccountNo', width: 20 },
       { header: 'IFSC', key: 'bankIFSC', width: 14 },
       { header: 'Bank Name', key: 'bankName', width: 20 },
+      { header: 'Type', key: 'type', width: 16 },
       { header: 'Net Pay', key: 'netPay', width: 14 },
     ];
 
