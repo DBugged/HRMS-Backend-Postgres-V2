@@ -3,6 +3,7 @@
 // Responsibilities: Owns upsert-by-(financialYear, regime) and exposes getDefaults() (static slab data,
 // not persisted) for the frontend to pre-fill a new config.
 import {
+  BadRequestException,
   ConflictException,
   Inject,
   Injectable,
@@ -16,6 +17,50 @@ import { getDefaultTaxSlabConfig } from './default-tax-slabs';
 import { getFinancialYear } from '../payroll-settings/financial-year';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
+
+type Band = { from: number; to: number | null; rate: number };
+
+// A slab list must be ordered, non-overlapping bands: each starts at or after the previous band's end, `to` is
+// above `from`, rates are 0-100 and only the last band may be open-ended. Overlapping bands are double-counted by
+// the engine, and a bad rate silently mis-states every employee's TDS.
+function assertValidBands(label: string, bands: unknown): void {
+  if (!Array.isArray(bands)) {
+    throw new BadRequestException(`${label} must be a list of bands.`);
+  }
+  let previousEnd = 0;
+  (bands as Band[]).forEach((b, i) => {
+    const n = i + 1;
+    if (typeof b?.from !== 'number' || !Number.isFinite(b.from) || b.from < 0) {
+      throw new BadRequestException(
+        `${label} band ${n}: "from" must be 0 or more.`,
+      );
+    }
+    if (typeof b.rate !== 'number' || b.rate < 0 || b.rate > 100) {
+      throw new BadRequestException(
+        `${label} band ${n}: rate must be between 0 and 100.`,
+      );
+    }
+    if (b.from < previousEnd) {
+      throw new BadRequestException(
+        `${label} band ${n}: overlaps the previous band.`,
+      );
+    }
+    if (b.to === null || b.to === undefined) {
+      if (i !== bands.length - 1) {
+        throw new BadRequestException(
+          `${label} band ${n}: only the last band can be open-ended.`,
+        );
+      }
+      return;
+    }
+    if (typeof b.to !== 'number' || b.to <= b.from) {
+      throw new BadRequestException(
+        `${label} band ${n}: "to" must be greater than "from".`,
+      );
+    }
+    previousEnd = b.to;
+  });
+}
 
 @Injectable()
 export class TaxSlabsService {
@@ -73,6 +118,23 @@ export class TaxSlabsService {
     organizationId: string,
     actorId?: string,
   ) {
+    if (dto.slabs !== undefined) assertValidBands('slabs', dto.slabs);
+    if (dto.surchargeSlabs !== undefined) {
+      assertValidBands('surchargeSlabs', dto.surchargeSlabs);
+    }
+    for (const [field, value] of [
+      ['cessRate', dto.cessRate],
+      ['standardDeduction', dto.standardDeduction],
+      ['rebate87ALimit', dto.rebate87ALimit],
+      ['rebate87AAmount', dto.rebate87AAmount],
+    ] as const) {
+      if (value !== undefined && (!Number.isFinite(value) || value < 0)) {
+        throw new BadRequestException(`${field} must be 0 or more.`);
+      }
+    }
+    if (dto.cessRate !== undefined && dto.cessRate > 100) {
+      throw new BadRequestException('cessRate must be between 0 and 100.');
+    }
     const existing = await this.scopedPrisma.taxSlabConfig.findFirst({
       where: {
         organizationId,

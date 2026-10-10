@@ -970,9 +970,46 @@ export class PayrollService {
           ? storedDeclaration
           : null;
       const regime = declaration?.regimeChosen ?? TaxRegime.NEW;
-      const taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
+      let taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
         where: { organizationId, financialYear, regime, isActive: true },
       });
+      // A new financial year starts on 1 April with no slab rows of its own. Carry the organization's most recent
+      // earlier configuration for this regime forward (slabs are normally unchanged year to year) instead of failing
+      // every employee's April run; HR can still edit the new year's slabs afterwards.
+      if (!taxSlabConfig) {
+        const previous = await this.scopedPrisma.taxSlabConfig.findFirst({
+          where: {
+            organizationId,
+            regime,
+            isActive: true,
+            financialYear: { lt: financialYear },
+          },
+          orderBy: { financialYear: 'desc' },
+        });
+        if (previous) {
+          try {
+            taxSlabConfig = await this.scopedPrisma.taxSlabConfig.create({
+              data: {
+                organizationId,
+                financialYear,
+                regime,
+                slabs: previous.slabs as Prisma.InputJsonValue,
+                standardDeduction: previous.standardDeduction,
+                cessRate: previous.cessRate,
+                surchargeSlabs:
+                  previous.surchargeSlabs as Prisma.InputJsonValue,
+                rebate87ALimit: previous.rebate87ALimit,
+                rebate87AAmount: previous.rebate87AAmount,
+              },
+            });
+          } catch {
+            // A concurrent run created it first - read that one.
+            taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
+              where: { organizationId, financialYear, regime, isActive: true },
+            });
+          }
+        }
+      }
       // Income tax is on for the org but there's nothing to compute it
       // against. This used to silently skip TDS (paying the month with zero
       // tax withheld); it now fails this employee so the run's failures[]
