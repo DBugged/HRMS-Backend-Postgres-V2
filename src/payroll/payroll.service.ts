@@ -1916,6 +1916,13 @@ export class PayrollService {
       deductions.reduce((s, d) => s + Number(d.amount || 0), 0),
     );
     const netPay = roundTwo(grossSalary - totalDeductions);
+    // A manual edit can't take the payslip below zero: a negative net would only be caught later, at verify, after the
+    // numbers had already been saved (and shown) as if they were fine.
+    if (netPay < 0) {
+      throw new BadRequestException(
+        `These edits would make the net pay negative (${netPay}). Reduce the deductions or increase the earnings.`,
+      );
+    }
     // ctcMonthly = grossSalary + employer contributions. Employer
     // contributions aren't part of this DTO directly, but a recalculation
     // refreshes them too (PF/ESI employer-side amounts move with payable
@@ -1955,6 +1962,22 @@ export class PayrollService {
       // pay is on hold can change with it (see applyVariablePay).
       data.heldVariablePay =
         recalculated.heldVariablePay as unknown as Prisma.InputJsonValue;
+    }
+
+    // An edited TDS line must not leave the stored tax breakdown (shown as "This month's TDS") disagreeing with the
+    // payslip: keep the engine's annual figures, but show the TDS actually on the payslip and flag it as manual.
+    if (!recalculated && dto.deductions) {
+      const tdsLine = deductions.find(
+        (d) => d.code === SALARY_COMPONENT_CODES.INCOME_TAX,
+      );
+      const storedTax = run.taxDetails as Record<string, unknown> | null;
+      if (storedTax && tdsLine) {
+        data.taxDetails = {
+          ...storedTax,
+          monthlyTDS: Number(tdsLine.amount),
+          manuallyAdjusted: true,
+        } as unknown as Prisma.InputJsonValue;
+      }
     }
 
     await this.scopedPrisma.payrollRun.updateMany({

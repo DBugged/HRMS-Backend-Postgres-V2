@@ -214,6 +214,13 @@ describe('Payroll (e2e)', () => {
       })
       .expect(201);
 
+    // Payroll skips anyone who joined after the month ended; accounts created "now" must be back-dated into the
+    // test periods (2020 is before every month these tests run).
+    await prisma.user.updateMany({
+      where: { organizationId },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
+
     await markFullMonthPresent(prisma, organizationId, employeeId);
   });
 
