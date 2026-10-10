@@ -204,7 +204,7 @@ export class LeaveTrackerService {
       const day = Number(row.date.slice(8, 10));
       if (row.workDurationMinutes > 0) {
         (hours[row.employeeId] ??= {})[day] =
-          Math.round((row.workDurationMinutes / 60) * 10) / 10;
+          Math.round((row.workDurationMinutes / 60) * 100) / 100;
       }
       let code: LeaveTrackerCellCode;
       if (row.status === AttendanceStatus.HOLIDAY) {
