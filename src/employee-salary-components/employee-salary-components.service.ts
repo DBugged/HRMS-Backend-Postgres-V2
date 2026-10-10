@@ -268,12 +268,6 @@ export class EmployeeSalaryComponentsService {
     }
     await this.assertNoFinalizedPayrollFrom(employeeId, from, organizationId);
     const sameDay = !!current && from === current.effectiveFrom;
-    if (current && !sameDay) {
-      await this.scopedPrisma.employeeSalaryComponent.updateMany({
-        where: { id: current.id, organizationId },
-        data: { effectiveTo: dayBefore(from) },
-      });
-    }
 
     const values = {
       valueType: dto.valueType ?? component.calcType,
@@ -285,29 +279,50 @@ export class EmployeeSalaryComponentsService {
       isEnabled: dto.isEnabled ?? true,
       revisionNote: dto.revisionNote ?? '',
     };
+    // Close-out and insert are one atomic step: a failure between them used to leave the old row closed with no
+    // successor (the component silently disappearing from the structure), and a double submit could leave two
+    // open rows. A partial unique index on the open row backs this up at the database level.
     let created: EmployeeSalaryComponent;
-    if (sameDay && current) {
-      await this.scopedPrisma.employeeSalaryComponent.updateMany({
-        where: { id: current.id, organizationId },
-        data: values,
-      });
-      created =
-        await this.scopedPrisma.employeeSalaryComponent.findFirstOrThrow({
-          where: { id: current.id, organizationId },
+    try {
+      created = await this.scopedPrisma.$transaction(async (tx) => {
+        if (current && !sameDay) {
+          await tx.employeeSalaryComponent.updateMany({
+            where: { id: current.id, organizationId, effectiveTo: null },
+            data: { effectiveTo: dayBefore(from) },
+          });
+        }
+        if (sameDay && current) {
+          await tx.employeeSalaryComponent.updateMany({
+            where: { id: current.id, organizationId },
+            data: values,
+          });
+          return tx.employeeSalaryComponent.findFirstOrThrow({
+            where: { id: current.id, organizationId },
+          });
+        }
+        return tx.employeeSalaryComponent.create({
+          data: {
+            organizationId,
+            employeeId,
+            componentId: component.id,
+            componentCode: component.code,
+            ...values,
+            effectiveFrom: from,
+            effectiveTo: null,
+            createdById: actorId,
+          },
         });
-    } else {
-      created = await this.scopedPrisma.employeeSalaryComponent.create({
-        data: {
-          organizationId,
-          employeeId,
-          componentId: component.id,
-          componentCode: component.code,
-          ...values,
-          effectiveFrom: from,
-          effectiveTo: null,
-          createdById: actorId,
-        },
       });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          `${component.code} was just revised by someone else - reload and try again.`,
+        );
+      }
+      throw err;
     }
 
     // A compensation change — same sensitivity class as EMPLOYEE_UPDATED's
