@@ -1027,7 +1027,71 @@ export class AssetsService {
       },
       orderBy: { createdAt: 'desc' },
     });
-    return wrapAll(entries);
+    return wrapAll(await this.withReadableDetails(entries, organizationId));
+  }
+
+  // The audit trail stores ids (the employee an asset was handed to, the category before/after an edit). They mean
+  // nothing to a reader, so each entry's details carry the name next to — and instead of — the id.
+  private async withReadableDetails<
+    T extends { details: Prisma.JsonValue | null },
+  >(entries: T[], organizationId: string): Promise<T[]> {
+    const asObject = (v: Prisma.JsonValue | null) =>
+      v && typeof v === 'object' && !Array.isArray(v)
+        ? (v as Record<string, Prisma.JsonValue>)
+        : null;
+    const employeeIds = new Set<string>();
+    const categoryIds = new Set<string>();
+    for (const e of entries) {
+      const d = asObject(e.details);
+      if (!d) continue;
+      if (typeof d.employeeId === 'string') employeeIds.add(d.employeeId);
+      const changes = asObject(d.changes ?? null);
+      const cat = asObject(changes?.categoryId ?? null);
+      if (cat) {
+        for (const side of [cat.from, cat.to]) {
+          if (typeof side === 'string') categoryIds.add(side);
+        }
+      }
+    }
+    const employees: { id: string; name: string; employeeId: string }[] =
+      employeeIds.size
+        ? await this.scopedPrisma.user.findMany({
+            where: { organizationId, id: { in: [...employeeIds] } },
+            select: { id: true, name: true, employeeId: true },
+          })
+        : [];
+    const categories: { id: string; name: string }[] = categoryIds.size
+      ? await this.scopedPrisma.orgListItem.findMany({
+          where: { organizationId, id: { in: [...categoryIds] } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const employeeById = new Map(employees.map((u) => [u.id, u]));
+    const categoryById = new Map(categories.map((c) => [c.id, c.name]));
+    return entries.map((e) => {
+      const d = asObject(e.details);
+      if (!d) return e;
+      const details: Record<string, Prisma.JsonValue> = { ...d };
+      if (typeof d.employeeId === 'string') {
+        const u = employeeById.get(d.employeeId);
+        delete details.employeeId;
+        details.employee = u
+          ? `${u.name} (${u.employeeId})`
+          : 'Former employee';
+      }
+      const changes = asObject(d.changes ?? null);
+      const cat = asObject(changes?.categoryId ?? null);
+      if (changes && cat) {
+        const { categoryId: _categoryId, ...rest } = changes;
+        const nameOf = (v: Prisma.JsonValue | undefined) =>
+          typeof v === 'string' ? (categoryById.get(v) ?? null) : null;
+        details.changes = {
+          ...rest,
+          category: { from: nameOf(cat.from), to: nameOf(cat.to) },
+        };
+      }
+      return { ...e, details };
+    });
   }
 }
 
