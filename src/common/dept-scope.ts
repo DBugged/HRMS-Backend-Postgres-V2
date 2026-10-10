@@ -106,6 +106,19 @@ export async function assertManagerScopeOrDelegate(
   targetEmployeeId: string,
 ): Promise<void> {
   assertNotSelfApproval(actor, targetEmployeeId);
+  // An Admin's requests are decided by an Admin, never by HR or a manager (an Admin has no reporting manager, so
+  // nothing falls back to HR).
+  if (actor.role !== Role.ADMIN) {
+    const targetUser = await prisma.user.findFirst({
+      where: { id: targetEmployeeId, organizationId },
+      select: { role: true },
+    });
+    if (targetUser?.role === Role.ADMIN) {
+      throw new ForbiddenException(
+        "Only an Admin can decide an Admin's request.",
+      );
+    }
+  }
   if (actor.role !== Role.MANAGER) return;
   const target = await prisma.user.findFirst({
     where: { id: targetEmployeeId, organizationId },

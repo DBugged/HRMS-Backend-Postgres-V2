@@ -293,4 +293,55 @@ describe('Event leave grant approval flow (e2e)', () => {
       .send({})
       .expect(201);
   });
+
+  it('an Admin has no reporting manager, and only an Admin decides their request (never HR)', async () => {
+    const hrUser = await prisma.user.findFirstOrThrow({
+      where: { email: 'grantappr-e2e-hr@example.test' },
+    });
+    const created = await request(app.getHttpServer())
+      .post('/employees')
+      .set(auth(adminToken))
+      .send({
+        name: 'Second Admin',
+        email: 'grantappr-e2e-admin2@example.test',
+        role: 'ADMIN',
+        reportingManagerId: hrUser.id,
+      })
+      .expect(201);
+    const body = created.body as {
+      employee: { id: string };
+      generatedPassword: string;
+    };
+    const row = await prisma.user.findFirstOrThrow({
+      where: { id: body.employee.id },
+    });
+    expect(row.reportingManagerId).toBeNull();
+
+    const admin2Token = await login(
+      'grantappr-e2e-admin2@example.test',
+      body.generatedPassword,
+    );
+    const req = (
+      await request(app.getHttpServer())
+        .post('/leave-grants/requests')
+        .set(auth(admin2Token))
+        .send({
+          leaveTypeId: oneLevelTypeId,
+          eventDate: day(7, 1),
+          days: 5,
+          reason: 'Second admin',
+        })
+        .expect(201)
+    ).body as Created;
+    await request(app.getHttpServer())
+      .post(`/leave-grants/requests/${req.id}/approve`)
+      .set(auth(hrToken))
+      .send({})
+      .expect(403);
+    await request(app.getHttpServer())
+      .post(`/leave-grants/requests/${req.id}/approve`)
+      .set(auth(adminToken))
+      .send({})
+      .expect(201);
+  });
 });

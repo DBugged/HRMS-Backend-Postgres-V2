@@ -249,7 +249,9 @@ export class EmployeesService {
             joiningDate: dto.joiningDate
               ? new Date(dto.joiningDate)
               : undefined,
-            reportingManagerId: dto.reportingManagerId,
+            // An Admin reports to nobody: their requests are decided by an Admin, never routed to HR.
+            reportingManagerId:
+              requestedRole === Role.ADMIN ? undefined : dto.reportingManagerId,
             employeeType: dto.employeeType ?? 'permanent',
             employmentStatus:
               dto.employeeType === 'probation' ? 'PROBATION' : 'ONBOARDING',
@@ -988,6 +990,11 @@ export class EmployeesService {
       // Exit statuses revoke login in the same write (sessions are revoked
       // after the write below).
       clean.isActive = false;
+    }
+
+    // An Admin reports to nobody: whenever the resulting role is Admin the reporting manager is cleared.
+    if ((clean.role ?? before.role) === Role.ADMIN) {
+      Object.assign(clean, { reportingManagerId: null });
     }
 
     // Reporting manager: no self-reporting and no cycles in the chain.

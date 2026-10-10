@@ -127,12 +127,22 @@ export class NotificationsService {
         });
         return;
       }
+      // An Admin's request goes to the other Admins only: it never falls back to HR.
+      const requesterRow = await this.scopedPrisma.user.findFirst({
+        where: { id: requester.id, organizationId },
+        select: { role: true },
+      });
       const reviewers = await this.scopedPrisma.user.findMany({
         where: {
           organizationId,
           isActive: true,
           id: { not: requester.id },
-          role: { in: [Role.HR, Role.ADMIN] },
+          role: {
+            in:
+              requesterRow?.role === Role.ADMIN
+                ? [Role.ADMIN]
+                : [Role.HR, Role.ADMIN],
+          },
         },
         select: { id: true },
       });
