@@ -6,7 +6,8 @@ import { AllocationType } from '@prisma/client';
 export interface EventGrantConfig {
   unit: 'CALENDAR_DAYS' | 'WORKING_DAYS';
   repeatPolicy: 'ONCE_PER_EVENT' | 'MIN_INTERVAL';
-  minIntervalMonths: number;
+  // Minimum days between two events (repeatPolicy MIN_INTERVAL).
+  minIntervalDays: number;
   effectiveFrom: string | null;
 }
 
@@ -19,10 +20,13 @@ export function readEventGrantConfig(raw: unknown): EventGrantConfig {
     unit: c.unit === 'WORKING_DAYS' ? 'WORKING_DAYS' : 'CALENDAR_DAYS',
     repeatPolicy:
       c.repeatPolicy === 'MIN_INTERVAL' ? 'MIN_INTERVAL' : 'ONCE_PER_EVENT',
-    minIntervalMonths:
-      typeof c.minIntervalMonths === 'number' && c.minIntervalMonths > 0
-        ? c.minIntervalMonths
-        : 0,
+    // Settings saved before the gap was set in days carry whole months; they read as 30-day months.
+    minIntervalDays:
+      typeof c.minIntervalDays === 'number' && c.minIntervalDays > 0
+        ? c.minIntervalDays
+        : typeof c.minIntervalMonths === 'number' && c.minIntervalMonths > 0
+          ? c.minIntervalMonths * 30
+          : 0,
     effectiveFrom:
       typeof c.effectiveFrom === 'string' && c.effectiveFrom
         ? c.effectiveFrom
@@ -32,9 +36,9 @@ export function readEventGrantConfig(raw: unknown): EventGrantConfig {
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
-function addMonths(isoDate: string, months: number): string {
+function addDays(isoDate: string, days: number): string {
   const d = new Date(`${isoDate}T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + months);
+  d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
 
@@ -82,12 +86,12 @@ export function checkGrantRequest(
   if (activeGrantEventDates.includes(input.eventDate)) {
     return 'A grant already exists for this employee, leave type and event date.';
   }
-  if (cfg.repeatPolicy === 'MIN_INTERVAL' && cfg.minIntervalMonths > 0) {
+  if (cfg.repeatPolicy === 'MIN_INTERVAL' && cfg.minIntervalDays > 0) {
     for (const prior of activeGrantEventDates) {
-      const earliestNext = addMonths(prior, cfg.minIntervalMonths);
-      const earliestThis = addMonths(input.eventDate, cfg.minIntervalMonths);
+      const earliestNext = addDays(prior, cfg.minIntervalDays);
+      const earliestThis = addDays(input.eventDate, cfg.minIntervalDays);
       if (input.eventDate < earliestNext && prior < earliestThis) {
-        return `Another grant exists for an event on ${prior}; the next event must be at least ${cfg.minIntervalMonths} month(s) apart.`;
+        return `Another grant exists for an event on ${prior}; the next event must be at least ${cfg.minIntervalDays} day(s) apart.`;
       }
     }
   }

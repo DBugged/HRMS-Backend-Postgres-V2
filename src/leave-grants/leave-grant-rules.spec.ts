@@ -68,7 +68,7 @@ describe('checkGrantRequest', () => {
 
   it('enforces the minimum interval between events when configured', () => {
     const t = type({
-      eventGrant: { repeatPolicy: 'MIN_INTERVAL', minIntervalMonths: 12 },
+      eventGrant: { repeatPolicy: 'MIN_INTERVAL', minIntervalDays: 365 },
     });
     expect(
       checkGrantRequest(t, req({ eventDate: '2026-10-01' }), ['2026-03-01']),
@@ -76,6 +76,15 @@ describe('checkGrantRequest', () => {
     expect(
       checkGrantRequest(t, req({ eventDate: '2026-10-01' }), ['2025-03-01']),
     ).toBeNull();
+  });
+
+  it('reads a legacy months setting as 30-day months', () => {
+    expect(
+      readEventGrantConfig({
+        repeatPolicy: 'MIN_INTERVAL',
+        minIntervalMonths: 2,
+      }).minIntervalDays,
+    ).toBe(60);
   });
 
   it('honours the effective-from date', () => {
@@ -117,7 +126,7 @@ describe('event-based balance behaviour', () => {
     expect(readEventGrantConfig({})).toEqual({
       unit: 'CALENDAR_DAYS',
       repeatPolicy: 'ONCE_PER_EVENT',
-      minIntervalMonths: 0,
+      minIntervalDays: 0,
       effectiveFrom: null,
     });
   });

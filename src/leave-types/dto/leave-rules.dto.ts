@@ -145,6 +145,16 @@ export class EventGrantDto {
   minIntervalMonths?: number;
 
   @ApiPropertyOptional({
+    description:
+      'Days that must pass between two events (repeatPolicy MIN_INTERVAL).',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(36500)
+  minIntervalDays?: number;
+
+  @ApiPropertyOptional({
     description: 'YYYY-MM-DD; no grant can take effect before this date.',
   })
   @IsOptional()
