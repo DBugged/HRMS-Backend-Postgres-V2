@@ -30,7 +30,8 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { signFileToken } from '../files/file-token';
 import { paginate, skip, wrapAll } from '../common/pagination';
-import { CreateAssetDto, DATE_RE } from './dto/create-asset.dto';
+import { CreateAssetDto } from './dto/create-asset.dto';
+import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
 import { BulkImportAssetsDto } from './dto/bulk-import-assets.dto';
 import { UpdateAssetDto } from './dto/update-asset.dto';
 import { UpdateAssetStatusDto } from './dto/update-asset-status.dto';
@@ -429,7 +430,7 @@ export class AssetsService {
         if (!purchasedFrom) {
           return Promise.reject(new Error('Purchased From is required.'));
         }
-        if (!purchaseDate || !DATE_RE.test(purchaseDate)) {
+        if (!isValidCalendarDateString(purchaseDate)) {
           return Promise.reject(
             new Error('Purchase Date is required and must be YYYY-MM-DD.'),
           );

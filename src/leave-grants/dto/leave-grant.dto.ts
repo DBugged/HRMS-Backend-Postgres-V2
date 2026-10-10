@@ -5,12 +5,10 @@ import {
   IsOptional,
   IsString,
   IsUUID,
-  Matches,
   MaxLength,
   Min,
 } from 'class-validator';
-
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class CreateLeaveGrantDto {
   @ApiProperty()
@@ -25,14 +23,14 @@ export class CreateLeaveGrantDto {
     example: '2026-10-01',
     description: 'The qualifying event (childbirth, adoption...).',
   })
-  @Matches(ISO_DATE)
+  @IsValidCalendarDateString()
   eventDate!: string;
 
   @ApiPropertyOptional({
     description: 'When the leave starts counting; defaults to the event date.',
   })
   @IsOptional()
-  @Matches(ISO_DATE)
+  @IsValidCalendarDateString()
   effectiveDate?: string;
 
   @ApiProperty({
@@ -96,7 +94,7 @@ export class CreateGrantRequestDto {
     example: '2026-10-01',
     description: 'The qualifying event (childbirth, adoption...).',
   })
-  @Matches(ISO_DATE)
+  @IsValidCalendarDateString()
   eventDate!: string;
 
   @ApiProperty({
@@ -134,7 +132,7 @@ export class ApproveGrantRequestDto {
     description: 'When the leave starts counting; defaults to the event date.',
   })
   @IsOptional()
-  @Matches(ISO_DATE)
+  @IsValidCalendarDateString()
   effectiveDate?: string;
 
   @ApiPropertyOptional()
