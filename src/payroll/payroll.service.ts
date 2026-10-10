@@ -2421,11 +2421,22 @@ export class PayrollService {
     }
 
     const updated: PayrollRun[] = [];
+    // A run for a month that has not started yet (one calculated before the period guard existed) can never be
+    // signed off or paid.
+    const orgToday = await this.orgToday(organizationId);
     // Encashments already claimed by a run locked earlier in this same batch (they only turn PROCESSED after the batch).
     const claimedEncashments = new Set<string>();
     for (const run of runs) {
       if (!config.fromStatuses.includes(run.status)) {
         skipped.push({ id: run.id, status: run.status });
+        continue;
+      }
+      if (`${run.year}-${String(run.month).padStart(2, '0')}-01` > orgToday) {
+        skipped.push({
+          id: run.id,
+          status: 'future_period',
+          reason: `Payroll for ${run.month}/${run.year} cannot be moved forward yet - that month has not started.`,
+        });
         continue;
       }
       // A payroll run that would pay a negative amount (e.g. a full-LOP
