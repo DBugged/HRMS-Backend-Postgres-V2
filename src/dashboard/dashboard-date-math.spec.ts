@@ -24,6 +24,20 @@ describe('buildFyMonths', () => {
   });
 });
 
+describe('buildFyMonths with a non-April financial year', () => {
+  it("starts the year in the organization's own start month", () => {
+    const months = buildFyMonths(0, new Date(2026, 8, 10), 1); // Sep 2026, Jan-Dec FY
+    expect(months[0]).toEqual({ month: 1, year: 2026 });
+    expect(months[11]).toEqual({ month: 12, year: 2026 });
+  });
+
+  it('rolls back a year before the start month', () => {
+    const months = buildFyMonths(0, new Date(2026, 5, 10), 7); // Jun 2026, Jul-Jun FY
+    expect(months[0]).toEqual({ month: 7, year: 2025 });
+    expect(months[11]).toEqual({ month: 6, year: 2026 });
+  });
+});
+
 describe('monthsForRange', () => {
   const now = new Date(2026, 7, 1); // August 2026 -> FY2026-27, month index 4 (Aug is the 5th FY month)
 

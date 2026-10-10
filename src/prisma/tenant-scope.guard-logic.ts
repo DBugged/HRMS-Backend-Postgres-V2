@@ -184,7 +184,14 @@ export function evaluateTenantScope(
   }
 
   if (FILTERED_OPS.has(operation)) {
-    if (!args.where || !('organizationId' in args.where)) {
+    // The value must be defined: `{ organizationId: undefined }` has the key but Prisma drops an undefined filter, so
+    // the query would run unscoped across every tenant.
+    if (
+      !args.where ||
+      !('organizationId' in args.where) ||
+      args.where.organizationId === undefined ||
+      args.where.organizationId === null
+    ) {
       throw new Error(
         `${model}.${operation}: query missing organizationId scope. Pass { where: { ` +
           `organizationId, ... } }, or use __tenantScopeBypass for a deliberate ` +

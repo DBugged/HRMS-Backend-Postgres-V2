@@ -1797,7 +1797,7 @@ export class PayrollService {
         },
       },
       orderBy: { createdAt: 'desc' },
-      take: 100,
+      take: 500,
     });
 
     const targetIds = [

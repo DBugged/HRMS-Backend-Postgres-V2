@@ -71,10 +71,22 @@ export class DashboardService {
     return org?.timezone ?? 'Asia/Kolkata';
   }
 
+  // "Now" as the organization's own calendar day (a local-midnight Date for that day), so month/year boundaries
+  // follow the org's time zone and not the server clock.
+  private async orgNow(organizationId: string): Promise<Date> {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const [y, m, d] = today.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+
   // 11.4 Payroll Cost Summary chart: Net Pay / Taxes / Benefits / Deductions
   // per month for the requested range.
   async payrollCostSummary(range: DashboardRange, organizationId: string) {
-    const months = monthsForRange(range);
+    const [now, settings] = await Promise.all([
+      this.orgNow(organizationId),
+      this.payrollSettingsService.getOrCreate(organizationId),
+    ]);
+    const months = monthsForRange(range, now, settings.financialYearStartMonth);
 
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where: {
@@ -129,8 +141,8 @@ export class DashboardService {
   // 11.1 HR Dashboard: total employees, attendance summary, pending
   // approvals, payroll status, leave stats.
   async hrDashboard(organizationId: string) {
-    const now = new Date();
-    const today = todayInOrgTz(await this.getOrgTimezone(organizationId), now);
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const now = new Date(`${today}T00:00:00`);
     const currentMonth = now.getMonth() + 1;
     const currentYear = now.getFullYear();
     const monthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
@@ -209,6 +221,7 @@ export class DashboardService {
           organizationId,
           month: currentMonth,
           year: currentYear,
+          isFinalSettlement: false,
           status: {
             in: [
               PayrollRunStatus.CALCULATED,
@@ -779,10 +792,10 @@ export class DashboardService {
   // 11.3 Employee Dashboard: attendance summary, leave balance, payroll
   // snapshot, upcoming holidays.
   async employeeDashboard(actor: Actor, organizationId: string) {
-    const now = new Date();
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const now = new Date(`${today}T00:00:00`);
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const currentYear = now.getFullYear();
-    const today = todayInOrgTz(await this.getOrgTimezone(organizationId), now);
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
     const currentFinancialYear = getFinancialYear(
