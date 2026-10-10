@@ -27,6 +27,35 @@ export interface LeaveRules {
   minGapBetweenRequestsDays: number;
 }
 
+/**
+ * The rules that actually apply to an application of an event-based leave type. Several Leave Rules make no sense
+ * for it and are hidden in the Leave Types form, so a stored value must not be enforced silently: the gap between
+ * requests, the consecutive-day and advance-application limits (the entitlement per event is the limit), and, when
+ * counted in calendar days, the sandwich / prefix-suffix holiday rules (every date is charged anyway). Any other
+ * allocation type is returned unchanged.
+ */
+export function effectiveLeaveRules(
+  rules: LeaveRules,
+  leaveType: { allocationType: string; eventGrant?: unknown },
+): LeaveRules {
+  if (leaveType.allocationType !== 'EVENT_BASED') return rules;
+  const calendarDays =
+    (leaveType.eventGrant as { unit?: string } | null)?.unit !== 'WORKING_DAYS';
+  return {
+    ...rules,
+    minGapBetweenRequestsDays: 0,
+    maxConsecutiveDays: null,
+    maxAdvanceDays: null,
+    ...(calendarDays
+      ? {
+          countCalendarDays: true,
+          sandwichLeaveApplies: false,
+          restrictPrefixSuffixHoliday: false,
+        }
+      : {}),
+  };
+}
+
 export interface LeaveRequest {
   startDate: string; // YYYY-MM-DD
   endDate: string;

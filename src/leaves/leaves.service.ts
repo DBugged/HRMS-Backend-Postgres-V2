@@ -42,7 +42,12 @@ import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
-import { checkLeaveRules, rangesOverlap, LeaveRules } from './leave-rules';
+import {
+  checkLeaveRules,
+  effectiveLeaveRules,
+  rangesOverlap,
+  LeaveRules,
+} from './leave-rules';
 import {
   resolveShiftConfig,
   OrganizationAttendancePrefs,
@@ -1078,13 +1083,9 @@ export class LeavesService {
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
 
     const baseRules = leaveType.rules as unknown as LeaveRules;
-    // Event-based leave configured in calendar days charges every date in the range (weekends/holidays included).
-    const rules: LeaveRules =
-      leaveType.allocationType === AllocationType.EVENT_BASED &&
-      (leaveType.eventGrant as { unit?: string } | null)?.unit ===
-        'CALENDAR_DAYS'
-        ? { ...baseRules, countCalendarDays: true }
-        : baseRules;
+    // Event-based leave drops the rules that do not apply to it and, in calendar days, charges every date in the range
+    // (weekends/holidays included) - see effectiveLeaveRules.
+    const rules = effectiveLeaveRules(baseRules, leaveType);
     const ruleResult = checkLeaveRules(
       rules,
       {

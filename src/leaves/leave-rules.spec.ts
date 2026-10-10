@@ -1,4 +1,4 @@
-import { checkLeaveRules, LeaveRules } from './leave-rules';
+import { checkLeaveRules, effectiveLeaveRules, LeaveRules } from './leave-rules';
 
 const permissiveRules: LeaveRules = {
   minDurationDays: 0.5,
@@ -455,5 +455,56 @@ describe('checkLeaveRules', () => {
       expect(result.ok).toBe(false);
       expect(result.errors.join(' ')).toContain('End date cannot be before');
     });
+  });
+});
+
+describe('effectiveLeaveRules', () => {
+  const base: LeaveRules = {
+    minDurationDays: 1,
+    maxDurationDays: 90,
+    noticePeriodDays: 30,
+    allowBackdated: true,
+    maxBackdateDays: 10,
+    allowFutureDated: true,
+    maxAdvanceDays: 60,
+    allowHalfDay: false,
+    sandwichLeaveApplies: true,
+    restrictPrefixSuffixHoliday: true,
+    maxConsecutiveDays: 20,
+    minGapBetweenRequestsDays: 15,
+  };
+
+  it('leaves an annual type exactly as configured', () => {
+    expect(effectiveLeaveRules(base, { allocationType: 'FIXED_ANNUAL' })).toBe(
+      base,
+    );
+  });
+
+  it('drops the inapplicable rules for an event-based type and counts calendar days', () => {
+    const r = effectiveLeaveRules(base, {
+      allocationType: 'EVENT_BASED',
+      eventGrant: { unit: 'CALENDAR_DAYS' },
+    });
+    expect(r.minGapBetweenRequestsDays).toBe(0);
+    expect(r.maxConsecutiveDays).toBeNull();
+    expect(r.maxAdvanceDays).toBeNull();
+    expect(r.sandwichLeaveApplies).toBe(false);
+    expect(r.restrictPrefixSuffixHoliday).toBe(false);
+    expect(r.countCalendarDays).toBe(true);
+    // The rules that still apply are untouched.
+    expect(r.noticePeriodDays).toBe(30);
+    expect(r.minDurationDays).toBe(1);
+    expect(r.maxDurationDays).toBe(90);
+  });
+
+  it('keeps sandwich / prefix-suffix in working days', () => {
+    const r = effectiveLeaveRules(base, {
+      allocationType: 'EVENT_BASED',
+      eventGrant: { unit: 'WORKING_DAYS' },
+    });
+    expect(r.sandwichLeaveApplies).toBe(true);
+    expect(r.restrictPrefixSuffixHoliday).toBe(true);
+    expect(r.countCalendarDays).toBeUndefined();
+    expect(r.minGapBetweenRequestsDays).toBe(0);
   });
 });
