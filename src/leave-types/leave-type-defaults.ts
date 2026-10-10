@@ -24,6 +24,12 @@ export interface LeaveTypeDefault {
   documentsRequired?: boolean;
   countInTotalBalance?: boolean;
   documentRequiredAfterDays?: number;
+  eventGrant?: {
+    unit: 'CALENDAR_DAYS' | 'WORKING_DAYS';
+    repeatPolicy: 'ONCE_PER_EVENT' | 'MIN_INTERVAL';
+    minIntervalMonths?: number;
+    effectiveFrom?: string | null;
+  };
   rules: Record<string, unknown>;
   carryForward?: {
     allowed: boolean;
@@ -146,14 +152,16 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
     code: 'ML',
     countInTotalBalance: false,
     name: 'Maternity Leave',
-    description: 'Statutory maternity leave (Maternity Benefit Act).',
+    description:
+      'Maternity leave granted per eligible event (up to 182 calendar days; subject to the Maternity Benefit Act and company policy).',
     color: '#ec4899',
     isPaid: true,
     displayOrder: 6,
-    allocationType: AllocationType.FIXED_ANNUAL,
+    allocationType: AllocationType.EVENT_BASED,
     annualQuota: 182,
     accrualFrequency: AccrualFrequency.YEARLY,
     prorateOnJoining: false,
+    eventGrant: { unit: 'CALENDAR_DAYS', repeatPolicy: 'ONCE_PER_EVENT' },
     applicableGenders: [Gender.FEMALE],
     rules: { minDurationDays: 1, allowHalfDay: false, noticePeriodDays: 30 },
     documentsRequired: true,
@@ -162,14 +170,16 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
     code: 'PTL',
     countInTotalBalance: false,
     name: 'Paternity Leave',
-    description: 'Leave for new fathers.',
+    description:
+      'Paternity leave granted per approved event (company policy; not a statutory entitlement).',
     color: '#0ea5e9',
     isPaid: true,
     displayOrder: 7,
-    allocationType: AllocationType.FIXED_ANNUAL,
+    allocationType: AllocationType.EVENT_BASED,
     annualQuota: 15,
     accrualFrequency: AccrualFrequency.YEARLY,
     prorateOnJoining: false,
+    eventGrant: { unit: 'CALENDAR_DAYS', repeatPolicy: 'ONCE_PER_EVENT' },
     applicableGenders: [Gender.MALE],
     rules: { minDurationDays: 1, allowHalfDay: false, noticePeriodDays: 7 },
   },
@@ -177,14 +187,16 @@ export const LEAVE_TYPE_DEFAULTS: LeaveTypeDefault[] = [
     code: 'ADL',
     countInTotalBalance: false,
     name: 'Adoption Leave',
-    description: 'Leave following the legal adoption of a child.',
+    description:
+      'Leave granted per eligible adoption event; the days are set by company policy and applicable law.',
     color: '#a855f7',
     isPaid: true,
     displayOrder: 8,
-    allocationType: AllocationType.FIXED_ANNUAL,
+    allocationType: AllocationType.EVENT_BASED,
     annualQuota: 90,
     accrualFrequency: AccrualFrequency.YEARLY,
     prorateOnJoining: false,
+    eventGrant: { unit: 'CALENDAR_DAYS', repeatPolicy: 'ONCE_PER_EVENT' },
     rules: { minDurationDays: 1, allowHalfDay: false, noticePeriodDays: 15 },
     documentsRequired: true,
   },

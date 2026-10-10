@@ -196,10 +196,12 @@ export class LeaveTypesService {
         }),
         // Leave never goes negative: whatever the request says, the type is stored with negative balance off. Days
         // beyond the quota are taken as Leave Without Pay (pay is deducted for them).
-        negativeBalance:
-          NO_NEGATIVE_BALANCE as unknown as Prisma.InputJsonValue,
+        negativeBalance: NO_NEGATIVE_BALANCE,
         ...(dto.encashment !== undefined && {
           encashment: dto.encashment as unknown as Prisma.InputJsonValue,
+        }),
+        ...(dto.eventGrant !== undefined && {
+          eventGrant: dto.eventGrant as unknown as Prisma.InputJsonValue,
         }),
         createdById,
       },
@@ -377,11 +379,13 @@ export class LeaveTypesService {
             carryForward: dto.carryForward as unknown as Prisma.InputJsonValue,
           }),
           ...(dto.negativeBalance !== undefined && {
-            negativeBalance:
-              NO_NEGATIVE_BALANCE as unknown as Prisma.InputJsonValue,
+            negativeBalance: NO_NEGATIVE_BALANCE,
           }),
           ...(dto.encashment !== undefined && {
             encashment: dto.encashment as unknown as Prisma.InputJsonValue,
+          }),
+          ...(dto.eventGrant !== undefined && {
+            eventGrant: dto.eventGrant as unknown as Prisma.InputJsonValue,
           }),
         },
       });
@@ -432,6 +436,7 @@ export class LeaveTypesService {
       'carryForward',
       'negativeBalance',
       'encashment',
+      'eventGrant',
     ] as const;
     const changes: Record<string, { from: unknown; to: unknown }> = {};
     for (const f of fields) {

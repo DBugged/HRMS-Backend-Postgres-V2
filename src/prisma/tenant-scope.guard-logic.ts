@@ -45,6 +45,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'TdsStatement',
   'PushDevice',
   'LeaveEncashment',
+  'LeaveGrant',
   'PayrollRun',
   'Reimbursement',
   'Loan',

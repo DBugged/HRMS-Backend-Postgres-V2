@@ -252,6 +252,7 @@ model Organization {
   tdsChallans                   TdsChallan[]
   tdsStatements                 TdsStatement[]
   leaveEncashments              LeaveEncashment[]
+  leaveGrants                   LeaveGrant[]
   payrollRuns                   PayrollRun[]
   reimbursements                Reimbursement[]
   loans                         Loan[]
@@ -535,6 +536,9 @@ model User {
   performanceRatingsGiven          PerformanceRating[]            @relation("PerformanceRatingRatedBy")
   performanceRatingsApproved       PerformanceRating[]            @relation("PerformanceRatingApprovedBy")
   leaveEncashments                 LeaveEncashment[]              @relation("LeaveEncashmentEmployee")
+  leaveGrants                      LeaveGrant[]                   @relation("LeaveGrantEmployee")
+  leaveGrantsMade                  LeaveGrant[]                   @relation("LeaveGrantGrantedBy")
+  leaveGrantsReversed              LeaveGrant[]                   @relation("LeaveGrantReversedBy")
   leaveEncashmentsApproved         LeaveEncashment[]              @relation("LeaveEncashmentApprovedBy")
   payrollRuns                      PayrollRun[]                   @relation("PayrollRunEmployee")
   payrollRunsCalculated            PayrollRun[]                   @relation("PayrollRunCalculatedBy")
@@ -963,6 +967,9 @@ enum AllocationType {
   EARNED_MONTHLY
   UNLIMITED
   NONE
+  // One-off leave granted per qualifying event (maternity, paternity, adoption...) through LeaveGrant: never
+  // credited yearly, and an unused grant stays available across calendar years.
+  EVENT_BASED
 }
 
 enum AccrualFrequency {
@@ -1038,6 +1045,11 @@ model LeaveType {
   negativeBalance Json @default("{\"allowed\":false,\"maxNegativeDays\":0}")
   encashment      Json @default("{\"allowed\":false,\"maxDaysPerYear\":0,\"minBalanceToRetain\":0}")
 
+  // Only read when allocationType = EVENT_BASED (annualQuota is then the maximum days per event):
+  // { unit: 'CALENDAR_DAYS' | 'WORKING_DAYS', repeatPolicy: 'ONCE_PER_EVENT' | 'MIN_INTERVAL',
+  //   minIntervalMonths: number, effectiveFrom: 'YYYY-MM-DD' | null }
+  eventGrant Json @default("{}")
+
   createdById String?
   createdBy   User?   @relation(fields: [createdById], references: [id])
 
@@ -1047,6 +1059,7 @@ model LeaveType {
   balances         LeaveBalance[]
   leaves           Leave[]
   leaveEncashments LeaveEncashment[]
+  leaveGrants      LeaveGrant[]
 
   @@unique([organizationId, name])
   @@unique([organizationId, code])
@@ -1920,6 +1933,51 @@ enum PerformanceRatingStatus {
   SUBMITTED
   APPROVED
   REJECTED
+}
+
+enum LeaveGrantStatus {
+  ACTIVE
+  REVERSED
+}
+
+// An entitlement HR/Admin granted to one employee for one qualifying event of an EVENT_BASED leave type. The days are
+// credited to that year's LeaveBalance; a correction is a reversal (status REVERSED + who/why), never a delete.
+model LeaveGrant {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId  String
+  employee    User      @relation("LeaveGrantEmployee", fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  // YYYY-MM-DD, same plain-string convention as Holiday.date.
+  eventDate     String
+  effectiveDate String
+  days          Float
+  // The balance year the days were credited to (year of effectiveDate).
+  balanceYear   Int
+  reason        String
+  // Reference/confirmation of the supporting document or eligibility check, when the leave type requires one.
+  documentRef   String?
+  // Client-supplied key making a retried request return the original grant instead of granting twice.
+  idempotencyKey String?
+
+  status         LeaveGrantStatus @default(ACTIVE)
+  grantedById    String
+  grantedBy      User             @relation("LeaveGrantGrantedBy", fields: [grantedById], references: [id])
+  reversedAt     DateTime?
+  reversedById   String?
+  reversedBy     User?            @relation("LeaveGrantReversedBy", fields: [reversedById], references: [id])
+  reversalReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, employeeId, leaveTypeId])
+  @@map("leave_grants")
 }
 
 enum LeaveEncashmentStatus {

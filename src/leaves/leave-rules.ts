@@ -20,6 +20,8 @@ export interface LeaveRules {
   maxAdvanceDays: number | null;
   allowHalfDay: boolean;
   sandwichLeaveApplies: boolean;
+  // Event-based leave counted in calendar days: every date in the range is charged, weekends/holidays included.
+  countCalendarDays?: boolean;
   restrictPrefixSuffixHoliday: boolean;
   maxConsecutiveDays: number | null;
   minGapBetweenRequestsDays: number;
@@ -177,7 +179,11 @@ export function checkLeaveRules(
   let totalDays: number;
   if (request.isHalfDay) {
     totalDays = 0.5;
-  } else if (rules.sandwichLeaveApplies || !rangeIsValid) {
+  } else if (
+    rules.sandwichLeaveApplies ||
+    rules.countCalendarDays ||
+    !rangeIsValid
+  ) {
     totalDays = countDaysInclusive(request.startDate, request.endDate);
   } else {
     totalDays = countWorkingDaysInclusive(

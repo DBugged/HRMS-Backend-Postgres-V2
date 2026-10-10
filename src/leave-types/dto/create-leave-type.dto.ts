@@ -17,6 +17,7 @@ import { AllocationType, AccrualFrequency, Gender } from '@prisma/client';
 import {
   CarryForwardDto,
   EncashmentRulesDto,
+  EventGrantDto,
   LeaveRulesDto,
   NegativeBalanceDto,
 } from './leave-rules.dto';
@@ -207,4 +208,10 @@ export class CreateLeaveTypeDto {
   @ValidateNested()
   @Type(() => EncashmentRulesDto)
   encashment?: EncashmentRulesDto;
+
+  @ApiPropertyOptional({ type: EventGrantDto })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => EventGrantDto)
+  eventGrant?: EventGrantDto;
 }

@@ -118,6 +118,9 @@ function monthsInRange(
   return months;
 }
 
+const NO_GRANT_MESSAGE =
+  'No leave has been granted for this leave type, or the granted days are used up. HR grants it for a qualifying event.';
+
 const INSUFFICIENT_BALANCE_MESSAGE =
   'Insufficient leave balance. For the extra days, apply for Leave Without Pay (pay is deducted for those days).';
 
@@ -1072,7 +1075,14 @@ export class LeavesService {
     );
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
 
-    const rules = leaveType.rules as unknown as LeaveRules;
+    const baseRules = leaveType.rules as unknown as LeaveRules;
+    // Event-based leave configured in calendar days charges every date in the range (weekends/holidays included).
+    const rules: LeaveRules =
+      leaveType.allocationType === AllocationType.EVENT_BASED &&
+      (leaveType.eventGrant as { unit?: string } | null)?.unit ===
+        'CALENDAR_DAYS'
+        ? { ...baseRules, countCalendarDays: true }
+        : baseRules;
     const ruleResult = checkLeaveRules(
       rules,
       {
@@ -1196,7 +1206,11 @@ export class LeavesService {
           forfeited ?? 0,
         );
         if (!preflight.ok) {
-          throw new ForbiddenException(INSUFFICIENT_BALANCE_MESSAGE);
+          throw new ForbiddenException(
+            leaveType.allocationType === AllocationType.EVENT_BASED
+              ? NO_GRANT_MESSAGE
+              : INSUFFICIENT_BALANCE_MESSAGE,
+          );
         }
         // Atomic increment, not `row.pending + totalDays` — the latter is a
         // read-modify-write against the JS-side value captured before this

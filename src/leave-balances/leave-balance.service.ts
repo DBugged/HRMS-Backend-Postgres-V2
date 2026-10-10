@@ -75,9 +75,15 @@ export class LeaveBalanceService {
     joiningDate: Date,
     leaveType: LeaveType,
     year: number,
-    priorYearRow: { carriedForwardOut: number } | null | undefined,
+    priorYearRow:
+      { carriedForwardOut: number; closing?: number } | null | undefined,
   ) {
-    const opening = priorYearRow?.carriedForwardOut ?? 0;
+    // Event-based leave never resets: whatever is left of a grant stays available in the next year (no cap, no
+    // expiry), so a leave that runs into the new year still draws from the same grant.
+    const opening =
+      leaveType.allocationType === AllocationType.EVENT_BASED
+        ? Math.max(0, priorYearRow?.closing ?? 0)
+        : (priorYearRow?.carriedForwardOut ?? 0);
     const credited = computeUpfrontCredit(leaveType, joiningDate, year);
     return { opening, credited, lastAccrualPeriod: null as string | null };
   }
@@ -161,7 +167,9 @@ export class LeaveBalanceService {
     if (
       !leaveType.isActive ||
       leaveType.allocationType === AllocationType.NONE ||
-      leaveType.allocationType === AllocationType.UNLIMITED
+      leaveType.allocationType === AllocationType.UNLIMITED ||
+      // Event-based leave is only ever credited by an HR grant.
+      leaveType.allocationType === AllocationType.EVENT_BASED
     ) {
       return { rows: 0, totalDaysCredited: 0 };
     }
@@ -194,7 +202,9 @@ export class LeaveBalanceService {
     );
     // ensureBalanceRowsBulk returns every balance row these employees hold for the year (all leave types), so only
     // this type's rows are counted.
-    const own = [...rows.values()].filter((r) => r.leaveTypeId === leaveType.id);
+    const own = [...rows.values()].filter(
+      (r) => r.leaveTypeId === leaveType.id,
+    );
     let total = 0;
     for (const row of own) total += row.credited;
     return {
@@ -254,11 +264,26 @@ export class LeaveBalanceService {
     if (!employee) throw new NotFoundException('Employee not found.');
     if (!leaveType) throw new NotFoundException('Leave type not found.');
 
+    // An event-based grant stays available until used, so the opening comes from the latest earlier row even when
+    // the previous calendar year has none.
+    const priorRow =
+      leaveType.allocationType === AllocationType.EVENT_BASED && !priorYearRow
+        ? await tx.leaveBalance.findFirst({
+            where: {
+              organizationId,
+              employeeId,
+              leaveTypeId,
+              year: { lt: year },
+            },
+            orderBy: { year: 'desc' },
+          })
+        : priorYearRow;
+
     const { opening, credited, lastAccrualPeriod } = this.initialBalanceFor(
       employee.joiningDate,
       leaveType,
       year,
-      priorYearRow,
+      priorRow,
     );
 
     await tx.$executeRaw`
@@ -354,7 +379,6 @@ export class LeaveBalanceService {
     }
     return { rowsUpdated: options.dryRun ? 0 : changes.length, changes };
   }
-
 
   // Recomputes and persists `closing` for a balance row — the single
   // source-of-truth writer, mirroring recalculateLeaveBalance. Called after

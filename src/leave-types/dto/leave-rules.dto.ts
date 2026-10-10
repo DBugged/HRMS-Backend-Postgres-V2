@@ -1,5 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsNumber, IsOptional } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 
 // Mirrors the old system's LeaveType.rules JSON shape exactly — read
 // generically by the future Leave-requests module's rule-checking logic,
@@ -110,4 +120,35 @@ export class EncashmentRulesDto {
   @IsOptional()
   @IsNumber()
   minBalanceToRetain?: number;
+}
+
+// Settings of an EVENT_BASED leave type (see LeaveType.eventGrant). The maximum days per event is the type's annualQuota.
+export class EventGrantDto {
+  @ApiPropertyOptional({ enum: ['CALENDAR_DAYS', 'WORKING_DAYS'] })
+  @IsOptional()
+  @IsIn(['CALENDAR_DAYS', 'WORKING_DAYS'])
+  unit?: 'CALENDAR_DAYS' | 'WORKING_DAYS';
+
+  @ApiPropertyOptional({ enum: ['ONCE_PER_EVENT', 'MIN_INTERVAL'] })
+  @IsOptional()
+  @IsIn(['ONCE_PER_EVENT', 'MIN_INTERVAL'])
+  repeatPolicy?: 'ONCE_PER_EVENT' | 'MIN_INTERVAL';
+
+  @ApiPropertyOptional({
+    description:
+      'Months that must pass between two events (repeatPolicy MIN_INTERVAL).',
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(600)
+  minIntervalMonths?: number;
+
+  @ApiPropertyOptional({
+    description: 'YYYY-MM-DD; no grant can take effect before this date.',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/)
+  effectiveFrom?: string | null;
 }

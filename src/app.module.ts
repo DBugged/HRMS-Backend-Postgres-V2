@@ -36,6 +36,7 @@ import { PerformanceRatingsModule } from './performance-ratings/performance-rati
 import { CompanyPerformanceModule } from './company-performance/company-performance.module';
 import { TdsComplianceModule } from './tds-compliance/tds-compliance.module';
 import { LeaveEncashmentsModule } from './leave-encashments/leave-encashments.module';
+import { LeaveGrantsModule } from './leave-grants/leave-grants.module';
 import { PayrollModule } from './payroll/payroll.module';
 import { ReimbursementsModule } from './reimbursements/reimbursements.module';
 import { LoansModule } from './loans/loans.module';
@@ -129,6 +130,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     CompanyPerformanceModule,
     TdsComplianceModule,
     LeaveEncashmentsModule,
+    LeaveGrantsModule,
     PayrollModule,
     ReimbursementsModule,
     LoansModule,
