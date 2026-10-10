@@ -7,6 +7,10 @@
 // holding it forge attendance webhooks for ANY organization; the generated key is shown once and never
 // exposed again on a read path, same as a generated employee password.
 import {
+  netWorkingHours,
+  shiftConsistencyError,
+} from '../attendance/shift-hours';
+import {
   BadRequestException,
   Inject,
   Injectable,
@@ -196,6 +200,7 @@ const REQUIRED_ATTENDANCE_PREFS_KEYS = [
   'defaultMinHoursForPresent',
   'defaultMinHoursForHalfDay',
   'defaultWorkWeek',
+  'defaultBreakMinutes',
   'defaultWorkingHoursPerDay',
 ];
 const REQUIRED_DOCUMENT_NUMBERING_TYPES = ['employeeId', 'payslip'];
@@ -203,6 +208,34 @@ const REQUIRED_DOCUMENT_NUMBERING_TYPES = ['employeeId', 'payslip'];
 function isBlank(value: unknown): boolean {
   if (value === null || value === undefined) return true;
   return typeof value === 'string' && value.trim() === '';
+}
+
+// Validates the merged default-shift preferences and stamps the derived working hours onto them.
+function applyShiftConsistency(prefs: Record<string, unknown>): void {
+  const start = prefs.defaultShiftStartTime;
+  const end = prefs.defaultShiftEndTime;
+  if (typeof start !== 'string' || typeof end !== 'string') return;
+  const rawBreak = prefs.defaultBreakMinutes;
+  // An explicitly blanked break was already rejected by validateSectionData; one that was never set (a partial write
+  // to an organization that predates the field) is left alone here and caught by "complete setup".
+  if (rawBreak === undefined || rawBreak === null || rawBreak === '') return;
+  const breakMinutes = Number(rawBreak);
+  const num = (v: unknown) =>
+    v === undefined || v === null || v === '' ? undefined : Number(v);
+  const message = shiftConsistencyError({
+    startTime: start,
+    endTime: end,
+    breakMinutes,
+    minHoursForPresent: num(prefs.defaultMinHoursForPresent),
+    minHoursForHalfDay: num(prefs.defaultMinHoursForHalfDay),
+    crossesMidnight:
+      typeof prefs.defaultCrossesMidnight === 'boolean'
+        ? prefs.defaultCrossesMidnight
+        : undefined,
+  });
+  if (message) throw new BadRequestException(message);
+  const net = netWorkingHours(start, end, breakMinutes);
+  if (net !== null) prefs.defaultWorkingHoursPerDay = net;
 }
 
 function missingJsonRequirements(org: Organization): string[] {
@@ -460,6 +493,15 @@ export class OrganizationSettingsService {
           data[field] as Record<string, unknown>,
         );
       }
+    }
+
+    // Default shift: the break is mandatory, the shift/break/minimum-hours combination must be consistent, and
+    // "working hours per day" is not typed - it is always (end - start) - break, computed here from the merged values
+    // so it can never disagree with the shift.
+    if (data.orgPayrollAttendancePrefs) {
+      applyShiftConsistency(
+        data.orgPayrollAttendancePrefs as Record<string, unknown>,
+      );
     }
 
     // Same trap resolveIncomingFileValue's comment describes for Payroll

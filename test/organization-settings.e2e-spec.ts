@@ -295,6 +295,42 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     });
   });
 
+  it('default shift: break is mandatory, working hours are computed and consistency is enforced', async () => {
+    const send = (prefs: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .patch('/organizations/settings/policies')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          orgPayrollAttendancePrefs: {
+            defaultShiftStartTime: '09:30',
+            defaultShiftEndTime: '18:30',
+            defaultMinHoursForPresent: 8,
+            defaultMinHoursForHalfDay: 4,
+            ...prefs,
+          },
+        });
+    // Blank break rejected; an explicit 0 is accepted.
+    await send({ defaultBreakMinutes: '' }).expect(400);
+    // Present hours above the net working time (9h - 90min = 7.5h) rejected.
+    await send({ defaultBreakMinutes: 90 }).expect(400);
+    // Break as long as the shift rejected.
+    await send({ defaultBreakMinutes: 540 }).expect(400);
+    // Valid: working hours per day are computed, whatever was typed.
+    await send({
+      defaultBreakMinutes: 60,
+      defaultWorkingHoursPerDay: 5,
+    }).expect(200);
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+    });
+    const prefs = org.orgPayrollAttendancePrefs as Record<string, unknown>;
+    expect(prefs.defaultWorkingHoursPerDay).toBe(8);
+    expect(prefs.defaultBreakMinutes).toBe(60);
+    await send({ defaultBreakMinutes: 0, defaultMinHoursForPresent: 8 }).expect(
+      200,
+    );
+  });
+
   it('a department created afterward inherits the org defaults, not the schema hardcoded ones', async () => {
     // Department's shift/threshold columns carry Prisma @default()s
     // (09:30/18:30/15/15/8/4) that are never actually "unset" once a row
