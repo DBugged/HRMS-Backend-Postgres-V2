@@ -9,6 +9,7 @@ import {
   isCarriedInExpired,
   recalcClosing,
   shouldProrateOnJoining,
+  usesYearEndCarryForward,
 } from './leave-balance-math';
 
 describe('computeUpfrontCredit', () => {
@@ -276,5 +277,31 @@ describe('joining-date proration (the 15th rule)', () => {
         prorateOnJoining: false,
       }),
     ).toBe(true);
+  });
+});
+
+describe('usesYearEndCarryForward', () => {
+  const cf = { allowed: true, maxDays: 5, expiryMonths: null };
+  it('runs for an annual type that allows carry forward', () => {
+    expect(
+      usesYearEndCarryForward({
+        allocationType: AllocationType.FIXED_ANNUAL,
+        carryForward: cf,
+      }),
+    ).toBe(true);
+    expect(
+      usesYearEndCarryForward({
+        allocationType: AllocationType.FIXED_ANNUAL,
+        carryForward: { ...cf, allowed: false },
+      }),
+    ).toBe(false);
+  });
+  it('never runs for an event-based type, whatever its stored carry-forward setting', () => {
+    expect(
+      usesYearEndCarryForward({
+        allocationType: AllocationType.EVENT_BASED,
+        carryForward: cf,
+      }),
+    ).toBe(false);
   });
 });

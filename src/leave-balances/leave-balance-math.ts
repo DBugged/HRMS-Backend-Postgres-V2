@@ -153,3 +153,15 @@ export function computeCarriedInExpiry(
   expiry.setUTCMonth(expiry.getUTCMonth() + expiryMonths);
   return expiry.toISOString().slice(0, 10);
 }
+
+/**
+ * Whether the year-end carry-forward run applies to a leave type. Event-based leave never resets - its unused days
+ * already stay available in the next year - so a carry-forward cap or expiry must not touch it.
+ */
+export function usesYearEndCarryForward(leaveType: {
+  allocationType: AllocationType;
+  carryForward: unknown;
+}): boolean {
+  if (leaveType.allocationType === AllocationType.EVENT_BASED) return false;
+  return !!(leaveType.carryForward as { allowed?: boolean } | null)?.allowed;
+}

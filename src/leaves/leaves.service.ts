@@ -44,6 +44,7 @@ import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import {
   checkLeaveRules,
+  applicationDocumentRule,
   effectiveLeaveRules,
   rangesOverlap,
   LeaveRules,
@@ -1103,8 +1104,7 @@ export class LeavesService {
           start: l.startDate,
           end: l.endDate,
         })),
-        documentsRequired: leaveType.documentsRequired,
-        documentRequiredAfterDays: leaveType.documentRequiredAfterDays,
+        ...applicationDocumentRule(leaveType),
       },
     );
     if (!ruleResult.ok) {

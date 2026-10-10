@@ -1,4 +1,9 @@
-import { checkLeaveRules, effectiveLeaveRules, LeaveRules } from './leave-rules';
+import {
+  applicationDocumentRule,
+  checkLeaveRules,
+  effectiveLeaveRules,
+  LeaveRules,
+} from './leave-rules';
 
 const permissiveRules: LeaveRules = {
   minDurationDays: 0.5,
@@ -506,5 +511,26 @@ describe('effectiveLeaveRules', () => {
     expect(r.restrictPrefixSuffixHoliday).toBe(true);
     expect(r.countCalendarDays).toBeUndefined();
     expect(r.minGapBetweenRequestsDays).toBe(0);
+  });
+});
+
+describe('applicationDocumentRule', () => {
+  it('keeps the document rule of an annual type', () => {
+    expect(
+      applicationDocumentRule({
+        allocationType: 'FIXED_ANNUAL',
+        documentsRequired: true,
+        documentRequiredAfterDays: 2,
+      }),
+    ).toEqual({ documentsRequired: true, documentRequiredAfterDays: 2 });
+  });
+  it('does not ask for the document again when applying for event-based leave', () => {
+    expect(
+      applicationDocumentRule({
+        allocationType: 'EVENT_BASED',
+        documentsRequired: true,
+        documentRequiredAfterDays: null,
+      }),
+    ).toEqual({ documentsRequired: false, documentRequiredAfterDays: null });
   });
 });

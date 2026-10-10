@@ -28,6 +28,7 @@ import {
   forfeitedCarryIn,
   isCarriedInExpired,
   recalcClosing,
+  usesYearEndCarryForward,
 } from './leave-balance-math';
 
 interface CarryForwardShape {
@@ -508,8 +509,8 @@ export class LeaveBalanceService {
     const leaveTypes = await this.scopedPrisma.leaveType.findMany({
       where: { organizationId, isActive: true },
     });
-    const carryForwardTypes = leaveTypes.filter(
-      (lt) => (lt.carryForward as unknown as CarryForwardShape).allowed,
+    const carryForwardTypes = leaveTypes.filter((lt) =>
+      usesYearEndCarryForward(lt),
     );
 
     // Batched outside the transaction, same rationale as seedBalancesForNewType —

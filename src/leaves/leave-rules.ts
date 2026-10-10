@@ -56,6 +56,24 @@ export function effectiveLeaveRules(
   };
 }
 
+/**
+ * Whether an application for this leave type has to carry a document. For an event-based type the supporting document
+ * is collected (and checked by HR) when the grant is requested, so the application of dates does not ask for it again.
+ */
+export function applicationDocumentRule(leaveType: {
+  allocationType: string;
+  documentsRequired: boolean;
+  documentRequiredAfterDays: number | null;
+}): { documentsRequired: boolean; documentRequiredAfterDays: number | null } {
+  if (leaveType.allocationType === 'EVENT_BASED') {
+    return { documentsRequired: false, documentRequiredAfterDays: null };
+  }
+  return {
+    documentsRequired: leaveType.documentsRequired,
+    documentRequiredAfterDays: leaveType.documentRequiredAfterDays,
+  };
+}
+
 export interface LeaveRequest {
   startDate: string; // YYYY-MM-DD
   endDate: string;
