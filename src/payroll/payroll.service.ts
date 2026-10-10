@@ -161,6 +161,20 @@ const PAYROLL_HISTORY_ACTIONS = [
   'PAYROLL_UNLOCKED',
 ];
 
+// Separation of duties: a non-Admin (HR) can never change or sign off their OWN payslip. An Admin is exempt, the
+// same carve-out assertNotSelfApproval makes for leave and loans.
+function assertNotOwnPayroll(
+  actor: { id: string; role: Role },
+  employeeId: string,
+  action: string,
+): void {
+  if (actor.role !== Role.ADMIN && actor.id === employeeId) {
+    throw new ForbiddenException(
+      `You cannot ${action} your own payslip. Another HR user or an Admin must do it.`,
+    );
+  }
+}
+
 const TRANSITIONS: Record<PayrollTransitionAction, TransitionConfig> = {
   verify: {
     fromStatuses: [PayrollRunStatus.CALCULATED],
@@ -1822,6 +1836,7 @@ export class PayrollService {
       where: { id, organizationId },
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotOwnPayroll(actor, run.employeeId, 'edit');
     if (
       run.status === PayrollRunStatus.APPROVED ||
       run.status === PayrollRunStatus.LOCKED ||
@@ -2160,6 +2175,7 @@ export class PayrollService {
       where: { id, organizationId },
     });
     if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotOwnPayroll(actor, run.employeeId, 'unlock');
     if (
       run.status !== PayrollRunStatus.LOCKED &&
       run.status !== PayrollRunStatus.PAID
@@ -2422,6 +2438,34 @@ export class PayrollService {
       //
       // A NaN/Infinity figure is blocked the same way — `NaN < 0` is false, so
       // the negative check alone let a non-numeric payslip through to paid.
+      // Separation of duties (Admin exempt): nobody but an Admin signs off their own payslip, and approval / payment
+      // must come from someone other than the person who calculated, verified or approved the run.
+      if (actor.role !== Role.ADMIN) {
+        let blocked: string | null = null;
+        if (run.employeeId === actor.id) {
+          blocked = `You cannot ${config.toStatus === PayrollRunStatus.VERIFIED ? 'verify' : config.toStatus === PayrollRunStatus.APPROVED ? 'approve' : config.toStatus === PayrollRunStatus.LOCKED ? 'lock' : 'pay'} your own payslip. Another HR user or an Admin must do it.`;
+        } else if (
+          config.toStatus === PayrollRunStatus.APPROVED &&
+          (run.calculatedById === actor.id || run.verifiedById === actor.id)
+        ) {
+          blocked =
+            'This run must be approved by someone other than the person who calculated or verified it.';
+        } else if (
+          config.toStatus === PayrollRunStatus.PAID &&
+          run.approvedById === actor.id
+        ) {
+          blocked =
+            'This run must be paid by someone other than the person who approved it.';
+        }
+        if (blocked) {
+          skipped.push({
+            id: run.id,
+            status: 'separation_of_duties',
+            reason: blocked,
+          });
+          continue;
+        }
+      }
       const badField = nonFiniteMoneyField(run);
       if (badField) {
         skipped.push({

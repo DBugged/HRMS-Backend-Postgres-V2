@@ -1928,6 +1928,116 @@ describe('Payroll (e2e)', () => {
     });
   });
 
+  describe('Separation of duties: an HR user cannot pay themselves', () => {
+    let hrId: string;
+    const SOD_YEAR = YEAR - 6;
+
+    beforeAll(async () => {
+      hrId = (
+        await prisma.user.findFirstOrThrow({
+          where: { email: 'pay-e2e-hr@example.test' },
+        })
+      ).id;
+    });
+
+    const createRun = (
+      forEmployeeId: string,
+      month: number,
+      data: Record<string, unknown> = {},
+    ) =>
+      prisma.payrollRun.create({
+        data: {
+          organizationId,
+          employeeId: forEmployeeId,
+          month,
+          year: SOD_YEAR,
+          status: 'CALCULATED',
+          grossSalary: 1000,
+          netPay: 1000,
+          ...data,
+        },
+      });
+
+    it('blocks HR from editing, verifying or unlocking their own payslip, but an Admin may', async () => {
+      const run = await createRun(hrId, 1);
+      const server = app.getHttpServer();
+      await request(server)
+        .patch(`/payroll/${run.id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reason: 'raise my own pay' })
+        .expect(403);
+      const verify = await request(server)
+        .post(`/payroll/${run.id}/verify`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
+      expect(JSON.stringify(verify.body)).toMatch(/your own payslip/);
+      await request(server)
+        .post(`/payroll/${run.id}/unlock`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reason: 'unlock my own payslip' })
+        .expect(403);
+      // An Admin is exempt.
+      await request(server)
+        .post(`/payroll/${run.id}/verify`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+    });
+
+    it("blocks a bulk verify from touching the HR user's own run but lets others through", async () => {
+      const own = await createRun(hrId, 2);
+      const others = await createRun(employeeId, 2);
+      const res = await request(app.getHttpServer())
+        .post('/payroll/bulk-transition')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ ids: [own.id, others.id], action: 'verify' })
+        .expect(201);
+      expect(JSON.stringify(res.body)).toMatch(/separation_of_duties/);
+      const ownAfter = await prisma.payrollRun.findUniqueOrThrow({
+        where: { id: own.id },
+      });
+      const othersAfter = await prisma.payrollRun.findUniqueOrThrow({
+        where: { id: others.id },
+      });
+      expect(ownAfter.status).toBe('CALCULATED');
+      expect(othersAfter.status).toBe('VERIFIED');
+    });
+
+    it('requires approval from someone other than the person who verified the run', async () => {
+      const run = await createRun(employeeId, 3, {
+        status: 'VERIFIED',
+        verifiedById: hrId,
+      });
+      const server = app.getHttpServer();
+      await request(server)
+        .post(`/payroll/${run.id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
+      await request(server)
+        .post(`/payroll/${run.id}/approve`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+    });
+
+    it('blocks HR from changing their own salary structure', async () => {
+      const server = app.getHttpServer();
+      const line = {
+        componentCode: 'BASIC',
+        valueType: 'FIXED',
+        fixedAmount: 99999,
+      };
+      await request(server)
+        .post(`/employee-salary/${hrId}/structure`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send(line)
+        .expect(403);
+      await request(server)
+        .post(`/employee-salary/${hrId}/structure/bulk`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ lines: [line] })
+        .expect(403);
+    });
+  });
+
   describe('Skipping employees from a bulk run', () => {
     it('excludeEmployeeIds skips a normally-included employee for just this run', async () => {
       const res = await request(app.getHttpServer())
