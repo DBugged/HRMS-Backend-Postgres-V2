@@ -20,6 +20,7 @@ import { MapEmployeesDto } from './dto/map-employees.dto';
 import { BulkImportDepartmentsDto } from './dto/bulk-import-departments.dto';
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { AttendanceService } from '../attendance/attendance.service';
 import { computeWeeklyOffs } from '../work-schedules/work-schedules.service';
 import {
   resolveShiftConfig,
@@ -46,6 +47,7 @@ export class DepartmentsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
+    private readonly attendanceService: AttendanceService,
   ) {}
 
   async create(
@@ -298,6 +300,34 @@ export class DepartmentsService {
       data: { ...rest, ...scheduleFields },
     });
 
+    // The shift, weekly offs or Present / Half-Day rules changed: re-judge this month's saved attendance under them.
+    const RULE_FIELDS = [
+      'shiftStartTime',
+      'shiftEndTime',
+      'weeklyOffs',
+      'breakMinutes',
+      'minHoursForPresent',
+      'minHoursForHalfDay',
+      'lateInThresholdMinutes',
+      'earlyOutThresholdMinutes',
+      'crossesMidnight',
+    ] as const;
+    const changed = { ...rest, ...scheduleFields } as Record<string, unknown>;
+    const before = existing as unknown as Record<string, unknown>;
+    if (
+      RULE_FIELDS.some(
+        (f) =>
+          changed[f] !== undefined &&
+          JSON.stringify(changed[f]) !== JSON.stringify(before[f]),
+      )
+    ) {
+      void this.attendanceService.rederiveCurrentMonth(
+        organizationId,
+        [id],
+        actorId,
+      );
+    }
+
     if (actorId) {
       await this.auditLogService.log({
         actorId,
@@ -379,7 +409,8 @@ export class DepartmentsService {
     const usedBy = [
       employeeCount > 0 && `${employeeCount} employee(s)`,
       holidayCount > 0 && `${holidayCount} holiday(s)`,
-      performanceCount > 0 && `${performanceCount} company-performance entr${performanceCount === 1 ? 'y' : 'ies'}`,
+      performanceCount > 0 &&
+        `${performanceCount} company-performance entr${performanceCount === 1 ? 'y' : 'ies'}`,
       importBatchCount > 0 && `${importBatchCount} attendance import batch(es)`,
     ].filter(Boolean);
     if (usedBy.length > 0) {

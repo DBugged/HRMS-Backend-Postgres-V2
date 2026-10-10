@@ -704,6 +704,126 @@ export class AttendanceService {
     return AttendanceStatus[statusForWorkedMinutes(minutes, cfg)];
   }
 
+  // A department's shift, weekly offs or Present / Half-Day hours changed: this month's attendance that was already
+  // saved under the old rules (a Saturday that is now a working day, a 4-hour day that is now a Half-Day) is judged
+  // again under the new ones. Only the status and the figures derived from the times are rewritten; the punch times,
+  // source, regularization and work arrangement are left exactly as they were. Left alone: months before this one,
+  // employees whose payroll for this month is already locked or paid, rows kept under another department's rules,
+  // and today's row while nobody has punched (the day is not over). Never throws - the edit that triggered it has
+  // already been saved.
+  async rederiveCurrentMonth(
+    organizationId: string,
+    departmentIds: string[],
+    actorId?: string | null,
+  ): Promise<{ updated: number }> {
+    try {
+      if (departmentIds.length === 0) return { updated: 0 };
+      const org = await this.prisma.organization.findUnique({
+        where: { id: organizationId },
+      });
+      const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+      const yesterday = addDaysStr(today, -1);
+      const monthStart = `${today.slice(0, 7)}-01`;
+      const month = Number(today.slice(5, 7));
+      const year = Number(today.slice(0, 4));
+
+      const employees = await this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          departmentId: { in: departmentIds },
+        },
+        select: { id: true, departmentId: true, joiningDate: true },
+      });
+      if (employees.length === 0) return { updated: 0 };
+      const lockedRuns = await this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          month,
+          year,
+          employeeId: { in: employees.map((e) => e.id) },
+          status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+        },
+        select: { employeeId: true },
+      });
+      const locked = new Set(lockedRuns.map((r) => r.employeeId));
+      const eligible = employees.filter((e) => !locked.has(e.id));
+      const employeeById = new Map(eligible.map((e) => [e.id, e]));
+      const departments = await this.scopedPrisma.department.findMany({
+        where: { organizationId, id: { in: departmentIds } },
+      });
+      const departmentById = new Map(departments.map((d) => [d.id, d]));
+
+      const rows = await this.scopedPrisma.attendance.findMany({
+        where: {
+          organizationId,
+          employeeId: { in: eligible.map((e) => e.id) },
+          date: { gte: monthStart, lte: today },
+        },
+      });
+      let updated = 0;
+      await mapWithConcurrency(rows, 8, async (row) => {
+        const employee = employeeById.get(row.employeeId);
+        if (!employee) return;
+        if (row.departmentId && row.departmentId !== employee.departmentId) {
+          return;
+        }
+        if (row.date < utcDateStrOf(employee.joiningDate)) return;
+        const hasPunch = !!(row.inTime || row.outTime);
+        if (row.date > yesterday && !hasPunch) return;
+        const department = employee.departmentId
+          ? (departmentById.get(employee.departmentId) ?? null)
+          : null;
+        const shiftConfig = resolveShiftConfig(
+          department,
+          org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+        );
+        const outcome = await this.deriveDayOutcome(this.scopedPrisma, {
+          organizationId,
+          employeeId: row.employeeId,
+          employeeDepartmentId: employee.departmentId,
+          dateStr: row.date,
+          shiftConfig,
+          inTime: row.inTime,
+          outTime: row.outTime,
+        });
+        if (
+          outcome.status === row.status &&
+          outcome.workDurationMinutes === row.workDurationMinutes &&
+          outcome.isLate === row.isLate &&
+          outcome.isEarlyOut === row.isEarlyOut
+        ) {
+          return;
+        }
+        await this.scopedPrisma.attendance.updateMany({
+          where: { id: row.id, organizationId },
+          data: {
+            status: outcome.status,
+            workDurationMinutes: outcome.workDurationMinutes,
+            isLate: outcome.isLate,
+            isEarlyOut: outcome.isEarlyOut,
+          },
+        });
+        updated += 1;
+      });
+      if (updated > 0 && actorId) {
+        await this.auditLogService.log({
+          actorId,
+          action: 'ATTENDANCE_RECALCULATED',
+          module: 'ATTENDANCE',
+          organizationId,
+          details: { month, year, daysUpdated: updated },
+        });
+      }
+      return { updated };
+    } catch (err) {
+      this.logger.error(
+        `Re-deriving this month's attendance failed for org ${organizationId}: ${err instanceof Error ? err.message : err}`,
+      );
+      return { updated: 0 };
+    }
+  }
+
   // Below this overshoot, a punch-out isn't worth a review-queue entry —
   // clocking out 5-10 minutes late is noise, not overtime.
   private static readonly AUTO_OVERTIME_MIN_MINUTES = 30;

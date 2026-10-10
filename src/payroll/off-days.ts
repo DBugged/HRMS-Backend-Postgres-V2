@@ -35,8 +35,27 @@ export function monthBounds(
 }
 
 /**
+ * The last day a month still running is paid for: yesterday. Today is not over - the person may still punch in - so
+ * counting it would show them as unmarked (and unpaid) before the day has even finished. On the 1st of the month it
+ * stays the 1st, so a month is never left with no days at all.
+ */
+export function lastCountedDay(
+  today: string,
+  month: number,
+  year: number,
+): string {
+  const yesterday = new Date(
+    new Date(`${today}T00:00:00.000Z`).getTime() - 24 * 60 * 60 * 1000,
+  )
+    .toISOString()
+    .slice(0, 10);
+  const first = `${year}-${pad(month)}-01`;
+  return yesterday < first ? first : yesterday;
+}
+
+/**
  * The days of the month the employee counts for. `from` is the joining date when they joined inside the month (else the
- * first of the month); `to` is the last day that has actually happened - the month's end, or `through` (today) while
+ * first of the month); `to` is the last day that has actually happened - the month's end, or `through` (yesterday, see lastCountedDay) while
  * the month is still running. `daysBeforeJoining` is how many days of the month fall before `from` (the whole month
  * when they joined after it ended) and `daysNotElapsed` how many fall after `to`. Neither kind is unpaid leave: they
  * are days the person was not employed yet, or that have not happened yet, so they stay out of LOP and out of the

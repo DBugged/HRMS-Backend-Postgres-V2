@@ -6,6 +6,7 @@ import {
   monthBounds,
   offDayCalendar,
   splitLeavesAroundOffDays,
+  lastCountedDay,
 } from './off-days';
 import { computeAttendanceSummary } from './attendance-summary';
 
@@ -261,5 +262,29 @@ describe('a month still running (month to date)', () => {
     );
     expect(summary.payableDays).toBe(7);
     expect(summary.lopDays).toBe(1); // 2 Oct, a Friday nobody marked
+  });
+});
+
+describe('lastCountedDay', () => {
+  it('a running month is counted up to yesterday, not today', () => {
+    expect(lastCountedDay('2026-10-10', 10, 2026)).toBe('2026-10-09');
+  });
+  it('on the 1st it stays the 1st, so the month is never empty', () => {
+    expect(lastCountedDay('2026-10-01', 10, 2026)).toBe('2026-10-01');
+  });
+  it('a finished month is not cut short', () => {
+    const through = lastCountedDay('2026-10-10', 9, 2026);
+    expect(employmentWindow('2024-04-04', 9, 2026, through).to).toBe(
+      '2026-09-30',
+    );
+  });
+  it('an employee who joined today has no finished day yet', () => {
+    const w = employmentWindow(
+      '2026-10-10',
+      10,
+      2026,
+      lastCountedDay('2026-10-10', 10, 2026),
+    );
+    expect(w.from > w.to).toBe(true);
   });
 });

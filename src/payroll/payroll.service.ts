@@ -92,6 +92,7 @@ import {
 import {
   dropLeaveRowsOnOffDays,
   employmentWindow,
+  lastCountedDay,
   missingOffDayRows,
   offDayCalendar,
   splitLeavesAroundOffDays,
@@ -576,14 +577,15 @@ export class PayrollService {
       department,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
     );
-    // A month still running is paid for the days that have happened so far (today included), not for days to come:
-    // those are neither unpaid nor paid weekly offs yet. A final settlement does its own period handling.
+    // A month still running is paid for the days that have finished so far (up to yesterday - today is not over yet),
+    // not for days to come: those are neither unpaid nor paid weekly offs yet. A final settlement does its own period
+    // handling.
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     const employed = employmentWindow(
       employee.joiningDate,
       month,
       year,
-      options?.finalSettlement ? undefined : today,
+      options?.finalSettlement ? undefined : lastCountedDay(today, month, year),
     );
     const elapsedAttendanceRows = attendanceRows.filter(
       (r) => r.date <= employed.to,
@@ -3655,7 +3657,7 @@ export class PayrollService {
   // with no row at all is a genuine blind spot.
   async getAttendanceGaps(month: number, year: number, organizationId: string) {
     const allEmployees = await this.targetEmployees(undefined, organizationId);
-    // Days that have not happened yet cannot be blind spots, so only the days up to today are looked at.
+    // Days that have not finished yet cannot be blind spots, so only the days up to yesterday are looked at (today may still get its punch).
     const today = await this.orgToday(organizationId);
     const totalDaysInMonth = daysInMonth(month, year);
     const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
@@ -3708,7 +3710,12 @@ export class PayrollService {
           department,
           org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
         );
-        const employed = employmentWindow(e.joiningDate, month, year, today);
+        const employed = employmentWindow(
+          e.joiningDate,
+          month,
+          year,
+          lastCountedDay(today, month, year),
+        );
         const calendar = offDayCalendar(
           employed.from,
           employed.to,

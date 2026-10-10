@@ -15,6 +15,7 @@ import { AuditModule, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { AttendanceService } from '../attendance/attendance.service';
 import type { WeeklyOffEntry } from '../attendance/attendance-shift-config';
 import {
   CreateWorkScheduleDto,
@@ -65,7 +66,8 @@ export function shiftHours(startTime: string, endTime: string): number {
     const [h, m] = t.split(':').map(Number);
     return h * 60 + m;
   };
-  const span = (toMinutes(endTime) - toMinutes(startTime) + 24 * 60) % (24 * 60);
+  const span =
+    (toMinutes(endTime) - toMinutes(startTime) + 24 * 60) % (24 * 60);
   return span / 60;
 }
 
@@ -82,6 +84,7 @@ export class WorkSchedulesService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
+    private readonly attendanceService: AttendanceService,
   ) {}
 
   async findAll(organizationId: string) {
@@ -205,6 +208,16 @@ export class WorkSchedulesService {
           breakMinutes: updated.breakMinutes,
         },
       });
+      // Their shift / weekly offs changed: re-judge this month's saved attendance under the new rules.
+      const affected = await this.scopedPrisma.department.findMany({
+        where: { organizationId, workScheduleId: id },
+        select: { id: true },
+      });
+      void this.attendanceService.rederiveCurrentMonth(
+        organizationId,
+        affected.map((d) => d.id),
+        actor.id,
+      );
     }
 
     await this.auditLogService.log({
@@ -298,6 +311,11 @@ export class WorkSchedulesService {
           breakMinutes: schedule.breakMinutes,
         },
       });
+      void this.attendanceService.rederiveCurrentMonth(
+        organizationId,
+        dto.departmentIds,
+        actor.id,
+      );
     }
 
     await this.auditLogService.log({
