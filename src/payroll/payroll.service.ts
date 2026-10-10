@@ -2191,7 +2191,12 @@ export class PayrollService {
       actor,
       organizationId,
     );
-    await this.afterLock(run, organizationId);
+    const lockFailure = await this.afterLockOrRevert(run, organizationId);
+    if (lockFailure) {
+      throw new ConflictException(
+        `${lockFailure} The payroll was moved back to Approved - lock it again to retry.`,
+      );
+    }
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'PAYROLL_LOCKED',
@@ -2325,9 +2330,55 @@ export class PayrollService {
       organizationId,
     );
     if (dto.action === 'lock') {
-      for (const run of updated) await this.afterLock(run, organizationId);
+      // One failing run must not stop the rest: each run's side effects are applied on their own, and a run whose
+      // side effects fail is returned to APPROVED (reported as skipped) instead of staying LOCKED half-processed.
+      const confirmed: PayrollRun[] = [];
+      for (const run of updated) {
+        const failure = await this.afterLockOrRevert(run, organizationId);
+        if (failure) {
+          skipped.push({
+            id: run.id,
+            status: 'lock_side_effects_failed',
+            reason: `${failure} It was moved back to Approved - lock it again to retry.`,
+          });
+        } else {
+          confirmed.push(run);
+        }
+      }
+      return {
+        updatedCount: confirmed.length,
+        skipped,
+        runs: confirmed,
+      };
     }
     return { updatedCount: updated.length, skipped, runs: updated };
+  }
+
+  // Lock = status change + its side effects (encashments marked processed, loan EMIs charged). The transition has
+  // already committed by the time this runs, so a failure here would leave a LOCKED payslip that no loan balance or
+  // encashment reflects (and which can't be locked again). The run is put back to APPROVED instead, so the whole
+  // lock fails together and can simply be retried (afterLock is idempotent per loan and run). Returns the failure
+  // message, or null on success.
+  private async afterLockOrRevert(
+    run: PayrollRun,
+    organizationId: string,
+  ): Promise<string | null> {
+    try {
+      await this.afterLock(run, organizationId);
+      return null;
+    } catch (err) {
+      await this.scopedPrisma.payrollRun.updateMany({
+        where: { id: run.id, organizationId, status: PayrollRunStatus.LOCKED },
+        data: {
+          status: PayrollRunStatus.APPROVED,
+          lockedAt: null,
+          lockedById: null,
+        },
+      });
+      return `Locking ${run.month}/${run.year} failed while applying its loan/encashment effects: ${
+        err instanceof Error ? err.message : 'unknown error'
+      }.`;
+    }
   }
 
   // Reverts a Locked/Paid run back to Calculated so it can be corrected
