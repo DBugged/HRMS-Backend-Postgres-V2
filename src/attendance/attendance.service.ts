@@ -3714,8 +3714,19 @@ export class AttendanceService {
   // is Batch 9 — this endpoint's shape is preserved so that batch can wire
   // in real delivery without a contract change.
   async notifyAbsentees(dto: NotifyAbsenteesDto, organizationId: string) {
-    const date =
-      dto.date ?? todayInOrgTz(await this.getOrgTimezone(organizationId));
+    // Only a day that has finished can be called an absence: today an employee who has not punched in yet may still
+    // do so, and marking them absent (with an in-app notice and an email) before the day ends is wrong. So the default
+    // is yesterday and nothing later than yesterday is accepted.
+    const yesterday = yesterdayInOrgTz(
+      await this.getOrgTimezone(organizationId),
+      new Date(),
+    );
+    const date = dto.date ?? yesterday;
+    if (date > yesterday) {
+      throw new BadRequestException(
+        `Absence alerts can only be sent for a day that has finished. The latest date allowed is yesterday (${yesterday}).`,
+      );
+    }
 
     const employees = await this.scopedPrisma.user.findMany({
       where: {

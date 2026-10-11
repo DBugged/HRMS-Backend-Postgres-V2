@@ -3010,6 +3010,23 @@ describe('Attendance (e2e)', () => {
       expect(body.notifiedCount).toBe(body.employeeIds.length);
     });
 
+    it('refuses today and future dates, and defaults to yesterday', async () => {
+      for (const date of [offsetDate(0), offsetDate(1), offsetDate(30)]) {
+        await request(app.getHttpServer())
+          .post('/attendance/notify-absentees')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ date })
+          .expect(400);
+      }
+      const res = await request(app.getHttpServer())
+        .post('/attendance/notify-absentees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({})
+        .expect(201);
+      expect((res.body as { date: string }).date <= offsetDate(0)).toBe(true);
+      expect((res.body as { date: string }).date).not.toBe(offsetDate(0));
+    });
+
     it('EMPLOYEE gets 403', async () => {
       await request(app.getHttpServer())
         .post('/attendance/notify-absentees')
