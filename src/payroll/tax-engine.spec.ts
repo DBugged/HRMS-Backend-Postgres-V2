@@ -800,3 +800,28 @@ describe('professional tax (section 16(iii))', () => {
     expect(r.deductions.professionalTax).toBe(0);
   });
 });
+
+describe('employer NPS deduction limit (80CCD(2))', () => {
+  const run = (basicPlusDaAnnual?: number) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: 200000,
+      recurringMonthlyGross: 200000,
+      basicAnnual: 600000,
+      basicPlusDaAnnual,
+      declaration: { section80CCD2: 200000 },
+      taxSlabConfig: {
+        ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+        regime: TaxRegime.NEW,
+      },
+    });
+
+  it('is limited to 14% of Basic + DA (new regime), not of Basic alone', () => {
+    expect(run(900000).deductions.section80CCD2).toBe(126000);
+  });
+
+  it('falls back to Basic when there is no DA figure', () => {
+    expect(run().deductions.section80CCD2).toBe(84000);
+  });
+});

@@ -1225,6 +1225,14 @@ export class PayrollService {
         ytdGross,
         ytdTDS,
         basicAnnual: basicMonthly * employmentMonths,
+        basicPlusDaAnnual:
+          (basicMonthly +
+            roundAmount(
+              recurringResults?.find((e) => e.code === 'DA')?.amount ??
+                earningsLines.find((e) => e.code === 'DA')?.amount ??
+                0,
+            )) *
+          employmentMonths,
         hraReceivedAnnual: hraMonthly * employmentMonths,
         // The LTA exemption is limited to LTA the employer actually pays (0 when the structure has none).
         ltaReceivedAnnual:
@@ -1554,6 +1562,8 @@ export class PayrollService {
           year: dto.year,
           status: PayrollRunStatus.DRAFT,
         })),
+        // Two drafts for the same month racing each other: the loser must not fail on the unique key.
+        skipDuplicates: true,
       });
     }
     const runs =

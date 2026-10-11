@@ -148,6 +148,9 @@ export interface CalculateTaxInput {
   ytdGross?: number;
   ytdTDS?: number;
   basicAnnual?: number;
+  // Basic + Dearness Allowance for the year - the 'salary' limit of the employer-NPS deduction (80CCD(2): 10% old regime,
+  // 14% new). Defaults to basicAnnual when the employee has no DA.
+  basicPlusDaAnnual?: number;
   hraReceivedAnnual?: number;
   // Leave Travel Allowance actually paid in the year (from the salary structure). The LTA exemption can never
   // exceed what was paid; when omitted, the declared figure is used as before.
@@ -222,6 +225,7 @@ export function calculateTax({
   ytdGross = 0,
   ytdTDS = 0,
   basicAnnual = 0,
+  basicPlusDaAnnual,
   hraReceivedAnnual = 0,
   ltaReceivedAnnual,
   declaration,
@@ -336,11 +340,11 @@ export function calculateTax({
   }
 
   // 80CCD(2) — employer NPS contribution — is allowed under both regimes,
-  // capped at 10%/14% of Basic (Old/New). DA isn't modeled as a separate
-  // figure, so the cap applies against Basic alone (documented
-  // simplification, ported as-is).
-  const section80CCD2Cap =
-    (regime === TaxRegime.NEW ? 0.14 : 0.1) * basicAnnual;
+  // capped at 10%/14% of Basic + DA (Old/New).
+  const section80CCD2Cap = Math.round(
+    (regime === TaxRegime.NEW ? 0.14 : 0.1) *
+      (basicPlusDaAnnual ?? basicAnnual),
+  );
   deductions.section80CCD2 = Math.min(
     declaration?.section80CCD2 || 0,
     section80CCD2Cap,
