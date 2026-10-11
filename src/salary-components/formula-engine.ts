@@ -48,7 +48,9 @@ export const SYSTEM_VARS = [
   'LATE_MARKS',
   'HOLIDAY_WORK_DAYS',
   'WEEKEND_WORK_DAYS',
+  // Absent / unmarked days only - unpaid-leave days are counted in UNPAID_LEAVE_DAYS. TOTAL_UNPAID_DAYS is both.
   'LOP_DAYS',
+  'TOTAL_UNPAID_DAYS',
   'PAYABLE_DAYS',
   'HOLIDAYS',
   'WEEKLY_OFFS',

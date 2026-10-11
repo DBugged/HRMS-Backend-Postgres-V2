@@ -95,6 +95,23 @@ describe('buildBaseContext', () => {
     expect(ctx.GRATUITY_RATE).toBe(4.81);
   });
 
+  it('TOTAL_UNPAID_DAYS is absent days plus unpaid-leave days, while LOP_DAYS leaves unpaid leave out', () => {
+    const ctx = buildBaseContext(
+      attendance({ lopDays: 1.5, unpaidLeaveDays: 2 }),
+      settings(),
+      4,
+    );
+    expect(ctx.LOP_DAYS).toBe(1.5);
+    expect(ctx.UNPAID_LEAVE_DAYS).toBe(2);
+    expect(ctx.TOTAL_UNPAID_DAYS).toBe(3.5);
+    expect(
+      evaluateFormula('GROSS * TOTAL_UNPAID_DAYS / TOTAL_DAYS_IN_MONTH', {
+        ...ctx,
+        GROSS: 30000,
+      }),
+    ).toBe(3500);
+  });
+
   it('zeroes LWF amounts outside a configured LWF month', () => {
     const ctx = buildBaseContext(attendance(), settings(), 4);
     expect(ctx.LWF_EMPLOYEE_AMOUNT).toBe(0);

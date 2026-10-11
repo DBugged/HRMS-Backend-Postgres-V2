@@ -4141,6 +4141,7 @@ export class PayrollService {
       UNPAID_LEAVE_DAYS: 0,
       HALF_DAYS: 0,
       LOP_DAYS: 0,
+      TOTAL_UNPAID_DAYS: 0,
       LATE_MARKS: 0,
       OT_HOURS: 0,
       OT_WEIGHTED_HOURS: 0,

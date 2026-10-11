@@ -236,7 +236,10 @@ export function buildBaseContext(
     LATE_MARKS: attendance.lateMarks,
     HOLIDAY_WORK_DAYS: attendance.holidayWorkDays,
     WEEKEND_WORK_DAYS: attendance.weekendWorkDays,
+    // Days with no pay for any reason: absent/unmarked days (LOP_DAYS) plus unpaid-leave days. LOP_DAYS alone leaves
+    // out unpaid leave, so a custom loss-of-pay formula should use this one.
     LOP_DAYS: attendance.lopDays,
+    TOTAL_UNPAID_DAYS: attendance.lopDays + attendance.unpaidLeaveDays,
     PAYABLE_DAYS: attendance.payableDays,
     HOLIDAYS: attendance.holidays,
     WEEKLY_OFFS: attendance.weeklyOffs,
