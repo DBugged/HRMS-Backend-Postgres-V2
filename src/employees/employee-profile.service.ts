@@ -78,6 +78,22 @@ function withSignedFileUrl<T extends EmployeeDocument>(doc: T): T {
   };
 }
 
+// personalData fields only the employee may change (HR/Admin: view-only).
+export const SELF_ONLY_PERSONAL_DATA_KEYS = [
+  'bankAccountHolderName',
+  'bankName',
+  'bankAccountNo',
+  'bankIFSC',
+  'cancelledChequeUrl',
+  'panNumber',
+  'aadharNumber',
+  'uanNumber',
+  'pfNumber',
+  'esicNumber',
+  'passportNumber',
+  'currentAddress',
+] as const;
+
 @Injectable()
 export class EmployeeProfileService {
   constructor(
@@ -202,6 +218,21 @@ export class EmployeeProfileService {
       delete patch.personalEmail;
       // The company, not the employee, decides what an employee's CTC is.
       delete patch.currentCTC;
+    }
+    // Bank details, government IDs and the address are the employee's own to enter: HR/Admin see them but cannot
+    // change them on someone else's record. Values equal to what is stored are ignored (the edit forms resend a
+    // whole section), so only an actual change is refused. Editing your own record is unaffected.
+    if (actor.id !== id) {
+      const same = (a: unknown, b: unknown) =>
+        String(a ?? '').trim() === String(b ?? '').trim();
+      const changed = SELF_ONLY_PERSONAL_DATA_KEYS.filter(
+        (key) => key in patch && !same(patch[key], before[key]),
+      );
+      if (changed.length > 0) {
+        throw new ForbiddenException(
+          "An employee's bank details, government IDs and address are view-only for HR and Admin - the employee updates them themselves.",
+        );
+      }
     }
     assertValidIdentifiers(patch);
     assertValidDates(patch);
