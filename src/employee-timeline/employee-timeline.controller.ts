@@ -73,7 +73,7 @@ export class EmployeeTimelineController {
     @CurrentUser() caller: Caller,
     @Res() res: Response,
   ) {
-    const [{ employee, events }, { dateFormat, timeFormat }] =
+    const [{ employee, events }, { dateFormat, timeFormat, timeZone }] =
       await Promise.all([
         this.timelineService.fetchForExport(
           id,
@@ -100,6 +100,7 @@ export class EmployeeTimelineController {
           '',
           dateFormat,
           timeFormat,
+          timeZone,
         ),
         category: e.category,
         title: e.title,
@@ -124,7 +125,7 @@ export class EmployeeTimelineController {
     @CurrentUser() caller: Caller,
     @Res() res: Response,
   ) {
-    const [{ employee, events }, { dateFormat, timeFormat }] =
+    const [{ employee, events }, { dateFormat, timeFormat, timeZone }] =
       await Promise.all([
         this.timelineService.fetchForExport(
           id,
@@ -151,6 +152,7 @@ export class EmployeeTimelineController {
           '',
           dateFormat,
           timeFormat,
+          timeZone,
         ),
         category: e.category,
         title: e.title,

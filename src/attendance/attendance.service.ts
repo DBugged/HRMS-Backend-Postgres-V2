@@ -999,11 +999,11 @@ export class AttendanceService {
     isLate: boolean,
     organizationId: string,
   ) {
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
-    const displayDate = formatDateDisplay(dateStr, '', dateFormat);
+    const displayDate = formatDateDisplay(dateStr, '', dateFormat, timeZone);
     // A dangling punch-in gets its own nudge instead of the "Marked Absent"
     // one — it's actionable (submit a regularization request) rather than
     // just informational, and wrongly telling someone who clearly showed up
@@ -1637,7 +1637,7 @@ export class AttendanceService {
     }
 
     if (isWfh) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(
+      const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
         this.scopedPrisma,
         organizationId,
       );
@@ -1646,7 +1646,7 @@ export class AttendanceService {
         employeeId: actor.id,
         eventKey: 'WFH_REQUESTED',
         performedById: actor.id,
-        description: `Requested Work From Home for ${formatDateDisplay(dateStr, '', dateFormat)}.`,
+        description: `Requested Work From Home for ${formatDateDisplay(dateStr, '', dateFormat, timeZone)}.`,
       });
       await this.notifyWfhRequested(actor, dateStr, organizationId);
     }
@@ -1661,7 +1661,7 @@ export class AttendanceService {
     date: string,
     organizationId: string,
   ) {
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
@@ -1669,7 +1669,7 @@ export class AttendanceService {
       organizationId,
       requester: actor,
       title: 'Work From Home Requested',
-      message: `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat)}, pending your approval.`,
+      message: `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat, timeZone)}, pending your approval.`,
       category: NotificationCategory.ATTENDANCE,
       managerFirst: true,
     });
@@ -1775,12 +1775,12 @@ export class AttendanceService {
       description: dto.comments ?? '',
     });
 
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
     const title = `Work From Home Request ${dto.decision}`;
-    const message = `Your Work From Home request for ${formatDateDisplay(row.date, '', dateFormat)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+    const message = `Your Work From Home request for ${formatDateDisplay(row.date, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
     await this.notificationsService.create({
       organizationId,
       userId: row.employeeId,
@@ -1795,7 +1795,7 @@ export class AttendanceService {
         {
           employeeName: row.employee.name,
           decision: dto.decision,
-          date: formatDateDisplay(row.date, '', dateFormat),
+          date: formatDateDisplay(row.date, '', dateFormat, timeZone),
           comments: dto.comments ?? '',
         },
         { subject: title, html: message },
@@ -2817,7 +2817,7 @@ export class AttendanceService {
     date: string,
     organizationId: string,
   ) {
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
@@ -2825,7 +2825,7 @@ export class AttendanceService {
       organizationId,
       requester: actor,
       title: 'Attendance Regularization Requested',
-      message: `${actor.name} requested attendance regularization for ${formatDateDisplay(date, '', dateFormat)}.`,
+      message: `${actor.name} requested attendance regularization for ${formatDateDisplay(date, '', dateFormat, timeZone)}.`,
       category: NotificationCategory.REGULARIZATION,
       managerFirst: true,
     });
@@ -2957,12 +2957,12 @@ export class AttendanceService {
       where: { id: row.employeeId, organizationId },
     });
     if (employee) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(
+      const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
         this.scopedPrisma,
         organizationId,
       );
       const title = `Regularization Request ${dto.decision}`;
-      const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+      const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -2976,7 +2976,7 @@ export class AttendanceService {
         {
           employeeName: employee.name,
           decision: dto.decision,
-          date: formatDateDisplay(row.date, '', dateFormat),
+          date: formatDateDisplay(row.date, '', dateFormat, timeZone),
           comments: dto.comments ?? '',
         },
         { subject: title, html: message },
@@ -4037,7 +4037,7 @@ export class AttendanceService {
       include: { employee: true },
     });
     if (candidates.length === 0) return;
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
@@ -4071,7 +4071,7 @@ export class AttendanceService {
         });
 
         const title = 'Work From Home Request APPROVED';
-        const message = `Your Work From Home request for ${formatDateDisplay(row.date, '', dateFormat)} was automatically approved — no reviewer acted within the configured window.`;
+        const message = `Your Work From Home request for ${formatDateDisplay(row.date, '', dateFormat, timeZone)} was automatically approved — no reviewer acted within the configured window.`;
         await this.notificationsService.create({
           organizationId,
           userId: row.employeeId,
@@ -4086,7 +4086,7 @@ export class AttendanceService {
             {
               employeeName: row.employee.name,
               decision: 'APPROVED',
-              date: formatDateDisplay(row.date, '', dateFormat),
+              date: formatDateDisplay(row.date, '', dateFormat, timeZone),
               comments: AttendanceService.AUTO_APPROVE_COMMENT,
             },
             { subject: title, html: message },
@@ -4120,7 +4120,7 @@ export class AttendanceService {
       include: { employee: true },
     });
     if (candidates.length === 0) return;
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
@@ -4225,7 +4225,7 @@ export class AttendanceService {
         }
 
         const title = 'Regularization Request APPROVED';
-        const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat)} was automatically approved — no reviewer acted within the configured window.`;
+        const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat, timeZone)} was automatically approved — no reviewer acted within the configured window.`;
         await this.notificationsService.create({
           organizationId,
           userId: row.employeeId,
@@ -4240,7 +4240,7 @@ export class AttendanceService {
             {
               employeeName: row.employee.name,
               decision: 'APPROVED',
-              date: formatDateDisplay(row.date, '', dateFormat),
+              date: formatDateDisplay(row.date, '', dateFormat, timeZone),
               comments: AttendanceService.AUTO_APPROVE_COMMENT,
             },
             { subject: title, html: message },

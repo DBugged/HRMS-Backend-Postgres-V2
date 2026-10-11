@@ -75,7 +75,11 @@ describe('resolveOrgDateTimeFormat', () => {
     };
     await expect(
       resolveOrgDateTimeFormat(scopedPrisma as any, 'org-1'),
-    ).resolves.toEqual({ dateFormat: 'DD-MM-YYYY', timeFormat: '12' });
+    ).resolves.toEqual({
+      dateFormat: 'DD-MM-YYYY',
+      timeFormat: '12',
+      timeZone: 'Asia/Kolkata',
+    });
   });
 
   it('falls back per-field when policies has malformed values', async () => {
@@ -88,7 +92,11 @@ describe('resolveOrgDateTimeFormat', () => {
     };
     await expect(
       resolveOrgDateTimeFormat(scopedPrisma as any, 'org-1'),
-    ).resolves.toEqual({ dateFormat: 'DD-MM-YYYY', timeFormat: '12' });
+    ).resolves.toEqual({
+      dateFormat: 'DD-MM-YYYY',
+      timeFormat: '12',
+      timeZone: 'Asia/Kolkata',
+    });
   });
 
   it('reads the time format but always returns DD-MM-YYYY, even for an older saved value', async () => {
@@ -101,7 +109,11 @@ describe('resolveOrgDateTimeFormat', () => {
     };
     await expect(
       resolveOrgDateTimeFormat(scopedPrisma as any, 'org-1'),
-    ).resolves.toEqual({ dateFormat: 'DD-MM-YYYY', timeFormat: '24' });
+    ).resolves.toEqual({
+      dateFormat: 'DD-MM-YYYY',
+      timeFormat: '24',
+      timeZone: 'Asia/Kolkata',
+    });
   });
 });
 
@@ -142,5 +154,68 @@ describe('formatTimeInZone', () => {
   it('returns the fallback for an empty value', () => {
     expect(formatTimeInZone(null, 'Asia/Kolkata')).toBe('');
     expect(formatTimeInZone(undefined, 'Asia/Kolkata', '12', '-')).toBe('-');
+  });
+});
+
+describe('timestamps are read in the organisation timezone', () => {
+  // 20:30 UTC on 12 Oct is already 02:00 on 13 Oct in IST (UTC+5:30) and still 16:30 on 12 Oct in New York (UTC-4).
+  const instant = new Date('2026-10-12T20:30:00.000Z');
+
+  it('gives the same day wherever the server runs', () => {
+    expect(formatDateDisplay(instant, '', 'DD-MM-YYYY', 'Asia/Kolkata')).toBe(
+      '13-10-2026',
+    );
+    expect(formatDateDisplay(instant, '', 'DD-MM-YYYY', 'UTC')).toBe(
+      '12-10-2026',
+    );
+    expect(
+      formatDateDisplay(instant, '', 'DD-MM-YYYY', 'America/New_York'),
+    ).toBe('12-10-2026');
+  });
+
+  it('reads an ISO timestamp string the same way', () => {
+    expect(
+      formatDateDisplay(
+        '2026-10-12T20:30:00Z',
+        '',
+        'DD-MM-YYYY',
+        'Asia/Kolkata',
+      ),
+    ).toBe('13-10-2026');
+  });
+
+  it('uses the same zone for the time', () => {
+    expect(
+      formatDateTimeDisplay(instant, '', 'DD-MM-YYYY', '24', 'Asia/Kolkata'),
+    ).toBe('13-10-2026, 02:00');
+    expect(
+      formatDateTimeDisplay(
+        instant,
+        '',
+        'DD-MM-YYYY',
+        '12',
+        'America/New_York',
+      ),
+    ).toBe('12-10-2026, 04:30 PM');
+  });
+
+  it('never shifts a plain calendar date or a date-only (UTC-midnight) value', () => {
+    expect(
+      formatDateDisplay('2026-10-12', '', 'DD-MM-YYYY', 'Pacific/Auckland'),
+    ).toBe('12-10-2026');
+    const joining = new Date('2026-10-12T00:00:00.000Z');
+    expect(
+      formatDateDisplay(joining, '', 'DD-MM-YYYY', 'America/Los_Angeles'),
+    ).toBe('12-10-2026');
+  });
+
+  it('falls back to the platform zone for an unknown zone name', () => {
+    expect(formatDateDisplay(instant, '', 'DD-MM-YYYY', 'Not/AZone')).toBe(
+      '13-10-2026',
+    );
+  });
+
+  it('returns the fallback for an impossible calendar date', () => {
+    expect(formatDateDisplay('2026-02-31', 'n/a')).toBe('n/a');
   });
 });

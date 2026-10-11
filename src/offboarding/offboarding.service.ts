@@ -214,12 +214,12 @@ export class OffboardingService {
       return created;
     });
 
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
     const title = 'Offboarding Process Initiated';
-    const message = `Your offboarding has been initiated with a last working day of ${formatDateDisplay(dto.lastWorkingDay, '', dateFormat)}. HR will reach out with the exit checklist.`;
+    const message = `Your offboarding has been initiated with a last working day of ${formatDateDisplay(dto.lastWorkingDay, '', dateFormat, timeZone)}. HR will reach out with the exit checklist.`;
     await this.notificationsService.create({
       organizationId,
       userId: employee.id,
@@ -232,7 +232,12 @@ export class OffboardingService {
       'OFFBOARDING_INITIATED',
       {
         employeeName: employee.name,
-        lastWorkingDay: formatDateDisplay(dto.lastWorkingDay, '', dateFormat),
+        lastWorkingDay: formatDateDisplay(
+          dto.lastWorkingDay,
+          '',
+          dateFormat,
+          timeZone,
+        ),
       },
       { subject: title, html: message },
     );
@@ -499,13 +504,18 @@ export class OffboardingService {
           ? personalData.personalEmail
           : '';
       if (!employee || !personalEmail) return;
-      const { dateFormat } = await resolveOrgDateTimeFormat(
+      const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
         this.scopedPrisma,
         organizationId,
       );
       const variables = {
         employeeName: employee.name,
-        lastWorkingDay: formatDateDisplay(lastWorkingDay, '', dateFormat),
+        lastWorkingDay: formatDateDisplay(
+          lastWorkingDay,
+          '',
+          dateFormat,
+          timeZone,
+        ),
       };
       const rendered = await this.emailTemplatesService.renderOccasion(
         organizationId,

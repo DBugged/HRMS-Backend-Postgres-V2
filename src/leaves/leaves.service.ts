@@ -969,7 +969,7 @@ export class LeavesService {
   }
 
   private async notifyLevel1Approved(leave: Leave, organizationId: string) {
-    const [hrUsers, { dateFormat }] = await Promise.all([
+    const [hrUsers, { dateFormat, timeZone }] = await Promise.all([
       this.scopedPrisma.user.findMany({
         where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
         select: { id: true },
@@ -981,7 +981,7 @@ export class LeavesService {
         organizationId,
         userId: u.id,
         title: 'Leave Application Pending Final Approval',
-        message: `A leave request (${formatDateDisplay(leave.startDate, '', dateFormat)} to ${formatDateDisplay(leave.endDate, '', dateFormat)}) has been level-1 approved and needs your final decision.`,
+        message: `A leave request (${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}) has been level-1 approved and needs your final decision.`,
         category: NotificationCategory.LEAVE,
       })),
     );
@@ -997,12 +997,12 @@ export class LeavesService {
     });
     if (!employee) return;
 
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
     const title = `Leave Request ${dto.decision}`;
-    const message = `Your leave request from ${formatDateDisplay(leave.startDate, '', dateFormat)} to ${formatDateDisplay(leave.endDate, '', dateFormat)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+    const message = `Your leave request from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
 
     await this.notificationsService.create({
       organizationId,
@@ -1018,8 +1018,8 @@ export class LeavesService {
       {
         employeeName: employee.name,
         decision: dto.decision,
-        startDate: formatDateDisplay(leave.startDate, '', dateFormat),
-        endDate: formatDateDisplay(leave.endDate, '', dateFormat),
+        startDate: formatDateDisplay(leave.startDate, '', dateFormat, timeZone),
+        endDate: formatDateDisplay(leave.endDate, '', dateFormat, timeZone),
         comments: dto.comments ?? '',
       },
       { subject: title, html: message },
@@ -1568,12 +1568,12 @@ export class LeavesService {
     actor: Actor,
     organizationId: string,
   ) {
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
     const title = 'New Leave Application';
-    const message = `${actor.name} applied for leave from ${formatDateDisplay(leave.startDate, '', dateFormat)} to ${formatDateDisplay(leave.endDate, '', dateFormat)}.`;
+    const message = `${actor.name} applied for leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.`;
 
     if (actor.reportingManagerId && actor.reportingManagerId !== actor.id) {
       await this.notificationsService.create({

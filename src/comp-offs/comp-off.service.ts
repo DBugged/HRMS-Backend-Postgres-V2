@@ -213,7 +213,7 @@ export class CompOffService {
         daysEarned: compOff.daysEarned,
       },
     });
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
@@ -222,7 +222,7 @@ export class CompOffService {
       employeeId: targetEmployeeId,
       eventKey: 'COMP_OFF_GRANTED',
       performedById: actor.id,
-      description: `Comp-off earned for ${formatDateDisplay(dto.earnedForDate, '', dateFormat)}.`,
+      description: `Comp-off earned for ${formatDateDisplay(dto.earnedForDate, '', dateFormat, timeZone)}.`,
     });
     // Only a request the employee raised for themselves is waiting on someone; one a reviewer logged on their behalf
     // is not.
@@ -231,7 +231,7 @@ export class CompOffService {
         organizationId,
         requester: actor,
         title: 'Comp-Off Requested',
-        message: `${actor.name} requested comp-off for ${formatDateDisplay(dto.earnedForDate, '', dateFormat)}, pending your approval.`,
+        message: `${actor.name} requested comp-off for ${formatDateDisplay(dto.earnedForDate, '', dateFormat, timeZone)}, pending your approval.`,
         category: NotificationCategory.ATTENDANCE,
         managerFirst: true,
       });
@@ -432,12 +432,12 @@ export class CompOffService {
       where: { id: compOff.employeeId, organizationId },
     });
     if (employee) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(
+      const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
         this.scopedPrisma,
         organizationId,
       );
       const title = `Comp-Off Request ${dto.decision}`;
-      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat)} has been ${dto.decision.toLowerCase()}.`;
+      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,

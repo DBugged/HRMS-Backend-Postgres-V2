@@ -174,7 +174,7 @@ export class OvertimeService {
       targetId: record.id,
       details: { employeeId: actor.id, date: dto.date, hours: dto.hours, type },
     });
-    const { dateFormat } = await resolveOrgDateTimeFormat(
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
     );
@@ -183,13 +183,13 @@ export class OvertimeService {
       employeeId: actor.id,
       eventKey: 'OVERTIME_LOGGED',
       performedById: actor.id,
-      description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat)}.`,
+      description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}.`,
     });
     await this.notificationsService.notifyReviewers({
       organizationId,
       requester: actor,
       title: 'Overtime Requested',
-      message: `${actor.name} logged ${dto.hours} hour(s) of overtime for ${formatDateDisplay(dto.date, '', dateFormat)}, pending your approval.`,
+      message: `${actor.name} logged ${dto.hours} hour(s) of overtime for ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}, pending your approval.`,
       category: NotificationCategory.ATTENDANCE,
       managerFirst: true,
     });
@@ -350,12 +350,12 @@ export class OvertimeService {
       where: { id: record.employeeId, organizationId },
     });
     if (employee) {
-      const { dateFormat } = await resolveOrgDateTimeFormat(
+      const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
         this.scopedPrisma,
         organizationId,
       );
       const title = `Overtime Request ${dto.status}`;
-      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat)} has been ${dto.status.toLowerCase()}.`;
+      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat, timeZone)} has been ${dto.status.toLowerCase()}.`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -369,7 +369,7 @@ export class OvertimeService {
         {
           employeeName: employee.name,
           hours: String(record.hours),
-          date: formatDateDisplay(record.date, '', dateFormat),
+          date: formatDateDisplay(record.date, '', dateFormat, timeZone),
           status: dto.status,
         },
         { subject: title, html: message },
