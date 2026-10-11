@@ -1092,6 +1092,8 @@ export class PayrollService {
                 cessRate: previous.cessRate,
                 surchargeSlabs:
                   previous.surchargeSlabs as Prisma.InputJsonValue,
+                isCarriedForward: true,
+                carriedForwardFrom: previous.financialYear,
                 rebate87ALimit: previous.rebate87ALimit,
                 rebate87AAmount: previous.rebate87AAmount,
               },
@@ -1867,12 +1869,38 @@ export class PayrollService {
         };
       })
       .filter((w) => w.missing.length > 0);
+    // Tax slabs that were copied from an earlier year rather than entered for this one: TDS in this run used them.
+    const years = [
+      ...new Set(
+        results.map((r) => r.financialYear).filter((y): y is string => !!y),
+      ),
+    ];
+    const carried = years.length
+      ? await this.scopedPrisma.taxSlabConfig.findMany({
+          where: {
+            organizationId,
+            financialYear: { in: years },
+            isCarriedForward: true,
+            isActive: true,
+          },
+          select: {
+            financialYear: true,
+            regime: true,
+            carriedForwardFrom: true,
+          },
+        })
+      : [];
+    const notices = carried.map(
+      (c) =>
+        `Income tax slabs for FY ${c.financialYear} (${c.regime} regime) were copied from FY ${c.carriedForwardFrom ?? 'an earlier year'}, not entered for this year. TDS in this run used them - check them against the current Budget under Tax Slabs and save to confirm.`,
+    );
     return {
       count: results.length,
       payrolls: results,
       failures,
       skipped,
       warnings,
+      notices,
     };
   }
 

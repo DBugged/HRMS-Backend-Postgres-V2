@@ -1631,6 +1631,10 @@ model TaxSlabConfig {
   rebate87ALimit    Float     @default(1200000)
   rebate87AAmount   Float     @default(60000)
   isActive          Boolean   @default(true)
+  // Set when payroll created this year's slabs by copying an earlier year's (a new financial year starts with none).
+  // Cleared when someone saves the slabs, i.e. has reviewed them against the Budget.
+  isCarriedForward   Boolean  @default(false)
+  carriedForwardFrom String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

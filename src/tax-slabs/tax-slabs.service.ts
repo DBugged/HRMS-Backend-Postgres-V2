@@ -186,6 +186,9 @@ export class TaxSlabsService {
         rebate87AAmount: dto.rebate87AAmount,
       }),
       ...(dto.isActive !== undefined && { isActive: dto.isActive }),
+      // Saving the slabs is the review: they are no longer an unconfirmed copy of an earlier year.
+      isCarriedForward: false,
+      carriedForwardFrom: null,
     };
 
     let result: TaxSlabConfig;
