@@ -23,7 +23,10 @@ import {
 } from './dto/report-queries.dto';
 import { Form16ReportQueryDto } from './dto/form16-report-query.dto';
 import { ReportPayload } from './reports.service';
-import { formatDateTimeDisplay } from '../payroll/format-date';
+import {
+  formatDateTimeDisplay,
+  resolveOrgDateTimeFormat,
+} from '../payroll/format-date';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
 import { dayRangeInOrgTz } from '../common/org-date';
@@ -958,8 +961,19 @@ export class PayrollReportsService {
     });
     assertWithinReportLimit(logs);
 
+    // The audit timestamps are read in the organisation's timezone and Time Format (General Settings).
+    const { dateFormat, timeFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
     const rows = logs.map((l) => ({
-      timestamp: formatDateTimeDisplay(l.createdAt),
+      timestamp: formatDateTimeDisplay(
+        l.createdAt,
+        '',
+        dateFormat,
+        timeFormat,
+        timeZone,
+      ),
       actor: l.actor?.name || '-',
       action: l.action,
       targetId: l.targetId || '-',
