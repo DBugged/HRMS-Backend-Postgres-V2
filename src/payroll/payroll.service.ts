@@ -1809,6 +1809,8 @@ export class PayrollService {
           netPayInWords: amountInWords(calc.netPay),
           calculatedAt: new Date(),
           calculatedById: actor.id,
+          // Calculated against the records as they are now.
+          inputsChangedAt: null,
           // Point-in-time snapshot for the payslip (falls back to live values on older runs).
           designation: employee.designation,
           gradeLevel: employee.gradeLevel,
@@ -2912,6 +2914,8 @@ export class PayrollService {
       data.status = PayrollRunStatus.CALCULATED;
     }
     if (recalculated) {
+      // The engine re-read the records, so the run is current again.
+      data.inputsChangedAt = null;
       data.attendanceSummary =
         recalculated.attendanceSummary as unknown as Prisma.InputJsonValue;
       data.employerContributions = recalculated.employerContributions;
@@ -3574,6 +3578,16 @@ export class PayrollService {
           status: 'zero_gross',
           reason:
             "This payroll run has no earnings (gross is 0) - check the employee's salary structure and attendance, then recalculate it before verifying.",
+        });
+        continue;
+      }
+      // Attendance, leave or overtime changed after this run was calculated: its figures are out of date.
+      if (run.inputsChangedAt) {
+        skipped.push({
+          id: run.id,
+          status: 'outdated',
+          reason:
+            'Attendance, leave or overtime for this month changed after the payroll was calculated, so the amounts are out of date. Recalculate it first.',
         });
         continue;
       }

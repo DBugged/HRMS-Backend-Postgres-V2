@@ -6,7 +6,7 @@
 // RATE_MULTIPLIERS only affects new records, not historical ones.
 import {
   assertPayrollMonthsUnlocked,
-  reopenSignedOffPayrollMonths,
+  markPayrollInputsChanged,
 } from '../payroll/payroll-period-guard';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import { OVERTIME_PAY_OFF_MESSAGE, isOvertimePayEnabled } from './overtime-pay';
@@ -318,7 +318,7 @@ export class OvertimeService {
     }
 
     if (dto.status === OvertimeStatus.APPROVED) {
-      await reopenSignedOffPayrollMonths(
+      await markPayrollInputsChanged(
         this.scopedPrisma,
         organizationId,
         record.employeeId,

@@ -1,7 +1,7 @@
 import {
   assertPayrollMonthsUnlocked,
   monthsBetween,
-  reopenSignedOffPayrollMonths,
+  markPayrollInputsChanged,
 } from './payroll-period-guard';
 
 type Row = Record<string, any>;
@@ -120,7 +120,7 @@ describe('assertPayrollMonthsUnlocked', () => {
   });
 });
 
-describe('reopenSignedOffPayrollMonths', () => {
+describe('markPayrollInputsChanged', () => {
   const run = (status: string) => ({
     employeeId: 'e1',
     month: 9,
@@ -129,42 +129,45 @@ describe('reopenSignedOffPayrollMonths', () => {
     isFinalSettlement: false,
   });
 
-  it('a verified or approved run goes back to Calculated so it must be recalculated and signed off again', async () => {
+  it('a verified or approved run goes back to Calculated and is marked outdated', async () => {
     const { client, store } = db([
       run('VERIFIED'),
       { ...run('APPROVED'), month: 9 },
     ]);
     expect(
-      await reopenSignedOffPayrollMonths(client, 'org', 'e1', [
+      await markPayrollInputsChanged(client, 'org', 'e1', [
         { month: 9, year: 2026 },
       ]),
     ).toBe(2);
     expect(store.map((r) => r.status)).toEqual(['CALCULATED', 'CALCULATED']);
+    expect(store.every((r) => r.inputsChangedAt instanceof Date)).toBe(true);
   });
 
-  it('locked, paid and still-open runs are left exactly as they are', async () => {
-    const { client, store } = db([
-      run('LOCKED'),
-      run('PAID'),
-      run('CALCULATED'),
-      run('DRAFT'),
-    ]);
+  it('a calculated run is marked outdated too, so it cannot be verified on old figures', async () => {
+    const { client, store } = db([run('CALCULATED')]);
     expect(
-      await reopenSignedOffPayrollMonths(client, 'org', 'e1', [
+      await markPayrollInputsChanged(client, 'org', 'e1', [
+        { month: 9, year: 2026 },
+      ]),
+    ).toBe(1);
+    expect(store[0].status).toBe('CALCULATED');
+    expect(store[0].inputsChangedAt).toBeInstanceOf(Date);
+  });
+
+  it('locked, paid and draft runs are left exactly as they are', async () => {
+    const { client, store } = db([run('LOCKED'), run('PAID'), run('DRAFT')]);
+    expect(
+      await markPayrollInputsChanged(client, 'org', 'e1', [
         { month: 9, year: 2026 },
       ]),
     ).toBe(0);
-    expect(store.map((r) => r.status)).toEqual([
-      'LOCKED',
-      'PAID',
-      'CALCULATED',
-      'DRAFT',
-    ]);
+    expect(store.map((r) => r.status)).toEqual(['LOCKED', 'PAID', 'DRAFT']);
+    expect(store.some((r) => r.inputsChangedAt)).toBe(false);
   });
 
   it('no months means nothing is touched', async () => {
     const { client, store } = db([run('APPROVED')]);
-    expect(await reopenSignedOffPayrollMonths(client, 'org', 'e1', [])).toBe(0);
+    expect(await markPayrollInputsChanged(client, 'org', 'e1', [])).toBe(0);
     expect(store[0].status).toBe('APPROVED');
   });
 });

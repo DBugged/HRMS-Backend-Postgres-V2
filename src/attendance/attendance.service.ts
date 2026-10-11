@@ -82,6 +82,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { markPayrollInputsChanged } from '../payroll/payroll-period-guard';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { getOvertimeRates } from '../overtime/overtime.service';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
@@ -300,20 +301,11 @@ async function assertPayrollPeriodUnlocked(
       `This attendance date (${dateStr}) falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before changing this attendance.`,
     );
   }
-  // A VERIFIED/APPROVED run was signed off on the old attendance and can no longer be recalculated once approved:
-  // send it back to CALCULATED so it is recalculated and re-approved against the corrected attendance.
-  await db.payrollRun.updateMany({
-    where: {
-      organizationId,
-      employeeId,
-      month,
-      year,
-      isFinalSettlement: false,
-      runSequence: 0,
-      status: { in: [PayrollRunStatus.VERIFIED, PayrollRunStatus.APPROVED] },
-    },
-    data: { status: PayrollRunStatus.CALCULATED },
-  });
+  // Any calculated run was built on the old attendance: mark it outdated (and send a signed-off one back to
+  // CALCULATED) so it is recalculated before it can be verified, approved or locked.
+  await markPayrollInputsChanged(db, organizationId, employeeId, [
+    { month, year },
+  ]);
 }
 
 function addDaysStr(dateStr: string, days: number): string {

@@ -59,8 +59,11 @@ export async function assertPayrollMonthsUnlocked(
   }
 }
 
-// Sends a signed-off (VERIFIED/APPROVED) run for these months back to CALCULATED so it is recalculated.
-export async function reopenSignedOffPayrollMonths(
+// A write changed the inputs (attendance, leave, overtime) of these months. A run that has been calculated no longer
+// matches the records, so it is marked as outdated (inputsChangedAt) and can only be verified, approved or locked after
+// it is recalculated; a VERIFIED or APPROVED run is also sent back to CALCULATED, because calculate()/adjust() won't
+// touch an APPROVED run. Locked/paid runs are refused earlier by assertPayrollMonthsUnlocked and never reach here.
+export async function markPayrollInputsChanged(
   db: Db,
   organizationId: string,
   employeeId: string,
@@ -73,10 +76,19 @@ export async function reopenSignedOffPayrollMonths(
       employeeId,
       isFinalSettlement: false,
       runSequence: 0,
-      status: { in: [PayrollRunStatus.VERIFIED, PayrollRunStatus.APPROVED] },
+      status: {
+        in: [
+          PayrollRunStatus.CALCULATED,
+          PayrollRunStatus.VERIFIED,
+          PayrollRunStatus.APPROVED,
+        ],
+      },
       OR: months,
     },
-    data: { status: PayrollRunStatus.CALCULATED },
+    data: {
+      status: PayrollRunStatus.CALCULATED,
+      inputsChangedAt: new Date(),
+    },
   });
   return count;
 }

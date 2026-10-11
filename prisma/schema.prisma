@@ -2226,6 +2226,9 @@ model PayrollRun {
   year          Int
   financialYear String?
   status        PayrollRunStatus @default(DRAFT)
+  // Set when attendance, leave or overtime changes after this run was calculated, so its figures no longer match the
+  // records; cleared by the next calculation. A run with this set cannot be verified, approved or locked.
+  inputsChangedAt DateTime?
 
   // {workingDays, presentDays, paidLeaveDays, unpaidLeaveDays, halfDays,
   // overtimeHours, lateMarks, holidayWorkDays, weekendWorkDays, lopDays,

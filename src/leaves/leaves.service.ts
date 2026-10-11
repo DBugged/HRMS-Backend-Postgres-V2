@@ -83,7 +83,7 @@ import { todayInOrgTz } from '../common/org-date';
 import {
   assertPayrollMonthsUnlocked,
   monthsBetween,
-  reopenSignedOffPayrollMonths,
+  markPayrollInputsChanged,
 } from '../payroll/payroll-period-guard';
 
 type Actor = Omit<User, 'password'>;
@@ -754,7 +754,7 @@ export class LeavesService {
           leave,
           organizationId,
         );
-        await reopenSignedOffPayrollMonths(
+        await markPayrollInputsChanged(
           tx,
           organizationId,
           leave.employeeId,
@@ -1102,6 +1102,15 @@ export class LeavesService {
       // to reverse, which the guarded update above just confirmed is
       // still accurate (no other caller could have changed it first).
       await this.releaseHold(tx, leave, organizationId);
+      // The leave's days stop counting: a calculated payroll for those months is out of date.
+      if (leave.status === LeaveStatus.APPROVED) {
+        await markPayrollInputsChanged(
+          tx,
+          organizationId,
+          leave.employeeId,
+          monthsBetween(leave.startDate, leave.endDate),
+        );
+      }
     });
 
     return this.findByIdOrThrow(id, organizationId);
