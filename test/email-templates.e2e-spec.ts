@@ -111,7 +111,7 @@ describe('EmailTemplates (e2e)', () => {
     // these).
     const res = await request(app.getHttpServer())
       .get('/email-templates')
-      .set('Authorization', `Bearer ${employeeToken}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     const data = (res.body as { data: EmailTemplateBody[] }).data;
     const occasionKeys = data.map((t) => t.occasionKey).sort();
@@ -175,12 +175,25 @@ describe('EmailTemplates (e2e)', () => {
     expect(byKey.SETUP_COMPLETE.category).toBe('Account & Access');
   });
 
-  it('any authenticated caller can get a template by occasionKey', async () => {
+  it('ADMIN/HR can get a template by occasionKey', async () => {
     const res = await request(app.getHttpServer())
       .get('/email-templates/BIRTHDAY')
-      .set('Authorization', `Bearer ${employeeToken}`)
+      .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
     expect((res.body as EmailTemplateBody).occasionKey).toBe('BIRTHDAY');
+  });
+
+  it('EMPLOYEE gets 403 reading the template list, one template or the signatures', async () => {
+    for (const url of [
+      '/email-templates',
+      '/email-templates/BIRTHDAY',
+      '/email-templates/signatures',
+    ]) {
+      await request(app.getHttpServer())
+        .get(url)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+    }
   });
 
   it('404s for an unknown occasionKey', async () => {

@@ -1,8 +1,7 @@
 // Purpose: Exposes CRUD for the organization's occasion-based email templates, plus its named signature
 // list (Organization.emailSignatures — each template picks which one it uses).
 // Responsibilities: Validates DTOs and delegates all logic to EmailTemplatesService.
-// Important: findAll/findOne/listSignatures have no @Roles() — any authenticated caller can view the
-// templates/signatures in effect; writes are ADMIN/HR only, same split as HolidaysController.
+// Important: every route here is ADMIN/HR only - the templates and signatures are not for other roles.
 import {
   Body,
   Controller,
@@ -33,8 +32,11 @@ type Caller = Omit<User, 'password'>;
 export class EmailTemplatesController {
   constructor(private readonly emailTemplatesService: EmailTemplatesService) {}
 
-  // No @Roles() — any authenticated caller can view the templates in effect.
+  // Admin/HR only (the Email Templates screen is theirs); other roles get 403. Previously any signed-in user could
+  // read every template body.
   @Get()
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
   findAll(@CurrentUser() caller: Caller) {
     return this.emailTemplatesService.findAll(caller.organizationId);
   }
@@ -43,6 +45,8 @@ export class EmailTemplatesController {
   // matches routes in registration order, so 'signatures' would otherwise
   // be captured as a literal occasionKey value instead of reaching these.
   @Get('signatures')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
   listSignatures(@CurrentUser() caller: Caller) {
     return this.emailTemplatesService.listSignatures(caller.organizationId);
   }
@@ -89,6 +93,8 @@ export class EmailTemplatesController {
   }
 
   @Get(':occasionKey')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
   findOne(
     @Param('occasionKey') occasionKey: string,
     @CurrentUser() caller: Caller,

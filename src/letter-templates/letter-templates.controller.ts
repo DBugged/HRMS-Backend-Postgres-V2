@@ -1,8 +1,6 @@
 // Purpose: Exposes CRUD for the organization's letter templates.
 // Responsibilities: Validates DTOs and delegates all logic to LetterTemplatesService.
-// Important: findAll/findOne have no @Roles() — any authenticated caller can view the templates in effect
-//   (the Letters tab on Employee Full Profile reads the active ones); create/update/delete are ADMIN/HR
-//   only, same split as EmailTemplatesController.
+// Important: every route here is ADMIN/HR only - the templates (their full text) are not for other roles.
 import {
   Body,
   Controller,
@@ -32,12 +30,17 @@ export class LetterTemplatesController {
     private readonly letterTemplatesService: LetterTemplatesService,
   ) {}
 
+  // Admin/HR only (the Letter Templates screen is theirs); other roles get 403.
   @Get()
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
   findAll(@CurrentUser() caller: Caller) {
     return this.letterTemplatesService.findAll(caller.organizationId);
   }
 
   @Get(':key')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
   findOne(@Param('key') key: string, @CurrentUser() caller: Caller) {
     return this.letterTemplatesService.findByKey(key, caller.organizationId);
   }
