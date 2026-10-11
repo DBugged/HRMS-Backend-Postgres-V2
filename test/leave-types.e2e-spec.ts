@@ -306,16 +306,22 @@ describe('Leave Types (e2e)', () => {
       .send({
         name: 'In-Use Leave',
         code: 'INUSE',
-        allocationType: 'EARNED_MONTHLY',
+        allocationType: 'FIXED_ANNUAL',
         annualQuota: 12,
-        accrualFrequency: 'MONTHLY',
       })
       .expect(201);
     const inUseId = (created.body as LeaveTypeBody).id;
+    // A balance row is created the first time balances are read (quotas are granted upfront; there is no accrual run).
     await request(app.getHttpServer())
-      .post(`/leave-types/${inUseId}/run-accrual`)
+      .get('/leaves/balance')
+      .query({ employeeId })
       .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
+      .expect(200);
+    // Untouched balance rows go with the type; one that has been used (leave taken) blocks the delete.
+    await prisma.leaveBalance.updateMany({
+      where: { leaveTypeId: inUseId },
+      data: { availed: 1 },
+    });
 
     await request(app.getHttpServer())
       .delete(`/leave-types/${inUseId}`)
@@ -323,163 +329,8 @@ describe('Leave Types (e2e)', () => {
       .expect(400);
   });
 
-  it('run-accrual credits the current-year balance row for an EARNED_MONTHLY type', async () => {
-    // 'Casual Leave'/'CL' would collide with the auto-seeded default (see
-    // LeaveTypesService.seedDefaults), so this uses a distinct name/code.
-    const created = await request(app.getHttpServer())
-      .post('/leave-types')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Test Monthly Leave',
-        code: 'CLT',
-        allocationType: 'EARNED_MONTHLY',
-        annualQuota: 18,
-        accrualFrequency: 'MONTHLY',
-      })
-      .expect(201);
-    const casualLeaveId = (created.body as LeaveTypeBody).id;
-
-    const accrualRes = await request(app.getHttpServer())
-      .post(`/leave-types/${casualLeaveId}/run-accrual`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
-    expect((accrualRes.body as { matched: number }).matched).toBeGreaterThan(0);
-    // The balance row is created inside this run and already credited for the current cycle at creation
-    // (a new joiner sees their balance immediately), so the run itself has nothing further to add.
-
-    const year = new Date().getFullYear();
-    const row = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: casualLeaveId, year },
-    });
-    expect(row).not.toBeNull();
-    expect(row?.credited).toBe(1.5);
-    expect(row?.closing).toBe(1.5);
-
-    // Running it again for the same accrual period is a no-op — the
-    // row's lastAccrualPeriod already matches, so creditAccrual() skips
-    // it (counted in alreadyAccrued, not credited/re-credited).
-    const secondRunRes = await request(app.getHttpServer())
-      .post(`/leave-types/${casualLeaveId}/run-accrual`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
-    expect(
-      (secondRunRes.body as { alreadyAccrued: number }).alreadyAccrued,
-    ).toBeGreaterThan(0);
-    const rowAfterSecondRun = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: casualLeaveId, year },
-    });
-    expect(rowAfterSecondRun?.credited).toBe(1.5);
-  });
-
-  it('switching from FIXED_ANNUAL to EARNED_MONTHLY rebases the existing upfront credit instead of leaving it stuck under the new accrual total', async () => {
-    const created = await request(app.getHttpServer())
-      .post('/leave-types')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Test Switch Leave',
-        code: 'TSL',
-        allocationType: 'FIXED_ANNUAL',
-        annualQuota: 6,
-        prorateOnJoining: false,
-      })
-      .expect(201);
-    const leaveTypeId = (created.body as LeaveTypeBody).id;
-    const year = new Date().getFullYear();
-
-    // Upfront credit lands the moment a balance row is first created.
+  it('raising annualQuota reconciles existing current-year balance rows, idempotently', async () => {
     await request(app.getHttpServer())
-      .get('/leaves/balance')
-      .query({ employeeId })
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(200);
-    const upfrontRow = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId, year },
-    });
-    expect(upfrontRow?.credited).toBe(6);
-
-    // Switch to accrual-based — this used to leave `credited` stuck at 6,
-    // so the next accrual run added its cycle's amount on top of it
-    // instead of on top of a clean 0.
-    await request(app.getHttpServer())
-      .put(`/leave-types/${leaveTypeId}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        allocationType: 'EARNED_MONTHLY',
-        accrualFrequency: 'QUARTERLY',
-        annualQuota: 6,
-      })
-      .expect(200);
-    const rebasedRow = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId, year },
-    });
-    // Rebased to the per-cycle amount (one quarter elapsed since joining = 1.5) — never the stale upfront 6.
-    expect(rebasedRow?.credited).not.toBe(6);
-    expect(Number(rebasedRow!.credited) % 1.5).toBe(0);
-
-    // totalDaysCredited is summed across every eligible employee in the
-    // org (this brand-new type has no department/gender restriction), not
-    // just employeeId — so it isn't directly comparable to one employee's
-    // row. What matters for this regression is employeeId's own row: a
-    // positive multiple of 1.5 (one per elapsed quarter since joining),
-    // never the old stale 6 resurfacing underneath it.
-    await request(app.getHttpServer())
-      .post(`/leave-types/${leaveTypeId}/run-accrual`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
-    const finalRow = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId, year },
-    });
-    expect(finalRow!.credited).toBeGreaterThan(0);
-    expect(Number(finalRow!.credited) % 1.5).toBe(0);
-  });
-
-  it('run-accrual-all credits every eligible leave type in one call', async () => {
-    const created = await request(app.getHttpServer())
-      .post('/leave-types')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        name: 'Test Monthly Leave All',
-        code: 'CLTA',
-        allocationType: 'EARNED_MONTHLY',
-        annualQuota: 24,
-        accrualFrequency: 'MONTHLY',
-      })
-      .expect(201);
-    const monthlyId = (created.body as LeaveTypeBody).id;
-
-    const res = await request(app.getHttpServer())
-      .post('/leave-types/run-accrual-all')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
-    expect(
-      (res.body as { leaveTypesProcessed: number }).leaveTypesProcessed,
-    ).toBeGreaterThan(0);
-    expect((res.body as { failed: string[] }).failed).toEqual([]);
-
-    const year = new Date().getFullYear();
-    const row = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: monthlyId, year },
-    });
-    expect(row).not.toBeNull();
-    expect(row?.credited).toBe(2);
-
-    // Same idempotency guarantee as the per-type endpoint — a second run in
-    // the same period re-credits nothing.
-    const secondRes = await request(app.getHttpServer())
-      .post('/leave-types/run-accrual-all')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
-    expect(
-      (secondRes.body as { totalAlreadyAccrued: number }).totalAlreadyAccrued,
-    ).toBeGreaterThan(0);
-    const rowAfterSecondRun = await prisma.leaveBalance.findFirst({
-      where: { employeeId, leaveTypeId: monthlyId, year },
-    });
-    expect(rowAfterSecondRun?.credited).toBe(2);
-  });
-
-  it('run-accrual on a type granted upfront (Yearly frequency) reports there is nothing to accrue', async () => {
-    const created = await request(app.getHttpServer())
       .post('/leave-types')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
@@ -490,24 +341,6 @@ describe('Leave Types (e2e)', () => {
         prorateOnJoining: false,
       })
       .expect(201);
-    const qedId = (created.body as LeaveTypeBody).id;
-
-    const res = await request(app.getHttpServer())
-      .post(`/leave-types/${qedId}/run-accrual`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(201);
-    const body = res.body as {
-      message: string;
-      employeesProcessed: number;
-      totalDaysCredited: number;
-    };
-    expect(body.employeesProcessed).toBe(0);
-    expect(body.totalDaysCredited).toBe(0);
-    expect(body.message).toMatch(/granted upfront/);
-    expect(body.message).not.toMatch(/^Accrual credited/);
-  });
-
-  it('raising annualQuota reconciles existing current-year balance rows, idempotently', async () => {
     const qed = await prisma.leaveType.findFirstOrThrow({
       where: { code: 'QED', organization: { name: 'Leave Types E2E Org' } },
     });
@@ -550,13 +383,6 @@ describe('Leave Types (e2e)', () => {
     expect(row?.closing).toBe(12);
   });
 
-  it('run-accrual-all is HR/ADMIN only', async () => {
-    await request(app.getHttpServer())
-      .post('/leave-types/run-accrual-all')
-      .set('Authorization', `Bearer ${employeeToken}`)
-      .expect(403);
-  });
-
   it('run-carry-forward rolls closing into next year opening and stamps expiry', async () => {
     const created = await request(app.getHttpServer())
       .post('/leave-types')
@@ -577,19 +403,10 @@ describe('Leave Types (e2e)', () => {
     // own (that happens via the future Leave-requests module applying
     // against it) — seed one directly via Prisma with a known closing
     // value to isolate this test to the carry-forward math itself.
-    await prisma.leaveBalance.create({
-      data: {
-        organizationId: (
-          await prisma.leaveType.findFirstOrThrow({ where: { id: cflId } })
-        ).organizationId,
-        employeeId,
-        leaveTypeId: cflId,
-        year: thisYear,
-        opening: 0,
-        credited: 10,
-        availed: 3,
-        closing: 7,
-      },
+    // A new type already has a balance row for every eligible employee; set this one to a known closing value.
+    await prisma.leaveBalance.updateMany({
+      where: { employeeId, leaveTypeId: cflId, year: thisYear },
+      data: { opening: 0, credited: 10, availed: 3, closing: 7 },
     });
 
     const res = await request(app.getHttpServer())
@@ -609,21 +426,6 @@ describe('Leave Types (e2e)', () => {
     });
     expect(nextRow?.opening).toBe(5);
     expect(nextRow?.carriedInExpiresOn).toBe(`${thisYear + 1}-07-01`);
-  });
-
-  it('GET /leaves/credit-history reflects the accrual and carry-forward runs above', async () => {
-    const res = await request(app.getHttpServer())
-      .get('/leaves/credit-history')
-      .set('Authorization', `Bearer ${adminToken}`)
-      .expect(200);
-    const { history } = res.body as {
-      history: { action: string; actor: { name: string } }[];
-    };
-    expect(history.some((h) => h.action === 'LEAVE_ACCRUAL_RUN')).toBe(true);
-    expect(history.some((h) => h.action === 'LEAVE_CARRYFORWARD_RUN')).toBe(
-      true,
-    );
-    expect(history[0].actor.name).toBe('Founder');
   });
 
   it('GET /leave-types?activeOnly=true excludes deactivated types', async () => {

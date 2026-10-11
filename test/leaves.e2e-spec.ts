@@ -280,7 +280,7 @@ describe('Leaves (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/leaves/${rows[0].id}/review`)
       .set('Authorization', `Bearer ${hrToken}`)
-      .send({ decision: 'REJECTED' })
+      .send({ decision: 'REJECTED', comments: 'cleanup' })
       .expect(200);
   });
 
@@ -362,18 +362,15 @@ describe('Leaves (e2e)', () => {
     expect(row?.availed).toBe(0);
     expect(row?.closing).toBe(24);
 
-    // Cancellation reverts every future-dated SYSTEM-sourced Attendance row
-    // back to ABSENT/FACE_API — these dates are all in the future relative
-    // to "today", so all three should be reverted.
+    // Cancellation removes the leave-generated (ON_LEAVE/HALF_DAY) Attendance rows
+    // outright — none should remain.
     const attendanceRows = await prisma.attendance.findMany({
       where: {
         employeeId,
         date: { gte: offsetDate(MON), lte: offsetDate(MON + 2) },
       },
     });
-    expect(attendanceRows).toHaveLength(3);
-    expect(attendanceRows.every((r) => r.status === 'ABSENT')).toBe(true);
-    expect(attendanceRows.every((r) => r.source === 'FACE_API')).toBe(true);
+    expect(attendanceRows).toHaveLength(0);
   });
 
   it('a COMPOFF-type leave draws from the CompOff table, not LeaveBalance', async () => {
@@ -410,6 +407,13 @@ describe('Leaves (e2e)', () => {
       })
       .expect(201);
     const compOffLeaveId = (leaveRes.body as LeaveBody).id;
+
+    // COMPOFF needs the manager's level-1 approval before HR can give the final one.
+    await request(app.getHttpServer())
+      .patch(`/leaves/${compOffLeaveId}/review`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ decision: 'APPROVED' })
+      .expect(200);
 
     await request(app.getHttpServer())
       .patch(`/leaves/${compOffLeaveId}/review`)
@@ -480,6 +484,14 @@ describe('Leaves (e2e)', () => {
     // guarded: at most one of the two can win the compare-and-swap: the
     // other must be rejected (409), never both silently "succeeding" with
     // only one debit actually persisted.
+    // Level-1 (manager) approvals first — HR's final approval is what races below.
+    for (const l of [leaveA, leaveB]) {
+      await request(app.getHttpServer())
+        .patch(`/leaves/${(l.body as LeaveBody).id}/review`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+    }
     const [resA, resB] = await Promise.all([
       request(app.getHttpServer())
         .patch(`/leaves/${(leaveA.body as LeaveBody).id}/review`)

@@ -260,15 +260,27 @@ describe('Employee Rich Profile (e2e)', () => {
         .set('Authorization', `Bearer ${empToken}`)
         .send({
           personalData: {
+            // Every field in REQUIRED_FOR_COMPLETION (personal-data.ts): a profile is only Complete when all of them
+            // are filled.
+            fullNameAsPerGovtId: 'Emp Full Name',
+            dateOfBirth: '1995-05-05',
             gender: 'Female',
-            // maritalStatus was added to REQUIRED_FOR_COMPLETION on top of
-            // the original 8 fields (see personal-data.ts's own comment) —
-            // without it this test's payload never actually reaches
-            // completion.
             maritalStatus: 'Single',
-            currentAddress: '123 Main St',
+            bloodGroup: 'O+',
+            currentAddress: '123 Main St, Mumbai, Maharashtra 400001',
             fatherName: 'John Doe',
-            emergencyContact1Number: '+91 98765 43210',
+            fatherContact: '9876543210',
+            motherName: 'Jane Doe',
+            motherContact: '9876543211',
+            emergencyContact1Name: 'Sam Doe',
+            emergencyContact1Number: '9876543212',
+            emergencyContact2Name: 'Sue Doe',
+            emergencyContact2Number: '9876543213',
+            totalExperience: '3 years',
+            currentOrganization: 'Acme',
+            relevantExperience: 'Backend work',
+            bankAccountHolderName: 'Emp Full Name',
+            bankName: 'HDFC Bank',
             bankAccountNo: '123456789',
             bankIFSC: 'HDFC0001234',
           },

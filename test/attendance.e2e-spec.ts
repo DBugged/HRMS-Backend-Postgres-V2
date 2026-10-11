@@ -143,6 +143,7 @@ describe('Attendance (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'att-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -183,6 +184,7 @@ describe('Attendance (e2e)', () => {
       .send({
         name: 'Geo Employee',
         email: 'att-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
         departmentId,
       });
     const empBody = empCreate.body as EmployeeCreateBody;
@@ -199,7 +201,11 @@ describe('Attendance (e2e)', () => {
     const noDeptCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'No Dept Employee', email: 'att-e2e-nodept@example.test' });
+      .send({
+        name: 'No Dept Employee',
+        email: 'att-e2e-nodept@example.test',
+        joiningDate: '2025-01-01',
+      });
     const noDeptBody = noDeptCreate.body as EmployeeCreateBody;
     noDeptEmployeeId = noDeptBody.employee.id;
     const noDeptLogin = await request(app.getHttpServer())
@@ -519,6 +525,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Night Employee',
           email: 'att-e2e-night@example.test',
+          joiningDate: '2025-01-01',
           departmentId: nightDeptId,
         });
       nightEmployeeId = (emp.body as EmployeeCreateBody).employee.id;
@@ -1057,6 +1064,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'WFH Employee',
           email: 'att-e2e-wfh-emp@example.test',
+          joiningDate: '2025-01-01',
           departmentId,
         });
       const wfhEmpBody = wfhEmpCreate.body as EmployeeCreateBody;
@@ -1075,6 +1083,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'WFH Same-Dept Manager',
           email: 'att-e2e-wfh-same-mgr@example.test',
+          joiningDate: '2025-01-01',
           role: 'MANAGER',
           departmentId,
         });
@@ -1099,6 +1108,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'WFH Other-Dept Manager',
           email: 'att-e2e-wfh-other-mgr@example.test',
+          joiningDate: '2025-01-01',
           role: 'MANAGER',
           departmentId: otherDeptId,
         });
@@ -1355,6 +1365,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Never Punched Employee',
           email: 'never-punched@example.test',
+          joiningDate: '2025-01-01',
         })
         .expect(201);
       const newEmployeeId = (created.body as EmployeeCreateBody).employee.id;
@@ -1428,6 +1439,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'No Dept Manager',
           email: 'att-e2e-nodept-mgr@example.test',
+          joiningDate: '2025-01-01',
           role: 'MANAGER',
         })
         .expect(201);
@@ -1642,7 +1654,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ date: offsetDate(-7), reason: 'Right at the edge' })
+        .send({
+          date: offsetDate(-7),
+          reason: 'Right at the edge',
+          requestedInTime: `${offsetDate(-7)}T09:30:00.000Z`,
+        })
         .expect(201);
     });
 
@@ -1651,13 +1667,21 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ date, reason: 'First request' })
+        .send({
+          date,
+          reason: 'First request',
+          requestedInTime: `${date}T00:30:00.000Z`,
+        })
         .expect(201);
 
       await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ date, reason: 'Trying again while pending' })
+        .send({
+          date,
+          reason: 'Trying again while pending',
+          requestedInTime: `${date}T00:30:00.000Z`,
+        })
         .expect(409);
     });
 
@@ -1764,7 +1788,11 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ date, reason: 'Trying again after approval' })
+        .send({
+          date,
+          reason: 'Trying again after approval',
+          requestedInTime: `${date}T00:30:00.000Z`,
+        })
         .expect(409);
     });
 
@@ -1775,6 +1803,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Regularization Single-Side Employee',
           email: 'att-e2e-reg-single@example.test',
+          joiningDate: '2025-01-01',
         });
       const createdBody = created.body as EmployeeCreateBody;
       const login = await request(app.getHttpServer())
@@ -1836,6 +1865,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Regularization Reject Employee',
           email: 'att-e2e-reg-reject@example.test',
+          joiningDate: '2025-01-01',
         });
       const createdBody = created.body as EmployeeCreateBody;
       const login = await request(app.getHttpServer())
@@ -1883,7 +1913,11 @@ describe('Attendance (e2e)', () => {
       const resubmitRes = await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ date, reason: 'Resubmitting with clearer evidence' })
+        .send({
+          date,
+          reason: 'Resubmitting with clearer evidence',
+          requestedInTime: `${date}T00:30:00.000Z`,
+        })
         .expect(201);
       expect(
         (resubmitRes.body as { regularization: { status: string } })
@@ -1904,6 +1938,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Import Manager',
           email: 'att-e2e-import-manager@example.test',
+          joiningDate: '2025-01-01',
           role: 'MANAGER',
           departmentId,
         });
@@ -1922,6 +1957,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Import Target',
           email: 'att-e2e-import-target@example.test',
+          joiningDate: '2025-01-01',
           departmentId,
         });
       importEmployeeHumanId = (importEmpCreate.body as EmployeeCreateBody)
@@ -1977,6 +2013,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Late Joiner',
           email: 'att-e2e-late-joiner@example.test',
+          joiningDate: '2025-01-01',
           departmentId,
         });
       const lateJoinerCode = (lateJoiner.body as EmployeeCreateBody).employee
@@ -2384,7 +2421,7 @@ describe('Attendance (e2e)', () => {
 
     it('creates a PENDING AUTO_PUNCH overtime record for a punch-out well past shift end', async () => {
       const date = offsetDateAvoidingHolidays(-30);
-      await punchAt(employeeId, `${date}T09:30:00.000Z`);
+      await punchAt(employeeId, `${date}T00:30:00.000Z`);
       await punchAt(employeeId, `${date}T19:15:00.000Z`); // 45 min past 18:30.
 
       const record = await prisma.overtimeRecord.findFirstOrThrow({
@@ -2441,7 +2478,7 @@ describe('Attendance (e2e)', () => {
 
     it('does not create a record for a punch-out only a few minutes past shift end', async () => {
       const date = offsetDateAvoidingHolidays(-31);
-      await punchAt(employeeId, `${date}T09:30:00.000Z`);
+      await punchAt(employeeId, `${date}T00:30:00.000Z`);
       await punchAt(employeeId, `${date}T18:40:00.000Z`); // 10 min past.
 
       const record = await prisma.overtimeRecord.findFirst({
@@ -2452,7 +2489,7 @@ describe('Attendance (e2e)', () => {
 
     it('a later correction that removes the overshoot deletes the still-PENDING suggestion', async () => {
       const date = offsetDateAvoidingHolidays(-32);
-      await punchAt(employeeId, `${date}T09:30:00.000Z`);
+      await punchAt(employeeId, `${date}T00:30:00.000Z`);
       await punchAt(employeeId, `${date}T19:15:00.000Z`);
       const created = await prisma.overtimeRecord.findFirstOrThrow({
         where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
@@ -2510,6 +2547,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Reminder Employee',
           email: 'att-e2e-reminder@example.test',
+          joiningDate: '2025-01-01',
           departmentId: remDeptId,
         });
       const remEmployeeId = (emp.body as EmployeeCreateBody).employee.id;
@@ -2565,6 +2603,7 @@ describe('Attendance (e2e)', () => {
         .send({
           name: 'Already Out Employee',
           email: 'att-e2e-reminder2@example.test',
+          joiningDate: '2025-01-01',
           departmentId: remDeptId,
         });
       const remEmployeeId = (emp.body as EmployeeCreateBody).employee.id;

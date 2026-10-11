@@ -32,7 +32,8 @@ interface CalcBody {
 const PASSWORD = 'TestPass123!';
 // Next year, so the org's seeded statutory versions (dated the day it registers) always precede these and the
 // suite doesn't depend on today's date. ESI contribution periods are Apr-Sep / Oct-Mar, so Oct + Nov share one.
-const YEAR = new Date().getFullYear() + 1;
+// A past year: payroll cannot be run for a month that has not started yet.
+const YEAR = new Date().getFullYear() - 1;
 // The financial year of October-December YEAR (FY starts in April).
 const TAX_FY = getFinancialYear(10, YEAR, 4);
 
@@ -140,6 +141,12 @@ describe('Statutory rules end-to-end: PF 50% wages, ESI period, state PT, bonus 
         where: { email: 'statutory-e2e-admin@example.test' },
       })
     ).organizationId;
+    // Registration seeds each statutory module effective today, and a new version must start after the latest one, so
+    // move the seeded versions back in time: these tests run payroll for a past year.
+    await prisma.statutoryConfigVersion.updateMany({
+      where: { organizationId },
+      data: { effectiveFrom: '2000-01-01' },
+    });
 
     // A Maharashtra work location + department for employee A.
     const loc = (

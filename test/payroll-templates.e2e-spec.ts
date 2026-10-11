@@ -63,6 +63,7 @@ describe('Payroll Templates (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'payrolltpl-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
       });
     const empLogin = await request(app.getHttpServer())
       .post('/auth/login')

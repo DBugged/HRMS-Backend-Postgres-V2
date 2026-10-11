@@ -157,7 +157,9 @@ describe('Privacy security hardening (e2e)', () => {
         data: { id: string; personalData: Record<string, string> }[];
       }
     ).data.find((r) => r.id === e1Id)!;
-    expect(row.personalData.panNumber).toBe('******234F');
+    // The directory list no longer carries a colleague's personal data at all for non-HR callers (only whether the
+    // profile is complete); the masked values are available on the single-employee read above.
+    expect(row.personalData.panNumber).toBeUndefined();
 
     const asAdmin = await http()
       .get(`/employees/${e1Id}`)

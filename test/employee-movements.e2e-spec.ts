@@ -45,7 +45,15 @@ describe('Employee movement history (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: email.split('@')[0], email, ...(role && { role }) });
+      .send({
+        name:
+          email
+            .split('@')[0]
+            .replace(/[^a-zA-Z]+/g, ' ')
+            .trim() || 'Test User',
+        email,
+        ...(role && { role }),
+      });
     const body = res.body as EmployeeCreateBody;
     const login = await request(app.getHttpServer())
       .post('/auth/login')

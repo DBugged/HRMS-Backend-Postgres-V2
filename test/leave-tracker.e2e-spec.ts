@@ -363,8 +363,8 @@ describe('Leave Tracker (e2e)', () => {
 
       const cells = body.cells[empAId];
       expect(cells[3]).toBe('PRESENT');
-      // 495 minutes worked on day 3 -> 8.25h, rounded to 1 decimal -> 8.3.
-      expect(body.hours[empAId]?.[3]).toBe(8.3);
+      // 495 minutes worked on day 3 -> 8.25h (hours are kept to 2 decimals).
+      expect(body.hours[empAId]?.[3]).toBe(8.25);
       // No work duration recorded for day 5 (WFH) — omitted, not 0.
       expect(body.hours[empAId]?.[5]).toBeUndefined();
       expect(cells[4]).toBe('ABSENT');

@@ -98,6 +98,7 @@ describe('Employee Timeline (e2e)', () => {
       .send({
         name: 'Eng Manager',
         email: 'tl-e2e-manager@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
         departmentId,
       });
@@ -115,6 +116,7 @@ describe('Employee Timeline (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'tl-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
         departmentId,
       });
     const empBody = empCreate.body as EmployeeCreateBody;

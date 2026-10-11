@@ -67,6 +67,7 @@ describe('Payroll Reports (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'prpt-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -83,6 +84,7 @@ describe('Payroll Reports (e2e)', () => {
       .send({
         name: 'A Manager',
         email: 'prpt-e2e-manager@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
       });
     const managerLogin = await request(app.getHttpServer())

@@ -120,6 +120,7 @@ describe('Payroll (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'pay-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -142,6 +143,7 @@ describe('Payroll (e2e)', () => {
       .send({
         name: 'Eng Manager',
         email: 'pay-e2e-manager@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
         departmentId,
       });
@@ -160,6 +162,7 @@ describe('Payroll (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'pay-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
         departmentId,
       });
     const empBody = empCreate.body as EmployeeCreateBody;
@@ -515,6 +518,18 @@ describe('Payroll (e2e)', () => {
   });
 
   describe('GET scoping', () => {
+    // An employee only sees a payslip once it is approved, so approve this employee's run for MONTH first.
+    beforeAll(async () => {
+      const run = await prisma.payrollRun.findFirstOrThrow({
+        where: { employeeId, month: MONTH, year: YEAR },
+      });
+      for (const step of ['verify', 'approve']) {
+        await request(app.getHttpServer())
+          .post(`/payroll/${run.id}/${step}`)
+          .set('Authorization', `Bearer ${adminToken}`);
+      }
+    });
+
     it('EMPLOYEE only sees their own runs', async () => {
       const res = await request(app.getHttpServer())
         .get('/payroll')
@@ -565,11 +580,33 @@ describe('Payroll (e2e)', () => {
     });
 
     it("MANAGER's list contains only their own payslips and keeps access to their own", async () => {
+      // Joined before the month being calculated (payroll skips someone who had not joined yet) ...
+      await prisma.user.update({
+        where: { id: managerId },
+        data: { joiningDate: new Date('2025-01-01T00:00:00.000Z') },
+      });
+      // ... with a salary on record ...
       await request(app.getHttpServer())
+        .post(`/employee-salary/${managerId}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentCode: 'BASIC',
+          fixedAmount: 30000,
+          effectiveFrom: '2025-01-01',
+        });
+      const calc = await request(app.getHttpServer())
         .post('/payroll/calculate')
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ month: MONTH, year: YEAR, employeeId: managerId })
         .expect(201);
+      // ... and approved, because an employee only sees an approved payslip.
+      const managerRunId = (calc.body as { payrolls: { id: string }[] })
+        .payrolls[0].id;
+      for (const step of ['verify', 'approve']) {
+        await request(app.getHttpServer())
+          .post(`/payroll/${managerRunId}/${step}`)
+          .set('Authorization', `Bearer ${adminToken}`);
+      }
       const res = await request(app.getHttpServer())
         .get('/payroll')
         .set('Authorization', `Bearer ${managerToken}`)
@@ -968,7 +1005,13 @@ describe('Payroll (e2e)', () => {
         .expect(200);
       expect(res.headers['content-type']).toBe('application/pdf');
       expect(res.headers['content-disposition']).toContain('attachment');
-      expect(res.headers['content-disposition']).toContain(`${PDF_MONTH}`);
+      // The file name carries the month's name (DP-00004-October.pdf), not its number.
+      expect(res.headers['content-disposition']).toContain(
+        new Date(Date.UTC(2000, PDF_MONTH - 1, 1)).toLocaleString('en-US', {
+          month: 'long',
+          timeZone: 'UTC',
+        }),
+      );
       const buffer = res.body as Buffer;
       expect(buffer.length).toBeGreaterThan(500);
       expect(buffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
@@ -983,9 +1026,31 @@ describe('Payroll (e2e)', () => {
   });
 
   describe('Loan/advance EMI deduction', () => {
-    const LOAN_MONTH = 11;
+    // A loan's first EMI can be at most 3 months in the past and payroll cannot run for a month that has not started,
+    // so the loan starts last month and its second run is this month. A fresh employee keeps these months free of the
+    // runs the other describes calculate for the shared employee.
+    const LOAN_MONTH = Math.max(1, new Date().getUTCMonth());
+    let employeeId: string;
 
     beforeAll(async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Loan Payroll Employee',
+          email: 'pay-e2e-loan-payroll@example.test',
+          joiningDate: '2025-01-01',
+        });
+      employeeId = (created.body as EmployeeCreateBody).employee.id;
+      await request(app.getHttpServer())
+        .post(`/employee-salary/${employeeId}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          componentCode: 'BASIC',
+          fixedAmount: 100000,
+          effectiveFrom: '2025-01-01',
+        })
+        .expect(201);
       await markFullMonthPresent(
         prisma,
         organizationId,
@@ -1108,7 +1173,7 @@ describe('Payroll (e2e)', () => {
       // getDueLoanEmis' "period has started" check, and >= 12 was never
       // actually calculate()'d anywhere else in this file (only used as
       // the OTHER loan's startMonth above, never as a run's own month).
-      const finalMonth = 12;
+      const finalMonth = LOAN_MONTH + 1;
       await markFullMonthPresent(
         prisma,
         organizationId,
@@ -1302,6 +1367,7 @@ describe('Payroll (e2e)', () => {
         .send({
           name: 'Var Pay Employee',
           email: 'pay-e2e-varpay@example.test',
+          joiningDate: '2025-01-01',
         });
       varPayEmployeeId = (create.body as EmployeeCreateBody).employee.id;
 
@@ -1404,7 +1470,11 @@ describe('Payroll (e2e)', () => {
       const create = await request(app.getHttpServer())
         .post('/employees')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ name: 'Gaps Employee', email: 'pay-e2e-gaps@example.test' });
+        .send({
+          name: 'Gaps Employee',
+          email: 'pay-e2e-gaps@example.test',
+          joiningDate: '2025-01-01',
+        });
       gapsEmployeeId = (create.body as EmployeeCreateBody).employee.id;
     });
 
@@ -1429,7 +1499,9 @@ describe('Payroll (e2e)', () => {
       }[];
       const row = rows.find((r) => r.employeeId === gapsEmployeeId);
       expect(row).toBeTruthy();
-      expect(row?.unmarkedDays).toBe(row?.totalDaysInMonth);
+      // Every working day is unmarked; weekly offs and holidays are not counted as days to mark.
+      expect(row?.unmarkedDays).toBeGreaterThan(0);
+      expect(row?.unmarkedDays).toBeLessThanOrEqual(row!.totalDaysInMonth);
     });
 
     it('marking the full month present drops the employee out of the gaps list', async () => {
@@ -1468,7 +1540,8 @@ describe('Payroll (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/employees')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ name, email });
+        // Joined well before the months these tests calculate: payroll skips an employee who had not joined yet.
+        .send({ name, email, joiningDate: '2025-01-01' });
       const id = (res.body as EmployeeCreateBody).employee.id;
       for (const line of structure) {
         await request(app.getHttpServer())

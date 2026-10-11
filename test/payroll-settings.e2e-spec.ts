@@ -69,6 +69,7 @@ describe('Payroll Settings (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'payrollsettings-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
       });
     const empLogin = await request(app.getHttpServer())
       .post('/auth/login')
@@ -130,7 +131,7 @@ describe('Payroll Settings (e2e)', () => {
     expect(body.financialYearStartMonth).toBe(4); // untouched
   });
 
-  it("CompOff.earn now reads the org's real compOffExpiryDays instead of a hardcoded default", async () => {
+  it('CompOff.earn expires the credit at the end of the financial year it was earned in (per the org financialYearStartMonth)', async () => {
     // Must be a past weekly off, not just "yesterday" — earn() rejects a
     // regular working day ("Comp-off can only be earned for a weekly off
     // or a holiday"). Hardcoding yesterday made this test pass only when
@@ -150,9 +151,10 @@ describe('Payroll Settings (e2e)', () => {
       .expect(201);
     const expiryDate = (compOff.body as { expiryDate: string }).expiryDate;
 
-    const expected = new Date(`${earnedForDate}T00:00:00.000Z`);
-    expected.setUTCDate(expected.getUTCDate() + 30); // the PUT above set this to 30
-    expect(expiryDate).toBe(expected.toISOString().slice(0, 10));
+    // FY starts in April (month 4): the credit lapses on 31 March that follows the earned date.
+    const [y, m] = earnedForDate.split('-').map(Number);
+    const fyEndYear = m >= 4 ? y + 1 : y;
+    expect(expiryDate).toBe(`${fyEndYear}-03-31`);
   });
   describe('Overtime Rates follow the Overtime Pay component', () => {
     const rates = () =>

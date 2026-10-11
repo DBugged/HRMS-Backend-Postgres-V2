@@ -200,9 +200,9 @@ describe('Employee Salary Components (e2e)', () => {
     expect(current?.effectiveTo).toBeNull();
   });
 
-  it('rejects a revision whose effectiveFrom is not after the current row, and logs SALARY_REVISION per applied revision', async () => {
-    // Current BASIC_PAY row starts at offsetDate(30); same-day and earlier dates would make effectiveTo < effectiveFrom.
-    for (const bad of [offsetDate(30), offsetDate(10)]) {
+  it('rejects a revision that starts before the current row, and logs SALARY_REVISION per applied revision', async () => {
+    // Current BASIC_PAY row starts at offsetDate(30); an earlier date is rejected (same-day is a correction, a later one a revision).
+    for (const bad of [offsetDate(10)]) {
       const res = await request(app.getHttpServer())
         .post(`/employee-salary/${employeeId}/structure`)
         .set('Authorization', `Bearer ${adminToken}`)
@@ -214,7 +214,7 @@ describe('Employee Salary Components (e2e)', () => {
         })
         .expect(400);
       expect((res.body as { message: string }).message).toContain(
-        'must be after',
+        'cannot start before',
       );
     }
     const events = await prisma.employeeTimeline.findMany({

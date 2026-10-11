@@ -30,7 +30,8 @@ interface CalcBody {
 const PASSWORD = 'TestPass123!';
 // December of NEXT year — comfortably after the seeded statutory versions (dated the day the org registers),
 // which new versions must follow, so the spec doesn't depend on today's date.
-const YEAR = new Date().getFullYear() + 1;
+// A past year: payroll cannot be run for a month that has not started yet.
+const YEAR = new Date().getFullYear() - 1;
 const MONTH = 12;
 
 describe('State-wise LWF by work location (e2e)', () => {
@@ -114,6 +115,12 @@ describe('State-wise LWF by work location (e2e)', () => {
         where: { email: 'lwf-e2e-admin@example.test' },
       })
     ).organizationId;
+    // Registration seeds each statutory module effective today, and a new version must start after the latest one, so
+    // move the seeded versions back in time: these tests run payroll for a past year.
+    await prisma.statutoryConfigVersion.updateMany({
+      where: { organizationId },
+      data: { effectiveFrom: '2000-01-01' },
+    });
 
     // Two work locations in different states, one department at each, plus a department with no location.
     const location = async (name: string, state: string) =>

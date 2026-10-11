@@ -99,6 +99,7 @@ describe('Reports (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'rpt-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -121,6 +122,7 @@ describe('Reports (e2e)', () => {
       .send({
         name: 'Eng Manager',
         email: 'rpt-e2e-manager@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
         departmentId,
       });
@@ -138,6 +140,7 @@ describe('Reports (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'rpt-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
         departmentId,
       });
     const empBody = empCreate.body as EmployeeCreateBody;
@@ -170,6 +173,8 @@ describe('Reports (e2e)', () => {
         allocationType: 'FIXED_ANNUAL',
         annualQuota: 24,
         prorateOnJoining: false,
+        // One approval level, so HR's decision is final (a two-level type waits for the manager first).
+        approvalLevels: 1,
       });
     const leaveTypeId = (leaveType.body as { id: string }).id;
 
@@ -347,6 +352,7 @@ describe('Reports (e2e)', () => {
       .send({
         name: 'Unassigned Person',
         email: 'rpt-e2e-unassigned@example.test',
+        joiningDate: '2025-01-01',
       })
       .expect(201);
     const unassignedId = (unassignedCreate.body as EmployeeCreateBody).employee
@@ -357,6 +363,7 @@ describe('Reports (e2e)', () => {
       .send({
         name: 'Unassigned Manager',
         email: 'rpt-e2e-unassigned-mgr@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
       })
       .expect(201);

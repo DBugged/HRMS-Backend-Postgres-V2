@@ -61,7 +61,15 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: email.split('@')[0], email, ...(role && { role }) });
+      .send({
+        name:
+          email
+            .split('@')[0]
+            .replace(/[^a-zA-Z]+/g, ' ')
+            .trim() || 'Test User',
+        email,
+        ...(role && { role }),
+      });
     const body = res.body as EmployeeCreateBody;
     const login = await request(app.getHttpServer())
       .post('/auth/login')
@@ -317,7 +325,8 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const settlement = await request(app.getHttpServer())
       .post('/settlements/calculate')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ employeeId: empId, lastWorkingDay: dateOffset(30) })
+      // A settlement can only be calculated on or after the last working day, so use today.
+      .send({ employeeId: empId, lastWorkingDay: dateOffset(0) })
       .expect(201);
     const settlementId = (settlement.body as { id: string }).id;
     await request(app.getHttpServer())

@@ -45,6 +45,21 @@ interface PaginatedBody<T> {
 
 const PASSWORD = 'TestPass123!';
 
+// The first EMI can be at most 3 months in the past, so loans start "this month" rather than on a fixed date, and
+// repayment months are offsets from it.
+const NOW = new Date();
+const START = {
+  startMonth: NOW.getUTCMonth() + 1,
+  startYear: NOW.getUTCFullYear(),
+};
+const rel = (offset: number) => {
+  const idx = START.startMonth - 1 + offset;
+  return {
+    month: (idx % 12) + 1,
+    year: START.startYear + Math.floor(idx / 12),
+  };
+};
+
 describe('Loans (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -102,9 +117,35 @@ describe('Loans (e2e)', () => {
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Plain Employee', email: 'loan-e2e-emp@example.test' });
+      .send({
+        name: 'Plain Employee',
+        email: 'loan-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
+      });
     const empBody = empCreate.body as EmployeeCreateBody;
     employeeId = empBody.employee.id;
+    // The HR person asks for a loan too (self-approval test), so they need a salary as well.
+    await request(app.getHttpServer())
+      .post(
+        `/employee-salary/${(hrCreate.body as EmployeeCreateBody).employee.id}/structure`,
+      )
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        componentCode: 'BASIC',
+        fixedAmount: 1000000,
+        effectiveFrom: '2025-01-01',
+      })
+      .expect(201);
+    // A loan's limit is checked against the employee's salary, so they need one on record.
+    await request(app.getHttpServer())
+      .post(`/employee-salary/${employeeId}/structure`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        componentCode: 'BASIC',
+        fixedAmount: 1000000,
+        effectiveFrom: '2025-01-01',
+      })
+      .expect(201);
     const empLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -141,8 +182,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 120000,
         tenureMonths: 12,
-        startMonth: 6,
-        startYear: 2026,
+        ...START,
       })
       .expect(403);
   });
@@ -157,8 +197,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 120000,
         tenureMonths: 12,
-        startMonth: 6,
-        startYear: 2026,
+        ...START,
         reason: 'Medical emergency',
       })
       .expect(201);
@@ -182,8 +221,7 @@ describe('Loans (e2e)', () => {
         principal: 100000,
         interestRate: 12,
         tenureMonths: 12,
-        startMonth: 7,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const body = res.body as LoanBody;
@@ -239,7 +277,7 @@ describe('Loans (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/loans/${loanId}/repayments`)
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ month: 6, year: 2026, amount: 10000 })
+      .send({ ...rel(0), amount: 10000 })
       .expect(403);
   });
 
@@ -247,7 +285,7 @@ describe('Loans (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/loans/${loanId}/repayments`)
       .set('Authorization', `Bearer ${hrToken}`)
-      .send({ month: 6, year: 2026, amount: 10000 })
+      .send({ ...rel(0), amount: 10000 })
       .expect(201);
     const body = res.body as RepaymentResultBody;
     expect(body.repayment.principalComponent).toBe(10000);
@@ -260,7 +298,7 @@ describe('Loans (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/loans/${loanId}/repayments`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 7, year: 2026, amount: 110000 })
+      .send({ ...rel(1), amount: 110000 })
       .expect(201);
     const body = res.body as RepaymentResultBody;
     expect(body.loan.outstandingBalance).toBe(0);
@@ -275,18 +313,22 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 5000,
         tenureMonths: 5,
-        startMonth: 8,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const smallLoanId = (loan.body as LoanBody).id;
 
-    const res = await request(app.getHttpServer())
+    await request(app.getHttpServer())
       .post(`/loans/${smallLoanId}/repayments`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 8, year: 2026, amount: 9000 })
+      .send({ ...rel(2), amount: 9000 })
+      .expect(400); // more than is still owed (5000)
+    const res2 = await request(app.getHttpServer())
+      .post(`/loans/${smallLoanId}/repayments`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ...rel(2), amount: 5000 })
       .expect(201);
-    const body = res.body as RepaymentResultBody;
+    const body = res2.body as RepaymentResultBody;
     expect(body.repayment.principalComponent).toBe(5000);
     expect(body.loan.outstandingBalance).toBe(0);
     expect(body.loan.status).toBe('CLOSED');
@@ -306,8 +348,7 @@ describe('Loans (e2e)', () => {
         principal: 100000,
         interestRate: 12,
         tenureMonths: 12,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const interestLoanId = (loan.body as LoanBody).id;
@@ -315,7 +356,7 @@ describe('Loans (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post(`/loans/${interestLoanId}/repayments`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 9, year: 2026, amount: 8885 })
+      .send({ ...rel(3), amount: 8885 })
       .expect(201);
     const body = res.body as RepaymentResultBody;
 
@@ -337,8 +378,7 @@ describe('Loans (e2e)', () => {
         principal: 10000,
         interestRate: 12,
         tenureMonths: 6,
-        startMonth: 10,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const smallInterestLoanId = (loan.body as LoanBody).id;
@@ -348,7 +388,7 @@ describe('Loans (e2e)', () => {
     const partial = await request(app.getHttpServer())
       .post(`/loans/${smallInterestLoanId}/repayments`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 10, year: 2026, amount: 10000 })
+      .send({ ...rel(4), amount: 10000 })
       .expect(201);
     expect((partial.body as RepaymentResultBody).loan.outstandingBalance).toBe(
       100,
@@ -359,7 +399,7 @@ describe('Loans (e2e)', () => {
     const final = await request(app.getHttpServer())
       .post(`/loans/${smallInterestLoanId}/repayments`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 11, year: 2026, amount: 101 })
+      .send({ ...rel(5), amount: 101 })
       .expect(201);
     expect((final.body as RepaymentResultBody).loan.outstandingBalance).toBe(0);
     expect((final.body as RepaymentResultBody).loan.status).toBe('CLOSED');
@@ -378,7 +418,7 @@ describe('Loans (e2e)', () => {
     await request(app.getHttpServer())
       .post('/loans/00000000-0000-4000-8000-000000000000/repayments')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 6, year: 2026, amount: 100 })
+      .send({ ...rel(0), amount: 100 })
       .expect(404);
   });
 
@@ -398,8 +438,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 20000,
         tenureMonths: 4,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const cancelLoanId = (loan.body as LoanBody).id;
@@ -420,8 +459,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 15000,
         tenureMonths: 3,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const id = (loan.body as LoanBody).id;
@@ -441,8 +479,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 18000,
         tenureMonths: 3,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const id = (loan.body as LoanBody).id;
@@ -462,8 +499,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 22000,
         tenureMonths: 3,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const id = (loan.body as LoanBody).id;
@@ -526,8 +562,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 9000,
         tenureMonths: 3,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const id = (loan.body as LoanBody).id;
@@ -556,8 +591,7 @@ describe('Loans (e2e)', () => {
         employeeId,
         principal: 4000,
         tenureMonths: 2,
-        startMonth: 9,
-        startYear: 2026,
+        ...START,
       })
       .expect(201);
     const id = (loan.body as LoanBody).id;
@@ -565,7 +599,7 @@ describe('Loans (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/loans/${id}/repayments`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ month: 9, year: 2026, amount: 4000 })
+      .send({ ...rel(3), amount: 4000 })
       .expect(201);
 
     // The repayment already auto-closed the loan (see the auto-close test
@@ -611,6 +645,24 @@ describe('Loans (e2e)', () => {
   });
 
   describe('self-service request -> approve/reject', () => {
+    // Only one request can wait per employee: reject whatever an earlier test left pending.
+    beforeEach(async () => {
+      const pending = await request(app.getHttpServer())
+        .get('/loans')
+        .query({ status: 'PENDING', limit: 100 })
+        .set('Authorization', `Bearer ${adminToken}`);
+      const rows = ((pending.body as { data?: { id: string }[] }).data ??
+        []) as {
+        id: string;
+      }[];
+      for (const row of rows) {
+        await request(app.getHttpServer())
+          .patch(`/loans/${row.id}/reject`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ reason: 'Test cleanup' });
+      }
+    });
+
     it('an employee can request a loan for themselves, landing PENDING', async () => {
       const res = await request(app.getHttpServer())
         .post('/loans/request')
@@ -625,6 +677,18 @@ describe('Loans (e2e)', () => {
       const loan = res.body as LoanBody;
       expect(loan.status).toBe('PENDING');
       expect(loan.employeeId).toBe(employeeId);
+      // One request waiting per employee: a second is refused until this one is decided.
+      await request(app.getHttpServer())
+        .post('/loans/request')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ principal: 1000, tenureMonths: 2 })
+        .expect(400);
+      // Decide it, so the tests below can raise their own requests.
+      await request(app.getHttpServer())
+        .patch(`/loans/${loan.id}/reject`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ reason: 'Test cleanup' })
+        .expect(200);
     });
 
     it('the request DTO has no employeeId field — it is always the caller (global whitelist rejects one)', async () => {
@@ -646,7 +710,7 @@ describe('Loans (e2e)', () => {
       const approved = await request(app.getHttpServer())
         .patch(`/loans/${id}/approve`)
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ startMonth: 4, startYear: 2027, interestRate: 5 })
+        .send({ ...START, interestRate: 5 })
         .expect(200);
       const body = approved.body as LoanBody;
       expect(body.status).toBe('ACTIVE');
@@ -717,7 +781,7 @@ describe('Loans (e2e)', () => {
       await request(app.getHttpServer())
         .patch(`/loans/${id}/approve`)
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ startMonth: 1, startYear: 2027, interestRate: 3 })
+        .send({ ...START, interestRate: 3 })
         .expect(400);
       // 0% (or omitted, defaulting to 0%) goes through fine.
       const approved = await request(app.getHttpServer())
@@ -740,8 +804,7 @@ describe('Loans (e2e)', () => {
           principal: 5000,
           interestRate: 2,
           tenureMonths: 1,
-          startMonth: 1,
-          startYear: 2027,
+          ...START,
         })
         .expect(400);
     });

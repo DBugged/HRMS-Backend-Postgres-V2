@@ -68,6 +68,7 @@ describe('Letters (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'letters-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -84,6 +85,7 @@ describe('Letters (e2e)', () => {
       .send({
         name: 'Manager Person',
         email: 'letters-e2e-mgr@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
       });
     const managerLogin = await request(app.getHttpServer())
@@ -453,6 +455,7 @@ describe('Letters (e2e)', () => {
     });
 
     it('HR can revoke and re-grant a non-restricted key too — every letter is toggleable now, not just the disciplinary ones', async () => {
+      // 'nda' rather than a hiring letter: those are blocked outright once the employee is leaving (see hiringLetterBlocked).
       // Visible by default with no grant row — same as any other non-restricted letter.
       const before = await request(app.getHttpServer())
         .get(`/employees/${employeeId}/letters`)
@@ -460,12 +463,12 @@ describe('Letters (e2e)', () => {
         .expect(200);
       expect(
         (before.body as { key: string; unlocked: boolean }[]).find(
-          (r) => r.key === 'appointmentLetter',
+          (r) => r.key === 'nda',
         )!.unlocked,
       ).toBe(true);
 
       await request(app.getHttpServer())
-        .patch(`/employees/${employeeId}/letters/appointmentLetter/access`)
+        .patch(`/employees/${employeeId}/letters/nda/access`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ enabled: false })
         .expect(200);
@@ -480,18 +483,18 @@ describe('Letters (e2e)', () => {
           unlocked: boolean;
           reason: string | null;
         }[]
-      ).find((r) => r.key === 'appointmentLetter')!;
+      ).find((r) => r.key === 'nda')!;
       expect(row.unlocked).toBe(false);
       expect(row.reason).toBe('Not yet made available to you — contact HR.');
 
       await request(app.getHttpServer())
-        .get(`/employees/${employeeId}/letters/appointmentLetter`)
+        .get(`/employees/${employeeId}/letters/nda`)
         .set('Authorization', `Bearer ${employeeToken}`)
         .expect(403);
 
       // Re-grant — back to visible.
       await request(app.getHttpServer())
-        .patch(`/employees/${employeeId}/letters/appointmentLetter/access`)
+        .patch(`/employees/${employeeId}/letters/nda/access`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ enabled: true })
         .expect(200);
@@ -501,7 +504,7 @@ describe('Letters (e2e)', () => {
         .expect(200);
       expect(
         (restored.body as { key: string; unlocked: boolean }[]).find(
-          (r) => r.key === 'appointmentLetter',
+          (r) => r.key === 'nda',
         )!.unlocked,
       ).toBe(true);
     });

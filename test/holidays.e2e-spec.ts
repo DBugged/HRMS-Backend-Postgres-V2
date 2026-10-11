@@ -136,7 +136,7 @@ describe('Holidays (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         name: 'Eng Offsite',
-        date: '2026-09-01',
+        date: '2026-12-01',
         department: departmentId,
       })
       .expect(201);
@@ -215,9 +215,13 @@ describe('Holidays (e2e)', () => {
     const created = await request(app.getHttpServer())
       .post('/holidays')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Past Holiday', date: '2020-01-01', type: 'COMPANY' })
+      .send({ name: 'Past Holiday', date: '2030-01-01', type: 'COMPANY' })
       .expect(201);
     const pastId = (created.body as HolidayBody).id;
+    // The API refuses past dates, so backdate the row directly to exercise the read-only rule.
+    await prisma.$executeRawUnsafe(
+      `UPDATE "holidays" SET "date" = '2020-01-01' WHERE id = '${pastId}'`,
+    );
 
     await request(app.getHttpServer())
       .put(`/holidays/${pastId}`)
@@ -263,10 +267,10 @@ describe('Holidays (e2e)', () => {
         rows: [
           // Uses a name/date distinct from the 'Diwali' row created earlier
           // in this suite to avoid a duplicate-detection collision.
-          { name: 'Test Import Holiday', date: '2026-03-15', rowNum: 2 },
-          { name: '', date: '2026-02-01', rowNum: 3 }, // missing name
+          { name: 'Test Import Holiday', date: '2027-03-15', rowNum: 2 },
+          { name: '', date: '2027-02-01', rowNum: 3 }, // missing name
           { name: 'Bad Date', date: 'not-a-date', rowNum: 4 }, // invalid date
-          { name: 'Test Import Holiday', date: '2026-03-15', rowNum: 5 }, // duplicate within batch
+          { name: 'Test Import Holiday', date: '2027-03-15', rowNum: 5 }, // duplicate within batch
         ],
       })
       .expect(201);

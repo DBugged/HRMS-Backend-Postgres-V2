@@ -87,6 +87,7 @@ describe('Offboarding (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'offb-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -100,7 +101,11 @@ describe('Offboarding (e2e)', () => {
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Departing Employee', email: 'offb-e2e-emp@example.test' });
+      .send({
+        name: 'Departing Employee',
+        email: 'offb-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
+      });
     const empBody = empCreate.body as EmployeeCreateBody;
     employeeId = empBody.employee.id;
     const empLogin = await request(app.getHttpServer())
@@ -114,7 +119,11 @@ describe('Offboarding (e2e)', () => {
     const otherCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Other Employee', email: 'offb-e2e-other@example.test' });
+      .send({
+        name: 'Other Employee',
+        email: 'offb-e2e-other@example.test',
+        joiningDate: '2025-01-01',
+      });
     otherEmployeeId = (otherCreate.body as EmployeeCreateBody).employee.id;
 
     // BASIC is auto-seeded on every new org (see LeaveTypesService/

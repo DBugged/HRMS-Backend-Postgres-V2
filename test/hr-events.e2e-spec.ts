@@ -30,6 +30,11 @@ function todayMonthDayUtc(): string {
   return `${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}`;
 }
 
+// A joining date a couple of months ahead (the API only allows up to 180 days ahead): its month/day never matches today's.
+const LATER_JOINING = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
+  .toISOString()
+  .slice(0, 10);
+
 describe('HrEventsService (e2e)', () => {
   let app: INestApplication<App>;
   let prisma: PrismaService;
@@ -126,7 +131,7 @@ describe('HrEventsService (e2e)', () => {
       .send({
         name: 'Birthday Employee',
         email: 'birthday.hr-events@example.com',
-        joiningDate: `2099-01-01`, // far off, irrelevant month/day
+        joiningDate: LATER_JOINING, // far off, irrelevant month/day
       });
     birthdayEmployeeId = (birthdayRes.body as EmployeeCreateBody).employee.id;
     await request(app.getHttpServer())
@@ -141,7 +146,7 @@ describe('HrEventsService (e2e)', () => {
       .send({
         name: 'Unrelated Employee',
         email: 'unrelated.hr-events@example.com',
-        joiningDate: '2099-01-01',
+        joiningDate: LATER_JOINING,
       });
     unrelatedEmployeeId = (unrelatedRes.body as EmployeeCreateBody).employee.id;
     await request(app.getHttpServer())

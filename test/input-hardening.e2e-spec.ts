@@ -160,11 +160,16 @@ describe('Input hardening (e2e): body sanity, type/range validation, email escap
 
   it('emails escape user-supplied text: an employee named with HTML cannot inject markup', async () => {
     const created = await admin('post', '/employees').send({
-      name: 'Eve <i>Evil</i> & Co',
+      name: 'Eve Evil',
       email: 'eve-hardening@example.test',
       joiningDate: '2024-01-01',
     });
     const id = (created.body as EmployeeCreateBody).employee.id;
+    // Names are letters-only at the API now, so seed the hostile name directly (legacy/imported data) to keep the escaping covered.
+    await prisma.user.update({
+      where: { id },
+      data: { name: 'Eve <i>Evil</i> & Co' },
+    });
     sendSpy.mockClear();
     await admin('patch', `/employees/${id}`)
       .send({ role: 'MANAGER' })

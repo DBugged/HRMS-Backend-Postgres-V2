@@ -100,6 +100,7 @@ describe('Notifications (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'notif-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -121,6 +122,7 @@ describe('Notifications (e2e)', () => {
       .send({
         name: 'Manager',
         email: 'notif-e2e-mgr@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
       });
     managerId = (mgrCreate.body as EmployeeCreateBody).employee.id;
@@ -148,6 +150,7 @@ describe('Notifications (e2e)', () => {
       .send({
         name: 'Dept Manager',
         email: 'notif-e2e-dept-mgr@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
         departmentId: deptId,
       });
@@ -165,6 +168,7 @@ describe('Notifications (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'notif-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
         reportingManagerId: managerId,
         departmentId: deptId,
       });
@@ -583,7 +587,12 @@ describe('Notifications (e2e)', () => {
     await request(app.getHttpServer())
       .post('/attendance/regularization')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ date: REGULARIZATION_DATE, reason: 'Forgot to punch' })
+      .send({
+        date: REGULARIZATION_DATE,
+        reason: 'Forgot to punch',
+        requestedInTime: `${REGULARIZATION_DATE}T09:30:00.000Z`,
+        requestedOutTime: `${REGULARIZATION_DATE}T18:00:00.000Z`,
+      })
       .expect(201);
 
     const mgrView = await request(app.getHttpServer())

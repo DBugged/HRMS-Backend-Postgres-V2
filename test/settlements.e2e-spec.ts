@@ -54,6 +54,12 @@ interface ProcessResultBody {
 const PASSWORD = 'TestPass123!';
 const MONTH = 6;
 const YEAR = 2026;
+// The first EMI can be at most 3 months in the past, so loans start this month, not on a fixed date.
+const NOW = new Date();
+const LOAN_START = {
+  startMonth: NOW.getUTCMonth() + 1,
+  startYear: NOW.getUTCFullYear(),
+};
 const LAST_WORKING_DAY = `${YEAR}-0${MONTH}-15`;
 const BASIC_MONTHLY = 30000;
 // HRA is auto-seeded (see SalaryComponentsService.seedDefaults) as 40% of
@@ -130,6 +136,7 @@ describe('Settlements (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'settle-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -238,8 +245,7 @@ describe('Settlements (e2e)', () => {
         employeeId,
         principal: 5000,
         tenureMonths: 5,
-        startMonth: 1,
-        startYear: YEAR,
+        ...LOAN_START,
       })
       .expect(201);
   });
@@ -445,11 +451,36 @@ describe('Settlements (e2e)', () => {
   // settlement dropped the salary while the run could still be locked later (charging that month's EMI on top of
   // the settlement's full loan recovery). An open run now blocks the settlement; only a LOCKED/PAID run covers
   // the month.
+  // A fresh employee (joined long ago, with a salary) for tests that need an employee whose final settlement has not
+  // been processed yet - a processed settlement cannot be calculated again for the same employee.
+  async function freshEmployee(tag: string): Promise<string> {
+    const res = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Fresh Employee',
+        email: `settle-e2e-${tag}@example.test`,
+        joiningDate: '2020-01-01',
+      });
+    const id = (res.body as EmployeeCreateBody).employee.id;
+    await request(app.getHttpServer())
+      .post(`/employee-salary/${id}/structure`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        componentCode: 'BASIC',
+        fixedAmount: 30000,
+        effectiveFrom: '2026-01-01',
+      })
+      .expect(201);
+    return id;
+  }
+
   it('does not pay the LWD month salary again when a regular payroll run already exists for it', async () => {
+    const freshId = await freshEmployee('lwd');
     const run = await prisma.payrollRun.create({
       data: {
         organizationId,
-        employeeId,
+        employeeId: freshId,
         month: 7,
         year: YEAR,
         status: 'CALCULATED',
@@ -459,7 +490,7 @@ describe('Settlements (e2e)', () => {
     const blocked = await request(app.getHttpServer())
       .post('/settlements/calculate')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ employeeId, lastWorkingDay: `${YEAR}-07-15` })
+      .send({ employeeId: freshId, lastWorkingDay: `${YEAR}-07-15` })
       .expect(400);
     expect((blocked.body as { message: string }).message).toMatch(
       /7\/2026 payroll run for this employee is calculated but not locked/,
@@ -472,7 +503,7 @@ describe('Settlements (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/settlements/calculate')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ employeeId, lastWorkingDay: `${YEAR}-07-15` })
+      .send({ employeeId: freshId, lastWorkingDay: `${YEAR}-07-15` })
       .expect(201);
     const body = res.body as SettlementBody & { pendingSalaryNote: string };
     expect(body.pendingSalaryAmount).toBe(0);
@@ -487,10 +518,11 @@ describe('Settlements (e2e)', () => {
   });
 
   it('marking paid before processing is rejected for a different (still-draft) settlement', async () => {
+    const freshId = await freshEmployee('draft');
     const draft = await request(app.getHttpServer())
       .post('/settlements/calculate')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ employeeId, lastWorkingDay: `${YEAR}-07-01` })
+      .send({ employeeId: freshId, lastWorkingDay: `${YEAR}-07-01` })
       .expect(201);
     const draftId = (draft.body as SettlementBody).id;
 
@@ -564,12 +596,17 @@ describe('Settlements (e2e)', () => {
       return id;
     }
 
-    async function markPresent(empId: string, month: number, days: number) {
+    async function markPresent(
+      empId: string,
+      month: number,
+      days: number,
+      year: number = YEAR,
+    ) {
       await prisma.attendance.createMany({
         data: Array.from({ length: days }, (_, i) => ({
           organizationId,
           employeeId: empId,
-          date: `${YEAR}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`,
+          date: `${year}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`,
           status: AttendanceStatus.PRESENT,
           source: 'FACE_API' as const,
         })),
@@ -580,13 +617,18 @@ describe('Settlements (e2e)', () => {
     // "already paid" even though only CALCULATED) went on to deduct that month's EMI again once locked; and
     // process() never re-read the balance captured at calculate time.
     it('never recovers the same loan money twice', async () => {
+      // Two months back: inside the loan's 3-month start window, and a month that has already ended.
+      const back = new Date(
+        Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth() - 2, 1),
+      );
+      const M2 = { month: back.getUTCMonth() + 1, year: back.getUTCFullYear() };
       const loanEmpId = await newEmployee(
         'FnF Loan Employee',
         'settle-e2e-loan@example.test',
         '2024-01-01',
         BASIC_MONTHLY,
       );
-      await markPresent(loanEmpId, 8, 31);
+      await markPresent(loanEmpId, M2.month, 31, M2.year);
       const loanRes = await request(app.getHttpServer())
         .post('/loans')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -594,18 +636,18 @@ describe('Settlements (e2e)', () => {
           employeeId: loanEmpId,
           principal: 3000,
           tenureMonths: 3,
-          startMonth: 8,
-          startYear: YEAR,
+          startMonth: M2.month,
+          startYear: M2.year,
         })
         .expect(201);
       const loanId = (loanRes.body as { id: string }).id;
-      const lwd = `${YEAR}-08-20`;
+      const lwd = `${M2.year}-${String(M2.month).padStart(2, '0')}-20`;
 
       // The August run is calculated (with its 1,000 EMI) but not locked -> the settlement is refused.
       const calc = await request(app.getHttpServer())
         .post('/payroll/calculate')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ month: 8, year: YEAR, employeeId: loanEmpId })
+        .send({ month: M2.month, year: M2.year, employeeId: loanEmpId })
         .expect(201);
       const augRun = (
         calc.body as {

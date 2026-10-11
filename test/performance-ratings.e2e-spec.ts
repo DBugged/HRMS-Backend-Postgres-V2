@@ -84,6 +84,7 @@ describe('Performance Ratings (e2e)', () => {
       .send({
         name: 'Eng Manager',
         email: 'perf-e2e-manager@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
         departmentId,
       });
@@ -102,6 +103,7 @@ describe('Performance Ratings (e2e)', () => {
       .send({
         name: 'Dept Employee',
         email: 'perf-e2e-deptemp@example.test',
+        joiningDate: '2025-01-01',
         departmentId,
       });
     deptEmployeeId = (deptEmpCreate.body as EmployeeCreateBody).employee.id;
@@ -112,6 +114,7 @@ describe('Performance Ratings (e2e)', () => {
       .send({
         name: 'Outside Employee',
         email: 'perf-e2e-outside@example.test',
+        joiningDate: '2025-01-01',
       });
     outsideEmployeeId = (outsideCreate.body as EmployeeCreateBody).employee.id;
 
@@ -132,6 +135,7 @@ describe('Performance Ratings (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'perf-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
         departmentId,
       });
@@ -153,6 +157,7 @@ describe('Performance Ratings (e2e)', () => {
       .send({
         name: 'Managed Employee',
         email: 'perf-e2e-managed@example.test',
+        joiningDate: '2025-01-01',
         departmentId,
         reportingManagerId: managerId,
       });
@@ -169,6 +174,7 @@ describe('Performance Ratings (e2e)', () => {
       .send({
         name: 'HR Managed Employee',
         email: 'perf-e2e-hrmanaged@example.test',
+        joiningDate: '2025-01-01',
         reportingManagerId: hrEmployeeId,
       });
     hrManagedEmployeeId = (hrManagedCreate.body as EmployeeCreateBody).employee
@@ -330,7 +336,7 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${managerToken}`)
         .send({
           employeeId: deptEmployeeId,
-          financialYear: '2027-28',
+          financialYear: '2025-26',
           rating: 3,
         })
         .expect(201);
@@ -353,7 +359,7 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           employeeId: outsideEmployeeId,
-          financialYear: '2027-28',
+          financialYear: '2025-26',
           rating: 4,
         })
         .expect(201);
@@ -368,7 +374,7 @@ describe('Performance Ratings (e2e)', () => {
 
     it('MANAGER is forbidden from calling approve/reject', async () => {
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: deptEmployeeId, financialYear: '2027-28' },
+        where: { employeeId: deptEmployeeId, financialYear: '2025-26' },
       });
       await request(app.getHttpServer())
         .patch(`/performance-ratings/${rating.id}/approve`)
@@ -379,7 +385,7 @@ describe('Performance Ratings (e2e)', () => {
 
     it('HR/Admin approve() sets APPROVED, stamps approvedBy/approvedAt, and does notify', async () => {
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: deptEmployeeId, financialYear: '2027-28' },
+        where: { employeeId: deptEmployeeId, financialYear: '2025-26' },
       });
       expect(rating.status).toBe('SUBMITTED');
 
@@ -410,7 +416,7 @@ describe('Performance Ratings (e2e)', () => {
 
     it('approve() on an already-approved row is rejected', async () => {
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: deptEmployeeId, financialYear: '2027-28' },
+        where: { employeeId: deptEmployeeId, financialYear: '2025-26' },
       });
       await request(app.getHttpServer())
         .patch(`/performance-ratings/${rating.id}/approve`)
@@ -425,12 +431,12 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${managerToken}`)
         .send({
           employeeId: deptEmployeeId,
-          financialYear: '2028-29',
+          financialYear: '2024-25',
           rating: 2,
         })
         .expect(201);
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: deptEmployeeId, financialYear: '2028-29' },
+        where: { employeeId: deptEmployeeId, financialYear: '2024-25' },
       });
 
       const before = await prisma.notification.count({
@@ -452,7 +458,7 @@ describe('Performance Ratings (e2e)', () => {
 
     it('reject() on an already-rejected row is rejected', async () => {
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: deptEmployeeId, financialYear: '2028-29' },
+        where: { employeeId: deptEmployeeId, financialYear: '2024-25' },
       });
       await request(app.getHttpServer())
         .patch(`/performance-ratings/${rating.id}/reject`)
@@ -467,12 +473,12 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${managerToken}`)
         .send({
           employeeId: hrEmployeeId,
-          financialYear: '2027-28',
+          financialYear: '2025-26',
           rating: 3,
         })
         .expect(201);
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: hrEmployeeId, financialYear: '2027-28' },
+        where: { employeeId: hrEmployeeId, financialYear: '2025-26' },
       });
 
       await request(app.getHttpServer())
@@ -495,7 +501,7 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({
           employeeId: managedEmployeeId,
-          financialYear: '2029-30',
+          financialYear: '2023-24',
           rating: 4,
         })
         .expect(403);
@@ -507,7 +513,7 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${hrToken}`)
         .send({
           employeeId: managedEmployeeId,
-          financialYear: '2029-30',
+          financialYear: '2023-24',
           rating: 4,
         })
         .expect(403);
@@ -519,14 +525,14 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${managerToken}`)
         .send({
           employeeId: managedEmployeeId,
-          financialYear: '2029-30',
+          financialYear: '2023-24',
           rating: 4,
         })
         .expect(201);
       expect((submitRes.body as RatingBody).status).toBe('SUBMITTED');
 
       const rating = await prisma.performanceRating.findFirstOrThrow({
-        where: { employeeId: managedEmployeeId, financialYear: '2029-30' },
+        where: { employeeId: managedEmployeeId, financialYear: '2023-24' },
       });
       const approveRes = await request(app.getHttpServer())
         .patch(`/performance-ratings/${rating.id}/approve`)
@@ -542,7 +548,7 @@ describe('Performance Ratings (e2e)', () => {
         .set('Authorization', `Bearer ${hrToken}`)
         .send({
           employeeId: hrManagedEmployeeId,
-          financialYear: '2029-30',
+          financialYear: '2023-24',
           rating: 5,
         })
         .expect(201);
@@ -558,6 +564,7 @@ describe('Performance Ratings (e2e)', () => {
         .send({
           name: 'Cross Reportee',
           email: 'perf-e2e-cross@example.test',
+          joiningDate: '2025-01-01',
           reportingManagerId: managerId,
         });
       const crossId = (other.body as EmployeeCreateBody).employee.id;
@@ -591,6 +598,7 @@ describe('Performance Ratings (e2e)', () => {
         .send({
           name: 'Other Manager',
           email: 'perf-e2e-mgr2@example.test',
+          joiningDate: '2025-01-01',
           role: 'MANAGER',
           departmentId: (dept2.body as { id: string }).id,
         });
@@ -622,6 +630,7 @@ describe('Performance Ratings (e2e)', () => {
         .send({
           name: 'Unassigned Manager',
           email: 'perf-e2e-mgr-nodept@example.test',
+          joiningDate: '2025-01-01',
           role: 'MANAGER',
         })
         .expect(201);

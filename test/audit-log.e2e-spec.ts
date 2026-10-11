@@ -83,6 +83,7 @@ describe('Audit Log (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'audit-e2e-hr@example.test',
+        joiningDate: '2025-01-01',
         role: 'HR',
       });
     const hrLogin = await request(app.getHttpServer())
@@ -99,6 +100,7 @@ describe('Audit Log (e2e)', () => {
       .send({
         name: 'A Manager',
         email: 'audit-e2e-manager@example.test',
+        joiningDate: '2025-01-01',
         role: 'MANAGER',
       });
     const managerLogin = await request(app.getHttpServer())
@@ -112,7 +114,11 @@ describe('Audit Log (e2e)', () => {
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Plain Employee', email: 'audit-e2e-emp@example.test' });
+      .send({
+        name: 'Plain Employee',
+        email: 'audit-e2e-emp@example.test',
+        joiningDate: '2025-01-01',
+      });
     const empBody = empCreate.body as EmployeeCreateBody;
     employeeId = empBody.employee.id;
     const empLogin = await request(app.getHttpServer())
