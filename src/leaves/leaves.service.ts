@@ -96,6 +96,7 @@ const CREDIT_HISTORY_ACTIONS = [
   'LEAVE_BALANCES_RECALCULATED',
   'LEAVE_TYPE_POLICY_CHANGED',
   'LEAVE_CARRYFORWARD_RUN',
+  'LEAVE_BALANCE_ADJUSTED',
 ];
 
 // Old system's LEAVE_APPROVE_ROLES / LEAVE_VIEW_ROLES both collapse to this
@@ -659,6 +660,19 @@ export class LeavesService {
         },
       });
       await this.notifyLevel1Approved(leave, organizationId);
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'LEAVE_LEVEL1_APPROVED',
+        module: 'LEAVE',
+        organizationId,
+        targetId: id,
+        details: {
+          employeeId: leave.employeeId,
+          startDate: leave.startDate,
+          endDate: leave.endDate,
+          comments: dto.comments ?? '',
+        },
+      });
       return this.findByIdOrThrow(id, organizationId);
     }
 
@@ -690,7 +704,7 @@ export class LeavesService {
       );
     }
 
-    return this.applyDecision(
+    const decided = await this.applyDecision(
       leave,
       leaveType,
       dto.decision,
@@ -698,6 +712,24 @@ export class LeavesService {
       actor.id,
       organizationId,
     );
+    // The decision itself is on the leave row (reviewer, time, comment); the trail records it too, so "who approved
+    // or rejected whose leave, and when" is in one place with every other change.
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: `LEAVE_${dto.decision}`,
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: leave.employeeId,
+        leaveType: leaveType.code,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        totalDays: leave.totalDays,
+        comments: dto.comments ?? '',
+      },
+    });
+    return decided;
   }
 
   // The actual status flip + balance/attendance/comp-off side effects,
@@ -1090,7 +1122,11 @@ export class LeavesService {
       // cancellation.
       const { count } = await tx.leave.updateMany({
         where: { id, organizationId, status: { in: cancellableStatuses } },
-        data: { status: LeaveStatus.CANCELLED },
+        data: {
+          status: LeaveStatus.CANCELLED,
+          cancelledById: actor.id,
+          cancelledAt: new Date(),
+        },
       });
       if (count === 0) {
         throw new ConflictException(
@@ -1113,6 +1149,21 @@ export class LeavesService {
       }
     });
 
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LEAVE_CANCELLED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: leave.employeeId,
+        previousStatus: leave.status,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        totalDays: leave.totalDays,
+        onBehalf: !isSelf,
+      },
+    });
     return this.findByIdOrThrow(id, organizationId);
   }
 

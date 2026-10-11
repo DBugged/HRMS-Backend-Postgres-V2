@@ -533,6 +533,7 @@ model User {
   leaves                           Leave[]                           @relation("LeaveEmployee")
   leavesReviewed                   Leave[]                           @relation("LeaveReviewedBy")
   leavesLevel1Approved             Leave[]                           @relation("LeaveLevel1ApprovedBy")
+  leavesCancelled                  Leave[]                           @relation("LeaveCancelledBy")
   compOffs                         CompOff[]                         @relation("CompOffEmployee")
   compOffsApproved                 CompOff[]                         @relation("CompOffApprovedBy")
   emailTemplatesUpdated            EmailTemplate[]                   @relation("EmailTemplateUpdatedBy")
@@ -1238,6 +1239,10 @@ model Leave {
   status         LeaveStatus @default(PENDING)
   reviewedById   String?
   reviewedBy     User?       @relation("LeaveReviewedBy", fields: [reviewedById], references: [id])
+  // Who cancelled it and when (the employee, or HR/Admin on their behalf); null until cancelled.
+  cancelledById  String?
+  cancelledBy    User?       @relation("LeaveCancelledBy", fields: [cancelledById], references: [id])
+  cancelledAt    DateTime?
   reviewedAt     DateTime?
   reviewComments String      @default("")
 

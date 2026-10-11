@@ -31,6 +31,7 @@ describe('Payroll input integrity (e2e)', () => {
   let adminToken: string;
   let hrToken: string;
   let employeeId: string;
+  let employeeToken: string;
   let hrId: string;
   let organizationId: string;
   let lwpId: string;
@@ -126,7 +127,9 @@ describe('Payroll input integrity (e2e)', () => {
     const hr = await mk('Hr Person', 'pi-hr@example.test', 'HR');
     hrId = hr.id;
     hrToken = hr.token;
-    employeeId = (await mk('Plain Employee', 'pi-emp@example.test')).id;
+    const plain = await mk('Plain Employee', 'pi-emp@example.test');
+    employeeId = plain.id;
+    employeeToken = plain.token;
     for (const id of [employeeId, hrId]) {
       await post(`/employee-salary/${id}/structure`)
         .send({
@@ -451,6 +454,135 @@ describe('Payroll input integrity (e2e)', () => {
         adminToken,
       ).expect(200);
       await get(`/attendance?employeeId=${employeeId}`, adminToken).expect(200);
+    });
+  });
+
+  describe('F8 - who decided or cancelled a leave is on record, and balances can be adjusted with a reason', () => {
+    it('approve, level-1/final decisions and cancellation are in the audit trail, and cancel stores who and when', async () => {
+      const leave = await makeLeave('2026-09-10', '2026-09-10');
+      await approve(leave.id).expect(200);
+      const approved = await prisma.auditLog.findFirst({
+        where: { targetId: leave.id, action: 'LEAVE_APPROVED' },
+      });
+      expect(approved).not.toBeNull();
+      expect((approved?.details as { employeeId: string }).employeeId).toBe(
+        employeeId,
+      );
+
+      await patch(`/leaves/${leave.id}/cancel`).expect(200);
+      const cancelled = await prisma.leave.findUniqueOrThrow({
+        where: { id: leave.id },
+      });
+      expect(cancelled.cancelledById).not.toBeNull();
+      expect(cancelled.cancelledAt).not.toBeNull();
+      const trail = await prisma.auditLog.findFirst({
+        where: { targetId: leave.id, action: 'LEAVE_CANCELLED' },
+      });
+      expect(
+        (trail?.details as { previousStatus: string }).previousStatus,
+      ).toBe('APPROVED');
+
+      const rejected = await makeLeave('2026-09-15', '2026-09-15');
+      await patch(`/leaves/${rejected.id}/review`)
+        .send({ decision: 'REJECTED', comments: 'not this week' })
+        .expect(200);
+      expect(
+        await prisma.auditLog.count({
+          where: { targetId: rejected.id, action: 'LEAVE_REJECTED' },
+        }),
+      ).toBe(1);
+    });
+
+    describe('balance adjustment', () => {
+      let elId: string;
+      const adjust = (token: string, body: Record<string, unknown>) =>
+        post('/leave-balances/adjust', token).send({
+          employeeId,
+          leaveTypeId: elId,
+          ...body,
+        });
+      const balanceNow = async () =>
+        (
+          await prisma.leaveBalance.findFirstOrThrow({
+            where: { employeeId, leaveTypeId: elId },
+            orderBy: { year: 'desc' },
+          })
+        ).closing;
+
+      beforeAll(async () => {
+        elId = (
+          await prisma.leaveType.findFirstOrThrow({
+            where: { organizationId, code: 'EL' },
+          })
+        ).id;
+        await request(app.getHttpServer())
+          .get(`/leaves/balance?employeeId=${employeeId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+      });
+
+      it('HR adds and removes days with a reason; the change is in the audit trail and the balance', async () => {
+        const start = await balanceNow();
+        const up = await adjust(hrToken, {
+          days: 2,
+          reason: 'Opening balance migrated',
+        }).expect(201);
+        expect((up.body as { after: number }).after).toBe(start + 2);
+        expect(await balanceNow()).toBe(start + 2);
+        await adjust(hrToken, {
+          days: -1.5,
+          reason: 'Credited twice by mistake',
+        }).expect(201);
+        expect(await balanceNow()).toBe(start + 0.5);
+        const trail = await prisma.auditLog.findFirst({
+          where: { action: 'LEAVE_BALANCE_ADJUSTED', targetId: employeeId },
+          orderBy: { createdAt: 'desc' },
+        });
+        const d = trail?.details as {
+          reason: string;
+          days: number;
+          before: number;
+          after: number;
+        };
+        expect(d.reason).toBe('Credited twice by mistake');
+        expect(d.days).toBe(-1.5);
+        expect(d.after).toBe(start + 0.5);
+      });
+
+      it('a reason is mandatory, a balance cannot go below zero, your own balance and non-quota types are refused', async () => {
+        await adjust(hrToken, { days: 1, reason: 'x' }).expect(400);
+        await adjust(hrToken, { days: 0, reason: 'no change at all' }).expect(
+          400,
+        );
+        await adjust(hrToken, {
+          days: -999,
+          reason: 'far too many days',
+        }).expect(400);
+        await adjust(hrToken, {
+          days: -300,
+          reason: 'more than the balance',
+        }).expect(400);
+        await post('/leave-balances/adjust', hrToken)
+          .send({
+            employeeId: hrId,
+            leaveTypeId: elId,
+            days: 1,
+            reason: 'my own balance',
+          })
+          .expect(403);
+        await adjust(hrToken, {
+          leaveTypeId: lwpId,
+          days: 1,
+          reason: 'unlimited type',
+        }).expect(400);
+      });
+
+      it('an employee cannot adjust balances', async () => {
+        await adjust(employeeToken, {
+          days: 1,
+          reason: 'topping myself up',
+        }).expect(403);
+      });
     });
   });
 });
