@@ -432,6 +432,39 @@ describe('Reports (e2e)', () => {
     );
   });
 
+  it('the attendance report carries Late and Early Out columns: Yes/No for a day with punches, a dash for one without', async () => {
+    const mk = (date: string, over: Record<string, unknown>) =>
+      prisma.attendance.create({
+        data: { organizationId, employeeId, date, status: 'PRESENT', ...over },
+      });
+    await mk('2026-03-02', {
+      inTime: new Date('2026-03-02T05:00:00.000Z'),
+      outTime: new Date('2026-03-02T11:00:00.000Z'),
+      isLate: true,
+      isEarlyOut: true,
+    });
+    await mk('2026-03-03', {
+      inTime: new Date('2026-03-03T04:00:00.000Z'),
+      outTime: new Date('2026-03-03T13:00:00.000Z'),
+    });
+    await mk('2026-03-04', { status: 'ABSENT' });
+
+    const report = await app.get(ReportsService).attendanceReport(
+      { from: '2026-03-02', to: '2026-03-04' } as never,
+      await prisma.user.findFirstOrThrow({
+        where: { email: 'rpt-e2e-hr@example.test' },
+        omit: { password: true },
+      }),
+      organizationId,
+    );
+    expect(report.columns.map((c) => c.header)).toEqual(
+      expect.arrayContaining(['Late', 'Early Out']),
+    );
+    const rows = report.rows.filter((r) => r.name !== 'Unassigned Person');
+    const flags = rows.map((r) => `${r.late}/${r.earlyOut}`).sort();
+    expect(flags).toEqual(['-/-', 'No/No', 'Yes/Yes']);
+  });
+
   it('rejects an invalid format value', async () => {
     await request(app.getHttpServer())
       .get('/reports/attendance')

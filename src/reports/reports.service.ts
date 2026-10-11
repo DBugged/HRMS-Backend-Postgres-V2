@@ -124,6 +124,9 @@ export class ReportsService {
       inTime: punch(r.inTime, r.inTime),
       outTime: punch(r.outTime, r.inTime),
       workHours: formatWorkedMinutes(r.workDurationMinutes),
+      // Late / early-out are only meaningful for a day with a punch; a day without one shows a dash, not "No".
+      late: r.inTime ? (r.isLate ? 'Yes' : 'No') : '-',
+      earlyOut: r.outTime ? (r.isEarlyOut ? 'Yes' : 'No') : '-',
       status: r.status,
     }));
 
@@ -134,6 +137,8 @@ export class ReportsService {
       { header: 'In Time', key: 'inTime', width: 25 },
       { header: 'Out Time', key: 'outTime', width: 25 },
       { header: 'Work Duration', key: 'workHours', width: 14 },
+      { header: 'Late', key: 'late', width: 10 },
+      { header: 'Early Out', key: 'earlyOut', width: 10 },
       { header: 'Status', key: 'status', width: 15 },
     ];
 
