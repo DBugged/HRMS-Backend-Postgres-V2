@@ -2174,6 +2174,10 @@ model PayrollRun {
   paymentMode       String?
   paymentReference  String?
   paymentDate       String?
+  // Set once a lock's side effects (loan EMIs charged, leave encashments processed) have been applied. A LOCKED/PAID
+  // run where this is null had its process die between the status change and the side effects - see
+  // PayrollService.lockEffectsPending / reapplyLockEffects.
+  lockEffectsAppliedAt DateTime?
 
   // Point-in-time snapshot taken at calculation so a re-issued payslip keeps the designation/department/
   // grade the employee held that month. Nullable: older runs fall back to the live values.

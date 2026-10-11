@@ -162,6 +162,24 @@ export class PayrollController {
     );
   }
 
+  @Get('integrity/lock-effects')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  lockEffectsPending(@CurrentUser() caller: Caller) {
+    return this.payrollService.lockEffectsPending(caller.organizationId);
+  }
+
+  @Post(':id/reapply-lock-effects')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  reapplyLockEffects(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.payrollService.reapplyLockEffects(
+      id,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   @Post('payments/import')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

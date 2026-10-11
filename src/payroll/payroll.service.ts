@@ -2452,6 +2452,70 @@ export class PayrollService {
     return { updated: updated.length, failed };
   }
 
+  // Locked/paid regular and supplementary runs whose lock side effects were never recorded as applied (the process died
+  // between the status change and the effects), i.e. a payslip whose loan EMIs / encashments may not be reflected.
+  async lockEffectsPending(organizationId: string) {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        isFinalSettlement: false,
+        status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+        lockEffectsAppliedAt: null,
+      },
+      select: {
+        id: true,
+        employeeId: true,
+        month: true,
+        year: true,
+        runSequence: true,
+        status: true,
+        lockedAt: true,
+        employee: { select: { name: true, employeeId: true } },
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+    });
+    return { count: runs.length, runs };
+  }
+
+  // Applies a locked run's loan/encashment effects again. Safe to repeat: afterLock is idempotent per loan and run.
+  async reapplyLockEffects(id: string, actor: Actor, organizationId: string) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
+    assertNotOwnPayroll(actor, run.employeeId, 're-apply the lock effects of');
+    if (
+      run.status !== PayrollRunStatus.LOCKED &&
+      run.status !== PayrollRunStatus.PAID
+    ) {
+      throw new BadRequestException(
+        'Only a locked or paid payroll has lock effects.',
+      );
+    }
+    await this.afterLock(run, organizationId);
+    await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId },
+      data: { lockEffectsAppliedAt: new Date() },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_LOCK_EFFECTS_REAPPLIED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        previouslyApplied: run.lockEffectsAppliedAt !== null,
+      },
+    });
+    return this.scopedPrisma.payrollRun.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+  }
+
   // Discards a supplementary run that has not been approved yet (wrong amount, wrong employee). Approved, locked or
   // paid ones are unlocked/reopened through the normal steps first.
   async removeSupplementary(id: string, actor: Actor, organizationId: string) {
@@ -3055,6 +3119,10 @@ export class PayrollService {
   ): Promise<string | null> {
     try {
       await this.afterLock(run, organizationId);
+      await this.scopedPrisma.payrollRun.updateMany({
+        where: { id: run.id, organizationId },
+        data: { lockEffectsAppliedAt: new Date() },
+      });
       return null;
     } catch (err) {
       await this.scopedPrisma.payrollRun.updateMany({
@@ -3063,6 +3131,7 @@ export class PayrollService {
           status: PayrollRunStatus.APPROVED,
           lockedAt: null,
           lockedById: null,
+          lockEffectsAppliedAt: null,
         },
       });
       return `Locking ${run.month}/${run.year} failed while applying its loan/encashment effects: ${
@@ -3120,6 +3189,7 @@ export class PayrollService {
         approvedById: null,
         lockedAt: null,
         lockedById: null,
+        lockEffectsAppliedAt: null,
         paidAt: null,
         paidById: null,
         // A corrected payslip is a new payslip: allow the e-mail to go out again when it is re-paid.
@@ -3346,6 +3416,21 @@ export class PayrollService {
           status: 'final_settlement',
           reason:
             'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+        });
+        continue;
+      }
+      // Payment must not be released for a lock whose loan/encashment effects were never applied (a crash between the
+      // status change and the effects): repair it first with POST /payroll/:id/reapply-lock-effects.
+      if (
+        config.toStatus === PayrollRunStatus.PAID &&
+        !run.isFinalSettlement &&
+        run.lockEffectsAppliedAt === null
+      ) {
+        skipped.push({
+          id: run.id,
+          status: 'lock_effects_pending',
+          reason:
+            "This payroll was locked but its loan/leave-encashment effects were not applied (the lock was interrupted). Re-apply them with 'Re-apply lock effects' before paying.",
         });
         continue;
       }
