@@ -7,7 +7,7 @@
 // authoritative for what applied at that time even if settings changed since. bankTransferReport's account
 // fields read from personalData.bank* (see that method).
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
-import { Inject, Injectable } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable } from '@nestjs/common';
 import {
   AuditModule,
   PayrollRunStatus,
@@ -198,15 +198,71 @@ export class PayrollReportsService {
       const v = personalDataById.get(employeeId)?.[key];
       return typeof v === 'string' && v.trim() ? v.trim() : '-';
     };
-    const rows = paidRuns.map((r) => ({
-      employeeId: r.employee.employeeId,
-      name: r.employee.name,
-      bankAccountNo: bankField(r.employeeId, 'bankAccountNo'),
-      bankIFSC: bankField(r.employeeId, 'bankIFSC'),
-      bankName: bankField(r.employeeId, 'bankName'),
-      type: runType(r),
-      netPay: r.netPay,
-    }));
+    const MONTH_ABBR = [
+      '',
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    const rows = paidRuns.map((r) => {
+      const bankAccountNo = bankField(r.employeeId, 'bankAccountNo');
+      const bankIFSC = bankField(r.employeeId, 'bankIFSC');
+      return {
+        employeeId: r.employee.employeeId,
+        name: r.employee.name,
+        bankAccountNo,
+        bankIFSC,
+        bankName: bankField(r.employeeId, 'bankName'),
+        type: runType(r),
+        netPay: r.netPay,
+        payslipNumber: r.payslipNumber ?? '-',
+        paymentMode: r.paymentMode ?? '-',
+        paymentReference: r.paymentReference ?? '-',
+        paymentDate: r.paymentDate ?? '-',
+        narration: `Salary ${MONTH_ABBR[r.month]}-${r.year}${r.runSequence > 0 && r.runLabel ? ` ${r.runLabel}` : ''}`,
+        check:
+          bankAccountNo === '-' || bankIFSC === '-'
+            ? 'MISSING BANK DETAILS'
+            : '',
+      };
+    });
+
+    // 'bulk': one beneficiary per row in the shape bank bulk-upload portals take. Payslip number is the reference, so
+    // the bank's statement can be matched back (POST /payroll/payments/import). Bank-specific templates differ in
+    // column order and headers; this is a neutral layout to adapt, not a certified bank format.
+    if (query.layout === 'bulk') {
+      return {
+        title: 'Bank Transfer - Bulk Upload',
+        columns: [
+          { header: 'Beneficiary Name', key: 'name', width: 26 },
+          {
+            header: 'Beneficiary Account Number',
+            key: 'bankAccountNo',
+            width: 24,
+          },
+          { header: 'IFSC', key: 'bankIFSC', width: 14 },
+          { header: 'Amount', key: 'netPay', width: 14 },
+          { header: 'Payment Mode', key: 'mode', width: 14 },
+          { header: 'Narration', key: 'narration', width: 28 },
+          { header: 'Reference (Payslip No)', key: 'payslipNumber', width: 22 },
+          { header: 'Check', key: 'check', width: 22 },
+        ],
+        rows: rows.map((r) => ({
+          ...r,
+          mode: r.paymentMode !== '-' ? r.paymentMode : 'NEFT',
+        })),
+        filename: 'bank_transfer_bulk_upload',
+      };
+    }
 
     const columns: ReportColumn[] = [
       { header: 'Employee ID', key: 'employeeId', width: 14 },
@@ -216,6 +272,10 @@ export class PayrollReportsService {
       { header: 'Bank Name', key: 'bankName', width: 20 },
       { header: 'Type', key: 'type', width: 16 },
       { header: 'Net Pay', key: 'netPay', width: 14 },
+      { header: 'Payslip No', key: 'payslipNumber', width: 16 },
+      { header: 'Payment Mode', key: 'paymentMode', width: 14 },
+      { header: 'Payment Reference', key: 'paymentReference', width: 22 },
+      { header: 'Payment Date', key: 'paymentDate', width: 14 },
     ];
 
     return {
@@ -223,6 +283,107 @@ export class PayrollReportsService {
       columns,
       rows,
       filename: 'bank_transfer_report',
+    };
+  }
+
+  // Accounting journal for one month's signed-off payroll: salary and employer-cost expense against the statutory
+  // liabilities, recoveries and net salary payable. Always balances (gross + employer cost = deductions + employer
+  // liabilities + net pay); the last row says so. Ledger names are fixed defaults here - map them to the books'
+  // chart of accounts on import.
+  async journalReport(
+    query: PayrollReportQueryDto,
+    organizationId: string,
+  ): Promise<ReportPayload> {
+    if (!query.month || !query.year) {
+      throw new BadRequestException('month and year are required.');
+    }
+    const runs = await this.fetchRuns(query, organizationId);
+    const debit = new Map<string, number>();
+    const credit = new Map<string, number>();
+    const add = (m: Map<string, number>, account: string, amount: number) => {
+      if (amount !== 0) m.set(account, (m.get(account) ?? 0) + amount);
+    };
+    const DEDUCTION_LIABILITY: Record<string, string> = {
+      PF: 'Provident Fund Payable',
+      ESI: 'ESI Payable',
+      PT: 'Professional Tax Payable',
+      LWF: 'Labour Welfare Fund Payable',
+      INCOME_TAX: 'TDS on Salary Payable',
+      LOAN_EMI: 'Employee Loans & Advances Recoverable',
+    };
+    const EMPLOYER_LIABILITY: Record<string, string> = {
+      PF_EMPLOYER: 'Provident Fund Payable',
+      EDLI_EMPLOYER: 'Provident Fund Payable',
+      EPF_ADMIN_EMPLOYER: 'Provident Fund Payable',
+      ESI_EMPLOYER: 'ESI Payable',
+      LWF_EMPLOYER: 'Labour Welfare Fund Payable',
+      NPS_EMPLOYER: 'NPS Payable',
+      GRATUITY_ACCRUAL: 'Gratuity Provision',
+      BONUS_ACCRUAL: 'Bonus Provision',
+    };
+    for (const r of runs) {
+      for (const e of linesOf(r.earnings)) {
+        add(debit, `Salaries & Wages - ${e.name ?? e.code}`, e.amount ?? 0);
+      }
+      for (const e of linesOf(r.employerContributions)) {
+        add(
+          debit,
+          `Employer Contribution Expense - ${e.name ?? e.code}`,
+          e.amount ?? 0,
+        );
+        add(
+          credit,
+          EMPLOYER_LIABILITY[e.code] ??
+            `Employer Contribution Payable - ${e.name ?? e.code}`,
+          e.amount ?? 0,
+        );
+      }
+      for (const d of linesOf(r.deductions)) {
+        add(
+          credit,
+          DEDUCTION_LIABILITY[d.code] ??
+            `Other Deductions Payable - ${d.name ?? d.code}`,
+          d.amount ?? 0,
+        );
+      }
+      add(credit, 'Net Salary Payable', r.netPay);
+    }
+    const round2 = (n: number) => Math.round(n * 100) / 100;
+    const narration = `Payroll ${query.month}/${query.year}`;
+    const toRows = (m: Map<string, number>, side: 'debit' | 'credit') =>
+      [...m.entries()]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([account, amount]) => ({
+          account,
+          debit: side === 'debit' ? round2(amount) : '',
+          credit: side === 'credit' ? round2(amount) : '',
+          narration,
+        }));
+    const totalDebit = round2([...debit.values()].reduce((s, v) => s + v, 0));
+    const totalCredit = round2([...credit.values()].reduce((s, v) => s + v, 0));
+    const rows = [
+      ...toRows(debit, 'debit'),
+      ...toRows(credit, 'credit'),
+      {
+        account:
+          Math.abs(totalDebit - totalCredit) < 0.5
+            ? 'TOTAL (balanced)'
+            : 'TOTAL (OUT OF BALANCE)',
+        debit: totalDebit,
+        credit: totalCredit,
+        narration,
+      },
+    ];
+    return {
+      title: `Payroll Journal ${query.month}-${query.year}`,
+      columns: [
+        { header: 'Account', key: 'account', width: 46 },
+        { header: 'Debit', key: 'debit', width: 16 },
+        { header: 'Credit', key: 'credit', width: 16 },
+        { header: 'Narration', key: 'narration', width: 22 },
+      ],
+      rows,
+      filename: `payroll_journal_${query.year}_${query.month}`,
     };
   }
 

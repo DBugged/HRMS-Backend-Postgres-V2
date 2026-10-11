@@ -31,6 +31,7 @@ import { BulkTransitionPayrollDto } from './dto/bulk-transition-payroll.dto';
 import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
 import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
 import { ArrearsPreviewDto, CreateArrearsDto } from './dto/arrears.dto';
+import { ImportPaymentsDto, RecordPaymentDto } from './dto/payment.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -155,6 +156,36 @@ export class PayrollController {
     @CurrentUser() caller: Caller,
   ) {
     return this.payrollService.createSupplementary(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Post('payments/import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  importPayments(
+    @Body() dto: ImportPaymentsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.importPayments(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Patch(':id/payment')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  recordPayment(
+    @Param('id') id: string,
+    @Body() dto: RecordPaymentDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.recordPayment(
+      id,
       dto,
       caller,
       caller.organizationId,

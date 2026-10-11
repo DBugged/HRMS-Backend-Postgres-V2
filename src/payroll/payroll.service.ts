@@ -122,6 +122,7 @@ import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
 import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
 import { ArrearsPreviewDto, CreateArrearsDto } from './dto/arrears.dto';
+import { ImportPaymentsDto, RecordPaymentDto } from './dto/payment.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto, PayrollLineDto } from './dto/adjust-payroll.dto';
 import {
@@ -2290,6 +2291,124 @@ export class PayrollService {
         })),
       },
     );
+  }
+
+  // Records how and when a PAID payslip was actually paid (bank UTR, mode, date). The "Pay" step only says the money was
+  // released; this ties each payslip to the bank's own reference so the payout can be reconciled against the statement.
+  async recordPayment(
+    id: string,
+    dto: RecordPaymentDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotOwnPayroll(actor, run.employeeId, 'record the payment of');
+    if (run.status !== PayrollRunStatus.PAID) {
+      throw new BadRequestException(
+        'Payment details can only be recorded on a payslip that is marked as paid.',
+      );
+    }
+    const paymentDate =
+      dto.paymentDate ?? (await this.orgToday(organizationId));
+    if (paymentDate > (await this.orgToday(organizationId))) {
+      throw new BadRequestException(
+        'The payment date cannot be in the future.',
+      );
+    }
+    await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId, status: PayrollRunStatus.PAID },
+      data: {
+        paymentMode: dto.paymentMode ?? null,
+        paymentReference: dto.paymentReference.trim(),
+        paymentDate,
+      },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_PAYMENT_RECORDED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        paymentMode: dto.paymentMode ?? null,
+        paymentReference: dto.paymentReference.trim(),
+        paymentDate,
+        previousReference: run.paymentReference,
+      },
+    });
+    return this.scopedPrisma.payrollRun.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+  }
+
+  // Bulk version of recordPayment for a bank statement / payout file: rows are matched by payslip number; a row whose
+  // amount differs from the payslip's net pay, or whose payslip is not paid, is reported and skipped.
+  async importPayments(
+    dto: ImportPaymentsDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const today = await this.orgToday(organizationId);
+    const numbers = [...new Set(dto.rows.map((r) => r.payslipNumber.trim()))];
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: { organizationId, payslipNumber: { in: numbers } },
+    });
+    const byNumber = new Map(runs.map((r) => [r.payslipNumber, r]));
+    const updated: string[] = [];
+    const failed: { row: number; payslipNumber: string; error: string }[] = [];
+    for (const [i, row] of dto.rows.entries()) {
+      const payslipNumber = row.payslipNumber.trim();
+      const fail = (error: string) =>
+        failed.push({ row: i + 1, payslipNumber, error });
+      const run = byNumber.get(payslipNumber);
+      if (!run) {
+        fail('No payslip with this number.');
+        continue;
+      }
+      if (run.status !== PayrollRunStatus.PAID) {
+        fail(`The payslip is ${run.status}, not paid.`);
+        continue;
+      }
+      if (run.employeeId === actor.id && actor.role !== Role.ADMIN) {
+        fail('You cannot record the payment of your own payslip.');
+        continue;
+      }
+      if (
+        row.amount !== undefined &&
+        Math.abs(row.amount - run.netPay) > 0.01
+      ) {
+        fail(`Amount ${row.amount} does not match the net pay ${run.netPay}.`);
+        continue;
+      }
+      const paymentDate = row.paymentDate ?? today;
+      if (paymentDate > today) {
+        fail('The payment date cannot be in the future.');
+        continue;
+      }
+      await this.scopedPrisma.payrollRun.updateMany({
+        where: { id: run.id, organizationId, status: PayrollRunStatus.PAID },
+        data: {
+          paymentMode: row.paymentMode ?? null,
+          paymentReference: row.paymentReference.trim(),
+          paymentDate,
+        },
+      });
+      updated.push(run.id);
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_PAYMENTS_IMPORTED',
+      module: 'PAYROLL',
+      organizationId,
+      details: { updated: updated.length, failed: failed.length },
+    });
+    return { updated: updated.length, failed };
   }
 
   // Discards a supplementary run that has not been approved yet (wrong amount, wrong employee). Approved, locked or

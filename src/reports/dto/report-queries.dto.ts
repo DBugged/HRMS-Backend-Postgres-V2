@@ -90,6 +90,13 @@ export class PayrollReportQueryDto extends FormatQueryDto {
   @Min(2000)
   @Max(2100)
   year?: number;
+
+  // Bank transfer file only. 'standard' = the register-style columns; 'bulk' = a beneficiary-per-row layout for a
+  // bank's bulk-upload portal (name, account, IFSC, amount, mode, narration, payslip number as the reference).
+  @ApiPropertyOptional({ enum: ['standard', 'bulk'] })
+  @IsOptional()
+  @IsIn(['standard', 'bulk'])
+  layout?: 'standard' | 'bulk';
 }
 
 export class PayrollAuditReportQueryDto extends FormatQueryDto {

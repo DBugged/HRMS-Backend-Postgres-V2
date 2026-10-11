@@ -2165,6 +2165,11 @@ model PayrollRun {
   // Supplementary arrears runs: [{ month, year, amount }] - the locked/paid months this payment makes good, so the same
   // difference is never paid twice.
   arrearsDetail     Json?
+  // Payment tracking, recorded after the bank transfer: mode (NEFT/RTGS/IMPS/UPI/CHEQUE/CASH/OTHER), the bank UTR or
+  // cheque number and the date the money moved.
+  paymentMode       String?
+  paymentReference  String?
+  paymentDate       String?
 
   // Point-in-time snapshot taken at calculation so a re-issued payslip keeps the designation/department/
   // grade the employee held that month. Nullable: older runs fall back to the live values.

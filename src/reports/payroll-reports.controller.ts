@@ -78,6 +78,22 @@ export class PayrollReportsController {
     });
   }
 
+  @Get('journal')
+  async journal(
+    @Query() query: PayrollReportQueryDto,
+    @CurrentUser() caller: Caller,
+    @Res() res: Response,
+  ) {
+    const report = await this.payrollReportsService.journalReport(
+      query,
+      caller.organizationId,
+    );
+    await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
+      ...report,
+      format: query.format ?? 'xlsx',
+    });
+  }
+
   @Get('income-tax')
   async incomeTax(
     @Query() query: PayrollReportQueryDto,
