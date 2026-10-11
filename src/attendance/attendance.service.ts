@@ -1384,6 +1384,26 @@ export class AttendanceService {
         department: { include: { workLocation: true } },
       },
     });
+    // A location from a fake-location app proves nothing about where the person is, so the punch is refused - and the
+    // attempt is recorded, since it is the only trace HR will have. The device is the only source of this signal (Android
+    // reports it; iOS and browsers do not), so it is a deterrent for honest clients rather than a guarantee.
+    if (dto.mockedLocation === true) {
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'ATTENDANCE_MOCK_LOCATION_BLOCKED',
+        module: 'ATTENDANCE',
+        organizationId,
+        details: {
+          employeeId: actor.id,
+          attendanceDate: dateStrInOrgTz(
+            await this.getOrgTimezone(organizationId),
+          ),
+        },
+      });
+      throw new ForbiddenException(
+        'Your device reports a mock (fake) location, so this punch was not recorded. Turn off any mock-location app and try again.',
+      );
+    }
     const orgTimezone = await this.getOrgTimezone(organizationId);
     const punchTime = new Date();
     const selfShiftConfig = await this.resolveEmployeeShiftConfig(

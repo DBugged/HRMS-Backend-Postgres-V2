@@ -1027,6 +1027,43 @@ describe('Attendance (e2e)', () => {
       ).toBeGreaterThanOrEqual(1);
     });
 
+    it('refuses a punch from a device that reports a mock location, records the attempt, and stores no punch', async () => {
+      const before = await prisma.punch.count({ where: { employeeId } });
+      const res = await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          latitude: OFFICE_LAT,
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+          mockedLocation: true,
+        })
+        .expect(403);
+      expect(JSON.stringify(res.body)).toContain('mock');
+      expect(await prisma.punch.count({ where: { employeeId } })).toBe(before);
+      const audit = await prisma.auditLog.findFirst({
+        where: {
+          organizationId,
+          actorId: employeeId,
+          action: 'ATTENDANCE_MOCK_LOCATION_BLOCKED',
+        },
+      });
+      expect(audit).not.toBeNull();
+    });
+
+    it('mockedLocation false (or absent) punches as before', async () => {
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({
+          latitude: OFFICE_LAT,
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+          mockedLocation: false,
+        })
+        .expect(201);
+    });
+
     it('an employee with no department (no geo-fence assigned) punches unchecked', async () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
