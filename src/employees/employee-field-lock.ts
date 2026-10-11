@@ -22,6 +22,8 @@ const LOCKED_FIELDS_FOR_EMPLOYEE: (keyof UpdateEmployeeDto)[] = [
   'isActive',
   'excludeFromPayroll',
   'lwfExempt',
+  'epsExcluded',
+  'epsExcludedUntil',
   'joiningDate',
   'reportingManagerId',
   'email',

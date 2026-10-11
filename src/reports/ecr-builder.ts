@@ -19,6 +19,8 @@ export interface EcrMemberInput {
   epsContribution: number;
   // Employer's EPF-EPS difference share.
   employerEpfShare: number;
+  // EPS wages when they differ from EPF wages up to the ceiling (a member enrolled in EPS part-way through the month).
+  epsWages?: number;
   ncpDays: number;
   refundOfAdvances?: number;
 }
@@ -98,7 +100,14 @@ export function buildEcr(
     const epf = rupees(m.epfContribution);
     const eps = Math.min(rupees(m.epsContribution), epf);
     // A member with no EPS contribution (past pension age) has no EPS wages either.
-    const epsWages = eps > 0 ? Math.min(epfWages, opts.wageCeiling) : 0;
+    const epsWages =
+      eps > 0
+        ? Math.min(
+            m.epsWages !== undefined ? rupees(m.epsWages) : epfWages,
+            epfWages,
+            opts.wageCeiling,
+          )
+        : 0;
     const diff = epf - eps;
     const ncp = Math.max(0, Math.min(opts.daysInMonth, Math.round(m.ncpDays)));
 

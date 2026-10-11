@@ -63,6 +63,36 @@ export function pfCeilingSegments(
   }));
 }
 
+// The wages the EPS (pension) share is charged on for a month, for a member who is outside EPS up to (and including)
+// `excludedThrough` (YYYY-MM-DD; null = never a member, undefined = a member for the whole month). Each day that counts
+// carries min(pfWages, that day's ceiling) / days in the month - the same day-weighting as blendedPfCeiling, so an
+// existing member gets the same figure and a member enrolled from 17-Sep gets only the 14 days from that date.
+export function epsWagesForMonth(
+  pfWages: number,
+  segments: PfCeilingSegment[],
+  month: number,
+  year: number,
+  excludedThrough: string | null | undefined,
+  fallbackCeiling: number,
+): number {
+  const total = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const perDay: number[] = [];
+  for (const seg of segments) {
+    for (let i = 0; i < seg.days; i += 1) perDay.push(seg.wageCeiling);
+  }
+  let sum = 0;
+  for (let day = 1; day <= total; day += 1) {
+    const date = ymd(year, month, day);
+    const inEps =
+      excludedThrough === undefined ||
+      (excludedThrough !== null && date > excludedThrough);
+    if (!inEps) continue;
+    const ceiling = perDay[day - 1] ?? fallbackCeiling;
+    sum += Math.min(pfWages, ceiling) / total;
+  }
+  return Math.round(sum);
+}
+
 // The employee's effective ceiling and EDLI cap for the month. Null when there is nothing to blend (one segment).
 export function blendedPfCeiling(
   pfWages: number,

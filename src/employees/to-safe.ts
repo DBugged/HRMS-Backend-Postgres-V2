@@ -21,6 +21,8 @@ const MASKED_INTERNAL_FIELDS = [
   'emailVerified',
   'excludeFromPayroll',
   'lwfExempt',
+  'epsExcluded',
+  'epsExcludedUntil',
   'notificationPreferences',
 ] as const;
 

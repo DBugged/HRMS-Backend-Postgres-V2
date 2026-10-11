@@ -72,7 +72,11 @@ import {
   type EffectiveConfigsByModule,
   type OverlaidSettings,
 } from './statutory-overlay';
-import { blendedPfCeiling, pfCeilingSegments } from './pf-ceiling-split';
+import {
+  blendedPfCeiling,
+  epsWagesForMonth,
+  pfCeilingSegments,
+} from './pf-ceiling-split';
 import {
   cycleKeyOf,
   describeVariablePay,
@@ -298,7 +302,7 @@ export interface CalculatedPayroll {
     name: string;
     amount: number;
     // Employer PF only: how the amount splits between EPS (pension) and EPF, for ECR filing.
-    breakup?: { eps: number; epf: number };
+    breakup?: { eps: number; epf: number; epsWages?: number };
     // The statutory wage base this contribution was calculated on (PF: capped at the ceiling; ESI: gross) — kept
     // on the run so statutory returns (ECR / ESIC) reproduce it without re-deriving it later.
     wages?: number;
@@ -1251,6 +1255,33 @@ export class PayrollService {
           rebate87ALimit: taxSlabConfig.rebate87ALimit,
           rebate87AAmount: taxSlabConfig.rebate87AAmount,
         },
+        // Employer NPS / PF for the span of the year the income base covers (from the regular, un-prorated structure,
+        // like Basic and HRA above). Zero when the employee has no such line in payroll.
+        employerNpsAnnual: applicable.some((c) => c.code === 'NPS_EMPLOYER')
+          ? Math.round(
+              ((basicMonthly +
+                roundAmount(
+                  recurringResults?.find((e) => e.code === 'DA')?.amount ??
+                    earningsLines.find((e) => e.code === 'DA')?.amount ??
+                    0,
+                )) *
+                employmentMonths *
+                settings.npsEmployerRate) /
+                100,
+            )
+          : 0,
+        employerPfAnnual: applicable.some(
+          (c) => c.code === SALARY_COMPONENT_CODES.PF_EMPLOYER,
+        )
+          ? Math.round(
+              (Math.min(
+                afterEarnings.PF_WAGES ?? 0,
+                afterEarnings.PF_WAGE_CEILING ?? settings.pfWageCeiling,
+              ) *
+                settings.pfEmployerRate) /
+                100,
+            ) * employmentMonths
+          : 0,
         financialYearStartMonth: settings.financialYearStartMonth,
       });
       // No TDS withheld for a month with zero actual taxable gross (e.g. a
@@ -1410,6 +1441,20 @@ export class PayrollService {
         ...(e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER
           ? {
               breakup: splitEmployerPf(e.amount, afterEarnings, pfSettings, {
+                // A member outside EPS (or only enrolled part-way through the month) is charged EPS on the days they
+                // belong to it, day-weighted at each day's wage ceiling.
+                ...(employee.epsExcluded
+                  ? {
+                      epsWages: epsWagesForMonth(
+                        afterEarnings.PF_WAGES ?? 0,
+                        pfSegments,
+                        month,
+                        year,
+                        employee.epsExcludedUntil ?? null,
+                        settings.pfWageCeiling,
+                      ),
+                    }
+                  : {}),
                 epsEligible: !(
                   (ageOnDate(
                     (employee.personalData as Record<string, unknown> | null)

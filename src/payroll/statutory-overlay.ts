@@ -1,4 +1,5 @@
 import { PayrollSettings, StatutoryModule } from '@prisma/client';
+import { effectiveBonusCeiling } from './statutory-bonus';
 
 /**
  * Overlays the Statutory Compliance Center's effective-for-this-period
@@ -243,12 +244,16 @@ export function applyStatutoryOverrides(
       rate?: number;
       eligibilityCeiling?: number;
       calculationCeiling?: number;
+      minimumWage?: number;
     };
     resolved.bonusRate = c.rate ?? resolved.bonusRate;
     resolved.bonusEligibilityCeiling =
       c.eligibilityCeiling ?? resolved.bonusEligibilityCeiling;
-    resolved.bonusCalcCeiling =
-      c.calculationCeiling ?? resolved.bonusCalcCeiling;
+    // The base is the higher of ₹7,000 and the applicable minimum wage, never the configured ceiling alone.
+    resolved.bonusCalcCeiling = effectiveBonusCeiling(
+      c.calculationCeiling ?? resolved.bonusCalcCeiling,
+      c.minimumWage,
+    );
     resolved.bonusEnabled = bonus.isEnabled;
   }
 

@@ -170,15 +170,22 @@ export function splitEmployerPf(
   employerPfAmount: number,
   context: Record<string, number>,
   settings: OverlaidSettings,
-  opts: { epsEligible?: boolean } = {},
-): { eps: number; epf: number } {
+  // epsWages: the wages the EPS share is charged on when that is not simply the PF wages up to the ceiling - a member
+  // outside EPS for part of the month (see epsWagesForMonth). Returned so the ECR reports the same figure.
+  opts: { epsEligible?: boolean; epsWages?: number } = {},
+): { eps: number; epf: number; epsWages?: number } {
   if (opts.epsEligible === false) return { eps: 0, epf: employerPfAmount };
-  const wages = Math.min(context.PF_WAGES ?? 0, settings.pfWageCeiling);
+  const wages =
+    opts.epsWages ?? Math.min(context.PF_WAGES ?? 0, settings.pfWageCeiling);
   const eps = Math.min(
     employerPfAmount,
     Math.round((wages * settings.pfEpsRate) / 100),
   );
-  return { eps, epf: employerPfAmount - eps };
+  return {
+    eps,
+    epf: employerPfAmount - eps,
+    ...(opts.epsWages !== undefined ? { epsWages: opts.epsWages } : {}),
+  };
 }
 
 // Age in whole years on `dateStr` (YYYY-MM-DD) for a YYYY-MM-DD date of birth; null when the DOB is unknown.

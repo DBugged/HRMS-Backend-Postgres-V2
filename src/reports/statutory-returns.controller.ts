@@ -16,7 +16,15 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 import { ExportAuditInterceptor } from '../common/sensitive-audit';
 import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -51,6 +59,14 @@ export class ReturnQueryDto {
   @IsOptional()
   @IsIn(['xlsx', 'csv', 'pdf'])
   format?: ReportFormat;
+}
+
+export class BonusQueryDto {
+  // Financial year as YYYY-YY, e.g. 2026-27.
+  @Matches(/^\d{4}-\d{2}$/, {
+    message: 'financialYear must look like 2026-27.',
+  })
+  financialYear!: string;
 }
 
 @ApiTags('reports')
@@ -156,6 +172,12 @@ export class StatutoryReturnsController {
       ...report,
       format: q.format ?? 'xlsx',
     });
+  }
+
+  // Annual statutory bonus payable for a financial year (HR/Admin).
+  @Get('statutory-bonus')
+  statutoryBonus(@Query() q: BonusQueryDto, @CurrentUser() c: Caller) {
+    return this.service.statutoryBonus(q.financialYear, c.organizationId);
   }
 
   @Get('lwf-return/preview')

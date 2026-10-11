@@ -6,7 +6,15 @@
 // Important: the wages and contributions are the ones payroll stored on each run; nothing is recomputed here.
 import { Inject, Injectable } from '@nestjs/common';
 import ExcelJS from 'exceljs';
-import { PayrollRunStatus, SettlementStatus } from '@prisma/client';
+import {
+  PayrollRunStatus,
+  SettlementStatus,
+  StatutoryModule,
+} from '@prisma/client';
+import {
+  computeStatutoryBonus,
+  type BonusMonthInput,
+} from '../payroll/statutory-bonus';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
@@ -289,6 +297,103 @@ export class StatutoryReturnsService {
       monthLabel: `${MONTH_NAMES[month]} ${year}`,
       members,
       ...buildPtReturn(members, month, year),
+    };
+  }
+
+  // ── Statutory bonus (annual) ────────────────────────────────────────────
+
+  // The annual statutory bonus for every employee with signed-off payroll in a financial year, on the bonus module's
+  // configuration in force at the year's end: rate, eligibility ceiling and the calculation base (higher of ₹7,000 and
+  // the applicable minimum wage). This is the amount to pay; paying it is a separate supplementary run.
+  async statutoryBonus(financialYear: string, organizationId: string) {
+    const startYear = Number(financialYear.slice(0, 4));
+    const yearEnd = `${startYear + 1}-03-31`;
+    const version = await this.scopedPrisma.statutoryConfigVersion.findFirst({
+      where: {
+        organizationId,
+        module: StatutoryModule.BONUS,
+        effectiveFrom: { lte: yearEnd },
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: yearEnd } }],
+      },
+      orderBy: { effectiveFrom: 'desc' },
+    });
+    const c = (version?.config ?? {}) as {
+      rate?: number;
+      eligibilityCeiling?: number;
+      calculationCeiling?: number;
+      minimumWage?: number;
+    };
+    const config = {
+      rate: c.rate ?? 8.33,
+      eligibilityCeiling: c.eligibilityCeiling ?? 21000,
+      calculationCeiling: c.calculationCeiling ?? 7000,
+      minimumWage: c.minimumWage,
+    };
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        financialYear,
+        runSequence: 0,
+        status: { in: PAID_OUT },
+      },
+      select: {
+        employeeId: true,
+        month: true,
+        year: true,
+        earnings: true,
+        attendanceSummary: true,
+      },
+    });
+    const byEmployee = new Map<string, BonusMonthInput[]>();
+    for (const r of runs) {
+      const att = (r.attendanceSummary ?? {}) as {
+        payableDays?: number;
+        totalDaysInMonth?: number;
+      };
+      const basicDa = linesOf(r.earnings)
+        .filter((l) => l.code === 'BASIC' || l.code === 'DA')
+        .reduce((sum, l) => sum + (l.amount || 0), 0);
+      const list = byEmployee.get(r.employeeId) ?? [];
+      list.push({
+        month: r.month,
+        year: r.year,
+        basicDaEarned: basicDa,
+        payableDays: att.payableDays ?? 0,
+        totalDays:
+          att.totalDaysInMonth ??
+          new Date(Date.UTC(r.year, r.month, 0)).getUTCDate(),
+      });
+      byEmployee.set(r.employeeId, list);
+    }
+    const users = await this.scopedPrisma.user.findMany({
+      where: { organizationId, id: { in: [...byEmployee.keys()] } },
+      select: { id: true, name: true, employeeId: true },
+    });
+    const userById = new Map(users.map((u) => [u.id, u]));
+    const rows = [...byEmployee.entries()]
+      .map(([employeeId, months]) => {
+        const u = userById.get(employeeId);
+        return {
+          employeeId,
+          employeeCode: u?.employeeId ?? '',
+          name: u?.name ?? '',
+          ...computeStatutoryBonus(months, config),
+        };
+      })
+      .sort((a, b) => a.employeeCode.localeCompare(b.employeeCode));
+    return {
+      financialYear,
+      config: {
+        ...config,
+        // Without it the base falls back to ₹7,000, which is below the applicable minimum wage in most states.
+        minimumWageMissing: config.minimumWage === undefined,
+      },
+      rows,
+      totals: {
+        employees: rows.length,
+        eligible: rows.filter((r) => r.eligible).length,
+        bonus: rows.reduce((s, r) => s + r.bonus, 0),
+      },
     };
   }
 

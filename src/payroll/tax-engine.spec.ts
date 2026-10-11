@@ -825,3 +825,69 @@ describe('employer NPS deduction limit (80CCD(2))', () => {
     expect(run().deductions.section80CCD2).toBe(84000);
   });
 });
+
+describe('employer NPS from payroll is salary, then deducted (audit F-04)', () => {
+  const base = {
+    month: 4,
+    year: 2026,
+    currentMonthGross: 100000,
+    recurringMonthlyGross: 100000,
+    basicAnnual: 600000,
+    basicPlusDaAnnual: 600000,
+    taxSlabConfig: {
+      ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+      regime: TaxRegime.NEW,
+    },
+  };
+
+  it('adds the contribution to income and deducts it within the cap, so tax is unchanged', () => {
+    const without = calculateTax({ ...base, declaration: null });
+    // 10% of Basic + DA (60,000) is inside the 14% new-regime cap (84,000): income +60,000, deduction 60,000.
+    const withNps = calculateTax({
+      ...base,
+      declaration: null,
+      employerNpsAnnual: 60000,
+    });
+    expect(withNps.grossAnnualIncome).toBe(without.grossAnnualIncome + 60000);
+    expect(withNps.deductions.section80CCD2).toBe(60000);
+    expect(withNps.taxableIncome).toBe(without.taxableIncome);
+    expect(withNps.totalAnnualTax).toBe(without.totalAnnualTax);
+  });
+
+  it('a declared 80CCD(2) no longer shelters other income when payroll has the NPS line', () => {
+    const withNps = calculateTax({
+      ...base,
+      declaration: { section80CCD2: 500000 },
+      employerNpsAnnual: 60000,
+    });
+    expect(withNps.deductions.section80CCD2).toBe(60000);
+    const without = calculateTax({ ...base, declaration: null });
+    expect(withNps.taxableIncome).toBe(without.taxableIncome);
+  });
+
+  it('taxes the part of the contribution above the cap', () => {
+    // 20% contributed against a 14% cap: 120,000 in income, 84,000 deducted.
+    const r = calculateTax({
+      ...base,
+      declaration: null,
+      employerNpsAnnual: 120000,
+    });
+    const without = calculateTax({ ...base, declaration: null });
+    expect(r.deductions.section80CCD2).toBe(84000);
+    expect(r.taxableIncome - without.taxableIncome).toBe(36000);
+  });
+
+  it('taxes employer PF + NPS above 7,50,000 a year as a perquisite', () => {
+    const without = calculateTax({ ...base, declaration: null });
+    const r = calculateTax({
+      ...base,
+      declaration: null,
+      employerPfAnnual: 600000,
+      employerNpsAnnual: 200000,
+    });
+    expect(r.employerFundPerquisite).toBe(50000);
+    expect(r.grossAnnualIncome).toBe(
+      without.grossAnnualIncome + 200000 + 50000,
+    );
+  });
+});

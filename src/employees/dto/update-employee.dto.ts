@@ -182,6 +182,21 @@ export class UpdateEmployeeDto {
   @IsBoolean()
   lwfExempt?: boolean;
 
+  // Outside EPS (the pension scheme) - see the User.epsExcluded schema comment. HR/Admin only, via the field lock.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  epsExcluded?: boolean;
+
+  // Last day outside EPS, YYYY-MM-DD; empty/null = excluded with no end date. Only meaningful with epsExcluded.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null && v !== '')
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'epsExcludedUntil must be a date in YYYY-MM-DD format.',
+  })
+  epsExcludedUntil?: string | null;
+
   // Durable relativeKey from POST /files/upload/profile-photos — never a
   // signed URL (see file-token.ts). Self-editable, not in the HR-only
   // locked-fields list.

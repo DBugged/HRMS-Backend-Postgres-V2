@@ -13,7 +13,7 @@ interface Line {
   code: string;
   amount: number;
   wages?: number;
-  breakup?: { eps: number; epf: number };
+  breakup?: { eps: number; epf: number; epsWages?: number };
 }
 
 const PAID_OUT: PayrollRunStatus[] = [
@@ -105,6 +105,9 @@ export class EcrService {
       cur.epfWages += employerLine?.wages ?? Math.round(employeePf / 0.12);
       cur.epfContribution += employeePf;
       cur.epsContribution += employerLine?.breakup?.eps ?? 0;
+      // A member enrolled in EPS part-way through the month has EPS wages for those days only.
+      if (employerLine?.breakup?.epsWages !== undefined)
+        cur.epsWages = (cur.epsWages ?? 0) + employerLine.breakup.epsWages;
       cur.employerEpfShare += employerLine?.breakup?.epf ?? 0;
       cur.ncpDays += (att.lopDays ?? 0) + (att.unpaidLeaveDays ?? 0);
       merged.set(r.employeeId, cur);

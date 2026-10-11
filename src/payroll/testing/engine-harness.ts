@@ -209,6 +209,8 @@ export function makeWorld(over: Partial<World> = {}): World {
       workLocationId: null,
       gender: null,
       lwfExempt: false,
+      epsExcluded: false,
+      epsExcludedUntil: null,
       personalData: {},
       isActive: true,
     },

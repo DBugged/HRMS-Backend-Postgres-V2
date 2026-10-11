@@ -202,20 +202,26 @@ function validateGratuity(config: unknown): void {
 
 // Payment of Bonus Act (now Chapter VIII of the Code on Wages): bonus is 8.33%-20% of the wage base, only for
 // employees whose Basic + DA is within the eligibility ceiling, and the base itself is capped at a calculation
-// ceiling — higher of ₹7,000 or the applicable minimum wage, which the admin sets. All three are optional so an
-// org that only ever switched the module on keeps working.
+// ceiling — higher of ₹7,000 or the applicable minimum wage. `minimumWage` is that minimum wage (per month, for the
+// organisation's scheduled employment, zone and skill level); payroll uses max(7,000, calculationCeiling, minimumWage).
+// All are optional so an org that only ever switched the module on keeps working.
 function validateBonus(config: unknown): void {
   const c = config as {
     rate?: unknown;
     eligibilityCeiling?: unknown;
     calculationCeiling?: unknown;
+    minimumWage?: unknown;
   };
   if (
     c.rate !== undefined &&
     !(isFiniteNumber(c.rate) && c.rate >= 8.33 && c.rate <= 20)
   )
     throw new Error('rate must be between 8.33 and 20 (Payment of Bonus Act).');
-  for (const key of ['eligibilityCeiling', 'calculationCeiling'] as const) {
+  for (const key of [
+    'eligibilityCeiling',
+    'calculationCeiling',
+    'minimumWage',
+  ] as const) {
     if (c[key] !== undefined && !isNonNegative(c[key]))
       throw new Error(`${key} must be a non-negative number.`);
   }

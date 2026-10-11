@@ -118,4 +118,27 @@ describe('ecr-builder', () => {
     ]);
     expect(r.issues).toEqual([]);
   });
+
+  it('reports EPS wages for the days a member belonged to EPS, not the full EPF wages', () => {
+    // Enrolled in EPS from 17-Sep-2026: EPF wages 17,333, EPS wages 9,333 (14 days), EPS 8.33% = 777.
+    const r = buildEcr(
+      [
+        {
+          ...base,
+          grossWages: 20000,
+          epfWages: 17333,
+          epfContribution: 2080,
+          epsWages: 9333,
+          epsContribution: 777,
+          employerEpfShare: 1303,
+        },
+      ],
+      { ...opts, wageCeiling: 25000 },
+    );
+    const f = r.lines[0].split(ECR_SEPARATOR);
+    expect(f.slice(3, 6)).toEqual(['17333', '9333', '17333']);
+    expect(r.issues.some((i) => /EPS contribution/.test(i.message))).toBe(
+      false,
+    );
+  });
 });

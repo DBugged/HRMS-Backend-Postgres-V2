@@ -175,7 +175,17 @@ export interface CalculateTaxInput {
   // Professional tax deducted from salary for the whole year (paid so far + this month + projected). Deductible from
   // salary income under section 16(iii) in the OLD regime only; the new regime allows no such deduction.
   professionalTaxAnnual?: number;
+  // Employer's NPS contribution for the year, from payroll. It is part of the employee's salary income and is then
+  // deducted (up to 10% / 14% of Basic + DA) - so it must be added to income before the deduction is taken. Before,
+  // the deduction was taken against income that never included the contribution, under-deducting TDS.
+  employerNpsAnnual?: number;
+  // Employer's PF contribution for the year. Together with the NPS contribution, anything above 7,50,000 a year is a
+  // taxable perquisite (employer contributions to PF / NPS / superannuation are exempt only up to that aggregate).
+  employerPfAnnual?: number;
 }
+
+// Aggregate yearly limit for employer contributions to PF, NPS and superannuation; the excess is taxable.
+export const EMPLOYER_FUND_PERQUISITE_LIMIT = 750000;
 
 // Basic-exemption limit of the old regime for an age (senior / super-senior citizen).
 export function oldRegimeExemptionLimit(age?: number | null): number {
@@ -206,6 +216,10 @@ export interface TaxDetails {
   rebate: number;
   surcharge: number;
   cess: number;
+  // Employer NPS contribution counted in income (and deducted under 80CCD(2) up to its cap), and the part of the
+  // employer PF + NPS contributions above 7,50,000 a year that is taxed as a perquisite.
+  employerNps: number;
+  employerFundPerquisite: number;
   // Section 89 relief applied (already deducted from totalAnnualTax).
   relief89: number;
   totalAnnualTax: number;
@@ -236,6 +250,8 @@ export function calculateTax({
   employmentMonthsInFY = 12,
   ageAtFYEnd = null,
   professionalTaxAnnual = 0,
+  employerNpsAnnual = 0,
+  employerPfAnnual = 0,
 }: CalculateTaxInput): TaxDetails {
   if (!taxSlabConfig) {
     throw new Error(
@@ -264,15 +280,34 @@ export function calculateTax({
   const previousEmployerTDS = declaration?.previousEmployerTDS || 0;
   const otherIncome = declaration?.otherIncome || 0;
 
+  // Employer NPS is salary: payroll's own figure (a contribution held outside the employee's gross pay) is added to
+  // income and then deducted within the 80CCD(2) cap, so only the part above the cap is taxed. When payroll has no NPS
+  // line, the employee's declared figure is the only source and is treated as already inside their gross pay (the old
+  // behaviour): it is deducted within the cap but not added again.
+  const employerNps = Math.max(0, employerNpsAnnual);
+  const employerFundPerquisite = Math.max(
+    0,
+    employerNps + Math.max(0, employerPfAnnual) - EMPLOYER_FUND_PERQUISITE_LIMIT,
+  );
+
   const grossAnnualIncome =
-    ytdGross + projectedRemainingGross + previousEmployerIncome + otherIncome;
+    ytdGross +
+    projectedRemainingGross +
+    previousEmployerIncome +
+    otherIncome +
+    employerNps +
+    employerFundPerquisite;
 
   // The standard deduction is a deduction from salary: it can't exceed the salary actually earned this year (this
   // employer's salary plus the previous employer's), so a part-year joiner or a near-zero salary doesn't shelter
   // other income with a full standard deduction.
   const salaryIncome = Math.max(
     0,
-    ytdGross + projectedRemainingGross + previousEmployerIncome,
+    ytdGross +
+      projectedRemainingGross +
+      previousEmployerIncome +
+      employerNps +
+      employerFundPerquisite,
   );
   const exemptions = { hra: 0, lta: 0 };
   const deductions = {
@@ -346,7 +381,7 @@ export function calculateTax({
       (basicPlusDaAnnual ?? basicAnnual),
   );
   deductions.section80CCD2 = Math.min(
-    declaration?.section80CCD2 || 0,
+    employerNps > 0 ? employerNps : declaration?.section80CCD2 || 0,
     section80CCD2Cap,
   );
 
@@ -457,6 +492,8 @@ export function calculateTax({
     rebate: Math.round(rebate),
     surcharge: Math.round(surcharge),
     cess: Math.round(cess),
+    employerNps: Math.round(employerNps),
+    employerFundPerquisite: Math.round(employerFundPerquisite),
     relief89,
     totalAnnualTax,
     ytdTDS,
