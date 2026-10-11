@@ -163,6 +163,9 @@ interface PayslipRun {
   designation?: string | null;
   departmentName?: string | null;
   gradeLevel?: string | null;
+  // Supplementary (off-cycle) run: 1, 2, ... and its label; 0 / absent for the regular run.
+  runSequence?: number;
+  runLabel?: string | null;
   netPay: number;
   netPayInWords: string;
   grossSalary: number;
@@ -591,11 +594,16 @@ export class PayslipPdfService {
       }
 
       doc.font(fonts.bold).fontSize(18).fillColor('#FFFFFF');
-      text('PAYSLIP', PAGE_W - MARGIN - 220, 16, {
-        width: 220,
-        align: 'right',
-      });
-      const periodLabel = `${MONTHS[run.month]} ${run.year}`;
+      text(
+        (run.runSequence ?? 0) > 0 ? 'SUPPLEMENTARY PAYSLIP' : 'PAYSLIP',
+        PAGE_W - MARGIN - 220,
+        16,
+        {
+          width: 220,
+          align: 'right',
+        },
+      );
+      const periodLabel = `${MONTHS[run.month]} ${run.year}${run.runLabel ? ` - ${run.runLabel}` : ''}`;
       doc.font(fonts.regular).fontSize(8.5).fillColor('#FFFFFF');
       text(periodLabel, PAGE_W - MARGIN - 220, 38, {
         width: 220,

@@ -74,12 +74,22 @@ function build(employees: Row[], runs: Row[] = [], extraPrisma: Row = {}) {
       },
       createMany: async (a: Row) => {
         a.data.forEach((d: Row) =>
-          store.push({ id: `run${++seq}`, isFinalSettlement: false, ...d }),
+          store.push({
+            id: `run${++seq}`,
+            isFinalSettlement: false,
+            runSequence: 0,
+            ...d,
+          }),
         );
         return { count: a.data.length };
       },
       create: async (a: Row) => {
-        const row = { id: `run${++seq}`, isFinalSettlement: false, ...a.data };
+        const row = {
+          id: `run${++seq}`,
+          isFinalSettlement: false,
+          runSequence: 0,
+          ...a.data,
+        };
         store.push(row);
         return row;
       },
@@ -268,6 +278,7 @@ describe('payroll calculate', () => {
       month: 9,
       year: 2026,
       isFinalSettlement: false,
+      runSequence: 0,
       grossSalary: 1,
     };
     const { service, store } = build(
@@ -350,6 +361,7 @@ describe('payroll calculate', () => {
           year: 2026,
           status: 'DRAFT',
           isFinalSettlement: false,
+          runSequence: 0,
         },
       ],
     );
@@ -413,6 +425,7 @@ describe('payroll manual adjustment', () => {
     year: 2026,
     status: 'CALCULATED',
     isFinalSettlement: false,
+    runSequence: 0,
     earnings: [{ code: 'BASIC', name: 'Basic', amount: 42000, taxable: true }],
     deductions: [{ code: 'PF', name: 'PF', amount: 1800 }],
     totalEmployerContributions: 1800,

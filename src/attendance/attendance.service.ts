@@ -286,6 +286,7 @@ async function assertPayrollPeriodUnlocked(
       month,
       year,
       isFinalSettlement: false,
+      runSequence: 0,
       status: { in: [PayrollRunStatus.VERIFIED, PayrollRunStatus.APPROVED] },
     },
     data: { status: PayrollRunStatus.CALCULATED },

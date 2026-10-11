@@ -5,6 +5,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -28,6 +29,7 @@ import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto } from './dto/adjust-payroll.dto';
 import { BulkTransitionPayrollDto } from './dto/bulk-transition-payroll.dto';
 import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
+import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -141,6 +143,32 @@ export class PayrollController {
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
   calculate(@Body() dto: CalculatePayrollDto, @CurrentUser() caller: Caller) {
     return this.payrollService.calculate(dto, caller, caller.organizationId);
+  }
+
+  @Post('supplementary')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  createSupplementary(
+    @Body() dto: CreateSupplementaryPayrollDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.createSupplementary(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Delete('supplementary/:id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  removeSupplementary(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.payrollService.removeSupplementary(
+      id,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Patch(':id')

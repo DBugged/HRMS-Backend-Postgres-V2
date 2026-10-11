@@ -195,7 +195,12 @@ const payrollSource: CustomReportSource<
     year: { header: 'Year', get: (r) => r.year },
     type: {
       header: 'Type',
-      get: (r) => (r.isFinalSettlement ? 'Final Settlement' : 'Regular'),
+      get: (r) =>
+        r.isFinalSettlement
+          ? 'Final Settlement'
+          : r.runSequence > 0
+            ? 'Supplementary'
+            : 'Regular',
     },
     grossSalary: { header: 'Gross Salary', get: (r) => r.grossSalary },
     netPay: { header: 'Net Pay', get: (r) => r.netPay },

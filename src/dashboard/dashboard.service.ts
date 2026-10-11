@@ -222,6 +222,7 @@ export class DashboardService {
           month: currentMonth,
           year: currentYear,
           isFinalSettlement: false,
+          runSequence: 0,
           status: {
             in: [
               PayrollRunStatus.CALCULATED,
@@ -240,6 +241,7 @@ export class DashboardService {
           year: currentYear,
           status: { not: PayrollRunStatus.DRAFT },
           isFinalSettlement: false,
+          runSequence: 0,
         },
       }),
       this.scopedPrisma.payrollRun.findMany({
@@ -247,6 +249,7 @@ export class DashboardService {
           organizationId,
           status: PayrollRunStatus.DRAFT,
           isFinalSettlement: false,
+          runSequence: 0,
         },
         orderBy: [{ year: 'asc' }, { month: 'asc' }],
       }),

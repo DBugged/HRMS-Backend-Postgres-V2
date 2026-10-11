@@ -392,6 +392,7 @@ export class EmployeeSalaryComponentsService {
         organizationId,
         employeeId,
         isFinalSettlement: false,
+        runSequence: 0,
         status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
         OR: [
           { year: { gt: fromYear } },

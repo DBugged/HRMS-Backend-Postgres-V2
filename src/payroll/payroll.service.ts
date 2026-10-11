@@ -120,6 +120,7 @@ import {
 import { amountInWords } from './number-to-words';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
+import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto, PayrollLineDto } from './dto/adjust-payroll.dto';
 import {
@@ -195,6 +196,19 @@ function assertNotFinalSettlementRun(run: {
   if (run.isFinalSettlement) {
     throw new BadRequestException(
       'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+    );
+  }
+}
+
+// A supplementary run's figures are fixed when it is created (its tax was worked out against that month's position);
+// to change one, delete it and create it again.
+function assertNotSupplementaryRun(
+  run: { runSequence: number },
+  what: string,
+): void {
+  if (run.runSequence > 0) {
+    throw new BadRequestException(
+      `A supplementary payroll cannot be ${what}. Delete it and create a new one instead.`,
     );
   }
 }
@@ -440,6 +454,7 @@ export class PayrollService {
         organizationId,
         employeeId,
         isFinalSettlement: false,
+        runSequence: 0,
         status: { not: PayrollRunStatus.DRAFT },
         OR: earlier,
       },
@@ -477,6 +492,9 @@ export class PayrollService {
         // The LWD month was already paid (and taxed) by a locked regular run — only the extras are taxed now.
         monthAlreadyPaid: boolean;
       };
+      // Supplementary run tax probe: adds this much taxable pay to the month's income, so the difference in annual tax
+      // against a run without it is the tax the supplementary payment itself causes. Nothing else changes.
+      supplementary?: { extraTaxable: number };
     },
   ): Promise<CalculatedPayroll> {
     const employee = await this.scopedPrisma.user.findFirst({
@@ -1157,7 +1175,7 @@ export class PayrollService {
         year,
         currentMonthGross: fs
           ? (fs.monthAlreadyPaid ? 0 : taxableForTax) + fs.extraTaxableEarnings
-          : taxableForTax,
+          : taxableForTax + (options?.supplementary?.extraTaxable ?? 0),
         finalMonth: !!fs,
         refundExcess: !!fs && settingsRow.refundExcessTdsOnExit,
         employmentMonthsInFY: employmentMonths,
@@ -1488,6 +1506,7 @@ export class PayrollService {
         month: dto.month,
         year: dto.year,
         isFinalSettlement: false,
+        runSequence: 0,
       },
     });
     const existingByEmployeeId = new Map(
@@ -1514,6 +1533,7 @@ export class PayrollService {
               month: dto.month,
               year: dto.year,
               isFinalSettlement: false,
+              runSequence: 0,
             },
           })
         : existing;
@@ -1571,6 +1591,7 @@ export class PayrollService {
         month: dto.month,
         year: dto.year,
         isFinalSettlement: false,
+        runSequence: 0,
       },
     });
     const existingRunByEmployeeId = new Map(
@@ -1769,6 +1790,7 @@ export class PayrollService {
                   month: dto.month,
                   year: dto.year,
                   isFinalSettlement: false,
+                  runSequence: 0,
                 },
               });
               if (!winner) throw createErr;
@@ -1850,6 +1872,267 @@ export class PayrollService {
       skipped,
       warnings,
     };
+  }
+
+  // Off-cycle payment for an employee and month: a bonus, incentive, arrears or correction that is not part of the
+  // regular run. The earnings are exactly what HR enters (no attendance proration, no PF/ESI/PT/LWF - the regular run
+  // already covered those on wages); the only deduction is the income tax the payment itself causes. It then goes
+  // through the same verify / approve / lock / pay steps as any run.
+  //
+  // TDS = annual tax with the payment minus annual tax without it, both worked out by the regular engine from the
+  // employee's declaration, year-to-date and structure, and withheld in full now (never under-deducts; later months
+  // see it in their year-to-date and withhold correspondingly less).
+  async createSupplementary(
+    dto: CreateSupplementaryPayrollDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const today = await this.orgToday(organizationId);
+    this.assertMonthStarted(dto.month, dto.year, today);
+    assertNotOwnPayroll(
+      actor,
+      dto.employeeId,
+      'create a supplementary payroll for',
+    );
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId, isActive: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    const notOnPayroll = notOnPayrollReason(
+      employee.joiningDate,
+      dto.month,
+      dto.year,
+      today,
+    );
+    if (notOnPayroll) throw new BadRequestException(notOnPayroll);
+
+    const settingsRow =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const roundAmount = (n: number) =>
+      round(n, settingsRow.roundingRule, settingsRow.roundingDecimals);
+
+    const codes = [
+      ...new Set(
+        dto.earnings
+          .map((l) => l.componentCode)
+          .filter((c): c is string => !!c),
+      ),
+    ];
+    const components = codes.length
+      ? await this.scopedPrisma.salaryComponent.findMany({
+          where: {
+            organizationId,
+            isActive: true,
+            code: { in: codes },
+            type: SalaryComponentType.EARNING,
+            isEmployerContribution: false,
+          },
+        })
+      : [];
+    const known = new Map(components.map((c) => [c.code, c]));
+    const unknown = codes.filter((c) => !known.has(c));
+    if (unknown.length > 0) {
+      throw new BadRequestException(
+        `Unknown earning component: ${unknown.join(', ')}.`,
+      );
+    }
+
+    const earnings = dto.earnings.map((l) => ({
+      code: l.componentCode ?? 'SUPPLEMENTARY',
+      name: l.name.trim(),
+      amount: roundAmount(l.amount),
+      taxable: l.taxable !== false,
+    }));
+    const grossSalary = roundAmount(earnings.reduce((s, e) => s + e.amount, 0));
+    const taxableExtra = roundAmount(
+      earnings.filter((e) => e.taxable).reduce((s, e) => s + e.amount, 0),
+    );
+
+    // The regular engine, twice: as the month stands, and with this payment's taxable pay added to the month.
+    const without = await this.calculatePayroll(
+      employee.id,
+      dto.month,
+      dto.year,
+      organizationId,
+      { supplementary: { extraTaxable: 0 } },
+    );
+    const withExtra = await this.calculatePayroll(
+      employee.id,
+      dto.month,
+      dto.year,
+      organizationId,
+      { supplementary: { extraTaxable: taxableExtra } },
+    );
+    let tds = 0;
+    if (withExtra.taxDetails && without.taxDetails && taxableExtra > 0) {
+      tds = Math.max(
+        0,
+        Math.round(
+          withExtra.taxDetails.totalAnnualTax -
+            without.taxDetails.totalAnnualTax,
+        ),
+      );
+    }
+    // Section 206AA switch: no valid PAN -> at least 20% of the taxable payment.
+    const panRaw = (employee.personalData as Record<string, unknown> | null)
+      ?.panNumber;
+    const validPan =
+      typeof panRaw === 'string' &&
+      /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(panRaw.trim().toUpperCase());
+    if (
+      withExtra.taxDetails &&
+      settingsRow.higherTdsWithoutPan &&
+      !validPan &&
+      taxableExtra > 0
+    ) {
+      tds = Math.max(tds, Math.round(taxableExtra * 0.2));
+    }
+    tds = Math.min(tds, grossSalary);
+    const netPay = roundAmount(grossSalary - tds);
+
+    const taxDetails = withExtra.taxDetails
+      ? { ...withExtra.taxDetails, monthlyTDS: tds }
+      : null;
+    const department = employee.departmentId
+      ? await this.scopedPrisma.department.findFirst({
+          where: { id: employee.departmentId, organizationId },
+          select: { name: true },
+        })
+      : null;
+
+    // The next free sequence for this employee and month; the unique key settles a concurrent create.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const last = await this.scopedPrisma.payrollRun.aggregate({
+        where: {
+          organizationId,
+          employeeId: employee.id,
+          month: dto.month,
+          year: dto.year,
+          isFinalSettlement: false,
+        },
+        _max: { runSequence: true },
+      });
+      const runSequence = (last._max.runSequence ?? 0) + 1;
+      try {
+        const payslipNumber = await this.scopedPrisma.$transaction((tx) =>
+          issueDocumentNumber(
+            tx,
+            organizationId,
+            'payslip',
+            new Date(dto.year, dto.month, 0),
+          ),
+        );
+        const run = await this.scopedPrisma.payrollRun.create({
+          data: {
+            organizationId,
+            employeeId: employee.id,
+            month: dto.month,
+            year: dto.year,
+            runSequence,
+            runLabel: dto.label.trim(),
+            financialYear: withExtra.financialYear,
+            status: PayrollRunStatus.CALCULATED,
+            payslipNumber,
+            attendanceSummary: {},
+            earnings: earnings as unknown as Prisma.InputJsonValue,
+            deductions: (tds > 0
+              ? [
+                  {
+                    code: SALARY_COMPONENT_CODES.INCOME_TAX,
+                    name: 'Income Tax (TDS)',
+                    amount: tds,
+                  },
+                ]
+              : []) as unknown as Prisma.InputJsonValue,
+            employerContributions: [],
+            taxDetails: taxDetails
+              ? (taxDetails as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
+            heldVariablePay: [],
+            grossSalary,
+            taxableGross: taxableExtra,
+            totalDeductions: tds,
+            totalEmployerContributions: 0,
+            netPay,
+            ctcMonthly: grossSalary,
+            netPayInWords: amountInWords(netPay),
+            calculatedAt: new Date(),
+            calculatedById: actor.id,
+            designation: employee.designation,
+            gradeLevel: employee.gradeLevel,
+            departmentName: department?.name ?? null,
+          },
+        });
+        await this.auditLogService.log({
+          actorId: actor.id,
+          action: 'PAYROLL_SUPPLEMENTARY_CREATED',
+          module: 'PAYROLL',
+          organizationId,
+          targetId: run.id,
+          details: {
+            employeeId: employee.id,
+            month: dto.month,
+            year: dto.year,
+            runSequence,
+            label: dto.label.trim(),
+            reason: dto.reason.trim(),
+            gross: grossSalary,
+            tds,
+          },
+        });
+        return run;
+      } catch (err) {
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          attempt < 2
+        ) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new ConflictException(
+      'Could not create the supplementary payroll - please try again.',
+    );
+  }
+
+  // Discards a supplementary run that has not been approved yet (wrong amount, wrong employee). Approved, locked or
+  // paid ones are unlocked/reopened through the normal steps first.
+  async removeSupplementary(id: string, actor: Actor, organizationId: string) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    if (run.runSequence === 0 || run.isFinalSettlement) {
+      throw new BadRequestException(
+        'Only a supplementary payroll can be deleted.',
+      );
+    }
+    assertNotOwnPayroll(actor, run.employeeId, 'delete');
+    if (!EDITABLE_RUN_STATUSES.includes(run.status)) {
+      throw new BadRequestException(
+        'Only a supplementary payroll that is not yet approved can be deleted.',
+      );
+    }
+    await this.scopedPrisma.payrollRun.deleteMany({
+      where: { id, organizationId, status: { in: EDITABLE_RUN_STATUSES } },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_SUPPLEMENTARY_DELETED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        runSequence: run.runSequence,
+        label: run.runLabel,
+      },
+    });
+    return { id };
   }
 
   async findAll(query: QueryPayrollDto, actor: Actor, organizationId: string) {
@@ -2025,6 +2308,7 @@ export class PayrollService {
     if (!run) throw new NotFoundException('Payroll run not found.');
     assertNotFinalSettlementRun(run);
     assertNotOwnPayroll(actor, run.employeeId, 'edit');
+    assertNotSupplementaryRun(run, 'edited');
     if (
       run.status === PayrollRunStatus.APPROVED ||
       run.status === PayrollRunStatus.LOCKED ||
@@ -3623,14 +3907,21 @@ export class PayrollService {
 
     let ytdGross = 0;
     let ytdTDS = 0;
-    let ytdMonths = 0;
+    // Months (not runs) with pay: a month with a regular and a supplementary run is one month of employment.
+    const paidMonths = new Set<string>();
     for (const run of runs) {
       const isBefore =
         run.year < beforeYear ||
         (run.year === beforeYear && run.month < beforeMonth);
-      if (!isBefore) continue;
+      // A supplementary run of the month being calculated is already-paid income and already-withheld tax for this
+      // year, even though the month itself is still ahead of the cut-off.
+      const isSameMonthSupplementary =
+        run.runSequence > 0 &&
+        run.year === beforeYear &&
+        run.month === beforeMonth;
+      if (!isBefore && !isSameMonthSupplementary) continue;
       const runGross = this.runTaxableGross(run);
-      if (runGross > 0) ytdMonths += 1;
+      if (isBefore && runGross > 0) paidMonths.add(`${run.year}-${run.month}`);
       ytdGross += runGross;
       const deductions = run.deductions as unknown as {
         code: string;
@@ -3641,7 +3932,7 @@ export class PayrollService {
       );
       ytdTDS += incomeTaxLine ? incomeTaxLine.amount : 0;
     }
-    return { ytdGross, ytdTDS, ytdMonths };
+    return { ytdGross, ytdTDS, ytdMonths: paidMonths.size };
   }
 
   private runTaxableGross(run: PayrollRun): number {

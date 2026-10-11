@@ -1573,6 +1573,7 @@ export class EmployeesService {
         organizationId,
         employeeId: before.id,
         isFinalSettlement: false,
+        runSequence: 0,
         status: { in: [PayrollRunStatus.DRAFT, PayrollRunStatus.CALCULATED] },
       },
       select: { month: true, year: true },

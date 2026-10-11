@@ -89,6 +89,7 @@ export class LoansService {
         organizationId,
         employeeId,
         isFinalSettlement: false,
+        runSequence: 0,
         status: { not: PayrollRunStatus.DRAFT },
       },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],

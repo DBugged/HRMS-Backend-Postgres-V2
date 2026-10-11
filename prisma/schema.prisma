@@ -2157,6 +2157,11 @@ model PayrollRun {
   // false for a regular monthly run.
   isFinalSettlement Boolean     @default(false)
   settlement        Settlement?
+  // 0 = the month's regular run. 1, 2, ... = supplementary (off-cycle) runs for the same employee and month — a bonus,
+  // incentive, arrears or correction paid outside the regular run, created by PayrollService.createSupplementary.
+  runSequence       Int         @default(0)
+  // Free-text name for a supplementary run ("Diwali bonus", "Arrears Apr-Jun"); null on regular and F&F runs.
+  runLabel          String?
 
   // Point-in-time snapshot taken at calculation so a re-issued payslip keeps the designation/department/
   // grade the employee held that month. Nullable: older runs fall back to the live values.
@@ -2167,7 +2172,7 @@ model PayrollRun {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([employeeId, month, year, isFinalSettlement])
+  @@unique([employeeId, month, year, isFinalSettlement, runSequence])
   @@index([organizationId, month, year])
   @@map("payroll_runs")
 }

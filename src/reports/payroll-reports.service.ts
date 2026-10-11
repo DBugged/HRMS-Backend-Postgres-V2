@@ -60,8 +60,16 @@ const lineAmount = (lines: unknown, code: string): number =>
   linesOf(lines)
     .filter((l) => l.code === code)
     .reduce((sum, l) => sum + (l.amount ?? 0), 0);
-const runType = (r: { isFinalSettlement: boolean }): string =>
-  r.isFinalSettlement ? 'Final Settlement' : 'Regular';
+const runType = (r: {
+  isFinalSettlement: boolean;
+  runSequence?: number;
+  runLabel?: string | null;
+}): string =>
+  r.isFinalSettlement
+    ? 'Final Settlement'
+    : (r.runSequence ?? 0) > 0
+      ? `Supplementary${r.runLabel ? ` - ${r.runLabel}` : ''}`
+      : 'Regular';
 
 @Injectable()
 export class PayrollReportsService {
