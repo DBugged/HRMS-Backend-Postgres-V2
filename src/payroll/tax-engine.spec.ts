@@ -753,3 +753,50 @@ describe('surcharge marginal relief for a senior citizen (old regime, above 50L)
     );
   });
 });
+
+describe('professional tax (section 16(iii))', () => {
+  const run = (regime: TaxRegime, professionalTaxAnnual?: number) =>
+    calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: 100000,
+      recurringMonthlyGross: 100000,
+      declaration: regime === TaxRegime.OLD ? {} : null,
+      taxSlabConfig: {
+        ...getDefaultTaxSlabConfig(regime),
+        regime,
+      },
+      professionalTaxAnnual,
+    });
+
+  it('old regime: professional tax paid comes off taxable income', () => {
+    const without = run(TaxRegime.OLD);
+    const withPt = run(TaxRegime.OLD, 2500);
+    expect(withPt.deductions.professionalTax).toBe(2500);
+    expect(withPt.taxableIncome).toBe(without.taxableIncome - 2500);
+    expect(withPt.totalAnnualTax).toBeLessThan(without.totalAnnualTax);
+  });
+
+  it('new regime: no such deduction', () => {
+    const withPt = run(TaxRegime.NEW, 2500);
+    expect(withPt.deductions.professionalTax).toBe(0);
+    expect(withPt.taxableIncome).toBe(run(TaxRegime.NEW).taxableIncome);
+  });
+
+  it('can never exceed the salary left after the standard deduction', () => {
+    const r = calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: 1000,
+      recurringMonthlyGross: 1000,
+      declaration: {},
+      taxSlabConfig: {
+        ...getDefaultTaxSlabConfig(TaxRegime.OLD),
+        regime: TaxRegime.OLD,
+      },
+      professionalTaxAnnual: 2500,
+    });
+    expect(r.taxableIncome).toBe(0);
+    expect(r.deductions.professionalTax).toBe(0);
+  });
+});

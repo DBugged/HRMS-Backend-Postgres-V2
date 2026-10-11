@@ -169,6 +169,9 @@ export interface CalculateTaxInput {
   // Employee's age on the last day of the financial year. Old regime only: 60+ is exempt up to 3,00,000 and 80+
   // up to 5,00,000 (instead of 2,50,000). Unknown age = treated as under 60.
   ageAtFYEnd?: number | null;
+  // Professional tax deducted from salary for the whole year (paid so far + this month + projected). Deductible from
+  // salary income under section 16(iii) in the OLD regime only; the new regime allows no such deduction.
+  professionalTaxAnnual?: number;
 }
 
 // Basic-exemption limit of the old regime for an age (senior / super-senior citizen).
@@ -192,6 +195,7 @@ export interface TaxDetails {
     section80G: number;
     section80TTA: number;
     homeLoanInterest: number;
+    professionalTax: number;
     other: number;
   };
   taxableIncome: number;
@@ -227,6 +231,7 @@ export function calculateTax({
   refundExcess = false,
   employmentMonthsInFY = 12,
   ageAtFYEnd = null,
+  professionalTaxAnnual = 0,
 }: CalculateTaxInput): TaxDetails {
   if (!taxSlabConfig) {
     throw new Error(
@@ -276,6 +281,7 @@ export function calculateTax({
     section80G: 0,
     section80TTA: 0,
     homeLoanInterest: 0,
+    professionalTax: 0,
     other: 0,
   };
 
@@ -322,6 +328,11 @@ export function calculateTax({
       (ageAtFYEnd ?? 0) >= 60 ? 50000 : 10000,
     );
     deductions.other = declaration.otherDeductions || 0;
+    // Section 16(iii): professional tax paid, deducted from salary income. Cannot exceed the salary itself.
+    deductions.professionalTax = Math.min(
+      Math.max(0, professionalTaxAnnual),
+      Math.max(0, salaryIncome - deductions.standard),
+    );
   }
 
   // 80CCD(2) — employer NPS contribution — is allowed under both regimes,

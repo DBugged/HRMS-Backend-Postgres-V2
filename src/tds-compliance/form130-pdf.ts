@@ -23,6 +23,7 @@ const SECTION_LABEL: Record<string, string> = {
   section80G: 'section 80G',
   section80TTA: 'section 80TTA',
   homeLoanInterest: 'section 24(b) home-loan interest',
+  professionalTax: 'professional tax paid (section 16(iii))',
   other: 'other deductions',
 };
 

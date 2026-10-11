@@ -481,6 +481,28 @@ describe('payroll engine: income tax (TDS)', () => {
     expect(r.taxDetails?.deductions.standard).toBe(75000);
   });
 
+  it('old regime: the professional tax withheld (paid so far + this month + the months to come) is deducted from taxable income', async () => {
+    const r = await run({
+      settings: defaultSettings({ ptEnabled: true }),
+      overrides: structure(150000),
+      declaration: {
+        id: 'd1',
+        organizationId: 'org-1',
+        employeeId: 'emp-1',
+        financialYear: '2026-27',
+        regimeChosen: 'OLD',
+        status: 'SUBMITTED',
+      },
+      slabs: [
+        slabRow('2026-27', 'NEW' as never),
+        slabRow('2026-27', 'OLD' as never),
+      ],
+    });
+    expect(line(r.deductions, 'PT')).toBe(200);
+    // September: 7 months of the year remain (Sep-Mar) at 200 each.
+    expect(r.taxDetails?.deductions.professionalTax).toBe(1400);
+  });
+
   it('a SUBMITTED old-regime declaration switches the regime; a DRAFT is ignored', async () => {
     const decl = (status: string) => ({
       id: 'd1',

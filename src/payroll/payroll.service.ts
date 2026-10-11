@@ -1129,13 +1129,14 @@ export class PayrollService {
             year: month === 12 ? year + 1 : year,
           }
         : { month, year };
-      const { ytdGross, ytdTDS, ytdMonths } = await this.getYtdFigures(
-        employeeId,
-        financialYear,
-        ytdBefore.month,
-        ytdBefore.year,
-        organizationId,
-      );
+      const { ytdGross, ytdTDS, ytdMonths, ytdProfessionalTax } =
+        await this.getYtdFigures(
+          employeeId,
+          financialYear,
+          ytdBefore.month,
+          ytdBefore.year,
+          organizationId,
+        );
       const remainingMonthsInFY = monthsRemainingInFY(
         month,
         year,
@@ -1183,6 +1184,18 @@ export class PayrollService {
         finalMonth: !!fs,
         refundExcess: !!fs && settingsRow.refundExcessTdsOnExit,
         employmentMonthsInFY: employmentMonths,
+        professionalTaxAnnual: (() => {
+          const ptThisMonth = deductionsResults
+            .filter((d) => d.code === 'PT')
+            .reduce((sum, d) => sum + d.amount, 0);
+          // This month's amount stands in for the months still to come (February's higher slab is not projected).
+          const months = fs
+            ? fs.monthAlreadyPaid
+              ? 0
+              : 1
+            : remainingMonthsInFY;
+          return ytdProfessionalTax + ptThisMonth * months;
+        })(),
         ageAtFYEnd: ageOnFYEnd(
           (employee.personalData as Record<string, unknown> | null)?.dob,
           financialYear,
@@ -4228,7 +4241,12 @@ export class PayrollService {
     beforeMonth: number,
     beforeYear: number,
     organizationId: string,
-  ): Promise<{ ytdGross: number; ytdTDS: number; ytdMonths: number }> {
+  ): Promise<{
+    ytdGross: number;
+    ytdTDS: number;
+    ytdMonths: number;
+    ytdProfessionalTax: number;
+  }> {
     const runs = await this.scopedPrisma.payrollRun.findMany({
       where: {
         organizationId,
@@ -4249,6 +4267,7 @@ export class PayrollService {
 
     let ytdGross = 0;
     let ytdTDS = 0;
+    let ytdProfessionalTax = 0;
     // Months (not runs) with pay: a month with a regular and a supplementary run is one month of employment.
     const paidMonths = new Set<string>();
     for (const run of runs) {
@@ -4273,8 +4292,16 @@ export class PayrollService {
         (d) => d.code === SALARY_COMPONENT_CODES.INCOME_TAX,
       );
       ytdTDS += incomeTaxLine ? incomeTaxLine.amount : 0;
+      ytdProfessionalTax += deductions
+        .filter((d) => d.code === 'PT')
+        .reduce((sum, d) => sum + d.amount, 0);
     }
-    return { ytdGross, ytdTDS, ytdMonths: paidMonths.size };
+    return {
+      ytdGross,
+      ytdTDS,
+      ytdMonths: paidMonths.size,
+      ytdProfessionalTax,
+    };
   }
 
   private runTaxableGross(run: PayrollRun): number {
