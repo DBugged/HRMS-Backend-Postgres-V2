@@ -89,11 +89,8 @@ export class OrganizationsController {
   }
 
   // -- WFH / Regularization Auto-Approval --
-  // Own ADMIN/HR/MANAGER-scoped endpoints (same reasoning as Employee
-  // Types below) — lets a Manager (who actually reviews these day to day,
-  // same @Roles as reviewWorkArrangement/reviewRegularization) set the
-  // auto-approve-after-N-hours window too, not just Admin/HR, without
-  // needing the broad ADMIN-only settings/:section route. Declared before
+  // Own endpoints (same reasoning as Employee Types below) so Admin/HR can set the auto-approve-after-N-hours window
+  // without needing the broad ADMIN-only settings/:section route; a Manager (who reviews these day to day) may read it. Declared before
   // that route's `:section` wildcard so `settings/auto-approval` matches
   // here first, not as section="auto-approval" on the generic ADMIN-only
   // route.
@@ -107,8 +104,10 @@ export class OrganizationsController {
     );
   }
 
+  // Changing it is Admin/HR only: it is one organisation-wide value, so a manager changing it would change it for every
+  // team. Managers can still read it (GET above) to see the rule their team's requests fall under.
   @Patch('settings/auto-approval')
-  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   updateAutoApprovalSettings(
     @Body() body: Record<string, unknown>,

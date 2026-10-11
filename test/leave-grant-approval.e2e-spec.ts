@@ -344,4 +344,21 @@ describe('Event leave grant approval flow (e2e)', () => {
       .send({})
       .expect(201);
   });
+
+  it('auto-approval settings: a manager can read them but only Admin or HR can change them', async () => {
+    await request(app.getHttpServer())
+      .get('/organizations/settings/auto-approval')
+      .set(auth(managerToken))
+      .expect(200);
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/auto-approval')
+      .set(auth(managerToken))
+      .send({ wfhAutoApproveIfNoAction: true })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/auto-approval')
+      .set(auth(hrToken))
+      .send({ regularizationWindowDays: 7 })
+      .expect(200);
+  });
 });
