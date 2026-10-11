@@ -417,4 +417,40 @@ describe('Payroll input integrity (e2e)', () => {
       expect(reopened.inputsChangedAt).not.toBeNull();
     });
   });
+
+  describe("F11 - another company's employee id is simply not found", () => {
+    it('balance, accrual history and attendance answer 404 for an employee of another organisation', async () => {
+      await request(app.getHttpServer()).post('/auth/register').send({
+        organizationName: 'Other Org',
+        name: 'Founder B',
+        email: 'pi-b-admin@example.test',
+        password: PASSWORD,
+      });
+      const otherToken = (
+        (
+          await request(app.getHttpServer())
+            .post('/auth/login')
+            .send({ email: 'pi-b-admin@example.test', password: PASSWORD })
+        ).body as AuthBody
+      ).accessToken;
+      const get = (url: string, token: string) =>
+        request(app.getHttpServer())
+          .get(url)
+          .set('Authorization', `Bearer ${token}`);
+      await get(`/leaves/balance?employeeId=${employeeId}`, otherToken).expect(
+        404,
+      );
+      await get(
+        `/leaves/accrual-history?employeeId=${employeeId}`,
+        otherToken,
+      ).expect(404);
+      await get(`/attendance?employeeId=${employeeId}`, otherToken).expect(404);
+      // Its own organisation still works.
+      await get(
+        `/leaves/accrual-history?employeeId=${employeeId}`,
+        adminToken,
+      ).expect(200);
+      await get(`/attendance?employeeId=${employeeId}`, adminToken).expect(200);
+    });
+  });
 });

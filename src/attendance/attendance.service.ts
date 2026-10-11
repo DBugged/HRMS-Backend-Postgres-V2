@@ -1873,6 +1873,12 @@ export class AttendanceService {
           ? query.employeeId
           : { in: [...deptEmployeeIds] };
     } else if (query.employeeId) {
+      // Not an employee of this organisation: "not found", like every other employee endpoint, rather than an empty list.
+      const exists = await this.scopedPrisma.user.findFirst({
+        where: { id: query.employeeId, organizationId },
+        select: { id: true },
+      });
+      if (!exists) throw new NotFoundException('Employee not found.');
       where.employeeId = query.employeeId;
     } else if (query.department) {
       const deptEmployees = await this.scopedPrisma.user.findMany({

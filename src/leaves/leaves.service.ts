@@ -1623,6 +1623,13 @@ export class LeavesService {
         "You cannot view another employee's leave balance.",
       );
     }
+    // An id that is not an employee of this organisation (another company's, or none at all) is "not found" - the same
+    // answer every other employee endpoint gives, instead of an empty result that looks like a real employee.
+    const exists = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeIdParam, organizationId },
+      select: { id: true },
+    });
+    if (!exists) throw new NotFoundException('Employee not found.');
     await assertManagerDeptScope(
       this.scopedPrisma,
       actor,
