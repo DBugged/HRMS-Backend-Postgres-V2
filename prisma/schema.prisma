@@ -1889,6 +1889,10 @@ model Attendance {
   // Independent of status — a WFH day is still `status: PRESENT` via the
   // normal punch flow. Only offered as a choice when Organization.enableWFH
   // is true, but the column always accepts it regardless.
+  // What this day was before an approved leave stamped it (status and source), so cancelling the leave can put the
+  // day back exactly as it was instead of leaving it as 'on leave'. Null on a day the leave created.
+  leaveOverriddenStatus         AttendanceStatus?
+  leaveOverriddenSource         AttendanceSource?
   workArrangement               WorkArrangement   @default(OFFICE)
   // See WfhApprovalStatus's comment — PENDING on WFH request, APPROVED/
   // REJECTED after review, NONE for non-WFH arrangements.

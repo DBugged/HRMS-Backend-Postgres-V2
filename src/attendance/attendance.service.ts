@@ -2273,32 +2273,28 @@ export class AttendanceService {
     });
     const existingDates = new Set(existingRows.map((r) => r.date));
 
-    if (existingRows.length > 0) {
+    for (const r of existingRows) {
       // A day already stamped HALF_DAY by another approved half-day leave (the morning under one leave, the afternoon
-      // under another) is now a whole day off.
-      const alreadyHalfLeave = (r: (typeof existingRows)[number]) =>
+      // under another) is now a whole day off; what the day was before any leave stamped it is already remembered.
+      const alreadyHalfLeave =
         leave.isHalfDay &&
         r.status === AttendanceStatus.HALF_DAY &&
         r.source === AttendanceSource.SYSTEM;
-      const wholeDay = existingRows.filter(alreadyHalfLeave).map((r) => r.id);
-      const rest = existingRows
-        .filter((r) => !alreadyHalfLeave(r))
-        .map((r) => r.id);
-      if (rest.length > 0) {
-        await tx.attendance.updateMany({
-          where: { id: { in: rest }, organizationId },
-          data: { status, source: AttendanceSource.SYSTEM },
-        });
-      }
-      if (wholeDay.length > 0) {
-        await tx.attendance.updateMany({
-          where: { id: { in: wholeDay }, organizationId },
-          data: {
-            status: AttendanceStatus.ON_LEAVE,
-            source: AttendanceSource.SYSTEM,
-          },
-        });
-      }
+      await tx.attendance.updateMany({
+        where: { id: r.id, organizationId },
+        data: alreadyHalfLeave
+          ? {
+              status: AttendanceStatus.ON_LEAVE,
+              source: AttendanceSource.SYSTEM,
+            }
+          : {
+              status,
+              source: AttendanceSource.SYSTEM,
+              // Remember the day as it was, so cancelling the leave can put it back.
+              leaveOverriddenStatus: r.leaveOverriddenStatus ?? r.status,
+              leaveOverriddenSource: r.leaveOverriddenSource ?? r.source,
+            },
+      });
     }
     const missingDates = dates.filter((d) => !existingDates.has(d));
     if (missingDates.length > 0) {
@@ -2314,37 +2310,76 @@ export class AttendanceService {
     }
   }
 
-  // Called from LeavesService's releaseHold() when a previously-approved
-  // leave is cancelled/edited — only reverts dates >= today, and only rows
-  // this same integration wrote (source === SYSTEM), never a row since
-  // regularized/imported/punched over.
-  //
-  // The leave stamp is simply removed. It used to be turned into an ABSENT row, which for a day that has not happened
-  // yet is wrong twice over: nobody has been absent, and a weekend or holiday inside the leave became an absence
-  // (unpaid in payroll) instead of the paid day off it is. A day with no row is handled like any other upcoming day:
-  // the daily job writes its weekly off / holiday / absent once it has passed, and payroll pays weekly offs and
-  // holidays from the calendar in the meantime.
+  // Called from LeavesService's releaseHold() when a previously-approved leave is cancelled/edited. Every day the leave
+  // stamped (past or future) goes back to what it was before: a day that held another status (present, weekly off,
+  // holiday, a regularized or imported day...) is restored exactly, and a day the leave itself created is removed - it
+  // then reads as any other day with no record (payroll pays a weekly off / holiday from the calendar and counts a
+  // working day with no record as unpaid). Only rows this integration wrote (source SYSTEM) are touched, never a day
+  // since regularized, imported or punched over. A day still covered by another approved leave (the other half of a
+  // half-day pair) keeps that leave's stamp.
   async revertAttendanceForLeave(
     tx: Prisma.TransactionClient,
     leave: Leave,
     organizationId: string,
   ) {
-    const orgTimezone = await this.getOrgTimezone(organizationId, tx);
-    const today = todayInOrgTz(orgTimezone);
-    const dates = enumerateDateStrings(leave.startDate, leave.endDate).filter(
-      (d) => d >= today,
-    );
+    const dates = enumerateDateStrings(leave.startDate, leave.endDate);
     if (dates.length === 0) return;
 
-    await tx.attendance.deleteMany({
-      where: {
-        organizationId,
-        employeeId: leave.employeeId,
-        date: { in: dates },
-        source: AttendanceSource.SYSTEM,
-        status: { in: [AttendanceStatus.ON_LEAVE, AttendanceStatus.HALF_DAY] },
-      },
-    });
+    const [rows, otherLeaves] = await Promise.all([
+      tx.attendance.findMany({
+        where: {
+          organizationId,
+          employeeId: leave.employeeId,
+          date: { in: dates },
+          source: AttendanceSource.SYSTEM,
+          status: {
+            in: [AttendanceStatus.ON_LEAVE, AttendanceStatus.HALF_DAY],
+          },
+        },
+      }),
+      tx.leave.findMany({
+        where: {
+          organizationId,
+          employeeId: leave.employeeId,
+          status: LeaveStatus.APPROVED,
+          id: { not: leave.id },
+          startDate: { lte: leave.endDate },
+          endDate: { gte: leave.startDate },
+        },
+        select: { startDate: true, endDate: true, isHalfDay: true },
+      }),
+    ]);
+
+    for (const row of rows) {
+      const covering = otherLeaves.filter(
+        (o) => o.startDate <= row.date && o.endDate >= row.date,
+      );
+      if (covering.length > 0) {
+        // Another approved leave still covers this day: it keeps a stamp (a half day when only half-day leaves remain).
+        await tx.attendance.updateMany({
+          where: { id: row.id, organizationId },
+          data: {
+            status: covering.every((o) => o.isHalfDay)
+              ? AttendanceStatus.HALF_DAY
+              : AttendanceStatus.ON_LEAVE,
+          },
+        });
+      } else if (row.leaveOverriddenStatus) {
+        await tx.attendance.updateMany({
+          where: { id: row.id, organizationId },
+          data: {
+            status: row.leaveOverriddenStatus,
+            source: row.leaveOverriddenSource ?? AttendanceSource.FACE_API,
+            leaveOverriddenStatus: null,
+            leaveOverriddenSource: null,
+          },
+        });
+      } else {
+        await tx.attendance.deleteMany({
+          where: { id: row.id, organizationId },
+        });
+      }
+    }
   }
 
   // Employee-initiated — no separate model, writes straight into the

@@ -318,4 +318,103 @@ describe('Payroll input integrity (e2e)', () => {
       }
     });
   });
+
+  describe('F2 - cancelling a leave puts the days back as they were', () => {
+    const rowOn = (date: string) =>
+      prisma.attendance.findFirst({ where: { employeeId, date } });
+    const cancel = (leaveId: string) => patch(`/leaves/${leaveId}/cancel`);
+
+    it('a worked day returns to PRESENT and the deduction goes away on recalculation', async () => {
+      await calculate(8).expect(201);
+      const baseline = (await runOf(8)).grossSalary;
+      const leave = await makeLeave('2026-08-12', '2026-08-12');
+      await approve(leave.id).expect(200);
+      expect((await rowOn('2026-08-12'))?.status).toBe('ON_LEAVE');
+      await calculate(8).expect(201);
+      expect((await runOf(8)).grossSalary).toBeLessThan(baseline);
+
+      await cancel(leave.id).expect(200);
+      const row = await rowOn('2026-08-12');
+      expect(row?.status).toBe('PRESENT');
+      expect(row?.source).toBe('FACE_API');
+      expect(row?.leaveOverriddenStatus).toBeNull();
+      await calculate(8).expect(201);
+      expect((await runOf(8)).grossSalary).toBe(baseline);
+    });
+
+    it('a weekly off, a regularized day and a day with no record all come back correctly', async () => {
+      await prisma.attendance.updateMany({
+        where: { employeeId, date: '2026-08-16' },
+        data: { status: 'WEEKLY_OFF' },
+      });
+      await prisma.attendance.updateMany({
+        where: { employeeId, date: '2026-08-21' },
+        data: {
+          source: 'REGULARIZED',
+          status: 'PRESENT',
+          inTime: new Date('2026-08-21T04:00:00.000Z'),
+          outTime: new Date('2026-08-21T13:00:00.000Z'),
+        },
+      });
+      await prisma.attendance.deleteMany({
+        where: { employeeId, date: '2026-08-20' },
+      });
+      const leave = await makeLeave('2026-08-16', '2026-08-21');
+      await approve(leave.id).expect(200);
+      expect((await rowOn('2026-08-20'))?.source).toBe('SYSTEM');
+      await cancel(leave.id).expect(200);
+
+      expect((await rowOn('2026-08-16'))?.status).toBe('WEEKLY_OFF');
+      const regularized = await rowOn('2026-08-21');
+      expect(regularized?.status).toBe('PRESENT');
+      expect(regularized?.source).toBe('REGULARIZED');
+      expect(regularized?.inTime).not.toBeNull();
+      expect(await rowOn('2026-08-20')).toBeNull();
+    });
+
+    it('cancelling one of two half-day leaves on the same day keeps the other half stamped', async () => {
+      await prisma.attendance.deleteMany({
+        where: { employeeId, date: '2026-08-25' },
+      });
+      const half = (session: 'FIRST_HALF' | 'SECOND_HALF') =>
+        prisma.leave.create({
+          data: {
+            organizationId,
+            employeeId,
+            leaveTypeId: lwpId,
+            startDate: '2026-08-25',
+            endDate: '2026-08-25',
+            totalDays: 0.5,
+            status: 'PENDING',
+            isHalfDay: true,
+            halfDaySession: session,
+            remarks: 'integrity test',
+          },
+        });
+      const morning = await half('FIRST_HALF');
+      const afternoon = await half('SECOND_HALF');
+      await approve(morning.id).expect(200);
+      await approve(afternoon.id).expect(200);
+      expect((await rowOn('2026-08-25'))?.status).toBe('ON_LEAVE');
+      await cancel(morning.id).expect(200);
+      expect((await rowOn('2026-08-25'))?.status).toBe('HALF_DAY');
+      await cancel(afternoon.id).expect(200);
+      expect(await rowOn('2026-08-25')).toBeNull();
+    });
+
+    it('cancelling an approved leave reopens a signed-off payroll for recalculation', async () => {
+      await calculate(8).expect(201);
+      const run = await runOf(8);
+      const leave = await makeLeave('2026-08-27', '2026-08-27');
+      await approve(leave.id).expect(200);
+      await calculate(8).expect(201);
+      await post(`/payroll/${run.id}/verify`).expect(201);
+      await post(`/payroll/${run.id}/approve`).expect(201);
+
+      await cancel(leave.id).expect(200);
+      const reopened = await runOf(8);
+      expect(reopened.status).toBe('CALCULATED');
+      expect(reopened.inputsChangedAt).not.toBeNull();
+    });
+  });
 });
