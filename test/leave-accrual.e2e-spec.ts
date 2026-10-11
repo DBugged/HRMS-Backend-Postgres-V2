@@ -356,4 +356,28 @@ describe('Leave accrual (e2e)', () => {
       .set(auth(managerToken));
     expect([200, 403]).toContain(mgrOutside.status);
   });
+
+  it("anniversary basis credits from each employee's joining date, and the basis is then locked", async () => {
+    // Joined 1 Jan: quarterly cycles start 1 Jan / 1 Apr / 1 Jul / 1 Oct.
+    const res = await createType({
+      name: 'Anniversary Leave',
+      code: 'ANV',
+      annualQuota: 6,
+      accrualMode: 'PERIODIC',
+      accrualBasis: 'JOINING_ANNIVERSARY',
+      accrualFrequency: 'QUARTERLY',
+      accrueAt: 'START',
+    });
+    expect(res.status).toBe(201);
+    const id = (res.body as { id: string }).id;
+    const cycles = Math.floor(new Date().getUTCMonth() / 3) + 1;
+    const b = await balanceOf('ANV');
+    expect(b?.credited).toBeCloseTo(cycles * 1.5, 2);
+    expect(b?.accrual?.annualEntitlement).toBe(6);
+    const locked = await request(app.getHttpServer())
+      .put(`/leave-types/${id}`)
+      .set(auth(adminToken))
+      .send({ accrualBasis: 'LEAVE_YEAR' });
+    expect(locked.status).toBe(400);
+  });
 });

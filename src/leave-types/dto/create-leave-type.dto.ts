@@ -15,6 +15,7 @@ import {
 } from 'class-validator';
 import {
   AllocationType,
+  AccrualBasis,
   AccrualFrequency,
   AccrualTiming,
   Gender,
@@ -81,6 +82,16 @@ export class CreateLeaveTypeDto {
   @IsOptional()
   @IsEnum(LeaveAccrualMode)
   accrualMode?: LeaveAccrualMode;
+
+  @ApiPropertyOptional({
+    enum: AccrualBasis,
+    default: 'LEAVE_YEAR',
+    description:
+      "PERIODIC only: LEAVE_YEAR credits on the same dates for everyone; JOINING_ANNIVERSARY runs each employee's cycles from their own joining date.",
+  })
+  @IsOptional()
+  @IsEnum(AccrualBasis)
+  accrualBasis?: AccrualBasis;
 
   @ApiPropertyOptional({
     enum: AccrualFrequency,

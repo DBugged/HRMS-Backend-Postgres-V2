@@ -999,6 +999,12 @@ enum AccrualTiming {
   END
 }
 
+/// Where a periodic type's cycles are counted from: the organisation's leave year, or each employee's own joining date.
+enum AccrualBasis {
+  LEAVE_YEAR
+  JOINING_ANNIVERSARY
+}
+
 enum AccrualFrequency {
   YEARLY
   HALF_YEARLY
@@ -1037,6 +1043,7 @@ model LeaveType {
   accrualAmountPerCycle Float            @default(0)
   // PERIODIC accrual (frequency = accrualFrequency; amount = accrualAmountPerCycle, or quota x months / 12 when 0).
   accrualMode           LeaveAccrualMode @default(UPFRONT)
+  accrualBasis          AccrualBasis     @default(LEAVE_YEAR)
   accrueAt              AccrualTiming    @default(END)
   // Accrual stops once the balance reaches this many days (null = no cap).
   maxBalance            Float?

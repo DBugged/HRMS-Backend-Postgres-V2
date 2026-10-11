@@ -167,3 +167,116 @@ describe('calendar year, January start', () => {
     expect(s[11].dueOn).toBe('2026-12-31');
   });
 });
+
+describe('joining-anniversary basis', () => {
+  const anniv = (over: Partial<AccrualRule> = {}) =>
+    rule({
+      basis: 'JOINING_ANNIVERSARY',
+      accrualFrequency: AccrualFrequency.QUARTERLY,
+      annualQuota: 6,
+      ...over,
+    });
+
+  it('cycles run from the joining date, not the leave year', () => {
+    const s = accrualSchedule(
+      anniv({ accrueAt: 'START' }),
+      CAL2026,
+      '2025-02-12',
+    );
+    expect(s.map((c) => c.dueOn)).toEqual([
+      '2026-02-12',
+      '2026-05-12',
+      '2026-08-12',
+      '2026-11-12',
+    ]);
+    expect(s.every((c) => c.days === 1.5)).toBe(true);
+  });
+
+  it('END timing credits on the last day of each cycle', () => {
+    const s = accrualSchedule(anniv(), CAL2026, '2025-02-12');
+    expect(s.map((c) => c.period.end)).toEqual([
+      '2026-02-11',
+      '2026-05-11',
+      '2026-08-11',
+      '2026-11-11',
+    ]);
+  });
+
+  it('a joiner is credited a full cycle - no joining proration', () => {
+    const s = accrualSchedule(
+      anniv({ accrueAt: 'START' }),
+      CAL2026,
+      '2026-02-10',
+    );
+    expect(s[0]).toMatchObject({ dueOn: '2026-02-10', days: 1.5 });
+  });
+
+  it('nothing before the joining date', () => {
+    const s = accrualSchedule(
+      anniv({ accrueAt: 'START' }),
+      CAL2026,
+      '2026-10-20',
+    );
+    expect(s.map((c) => c.dueOn)).toEqual(['2026-10-20']);
+  });
+
+  it('a 31st clamps to a short month without drifting later cycles', () => {
+    const s = accrualSchedule(
+      anniv({ accrualFrequency: AccrualFrequency.MONTHLY, accrueAt: 'START' }),
+      CAL2026,
+      '2025-12-31',
+    );
+    const due = s.map((c) => c.dueOn);
+    expect(due.slice(0, 4)).toEqual([
+      '2026-01-31',
+      '2026-02-28',
+      '2026-03-31',
+      '2026-04-30',
+    ]);
+  });
+
+  it('a per-cycle amount overrides the quota split', () => {
+    const s = accrualSchedule(
+      anniv({ accrualAmountPerCycle: 2, accrueAt: 'START' }),
+      CAL2026,
+      '2025-02-12',
+    );
+    expect(s.every((c) => c.days === 2)).toBe(true);
+    expect(
+      annualEntitlement(
+        anniv({ accrualAmountPerCycle: 2 }),
+        CAL2026,
+        '2025-02-12',
+      ),
+    ).toBe(8);
+  });
+
+  it('due credits skip what is recorded and what is not yet due', () => {
+    const r = anniv({ accrueAt: 'START' });
+    const due = dueCredits(
+      r,
+      CAL2026,
+      '2025-02-12',
+      '2026-06-01',
+      new Set(['2026-02-12']),
+    );
+    expect(due.map((c) => c.dueOn)).toEqual(['2026-05-12']);
+    expect(nextCredit(r, CAL2026, '2025-02-12', '2026-06-01')?.dueOn).toBe(
+      '2026-08-12',
+    );
+  });
+
+  it('works in an April-March leave year', () => {
+    const s = accrualSchedule(
+      anniv({ accrueAt: 'START' }),
+      y2027,
+      '2025-02-12',
+    );
+    expect(s.map((c) => c.dueOn)).toEqual([
+      '2027-05-12',
+      '2027-08-12',
+      '2027-11-12',
+      '2028-02-12',
+    ]);
+  });
+});

@@ -200,6 +200,7 @@ export class LeaveTypesService {
   ) {
     const touched =
       dto.accrualMode !== undefined ||
+      dto.accrualBasis !== undefined ||
       dto.accrualFrequency !== undefined ||
       dto.accrualAmountPerCycle !== undefined ||
       dto.accrueAt !== undefined ||
@@ -235,6 +236,7 @@ export class LeaveTypesService {
       Pick<
         LeaveType,
         | 'accrualMode'
+        | 'accrualBasis'
         | 'accrualFrequency'
         | 'accrualAmountPerCycle'
         | 'accrueAt'
@@ -243,6 +245,20 @@ export class LeaveTypesService {
       >
     > = {};
     if (dto.accrualMode !== undefined) data.accrualMode = dto.accrualMode;
+    if (dto.accrualBasis !== undefined) {
+      if (existing && dto.accrualBasis !== existing.accrualBasis) {
+        // The two bases cut the year into different periods, so credits already made would be paid again.
+        const credited = await this.scopedPrisma.leaveAccrualEntry.count({
+          where: { organizationId, leaveTypeId: existing.id },
+        });
+        if (credited > 0) {
+          throw new BadRequestException(
+            'This leave type has already accrued leave, so its cycle basis can no longer be changed.',
+          );
+        }
+      }
+      data.accrualBasis = dto.accrualBasis;
+    }
     if (dto.accrualFrequency !== undefined)
       data.accrualFrequency = dto.accrualFrequency;
     if (dto.accrualAmountPerCycle !== undefined)

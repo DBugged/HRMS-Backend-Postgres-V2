@@ -78,6 +78,7 @@ export function ruleOfLeaveType(type: LeaveType): AccrualRule {
     accrualAmountPerCycle: type.accrualAmountPerCycle,
     accrueAt: type.accrueAt === 'START' ? 'START' : 'END',
     prorate: shouldProrateOnJoining(type),
+    basis: type.accrualBasis,
   };
 }
 
@@ -349,6 +350,7 @@ export class LeaveAccrualService {
     return {
       mode: 'PERIODIC' as const,
       frequency: type.accrualFrequency,
+      basis: type.accrualBasis,
       accrueAt: rule.accrueAt,
       annualEntitlement: annualEntitlement(rule, bounds, joined),
       maxBalance: type.maxBalance ?? null,

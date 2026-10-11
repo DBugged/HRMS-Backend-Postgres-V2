@@ -17,6 +17,12 @@ export interface AccrualRule {
   accrueAt: 'START' | 'END';
   /** Joining inside the year prorates (15th rule); false = counted from the year's start. */
   prorate: boolean;
+  /**
+   * LEAVE_YEAR (default): periods are cut from the leave year's start, the same dates for everyone.
+   * JOINING_ANNIVERSARY: each employee's cycles run from their own joining date (joined 12 Feb + quarterly = cycles
+   * from 12 Feb, 12 May, 12 Aug, 12 Nov...). Cycles are always whole, so no joining proration applies.
+   */
+  basis?: 'LEAVE_YEAR' | 'JOINING_ANNIVERSARY';
 }
 
 export interface AccrualPeriod {
@@ -48,6 +54,18 @@ function addMonths(dateStr: string, months: number): string {
   const d = new Date(`${dateStr}T00:00:00.000Z`);
   d.setUTCMonth(d.getUTCMonth() + months);
   return d.toISOString().slice(0, 10);
+}
+
+// The same day-of-month `months` later, clamped to the end of a shorter month (31 Jan + 1 month = 28/29 Feb). Always
+// counted from the joining date itself, so a clamp never drifts later cycles (31 Jan + 2 months = 31 Mar, not 28 Mar).
+function addMonthsClamped(dateStr: string, months: number): string {
+  const [y, m, day] = dateStr.split('-').map(Number);
+  const total = y * 12 + (m - 1) + months;
+  const ty = Math.floor(total / 12);
+  const tm = total % 12;
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  const dd = Math.min(day, last);
+  return `${ty}-${String(tm + 1).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
 }
 
 function dayBefore(dateStr: string): string {
@@ -107,6 +125,9 @@ export function accrualSchedule(
   bounds: LeaveYearBounds,
   joiningDateStr: string,
 ): AccrualCredit[] {
+  if (rule.basis === 'JOINING_ANNIVERSARY') {
+    return anniversarySchedule(rule, bounds, joiningDateStr);
+  }
   const periods = buildPeriods(bounds, rule.accrualFrequency);
   const joinedInside =
     joiningDateStr >= bounds.start && joiningDateStr <= bounds.end;
@@ -132,6 +153,36 @@ export function accrualSchedule(
       period,
       days,
       dueOn: rule.accrueAt === 'START' ? period.start : period.end,
+    });
+  }
+  return out;
+}
+
+/**
+ * Anniversary basis: the credits whose due date falls inside the leave year. A cycle is `months` long from the joining
+ * date; it credits `accrualAmountPerCycle`, or quota x months / 12. A credit belongs to the leave year it falls due in.
+ */
+function anniversarySchedule(
+  rule: AccrualRule,
+  bounds: LeaveYearBounds,
+  joiningDateStr: string,
+): AccrualCredit[] {
+  const months = periodMonthsOf(rule.accrualFrequency);
+  const days =
+    rule.accrualAmountPerCycle > 0
+      ? round2(rule.accrualAmountPerCycle)
+      : round2((rule.annualQuota * months) / 12);
+  const out: AccrualCredit[] = [];
+  for (let k = 0; k < 12 * 80; k++) {
+    const start = addMonthsClamped(joiningDateStr, k * months);
+    const end = dayBefore(addMonthsClamped(joiningDateStr, (k + 1) * months));
+    const dueOn = rule.accrueAt === 'START' ? start : end;
+    if (dueOn > bounds.end) break;
+    if (dueOn < bounds.start) continue;
+    out.push({
+      period: { start, end, months, monthIndex: 0 },
+      days,
+      dueOn,
     });
   }
   return out;
@@ -171,6 +222,15 @@ export function annualEntitlement(
   bounds: LeaveYearBounds,
   joiningDateStr: string,
 ): number {
+  if (rule.basis === 'JOINING_ANNIVERSARY') {
+    // Cycles do not line up with the leave year, so state the yearly rate instead of counting credits in it.
+    const months = periodMonthsOf(rule.accrualFrequency);
+    return round2(
+      rule.accrualAmountPerCycle > 0
+        ? (rule.accrualAmountPerCycle * 12) / months
+        : rule.annualQuota,
+    );
+  }
   return round2(
     accrualSchedule(rule, bounds, joiningDateStr).reduce(
       (sum, c) => sum + c.days,
