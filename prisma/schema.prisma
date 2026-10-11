@@ -1170,6 +1170,9 @@ model Leave {
   // for regular Leave, unlike CompOff's employeeId override).
   appliedOnBehalfOf Boolean @default(false)
   editedFromLeaveId String?
+  // [{ year, days }] when the leave spans New Year: the days charged to each year's balance (they add up to totalDays).
+  // Null for a leave inside one year, whose days all belong to its start year.
+  yearSplit         Json?
 
   // Two-level approval (dept-head then HR), capped at 2, flat fields
   // rather than a separate approval-history table — mirrors the old

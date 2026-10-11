@@ -3,6 +3,8 @@ import {
   checkLeaveRules,
   effectiveLeaveRules,
   LeaveRules,
+  rangesOverlap,
+  splitDaysByYear,
 } from './leave-rules';
 
 const permissiveRules: LeaveRules = {
@@ -532,5 +534,109 @@ describe('applicationDocumentRule', () => {
         documentRequiredAfterDays: null,
       }),
     ).toEqual({ documentsRequired: false, documentRequiredAfterDays: null });
+  });
+});
+
+describe('half-day on a day off', () => {
+  const rules = {
+    minDurationDays: 0.5,
+    maxDurationDays: null,
+    noticePeriodDays: 0,
+    allowBackdated: true,
+    maxBackdateDays: 30,
+    allowFutureDated: true,
+    maxAdvanceDays: null,
+    allowHalfDay: true,
+    sandwichLeaveApplies: false,
+    restrictPrefixSuffixHoliday: false,
+    maxConsecutiveDays: null,
+    minGapBetweenRequestsDays: 0,
+  };
+  const ctx = (holidays: string[] = []) => ({
+    today: '2026-06-10',
+    holidayDates: new Set(holidays),
+    weeklyOffs: [0] as never,
+    existingRanges: [],
+    documentsRequired: false,
+    documentRequiredAfterDays: null,
+  });
+  const half = (d: string) => ({
+    startDate: d,
+    endDate: d,
+    isHalfDay: true,
+    halfDaySession: 'FIRST_HALF',
+    hasAttachment: false,
+  });
+
+  it('is refused on a Sunday and on a holiday, accepted on a working day', () => {
+    expect(checkLeaveRules(rules, half('2026-06-14'), ctx()).ok).toBe(false); // Sunday
+    expect(
+      checkLeaveRules(rules, half('2026-06-16'), ctx(['2026-06-16'])).ok,
+    ).toBe(false);
+    expect(checkLeaveRules(rules, half('2026-06-16'), ctx()).ok).toBe(true);
+  });
+
+  it('is accepted on a weekly off for calendar-day (event) leave', () => {
+    expect(
+      checkLeaveRules(
+        { ...rules, countCalendarDays: true },
+        half('2026-06-14'),
+        ctx(),
+      ).ok,
+    ).toBe(true);
+  });
+});
+
+describe('rangesOverlap with half-day sessions', () => {
+  const d = '2026-06-16';
+  const h = (session: string | null, over: object = {}) => ({
+    start: d,
+    end: d,
+    isHalfDay: true,
+    halfDaySession: session,
+    ...over,
+  });
+  it('different sessions on one date do not overlap', () => {
+    expect(rangesOverlap(h('FIRST_HALF'), h('SECOND_HALF'))).toBe(false);
+  });
+  it('the same session, a missing session, or a full day still overlaps', () => {
+    expect(rangesOverlap(h('FIRST_HALF'), h('FIRST_HALF'))).toBe(true);
+    expect(rangesOverlap(h(null), h('SECOND_HALF'))).toBe(true);
+    expect(
+      rangesOverlap(h('FIRST_HALF'), { start: d, end: d, isHalfDay: false }),
+    ).toBe(true);
+    expect(
+      rangesOverlap(h('FIRST_HALF'), h('SECOND_HALF', { end: '2026-06-17' })),
+    ).toBe(true);
+  });
+});
+
+describe('splitDaysByYear', () => {
+  const rules = { sandwichLeaveApplies: false, countCalendarDays: false };
+  it('is a single part for a leave inside one year', () => {
+    expect(
+      splitDaysByYear(rules, '2026-12-01', '2026-12-04', 4, new Set(), [0]),
+    ).toEqual([{ year: 2026, days: 4 }]);
+  });
+  it('splits working days at New Year and adds back to the total', () => {
+    // Mon 30 Dec 2030 .. Thu 2 Jan 2031; Sunday is the only weekly off.
+    expect(
+      splitDaysByYear(rules, '2030-12-30', '2031-01-02', 4, new Set(), [0]),
+    ).toEqual([
+      { year: 2030, days: 2 },
+      { year: 2031, days: 2 },
+    ]);
+  });
+  it('a sandwich-adjusted total keeps the parts summing to it (remainder on the last year)', () => {
+    const parts = splitDaysByYear(
+      { sandwichLeaveApplies: true, countCalendarDays: false },
+      '2030-12-30',
+      '2031-01-02',
+      6,
+      new Set(),
+      [0],
+    );
+    expect(parts.reduce((s, p) => s + p.days, 0)).toBe(6);
+    expect(parts[0].year).toBe(2030);
   });
 });

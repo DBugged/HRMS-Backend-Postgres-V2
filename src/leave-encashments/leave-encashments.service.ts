@@ -162,9 +162,19 @@ export class LeaveEncashmentsService {
       );
     }
 
+    // The year and month in the organisation's own timezone, not the server's: around New Year the two differ, and the
+    // yearly cap and the balance row would be taken from the wrong year.
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
+    const orgTz =
+      (
+        await this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        })
+      )?.timezone ?? 'Asia/Kolkata';
+    const orgToday = localDateStr(orgTz, now);
+    const year = Number(orgToday.slice(0, 4));
+    const month = Number(orgToday.slice(5, 7));
 
     const created = await this.scopedPrisma
       .$transaction(async (tx) => {

@@ -47,6 +47,7 @@ import {
   applicationDocumentRule,
   effectiveLeaveRules,
   rangesOverlap,
+  splitDaysByYear,
   LeaveRules,
 } from './leave-rules';
 import {
@@ -96,6 +97,18 @@ const CANCEL_OVERRIDE_ROLES: Role[] = [Role.ADMIN, Role.HR];
 
 function deriveLeaveYear(startDate: string): number {
   return Number(startDate.slice(0, 4));
+}
+
+// The balance years a leave is charged to and how many days each: the split recorded when it was applied, or all of
+// totalDays on its start year for a leave inside one year (and for every leave applied before the split existed).
+function yearPartsOf(leave: {
+  startDate: string;
+  totalDays: number;
+  yearSplit?: unknown;
+}): { year: number; days: number }[] {
+  const split = leave.yearSplit as { year: number; days: number }[] | null;
+  if (Array.isArray(split) && split.length > 0) return split;
+  return [{ year: deriveLeaveYear(leave.startDate), days: leave.totalDays }];
 }
 
 // Every distinct (month, year) a leave's date range touches, as
@@ -389,6 +402,60 @@ export class LeavesService {
     });
   }
 
+  // Who is away in a window - open to every employee, so people can see who is out before planning a meeting. Only what
+  // that needs: the person, the dates and whether it is a half-day. Never the leave type, the remarks or any document
+  // (a sick or maternity leave is nobody else's business), and only approved leave. HR and Admin see the whole
+  // organisation; everyone else sees their own department (an employee with no department sees only themself).
+  async getWhosOut(
+    query: TeamCalendarQueryDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const where: Prisma.LeaveWhereInput = {
+      organizationId,
+      status: LeaveStatus.APPROVED,
+      startDate: { lte: query.to },
+      endDate: { gte: query.from },
+    };
+    if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
+      where.employee = actor.departmentId
+        ? { departmentId: actor.departmentId }
+        : { id: actor.id };
+    }
+    const leaves = await this.scopedPrisma.leave.findMany({
+      where,
+      select: {
+        id: true,
+        startDate: true,
+        endDate: true,
+        isHalfDay: true,
+        halfDaySession: true,
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { startDate: 'asc' }],
+    });
+    return {
+      data: leaves.map((l) => ({
+        id: l.id,
+        employeeId: l.employee.id,
+        employeeCode: l.employee.employeeId,
+        name: l.employee.name,
+        department: l.employee.department?.name ?? null,
+        startDate: l.startDate,
+        endDate: l.endDate,
+        isHalfDay: l.isHalfDay,
+        halfDaySession: l.halfDaySession,
+      })),
+    };
+  }
+
   async getHistory(employeeId: string, actor: Actor, organizationId: string) {
     if (employeeId !== actor.id && !APPROVE_ROLES.includes(actor.role)) {
       throw new ForbiddenException(
@@ -442,24 +509,9 @@ export class LeavesService {
       );
     }
 
-    await this.scopedPrisma.$transaction(async (tx) => {
-      // Same compare-and-swap-then-release ordering as cancel() below —
-      // only the caller that wins this guarded update (still PENDING)
-      // proceeds to release the pending hold, so a concurrent double-edit
-      // can't decrement `pending` twice for one request.
-      const { count } = await tx.leave.updateMany({
-        where: { id, organizationId, status: LeaveStatus.PENDING },
-        data: { status: LeaveStatus.CANCELLED },
-      });
-      if (count === 0) {
-        throw new ConflictException(
-          'This leave request was already reviewed or cancelled.',
-        );
-      }
-      await this.releaseHold(tx, existing, organizationId);
-    });
-
-    return this.createLeaveInternal(dto, actor, organizationId, id);
+    // The original is replaced inside createLeaveInternal's own transaction, after the new request has been checked: a
+    // request that fails validation or the balance check leaves the original exactly as it was.
+    return this.createLeaveInternal(dto, actor, organizationId, existing);
   }
 
   async review(
@@ -641,23 +693,45 @@ export class LeavesService {
             organizationId,
           );
         } else if (!isUnbalancedType(leaveType)) {
-          const year = deriveLeaveYear(leave.startDate);
+          for (const part of yearPartsOf(leave)) {
+            const row = await this.leaveBalanceService.ensureBalanceRow(
+              tx,
+              leave.employeeId,
+              leave.leaveTypeId,
+              part.year,
+              organizationId,
+            );
+            // Atomic increment/decrement — see the comment on the apply()
+            // pending update above for why a JS-computed `row.field ± delta`
+            // here would lose an update under concurrent review calls.
+            await tx.leaveBalance.updateMany({
+              where: { id: row.id, organizationId },
+              data: {
+                pending: { decrement: part.days },
+                availed: { increment: part.days },
+              },
+            });
+            await this.leaveBalanceService.recalculate(
+              tx,
+              row.id,
+              organizationId,
+            );
+          }
+        }
+      } else if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
+        // REJECTED/RETURNED — release the pending hold, nothing was ever
+        // deducted from availed.
+        for (const part of yearPartsOf(leave)) {
           const row = await this.leaveBalanceService.ensureBalanceRow(
             tx,
             leave.employeeId,
             leave.leaveTypeId,
-            year,
+            part.year,
             organizationId,
           );
-          // Atomic increment/decrement — see the comment on the apply()
-          // pending update above for why a JS-computed `row.field ± delta`
-          // here would lose an update under concurrent review calls.
           await tx.leaveBalance.updateMany({
             where: { id: row.id, organizationId },
-            data: {
-              pending: { decrement: leave.totalDays },
-              availed: { increment: leave.totalDays },
-            },
+            data: { pending: { decrement: part.days } },
           });
           await this.leaveBalanceService.recalculate(
             tx,
@@ -665,22 +739,6 @@ export class LeavesService {
             organizationId,
           );
         }
-      } else if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
-        // REJECTED/RETURNED — release the pending hold, nothing was ever
-        // deducted from availed.
-        const year = deriveLeaveYear(leave.startDate);
-        const row = await this.leaveBalanceService.ensureBalanceRow(
-          tx,
-          leave.employeeId,
-          leave.leaveTypeId,
-          year,
-          organizationId,
-        );
-        await tx.leaveBalance.updateMany({
-          where: { id: row.id, organizationId },
-          data: { pending: { decrement: leave.totalDays } },
-        });
-        await this.leaveBalanceService.recalculate(tx, row.id, organizationId);
       }
     });
 
@@ -727,6 +785,13 @@ export class LeavesService {
       },
       include: { leaveType: true },
     });
+    // The audit log needs a user as its actor, and a sweep has none: the organisation's oldest active Admin stands in, and
+    // every entry is marked details.source = 'SCHEDULED' so it is never mistaken for something they did.
+    const systemActor = await this.scopedPrisma.user.findFirst({
+      where: { organizationId, isActive: true, role: Role.ADMIN },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
     for (const leave of candidates) {
       const deadline = new Date(
         leave.createdAt.getTime() +
@@ -734,6 +799,16 @@ export class LeavesService {
       );
       if (now < deadline) continue;
       try {
+        // The sweep stands in for the final approver, and a final approver cannot skip level 1: on a two-level type the
+        // reporting manager's sign-off must be on record first, unless there is nobody who could give it (the same rule
+        // review() applies). Otherwise the request stays pending for the manager instead of being approved around them.
+        if (
+          leave.leaveType.approvalLevels === 2 &&
+          leave.level1ApprovedById === null &&
+          (await this.levelOneApproverExists(leave, organizationId))
+        ) {
+          continue;
+        }
         await this.applyDecision(
           leave,
           leave.leaveType,
@@ -742,7 +817,33 @@ export class LeavesService {
           null,
           organizationId,
         );
+        if (systemActor) {
+          await this.auditLogService.log({
+            actorId: systemActor.id,
+            action: 'LEAVE_AUTO_APPROVED',
+            module: 'LEAVE',
+            organizationId,
+            targetId: leave.id,
+            details: {
+              source: 'SCHEDULED',
+              autoApproved: true,
+              employeeId: leave.employeeId,
+              leaveType: leave.leaveType.name,
+              startDate: leave.startDate,
+              endDate: leave.endDate,
+              totalDays: leave.totalDays,
+            },
+          });
+        }
       } catch (err) {
+        // A leave that cannot be approved yet (its payroll month is locked or paid) stays pending and is tried again on
+        // the next run; that is expected, not an error.
+        if (err instanceof BadRequestException) {
+          this.logger.warn(
+            `Auto-approve skipped for leave ${leave.id}: ${err.message}`,
+          );
+          continue;
+        }
         this.logger.error(
           `Auto-approve failed for leave ${leave.id}`,
           err instanceof Error ? err.stack : String(err),
@@ -958,19 +1059,6 @@ export class LeavesService {
     }
     if (isUnbalancedType(leaveType)) return;
 
-    const year = deriveLeaveYear(leave.startDate);
-    const row = await this.leaveBalanceService.ensureBalanceRow(
-      tx,
-      leave.employeeId,
-      leave.leaveTypeId,
-      year,
-      organizationId,
-    );
-
-    // Atomic decrement — see the comment on the apply() pending update
-    // above for why `row.field - delta` here would lose an update under
-    // concurrent cancellations/reversals.
-    //
     // Only PENDING still holds a `pending` reservation. review() already
     // releases it when it sets REJECTED/RETURNED, so decrementing again
     // here for those statuses double-releases: a RETURNED leave that the
@@ -979,28 +1067,41 @@ export class LeavesService {
     // checkAffordability computes available as `... - pending`, that
     // *inflated* the employee's usable balance by the leave's length,
     // repeatably and invisibly (LeaveBalance.closing ignores `pending`).
-    const data: Prisma.LeaveBalanceUpdateManyMutationInput = {};
-    if (leave.status === LeaveStatus.APPROVED) {
-      data.availed = { decrement: leave.totalDays };
-    } else if (leave.status === LeaveStatus.PENDING) {
-      data.pending = { decrement: leave.totalDays };
-    } else {
-      // REJECTED/RETURNED — hold already released by review(); nothing to
-      // reverse, and recalculate() below would only re-derive the same row.
+    if (
+      leave.status !== LeaveStatus.APPROVED &&
+      leave.status !== LeaveStatus.PENDING
+    ) {
       return;
     }
-    await tx.leaveBalance.updateMany({
-      where: { id: row.id, organizationId },
-      data,
-    });
-    await this.leaveBalanceService.recalculate(tx, row.id, organizationId);
+    // Atomic decrement — see the comment on the apply() pending update
+    // above for why `row.field - delta` here would lose an update under
+    // concurrent cancellations/reversals. A leave that spans New Year gives back each year's own days.
+    for (const part of yearPartsOf(leave)) {
+      const row = await this.leaveBalanceService.ensureBalanceRow(
+        tx,
+        leave.employeeId,
+        leave.leaveTypeId,
+        part.year,
+        organizationId,
+      );
+      await tx.leaveBalance.updateMany({
+        where: { id: row.id, organizationId },
+        data:
+          leave.status === LeaveStatus.APPROVED
+            ? { availed: { decrement: part.days } }
+            : { pending: { decrement: part.days } },
+      });
+      await this.leaveBalanceService.recalculate(tx, row.id, organizationId);
+    }
   }
 
   private async createLeaveInternal(
     dto: ApplyLeaveDto,
     actor: Actor,
     organizationId: string,
-    editedFromLeaveId?: string,
+    // Set when this request replaces an existing PENDING one (an edit): that leave is left out of the overlap and gap
+    // checks, and is cancelled - with its balance hold released - inside the same transaction that creates the new one.
+    replacing?: Leave,
   ) {
     const leaveType = await this.scopedPrisma.leaveType.findFirst({
       where: { id: dto.leaveType, organizationId, isActive: true },
@@ -1015,6 +1116,13 @@ export class LeavesService {
     // request would silently proceed.
     if (!isEligible(leaveType, actor)) {
       throw new ForbiddenException('You are not eligible for this leave type.');
+    }
+
+    // Nobody is on leave before they have joined.
+    if (dto.startDate < actor.joiningDate.toISOString().slice(0, 10)) {
+      throw new BadRequestException(
+        'Leave cannot start before your joining date.',
+      );
     }
 
     // No new leave once notice period has started — derived entirely from
@@ -1041,8 +1149,19 @@ export class LeavesService {
 
     const [holidays, priorLeaveOfType, otherLeaves, employeeDept, org] =
       await Promise.all([
+        // The holidays this employee actually gets: company-wide and their own department's, optional ones excluded
+        // (an optional holiday is a day the employee may choose to take, not a day off for everyone) - the same set
+        // attendance and payroll use. Counting every holiday of the organisation undercharged leave around other
+        // departments' holidays.
         this.scopedPrisma.holiday.findMany({
-          where: { organizationId, isActive: true },
+          where: {
+            organizationId,
+            isActive: true,
+            isOptional: false,
+            OR: actor.departmentId
+              ? [{ departmentId: null }, { departmentId: actor.departmentId }]
+              : [{ departmentId: null }],
+          },
           select: { date: true },
         }),
         this.scopedPrisma.leave.findFirst({
@@ -1052,6 +1171,7 @@ export class LeavesService {
             leaveTypeId: leaveType.id,
             status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
             endDate: { lt: dto.startDate },
+            ...(replacing ? { id: { not: replacing.id } } : {}),
           },
           orderBy: { endDate: 'desc' },
         }),
@@ -1060,8 +1180,14 @@ export class LeavesService {
             organizationId,
             employeeId: actor.id,
             status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+            ...(replacing ? { id: { not: replacing.id } } : {}),
           },
-          select: { startDate: true, endDate: true },
+          select: {
+            startDate: true,
+            endDate: true,
+            isHalfDay: true,
+            halfDaySession: true,
+          },
         }),
         actor.departmentId
           ? this.scopedPrisma.department.findFirst({
@@ -1093,6 +1219,7 @@ export class LeavesService {
         startDate: dto.startDate,
         endDate: dto.endDate,
         isHalfDay: dto.isHalfDay ?? false,
+        halfDaySession: dto.halfDaySession ?? null,
         hasAttachment: !!dto.attachmentUrl,
       },
       {
@@ -1103,6 +1230,8 @@ export class LeavesService {
         existingRanges: otherLeaves.map((l) => ({
           start: l.startDate,
           end: l.endDate,
+          isHalfDay: l.isHalfDay,
+          halfDaySession: l.halfDaySession,
         })),
         ...applicationDocumentRule(leaveType),
       },
@@ -1111,6 +1240,15 @@ export class LeavesService {
       throw new BadRequestException(ruleResult.errors.join(' '));
     }
     const totalDays = ruleResult.totalDays;
+    const holidayDates = new Set(holidays.map((h) => h.date));
+    const yearParts = splitDaysByYear(
+      rules,
+      dto.startDate,
+      dto.endDate,
+      totalDays,
+      holidayDates,
+      weeklyOffs,
+    );
 
     const created = await this.scopedPrisma.$transaction(async (tx) => {
       // Row-lock the applicant's own User row so two concurrent apply()
@@ -1123,18 +1261,52 @@ export class LeavesService {
       // concurrent caller waits for the first to commit, then sees its
       // just-inserted row and is correctly rejected.
       await tx.$queryRaw`SELECT id FROM "users" WHERE id = ${actor.id} FOR UPDATE`;
+      // An edit replaces the original here, inside the same transaction: the original is cancelled (only if still
+      // PENDING - the guarded update below makes a concurrent review or cancel win cleanly) and its balance hold given
+      // back. If anything below fails, the whole transaction rolls back and the original is still there.
+      if (replacing) {
+        const { count } = await tx.leave.updateMany({
+          where: {
+            id: replacing.id,
+            organizationId,
+            status: LeaveStatus.PENDING,
+          },
+          data: { status: LeaveStatus.CANCELLED },
+        });
+        if (count === 0) {
+          throw new ConflictException(
+            'This leave request was already reviewed or cancelled.',
+          );
+        }
+        await this.releaseHold(tx, replacing, organizationId);
+      }
       const freshOtherLeaves = await tx.leave.findMany({
         where: {
           organizationId,
           employeeId: actor.id,
           status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
         },
-        select: { startDate: true, endDate: true },
+        select: {
+          startDate: true,
+          endDate: true,
+          isHalfDay: true,
+          halfDaySession: true,
+        },
       });
       const stillOverlaps = freshOtherLeaves.some((range) =>
         rangesOverlap(
-          { start: range.startDate, end: range.endDate },
-          { start: dto.startDate, end: dto.endDate },
+          {
+            start: range.startDate,
+            end: range.endDate,
+            isHalfDay: range.isHalfDay,
+            halfDaySession: range.halfDaySession,
+          },
+          {
+            start: dto.startDate,
+            end: dto.endDate,
+            isHalfDay: dto.isHalfDay ?? false,
+            halfDaySession: dto.halfDaySession ?? null,
+          },
         ),
       );
       if (stillOverlaps) {
@@ -1173,85 +1345,83 @@ export class LeavesService {
       }
 
       if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
-        const year = deriveLeaveYear(dto.startDate);
         // Leave never goes negative: once the quota is used up the employee applies Leave Without Pay for the extra
         // days (pay is deducted for those). Any Allow Negative Balance setting on the leave type is ignored.
         const negativeBalance: NegativeBalanceRule = {
           allowed: false,
           maxNegativeDays: 0,
         };
-        const row = await this.leaveBalanceService.ensureBalanceRow(
-          tx,
-          actor.id,
-          leaveType.id,
-          year,
-          organizationId,
-        );
-        // Cheap fail-fast against the pre-hold snapshot — good enough to
-        // reject an obviously-unaffordable request without touching the
-        // row, but NOT the authoritative check: two concurrent apply()
-        // calls for the same employee+leaveType+year can both read this
-        // same snapshot before either commits its hold below, so both
-        // would pass here even if only one can actually be afforded.
-        const forfeited = (
-          await this.leaveBalanceService.forfeitedCarryIn(
+        // A leave spanning New Year takes each year's days from that year's balance.
+        for (const part of yearParts) {
+          const row = await this.leaveBalanceService.ensureBalanceRow(
             tx,
-            [row],
+            actor.id,
+            leaveType.id,
+            part.year,
             organizationId,
-            today,
-          )
-        ).get(row.id);
-        const preflight = checkAffordability(
-          row,
-          negativeBalance,
-          totalDays,
-          today,
-          forfeited ?? 0,
-        );
-        if (!preflight.ok) {
-          throw new ForbiddenException(
-            leaveType.allocationType === AllocationType.EVENT_BASED
-              ? NO_GRANT_MESSAGE
-              : INSUFFICIENT_BALANCE_MESSAGE,
           );
-        }
-        // Atomic increment, not `row.pending + totalDays` — the latter is a
-        // read-modify-write against the JS-side value captured before this
-        // statement runs, so two concurrent apply() calls for the same
-        // employee+leaveType+year (each starting from the same stale read)
-        // would each overwrite rather than accumulate, losing one of the
-        // two pending holds. Prisma's `increment` compiles to `SET pending
-        // = pending + $1`, which Postgres applies against the row's
-        // current value under the row lock the UPDATE itself takes, so the
-        // second concurrent writer serializes behind the first instead of
-        // clobbering it.
-        await tx.leaveBalance.updateMany({
-          where: { id: row.id, organizationId },
-          data: { pending: { increment: totalDays } },
-        });
-        // The authoritative check, re-read AFTER the hold above — by the
-        // time this runs, a concurrent apply() that got here first has
-        // already committed its own increment (this UPDATE serialized
-        // behind its row lock), so `rowAfterHold.pending` reflects BOTH
-        // holds, not the stale pre-hold snapshot the preflight check saw.
-        // Passing requestedDays=0 here checks "is the balance still
-        // affordable now that this request's own days are already held,"
-        // which is the exact same inequality as the preflight check
-        // against the pre-hold row (pending appears on both sides of the
-        // formula either way) — just evaluated against current data
-        // instead of a snapshot two writers could share.
-        const rowAfterHold = await tx.leaveBalance.findFirstOrThrow({
-          where: { id: row.id, organizationId },
-        });
-        const affordability = checkAffordability(
-          rowAfterHold,
-          negativeBalance,
-          0,
-          today,
-          forfeited ?? 0,
-        );
-        if (!affordability.ok) {
-          throw new ForbiddenException(INSUFFICIENT_BALANCE_MESSAGE);
+          // Cheap fail-fast against the pre-hold snapshot — good enough to
+          // reject an obviously-unaffordable request without touching the
+          // row, but NOT the authoritative check: two concurrent apply()
+          // calls for the same employee+leaveType+year can both read this
+          // same snapshot before either commits its hold below, so both
+          // would pass here even if only one can actually be afforded.
+          const forfeited = (
+            await this.leaveBalanceService.forfeitedCarryIn(
+              tx,
+              [row],
+              organizationId,
+              today,
+            )
+          ).get(row.id);
+          const preflight = checkAffordability(
+            row,
+            negativeBalance,
+            part.days,
+            today,
+            forfeited ?? 0,
+          );
+          if (!preflight.ok) {
+            throw new ForbiddenException(
+              leaveType.allocationType === AllocationType.EVENT_BASED
+                ? NO_GRANT_MESSAGE
+                : INSUFFICIENT_BALANCE_MESSAGE,
+            );
+          }
+          // Atomic increment, not `row.pending + totalDays` — the latter is a
+          // read-modify-write against the JS-side value captured before this
+          // statement runs, so two concurrent apply() calls for the same
+          // employee+leaveType+year (each starting from the same stale read)
+          // would each overwrite rather than accumulate, losing one of the
+          // two pending holds. Prisma's `increment` compiles to `SET pending
+          // = pending + $1`, which Postgres applies against the row's
+          // current value under the row lock the UPDATE itself takes, so the
+          // second concurrent writer serializes behind the first instead of
+          // clobbering it.
+          await tx.leaveBalance.updateMany({
+            where: { id: row.id, organizationId },
+            data: { pending: { increment: part.days } },
+          });
+          // The authoritative check, re-read AFTER the hold above — by the
+          // time this runs, a concurrent apply() that got here first has
+          // already committed its own increment (this UPDATE serialized
+          // behind its row lock), so `rowAfterHold.pending` reflects BOTH
+          // holds, not the stale pre-hold snapshot the preflight check saw.
+          // Passing requestedDays=0 here checks "is the balance still
+          // affordable now that this request's own days are already held".
+          const rowAfterHold = await tx.leaveBalance.findFirstOrThrow({
+            where: { id: row.id, organizationId },
+          });
+          const affordability = checkAffordability(
+            rowAfterHold,
+            negativeBalance,
+            0,
+            today,
+            forfeited ?? 0,
+          );
+          if (!affordability.ok) {
+            throw new ForbiddenException(INSUFFICIENT_BALANCE_MESSAGE);
+          }
         }
       }
 
@@ -1271,7 +1441,11 @@ export class LeavesService {
           totalDays,
           remarks: dto.remarks ?? '',
           attachmentUrl: dto.attachmentUrl,
-          editedFromLeaveId: editedFromLeaveId ?? null,
+          editedFromLeaveId: replacing?.id ?? null,
+          yearSplit:
+            yearParts.length > 1
+              ? (yearParts as unknown as Prisma.InputJsonValue)
+              : Prisma.JsonNull,
         },
       });
     });

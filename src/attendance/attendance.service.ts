@@ -2247,10 +2247,31 @@ export class AttendanceService {
     const existingDates = new Set(existingRows.map((r) => r.date));
 
     if (existingRows.length > 0) {
-      await tx.attendance.updateMany({
-        where: { id: { in: existingRows.map((r) => r.id) }, organizationId },
-        data: { status, source: AttendanceSource.SYSTEM },
-      });
+      // A day already stamped HALF_DAY by another approved half-day leave (the morning under one leave, the afternoon
+      // under another) is now a whole day off.
+      const alreadyHalfLeave = (r: (typeof existingRows)[number]) =>
+        leave.isHalfDay &&
+        r.status === AttendanceStatus.HALF_DAY &&
+        r.source === AttendanceSource.SYSTEM;
+      const wholeDay = existingRows.filter(alreadyHalfLeave).map((r) => r.id);
+      const rest = existingRows
+        .filter((r) => !alreadyHalfLeave(r))
+        .map((r) => r.id);
+      if (rest.length > 0) {
+        await tx.attendance.updateMany({
+          where: { id: { in: rest }, organizationId },
+          data: { status, source: AttendanceSource.SYSTEM },
+        });
+      }
+      if (wholeDay.length > 0) {
+        await tx.attendance.updateMany({
+          where: { id: { in: wholeDay }, organizationId },
+          data: {
+            status: AttendanceStatus.ON_LEAVE,
+            source: AttendanceSource.SYSTEM,
+          },
+        });
+      }
     }
     const missingDates = dates.filter((d) => !existingDates.has(d));
     if (missingDates.length > 0) {

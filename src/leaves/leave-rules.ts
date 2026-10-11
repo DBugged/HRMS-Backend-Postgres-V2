@@ -78,12 +78,17 @@ export interface LeaveRequest {
   startDate: string; // YYYY-MM-DD
   endDate: string;
   isHalfDay: boolean;
+  halfDaySession?: string | null;
   hasAttachment: boolean;
 }
 
 export interface DateRange {
   start: string;
   end: string;
+  // A half-day leave on a single date, with the part of the day it covers. Two half-days of different sessions on the
+  // same date do not overlap (see rangesOverlap).
+  isHalfDay?: boolean;
+  halfDaySession?: string | null;
 }
 
 export interface LeaveRuleContext {
@@ -189,7 +194,56 @@ function computeSandwichAdjustedDays(
 // snapshot, which two concurrent apply() calls for the same employee can
 // both pass (see LeavesService.createLeaveInternal for the full guard).
 export function rangesOverlap(a: DateRange, b: DateRange): boolean {
-  return a.start <= b.end && b.start <= a.end;
+  if (!(a.start <= b.end && b.start <= a.end)) return false;
+  // The morning off under one leave and the afternoon under another is a legitimate day: two half-days on the same single
+  // date, each with its own (different) session, do not clash. Anything else that shares a date does.
+  const sameSingleDate =
+    a.start === a.end && b.start === b.end && a.start === b.start;
+  if (
+    sameSingleDate &&
+    a.isHalfDay &&
+    b.isHalfDay &&
+    a.halfDaySession &&
+    b.halfDaySession &&
+    a.halfDaySession !== b.halfDaySession
+  ) {
+    return false;
+  }
+  return true;
+}
+
+// The days a leave is charged, split by calendar year, so a leave spanning New Year takes its December days from the
+// old year's balance and its January days from the new one's. `total` is what the whole request is charged (it can
+// include a sandwich adjustment); each part is counted with the same basis as the total and the last part takes the
+// remainder, so the parts always add up to it. A leave inside one year returns a single part.
+export function splitDaysByYear(
+  rules: Pick<LeaveRules, 'sandwichLeaveApplies' | 'countCalendarDays'>,
+  startDate: string,
+  endDate: string,
+  total: number,
+  holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
+): { year: number; days: number }[] {
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  if (startYear === endYear) return [{ year: startYear, days: total }];
+  const calendar = rules.sandwichLeaveApplies || rules.countCalendarDays;
+  const parts: { year: number; days: number }[] = [];
+  let assigned = 0;
+  for (let year = startYear; year <= endYear; year += 1) {
+    if (year === endYear) {
+      parts.push({ year, days: Math.round((total - assigned) * 100) / 100 });
+      break;
+    }
+    const from = year === startYear ? startDate : `${year}-01-01`;
+    const to = `${year}-12-31`;
+    const days = calendar
+      ? countDaysInclusive(from, to)
+      : countWorkingDaysInclusive(from, to, holidayDates, weeklyOffs);
+    parts.push({ year, days });
+    assigned += days;
+  }
+  return parts;
 }
 
 export function checkLeaveRules(
@@ -212,6 +266,24 @@ export function checkLeaveRules(
     // e.g. a month-long "half day" cost the employee half a day of balance.
     errors.push(
       'A half-day leave must start and end on the same date. Uncheck half day to apply for a date range.',
+    );
+  }
+
+  // A half-day is leave from a working day. On a weekly off or holiday there is nothing to take leave from (a full-day
+  // request made up only of such days is refused below for the same reason); event leave counted in calendar days
+  // charges every date, so it is exempt.
+  if (
+    request.isHalfDay &&
+    request.startDate === request.endDate &&
+    !rules.countCalendarDays &&
+    isHolidayOrWeeklyOff(
+      request.startDate,
+      context.holidayDates,
+      context.weeklyOffs,
+    )
+  ) {
+    errors.push(
+      'The selected date is a weekly off or holiday - there is no working day to take half-day leave from.',
     );
   }
 
@@ -337,7 +409,12 @@ export function checkLeaveRules(
 
   // Unconditional — applies regardless of the leave type's rules.
   const overlapsExisting = context.existingRanges.some((range) =>
-    rangesOverlap(range, { start: request.startDate, end: request.endDate }),
+    rangesOverlap(range, {
+      start: request.startDate,
+      end: request.endDate,
+      isHalfDay: request.isHalfDay,
+      halfDaySession: request.halfDaySession ?? null,
+    }),
   );
   if (overlapsExisting) {
     errors.push(

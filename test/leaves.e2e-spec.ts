@@ -401,8 +401,9 @@ describe('Leaves (e2e)', () => {
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         leaveType: compOffLeaveTypeId,
-        startDate: offsetDate(20),
-        endDate: offsetDate(20),
+        // A half-day needs a working day (it is refused on a weekly off or holiday), so anchor it to a Tuesday.
+        startDate: offsetDate(offsetToWeekday(40, 2)),
+        endDate: offsetDate(offsetToWeekday(40, 2)),
         isHalfDay: true,
       })
       .expect(201);
@@ -875,6 +876,358 @@ describe('Leaves (e2e)', () => {
           endDate: offsetDate(sat + 1),
         })
         .expect(400);
+    });
+  });
+
+  describe("Leave fixes: editing, holidays, half-days, auto-approval, year split, joining date, who's out", () => {
+    const apply = (token: string, body: object) =>
+      request(app.getHttpServer())
+        .post('/leaves')
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+    const edit = (token: string, id: string, body: object) =>
+      request(app.getHttpServer())
+        .put(`/leaves/${id}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+    const pendingOf = async (typeId: string, year: number) =>
+      (
+        await prisma.leaveBalance.findFirst({
+          where: { employeeId, leaveTypeId: typeId, year },
+        })
+      )?.pending ?? 0;
+
+    it('LV-1: an edit that fails validation leaves the original request pending and its hold intact', async () => {
+      const mon = offsetToWeekday(200, 1);
+      const created = await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(mon),
+        endDate: offsetDate(mon + 1),
+      }).expect(201);
+      const id = (created.body as LeaveBody).id;
+      const year = Number(offsetDate(mon).slice(0, 4));
+      const held = await pendingOf(elLeaveTypeId, year);
+
+      await edit(employeeToken, id, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(mon + 4),
+        endDate: offsetDate(mon),
+      }).expect(400);
+      const after = await prisma.leave.findUniqueOrThrow({ where: { id } });
+      expect(after.status).toBe('PENDING');
+      expect(await pendingOf(elLeaveTypeId, year)).toBe(held);
+    });
+
+    it('LV-1: a valid edit replaces the original in one step: new request pending, old cancelled, hold not doubled', async () => {
+      const mon = offsetToWeekday(210, 1);
+      const created = await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(mon),
+        endDate: offsetDate(mon + 1),
+      }).expect(201);
+      const oldId = (created.body as LeaveBody).id;
+      const year = Number(offsetDate(mon).slice(0, 4));
+      const held = await pendingOf(elLeaveTypeId, year);
+      // Overlaps the original's own dates (an edit must not clash with the request it replaces) and is one day longer.
+      const edited = await edit(employeeToken, oldId, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(mon),
+        endDate: offsetDate(mon + 2),
+      }).expect(200);
+      expect((edited.body as LeaveBody).totalDays).toBe(3);
+      expect(
+        (await prisma.leave.findUniqueOrThrow({ where: { id: oldId } })).status,
+      ).toBe('CANCELLED');
+      expect(await pendingOf(elLeaveTypeId, year)).toBe(held + 1);
+    });
+
+    it("LV-2: only the employee's own holidays reduce the days charged; another department's and optional ones do not", async () => {
+      const mon = offsetToWeekday(250, 1);
+      const own = (
+        await prisma.user.findUniqueOrThrow({ where: { id: employeeId } })
+      ).departmentId!;
+      const other = await request(app.getHttpServer())
+        .post('/departments')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Holiday Other', code: 'HOL' })
+        .expect(201);
+      const mkHoliday = (name: string, date: string, extra: object) =>
+        request(app.getHttpServer())
+          .post('/holidays')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ name, date, ...extra })
+          .expect(201);
+      await mkHoliday('Other dept only', offsetDate(mon + 2), {
+        department: (other.body as { id: string }).id,
+      });
+      await mkHoliday('Optional festival', offsetDate(mon + 3), {
+        isOptional: true,
+      });
+      const week = await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(mon),
+        endDate: offsetDate(mon + 4),
+      }).expect(201);
+      expect((week.body as LeaveBody).totalDays).toBe(5);
+
+      // The employee's own department's holiday does come off.
+      const mon2 = offsetToWeekday(260, 1);
+      await mkHoliday('Own dept holiday', offsetDate(mon2 + 2), {
+        department: own,
+      });
+      const week2 = await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(mon2),
+        endDate: offsetDate(mon2 + 4),
+      }).expect(201);
+      expect((week2.body as LeaveBody).totalDays).toBe(4);
+    });
+
+    it('LV-3: a half-day on a weekly off is refused; on a working day it is accepted', async () => {
+      const sunday = offsetToWeekday(270, 0);
+      const refused = await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(sunday),
+        endDate: offsetDate(sunday),
+        isHalfDay: true,
+        halfDaySession: 'FIRST_HALF',
+      }).expect(400);
+      expect(JSON.stringify(refused.body)).toContain('weekly off or holiday');
+      const tue = offsetToWeekday(270, 2);
+      await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: offsetDate(tue),
+        endDate: offsetDate(tue),
+        isHalfDay: true,
+        halfDaySession: 'FIRST_HALF',
+      }).expect(201);
+    });
+
+    it('LV-7: the morning under one leave and the afternoon under another is allowed; the same session twice is not', async () => {
+      const second = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Half Day Mate',
+          code: 'HDM',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 10,
+        })
+        .expect(201);
+      const mateId = (second.body as LeaveTypeBody).id;
+      const wed = offsetToWeekday(280, 3);
+      const date = offsetDate(wed);
+      await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: date,
+        endDate: date,
+        isHalfDay: true,
+        halfDaySession: 'FIRST_HALF',
+      }).expect(201);
+      await apply(employeeToken, {
+        leaveType: mateId,
+        startDate: date,
+        endDate: date,
+        isHalfDay: true,
+        halfDaySession: 'FIRST_HALF',
+      }).expect(400);
+      await apply(employeeToken, {
+        leaveType: mateId,
+        startDate: date,
+        endDate: date,
+        isHalfDay: true,
+        halfDaySession: 'SECOND_HALF',
+      }).expect(201);
+      // A full day over a half-day is still a clash.
+      await apply(employeeToken, {
+        leaveType: mateId,
+        startDate: date,
+        endDate: date,
+      }).expect(400);
+    });
+
+    it('LV-4: auto-approval waits for level-1 on a two-level type; once the manager has signed off it approves and is audited', async () => {
+      const type = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Two Level Auto',
+          code: 'TLA',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 10,
+          approvalLevels: 2,
+          autoApproveIfNoAction: true,
+          autoApproveHours: 1,
+        })
+        .expect(201);
+      const typeId = (type.body as LeaveTypeBody).id;
+      const mon = offsetToWeekday(290, 1);
+      const created = await apply(employeeToken, {
+        leaveType: typeId,
+        startDate: offsetDate(mon),
+        endDate: offsetDate(mon),
+      }).expect(201);
+      const id = (created.body as LeaveBody).id;
+      await prisma.leave.update({
+        where: { id },
+        data: { createdAt: new Date(Date.now() - 3 * 3600000) },
+      });
+      await leavesService.autoApprovePendingLeaves();
+      expect(
+        (await prisma.leave.findUniqueOrThrow({ where: { id } })).status,
+      ).toBe('PENDING');
+
+      // The manager signs off level 1; the sweep may now give the final approval.
+      await request(app.getHttpServer())
+        .patch(`/leaves/${id}/review`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      await leavesService.autoApprovePendingLeaves();
+      const done = await prisma.leave.findUniqueOrThrow({ where: { id } });
+      expect(done.status).toBe('APPROVED');
+      const audit = await prisma.auditLog.findFirst({
+        where: { targetId: id, action: 'LEAVE_AUTO_APPROVED' },
+      });
+      expect((audit?.details as { source?: string })?.source).toBe('SCHEDULED');
+    });
+
+    it("LV-5: a leave across New Year takes each year's days from that year's balance, and gives them back on cancel", async () => {
+      // 2030-12-30 is a Monday: Mon + Tue in 2030, Wed + Thu in 2031 (Sunday is the only weekly off).
+      const created = await apply(employeeToken, {
+        leaveType: elLeaveTypeId,
+        startDate: '2030-12-30',
+        endDate: '2031-01-02',
+      }).expect(201);
+      const id = (created.body as LeaveBody).id;
+      expect((created.body as LeaveBody).totalDays).toBe(4);
+      expect(await pendingOf(elLeaveTypeId, 2030)).toBeGreaterThanOrEqual(2);
+      const row = (y: number) =>
+        prisma.leaveBalance.findFirstOrThrow({
+          where: { employeeId, leaveTypeId: elLeaveTypeId, year: y },
+        });
+      const before = { a: await row(2030), b: await row(2031) };
+      expect(before.a.pending).toBe(2);
+      expect(before.b.pending).toBe(2);
+
+      await request(app.getHttpServer())
+        .patch(`/leaves/${id}/review`)
+        .set('Authorization', `Bearer ${managerToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch(`/leaves/${id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      expect([(await row(2030)).availed, (await row(2031)).availed]).toEqual([
+        2, 2,
+      ]);
+      expect([(await row(2030)).pending, (await row(2031)).pending]).toEqual([
+        0, 0,
+      ]);
+
+      await request(app.getHttpServer())
+        .patch(`/leaves/${id}/cancel`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+      expect([(await row(2030)).availed, (await row(2031)).availed]).toEqual([
+        0, 0,
+      ]);
+    });
+
+    it('LV-6: leave cannot start before the joining date', async () => {
+      await prisma.user.update({
+        where: { id: employeeId },
+        data: { joiningDate: new Date('2031-06-01T00:00:00.000Z') },
+      });
+      try {
+        const refused = await apply(employeeToken, {
+          leaveType: elLeaveTypeId,
+          startDate: '2031-05-05',
+          endDate: '2031-05-05',
+        }).expect(400);
+        expect(JSON.stringify(refused.body)).toContain('joining date');
+        await apply(employeeToken, {
+          leaveType: elLeaveTypeId,
+          startDate: '2031-06-03',
+          endDate: '2031-06-03',
+        }).expect(201);
+      } finally {
+        await prisma.user.update({
+          where: { id: employeeId },
+          data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+        });
+      }
+    });
+
+    it("LV-10: who's out shows approved leave to colleagues, with no type or remarks; HR sees everyone; others see only their department", async () => {
+      const orgId = (
+        await prisma.user.findUniqueOrThrow({ where: { id: employeeId } })
+      ).organizationId;
+      const type = elLeaveTypeId;
+      const day = '2031-09-02';
+      await prisma.leave.create({
+        data: {
+          organizationId: orgId,
+          employeeId,
+          leaveTypeId: type,
+          startDate: day,
+          endDate: day,
+          totalDays: 1,
+          status: 'APPROVED',
+          remarks: 'private medical reason',
+        },
+      });
+      await prisma.leave.create({
+        data: {
+          organizationId: orgId,
+          employeeId: outsideDeptEmployeeId,
+          leaveTypeId: type,
+          startDate: day,
+          endDate: day,
+          totalDays: 1,
+          status: 'APPROVED',
+          remarks: 'other dept',
+        },
+      });
+      await prisma.leave.create({
+        data: {
+          organizationId: orgId,
+          employeeId,
+          leaveTypeId: type,
+          startDate: '2031-09-03',
+          endDate: '2031-09-03',
+          totalDays: 1,
+          status: 'PENDING',
+        },
+      });
+      const get = (token: string) =>
+        request(app.getHttpServer())
+          .get('/leaves/whos-out')
+          .query({ from: '2031-09-01', to: '2031-09-05' })
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+      const asManager = (await get(managerToken)).body as {
+        data: Record<string, unknown>[];
+      };
+      expect(asManager.data.map((r) => r.employeeId)).toEqual([employeeId]);
+      const row = asManager.data[0];
+      expect(Object.keys(row)).not.toEqual(expect.arrayContaining(['remarks']));
+      expect(JSON.stringify(row)).not.toContain('private medical reason');
+      expect(row).not.toHaveProperty('leaveType');
+      const asHr = (await get(hrToken)).body as {
+        data: { employeeId: string }[];
+      };
+      expect(asHr.data.map((r) => r.employeeId).sort()).toEqual(
+        [employeeId, outsideDeptEmployeeId].sort(),
+      );
+      // The pending request is not shown to anyone.
+      expect(asHr.data).toHaveLength(2);
+      const asEmployee = (await get(employeeToken)).body as {
+        data: { employeeId: string }[];
+      };
+      expect(asEmployee.data.map((r) => r.employeeId)).toEqual([employeeId]);
     });
   });
 });

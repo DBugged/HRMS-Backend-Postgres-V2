@@ -81,6 +81,12 @@ export class LeavesController {
     );
   }
 
+  // No @Roles(): every employee may see who is away (approved leave only, no type or remarks - see the service).
+  @Get('whos-out')
+  whosOut(@Query() query: TeamCalendarQueryDto, @CurrentUser() caller: Caller) {
+    return this.leavesService.getWhosOut(query, caller, caller.organizationId);
+  }
+
   @Get('credit-history')
   @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
