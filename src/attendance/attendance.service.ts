@@ -2307,6 +2307,19 @@ export class AttendanceService {
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dto.date },
     });
+    // Asking for only the In or only the Out time works when the day already has the other one (a forgotten punch-out).
+    // With nothing recorded on the other side the day could never get a full In/Out pair, so say so now instead of
+    // leaving a request that no one can approve.
+    if (!dto.requestedInTime && !existing?.inTime) {
+      throw new BadRequestException(
+        'There is no In time recorded for this date - enter both the In time and the Out time.',
+      );
+    }
+    if (!dto.requestedOutTime && !existing?.outTime) {
+      throw new BadRequestException(
+        'There is no Out time recorded for this date - enter both the In time and the Out time.',
+      );
+    }
     // A fresh 'none'/never-requested row, or one HR/Manager already
     // rejected, can be (re)submitted — matches this app's own precedent
     // elsewhere of allowing resubmission after rejection (see
@@ -2355,22 +2368,26 @@ export class AttendanceService {
     let workDurationMinutes: number | undefined;
     let status: AttendanceStatus = AttendanceStatus.ABSENT;
     let source: AttendanceSource = AttendanceSource.SYSTEM;
+    let isLate: boolean | undefined;
+    let isEarlyOut: boolean | undefined;
     if (isSelfApproving) {
-      if (requestedInTime) inTime = requestedInTime;
-      if (requestedOutTime) outTime = requestedOutTime;
-      if (requestedInTime && requestedOutTime) {
-        workDurationMinutes = Math.max(
-          0,
-          Math.round(
-            (requestedOutTime.getTime() - requestedInTime.getTime()) / 60000,
-          ),
-        );
-        status = await this.statusForWorkedMinutes(
-          actor.id,
-          organizationId,
-          workDurationMinutes,
-        );
-      }
+      const outcome = await this.regularizationOutcome(
+        {
+          date: dto.date,
+          employeeId: actor.id,
+          departmentId: existing?.departmentId ?? null,
+          inTime: existing?.inTime ?? null,
+          outTime: existing?.outTime ?? null,
+        },
+        regularization,
+        organizationId,
+      );
+      inTime = outcome.inTime;
+      outTime = outcome.outTime;
+      workDurationMinutes = outcome.workDurationMinutes;
+      status = outcome.status;
+      isLate = outcome.isLate;
+      isEarlyOut = outcome.isEarlyOut;
       source = AttendanceSource.REGULARIZED;
     }
 
@@ -2385,6 +2402,8 @@ export class AttendanceService {
             workDurationMinutes,
             status,
             source,
+            isLate,
+            isEarlyOut,
           }),
         },
       });
@@ -2399,18 +2418,136 @@ export class AttendanceService {
           workDurationMinutes,
           inTime,
           outTime,
+          isLate,
+          isEarlyOut,
           regularization: regularization as unknown as Prisma.InputJsonValue,
         },
       });
     }
 
-    if (!isSelfApproving) {
+    if (isSelfApproving) {
+      // An Admin's own request applies at once, so the trail has to say so: a reviewer's approval is logged, this one
+      // was not.
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'REGULARIZATION_APPROVED',
+        module: 'ATTENDANCE',
+        organizationId,
+        targetId: existing?.id ?? null,
+        details: {
+          employeeId: actor.id,
+          date: dto.date,
+          selfApproved: true,
+          previousInTime: existing?.inTime?.toISOString() ?? null,
+          previousOutTime: existing?.outTime?.toISOString() ?? null,
+          requestedInTime: dto.requestedInTime ?? null,
+          requestedOutTime: dto.requestedOutTime ?? null,
+          previousStatus: existing?.status ?? null,
+          newStatus: status,
+          reason: dto.reason,
+        },
+      });
+    } else {
       await this.notifyRegularizationRequested(actor, dto.date, organizationId);
     }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({
       where: { organizationId, employeeId: actor.id, date: dto.date },
     });
+  }
+
+  // What approving a regularization does to the day, in one place for the three ways a request can be approved (a
+  // reviewer, the Admin's own request, the "no action in X hours" sweep) so they cannot drift apart again.
+  //   - The In/Out times are the requested ones, falling back to what the day already has for the side not requested.
+  //   - Both must exist afterwards: a single time cannot give worked hours, and used to be marked PRESENT regardless.
+  //   - Status is judged on the hours worked with the employee's shift thresholds (so a regularized 1-hour day is not a
+  //     full Present day); late / early-out are recalculated for the corrected times on the organisation's wall clock.
+  //   - Like before, a regularized day is a hard override: a holiday or weekly off does not turn it back.
+  private async regularizationOutcome(
+    row: {
+      date: string;
+      employeeId: string;
+      departmentId: string | null;
+      inTime: Date | null;
+      outTime: Date | null;
+    },
+    reg: Pick<RegularizationState, 'requestedInTime' | 'requestedOutTime'>,
+    organizationId: string,
+  ): Promise<{
+    inTime: Date;
+    outTime: Date;
+    workDurationMinutes: number;
+    status: AttendanceStatus;
+    isLate: boolean;
+    isEarlyOut: boolean;
+  }> {
+    const inTime = reg.requestedInTime
+      ? new Date(reg.requestedInTime)
+      : row.inTime;
+    const outTime = reg.requestedOutTime
+      ? new Date(reg.requestedOutTime)
+      : row.outTime;
+    if (!inTime || !outTime) {
+      throw new BadRequestException(
+        `This cannot be approved: the day would still have no ${inTime ? 'Out' : 'In'} time. Reject it and ask the employee to send both times.`,
+      );
+    }
+    if (outTime.getTime() <= inTime.getTime()) {
+      throw new BadRequestException(
+        'The requested Out time is not after the In time, so this cannot be approved. Reject it and ask the employee to send it again.',
+      );
+    }
+
+    const [employee, org] = await Promise.all([
+      this.scopedPrisma.user.findFirst({
+        where: { id: row.employeeId, organizationId },
+        include: { department: true },
+      }),
+      this.prisma.organization.findUnique({ where: { id: organizationId } }),
+    ]);
+    // The department the day was recorded under, not necessarily the employee's current one.
+    const department =
+      row.departmentId && row.departmentId !== employee?.departmentId
+        ? await this.scopedPrisma.department.findFirst({
+            where: { id: row.departmentId, organizationId },
+          })
+        : (employee?.department ?? null);
+    const shiftConfig = resolveShiftConfig(
+      department,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      org?.timezone ?? DEFAULT_ORG_TIMEZONE,
+    );
+
+    const workDurationMinutes = Math.max(
+      0,
+      Math.round((outTime.getTime() - inTime.getTime()) / 60000),
+    );
+    const tz = tzOf(shiftConfig);
+    const shiftStart = buildShiftDateTime(
+      row.date,
+      shiftConfig.shiftStartTime,
+      tz,
+    );
+    const shiftEnd = buildShiftDateTime(
+      shiftConfig.crossesMidnight ? addDaysStr(row.date, 1) : row.date,
+      shiftConfig.shiftEndTime,
+      tz,
+    );
+    return {
+      inTime,
+      outTime,
+      workDurationMinutes,
+      status:
+        AttendanceStatus[
+          statusForWorkedMinutes(workDurationMinutes, shiftConfig)
+        ],
+      isLate:
+        inTime.getTime() - shiftStart.getTime() >
+        shiftConfig.lateInThresholdMinutes * 60000,
+      isEarlyOut:
+        shiftEnd.getTime() - outTime.getTime() >
+        shiftConfig.earlyOutThresholdMinutes * 60000,
+    };
   }
 
   // Ported against reportingManagerId rather than Department.departmentHeadId
@@ -2491,41 +2628,17 @@ export class AttendanceService {
     };
 
     if (dto.decision === 'APPROVED') {
-      const inTime = existingReg.requestedInTime
-        ? new Date(existingReg.requestedInTime)
-        : row.inTime;
-      const outTime = existingReg.requestedOutTime
-        ? new Date(existingReg.requestedOutTime)
-        : row.outTime;
-      if (existingReg.requestedInTime) data.inTime = inTime;
-      if (existingReg.requestedOutTime) data.outTime = outTime;
-
-      // No shift-based late/half-day recompute here — a hard override,
-      // matching the old system exactly. status must flip to PRESENT
-      // whenever the approval actually established a real in/out time,
-      // not only when BOTH are present — a regularization that only
-      // supplied one side (e.g. a forgotten punch-out with no punch-in on
-      // record either) previously left the row silently stuck at ABSENT
-      // forever despite being approved, since workDurationMinutes can't be
-      // computed without both.
-      if (inTime && outTime) {
-        if (outTime.getTime() <= inTime.getTime()) {
-          throw new BadRequestException(
-            'The requested Out time is not after the In time, so this cannot be approved. Reject it and ask the employee to send it again.',
-          );
-        }
-        data.workDurationMinutes = Math.max(
-          0,
-          Math.round((outTime.getTime() - inTime.getTime()) / 60000),
-        );
-        data.status = await this.statusForWorkedMinutes(
-          row.employeeId,
-          organizationId,
-          data.workDurationMinutes,
-        );
-      } else if (inTime || outTime) {
-        data.status = AttendanceStatus.PRESENT;
-      }
+      const outcome = await this.regularizationOutcome(
+        row,
+        existingReg,
+        organizationId,
+      );
+      data.inTime = outcome.inTime;
+      data.outTime = outcome.outTime;
+      data.workDurationMinutes = outcome.workDurationMinutes;
+      data.status = outcome.status;
+      data.isLate = outcome.isLate;
+      data.isEarlyOut = outcome.isEarlyOut;
       data.source = AttendanceSource.REGULARIZED;
     }
 
@@ -2565,6 +2678,8 @@ export class AttendanceService {
         previousOutTime: row.outTime?.toISOString() ?? null,
         requestedInTime: existingReg.requestedInTime ?? null,
         requestedOutTime: existingReg.requestedOutTime ?? null,
+        previousStatus: row.status,
+        newStatus: data.status ?? row.status,
         comments: dto.comments ?? '',
       },
     });
@@ -3740,10 +3855,42 @@ export class AttendanceService {
       this.scopedPrisma,
       organizationId,
     );
+    // The audit log needs a user as its actor, and a sweep has none: the organisation's oldest active Admin stands in,
+    // and every entry is marked details.source = 'SCHEDULED' so it is never mistaken for something they did.
+    const systemActor = await this.scopedPrisma.user.findFirst({
+      where: { organizationId, isActive: true, role: Role.ADMIN },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true },
+    });
     for (const row of candidates) {
       try {
         const existingReg =
           row.regularization as unknown as RegularizationState;
+        // The same rules as a reviewer's approval. A request that cannot be approved as a reviewer would - the payroll
+        // for that month is locked or paid, or the day would still lack an In or Out time - stays pending for a person
+        // to deal with, instead of being forced through.
+        let outcome: Awaited<ReturnType<typeof this.regularizationOutcome>>;
+        try {
+          await assertPayrollPeriodUnlocked(
+            this.scopedPrisma,
+            organizationId,
+            row.employeeId,
+            row.date,
+          );
+          outcome = await this.regularizationOutcome(
+            row,
+            existingReg,
+            organizationId,
+          );
+        } catch (blocked) {
+          if (blocked instanceof BadRequestException) {
+            this.logger.warn(
+              `Auto-approve skipped for attendance ${row.id}: ${blocked.message}`,
+            );
+            continue;
+          }
+          throw blocked;
+        }
         const regularization: RegularizationState = {
           ...existingReg,
           status: 'approved',
@@ -3753,29 +3900,14 @@ export class AttendanceService {
         };
         const data: Prisma.AttendanceUpdateManyMutationInput = {
           regularization: regularization as unknown as Prisma.InputJsonValue,
+          inTime: outcome.inTime,
+          outTime: outcome.outTime,
+          workDurationMinutes: outcome.workDurationMinutes,
+          status: outcome.status,
+          isLate: outcome.isLate,
+          isEarlyOut: outcome.isEarlyOut,
+          source: AttendanceSource.REGULARIZED,
         };
-        // Same hard-override reasoning as reviewRegularization's own
-        // APPROVED branch — status flips to PRESENT whenever the approval
-        // actually established a real in/out time, even if only one side
-        // was requested.
-        const inTime = existingReg.requestedInTime
-          ? new Date(existingReg.requestedInTime)
-          : row.inTime;
-        const outTime = existingReg.requestedOutTime
-          ? new Date(existingReg.requestedOutTime)
-          : row.outTime;
-        if (existingReg.requestedInTime) data.inTime = inTime;
-        if (existingReg.requestedOutTime) data.outTime = outTime;
-        if (inTime && outTime) {
-          data.workDurationMinutes = Math.max(
-            0,
-            Math.round((outTime.getTime() - inTime.getTime()) / 60000),
-          );
-          data.status = AttendanceStatus.PRESENT;
-        } else if (inTime || outTime) {
-          data.status = AttendanceStatus.PRESENT;
-        }
-        data.source = AttendanceSource.REGULARIZED;
 
         // Same compare-and-swap guarantee as reviewRegularization — a
         // human reviewer acting on this row at the same moment can't race
@@ -3790,13 +3922,27 @@ export class AttendanceService {
         });
         if (count === 0) continue;
 
-        // No auditLogService.log() here — actorId is required/non-nullable
-        // on AuditLog and there's no human actor for a system-triggered
-        // decision; same reasoning LeavesService.autoApprovePendingLeaves
-        // already settled on (it skips an audit entry entirely too), and
-        // reviewRegularization's own human-review path doesn't log a
-        // timeline event either. regularization.reviewComments above still
-        // records what happened and why, right on the row itself.
+        if (systemActor) {
+          await this.auditLogService.log({
+            actorId: systemActor.id,
+            action: 'REGULARIZATION_APPROVED',
+            module: 'ATTENDANCE',
+            organizationId,
+            targetId: row.id,
+            details: {
+              source: 'SCHEDULED',
+              autoApproved: true,
+              employeeId: row.employeeId,
+              date: row.date,
+              previousInTime: row.inTime?.toISOString() ?? null,
+              previousOutTime: row.outTime?.toISOString() ?? null,
+              requestedInTime: existingReg.requestedInTime ?? null,
+              requestedOutTime: existingReg.requestedOutTime ?? null,
+              previousStatus: row.status,
+              newStatus: outcome.status,
+            },
+          });
+        }
 
         const title = 'Regularization Request APPROVED';
         const message = `Your attendance regularization request for ${formatDateDisplay(row.date, '', dateFormat)} was automatically approved — no reviewer acted within the configured window.`;

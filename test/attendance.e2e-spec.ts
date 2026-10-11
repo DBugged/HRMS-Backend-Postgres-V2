@@ -1755,7 +1755,8 @@ describe('Attendance (e2e)', () => {
         .send({
           date: offsetDate(-7),
           reason: 'Right at the edge',
-          requestedInTime: `${offsetDate(-7)}T09:30:00.000Z`,
+          requestedInTime: istIso(offsetDate(-7), '09:30'),
+          requestedOutTime: istIso(offsetDate(-7), '18:30'),
         })
         .expect(201);
     });
@@ -1769,6 +1770,7 @@ describe('Attendance (e2e)', () => {
           date,
           reason: 'First request',
           requestedInTime: `${date}T00:30:00.000Z`,
+          requestedOutTime: `${date}T00:45:00.000Z`,
         })
         .expect(201);
 
@@ -1779,6 +1781,7 @@ describe('Attendance (e2e)', () => {
           date,
           reason: 'Trying again while pending',
           requestedInTime: `${date}T00:30:00.000Z`,
+          requestedOutTime: `${date}T00:45:00.000Z`,
         })
         .expect(409);
     });
@@ -1894,55 +1897,277 @@ describe('Attendance (e2e)', () => {
         .expect(409);
     });
 
-    it('approving a request with only ONE of in/out time still flips status to PRESENT (not stuck ABSENT)', async () => {
-      const created = await request(app.getHttpServer())
-        .post('/employees')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({
-          name: 'Regularization Single-Side Employee',
-          email: 'att-e2e-reg-single@example.test',
-          joiningDate: '2025-01-01',
-        });
-      const createdBody = created.body as EmployeeCreateBody;
-      const login = await request(app.getHttpServer())
-        .post('/auth/login')
-        .send({
-          email: 'att-e2e-reg-single@example.test',
-          password: createdBody.generatedPassword,
-        });
-      const singleSideToken = (login.body as AuthBody).accessToken;
+    describe('one-sided requests (only In or only Out)', () => {
+      let sideEmployeeId: string;
+      let sideToken: string;
+      beforeAll(async () => {
+        const created = await request(app.getHttpServer())
+          .post('/employees')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({
+            name: 'Regularization Single-Side Employee',
+            email: 'att-e2e-reg-single@example.test',
+            joiningDate: '2025-01-01',
+          });
+        const createdBody = created.body as EmployeeCreateBody;
+        sideEmployeeId = createdBody.employee.id;
+        const login = await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({
+            email: 'att-e2e-reg-single@example.test',
+            password: createdBody.generatedPassword,
+          });
+        sideToken = (login.body as AuthBody).accessToken;
+      });
 
-      const date = offsetDate(-5);
-      const req = await request(app.getHttpServer())
-        .post('/attendance/regularization')
-        .set('Authorization', `Bearer ${singleSideToken}`)
-        .send({
-          date,
-          // Only a check-in correction — no requestedOutTime, and no prior
-          // punch supplies one either, so outTime stays null even after
-          // approval. Previously this meant `if (inTime && outTime)` never
-          // fired and status silently stayed ABSENT despite the approval.
-          requestedInTime: `${date}T09:00:00.000Z`,
-          reason: 'Forgot to punch in, never punched out that day either',
-        })
-        .expect(201);
-      const attendanceId = (req.body as { id: string }).id;
+      it('is refused up front when the other side is not recorded - it could never be approved', async () => {
+        const date = offsetDate(-5);
+        const res = await request(app.getHttpServer())
+          .post('/attendance/regularization')
+          .set('Authorization', `Bearer ${sideToken}`)
+          .send({
+            date,
+            requestedInTime: istIso(date, '09:30'),
+            reason: 'Forgot to punch in, never punched out either',
+          })
+          .expect(400);
+        expect(JSON.stringify(res.body)).toContain('Out time');
+      });
 
-      const res = await request(app.getHttpServer())
-        .patch(`/attendance/regularization/${attendanceId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ decision: 'APPROVED' })
-        .expect(200);
-      const body = res.body as {
-        status: string;
-        source: string;
-        outTime: string | null;
-        regularization: { status: string };
-      };
-      expect(body.status).toBe('PRESENT');
-      expect(body.source).toBe('REGULARIZED');
-      expect(body.outTime).toBeNull();
-      expect(body.regularization.status).toBe('approved');
+      it('with the other punch already recorded, approval judges the status on the resulting hours, not blindly PRESENT', async () => {
+        const date = offsetDate(-4);
+        // Punched in at 09:30 and forgot to punch out; asks for 11:30 as the out time = a 2-hour day.
+        await request(app.getHttpServer())
+          .post('/attendance/punch/manual')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            employeeId: sideEmployeeId,
+            punchTime: istIso(date, '09:30'),
+          })
+          .expect(201);
+        const req = await request(app.getHttpServer())
+          .post('/attendance/regularization')
+          .set('Authorization', `Bearer ${sideToken}`)
+          .send({
+            date,
+            requestedOutTime: istIso(date, '11:30'),
+            reason: 'Forgot to punch out',
+          })
+          .expect(201);
+        const res = await request(app.getHttpServer())
+          .patch(
+            `/attendance/regularization/${(req.body as { id: string }).id}`,
+          )
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ decision: 'APPROVED' })
+          .expect(200);
+        const body = res.body as {
+          status: string;
+          workDurationMinutes: number;
+          source: string;
+        };
+        expect(body.workDurationMinutes).toBe(120);
+        expect(body.status).toBe('ABSENT'); // 2h is below the 4h Half-Day minimum
+        expect(body.source).toBe('REGULARIZED');
+      });
+
+      it('approval recalculates the late / early-out flags for the corrected times', async () => {
+        const date = offsetDate(-3);
+        await request(app.getHttpServer())
+          .post('/attendance/punch/manual')
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({
+            employeeId: sideEmployeeId,
+            punchTime: istIso(date, '11:00'),
+          })
+          .expect(201);
+        const before = await prisma.attendance.findFirstOrThrow({
+          where: { employeeId: sideEmployeeId, date },
+        });
+        expect(before.isLate).toBe(true);
+        const req = await request(app.getHttpServer())
+          .post('/attendance/regularization')
+          .set('Authorization', `Bearer ${sideToken}`)
+          .send({
+            date,
+            requestedInTime: istIso(date, '09:30'),
+            requestedOutTime: istIso(date, '18:30'),
+            reason: 'Biometric was down in the morning',
+          })
+          .expect(201);
+        await request(app.getHttpServer())
+          .patch(
+            `/attendance/regularization/${(req.body as { id: string }).id}`,
+          )
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ decision: 'APPROVED' })
+          .expect(200);
+        const after = await prisma.attendance.findFirstOrThrow({
+          where: { employeeId: sideEmployeeId, date },
+        });
+        expect([after.isLate, after.isEarlyOut, after.status]).toEqual([
+          false,
+          false,
+          'PRESENT',
+        ]);
+      });
+
+      it('the review audit entry records the status before and after', async () => {
+        const audit = await prisma.auditLog.findFirstOrThrow({
+          where: { organizationId, action: 'REGULARIZATION_APPROVED' },
+          orderBy: { createdAt: 'desc' },
+        });
+        const d = audit.details as {
+          previousStatus?: string;
+          newStatus?: string;
+        };
+        expect(d.previousStatus).toBeDefined();
+        expect(d.newStatus).toBe('PRESENT');
+      });
+    });
+
+    describe('Admin self-regularization and the auto-approval sweep', () => {
+      it("an Admin's own request applies at once, from hours (not blindly PRESENT), and is audited", async () => {
+        const date = offsetDate(-2);
+        const res = await request(app.getHttpServer())
+          .post('/attendance/regularization')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({
+            date,
+            requestedInTime: istIso(date, '09:30'),
+            requestedOutTime: istIso(date, '11:30'),
+            reason: 'Admin correction',
+          })
+          .expect(201);
+        const body = res.body as {
+          status: string;
+          regularization: { status: string };
+        };
+        expect(body.regularization.status).toBe('approved');
+        expect(body.status).toBe('ABSENT'); // 2 hours
+        const audits = await prisma.auditLog.findMany({
+          where: { organizationId, action: 'REGULARIZATION_APPROVED' },
+        });
+        expect(
+          audits.some(
+            (a) =>
+              (a.details as { selfApproved?: boolean; date?: string })
+                .selfApproved === true &&
+              (a.details as { date?: string }).date === date,
+          ),
+        ).toBe(true);
+      });
+
+      describe('auto-approval when nobody acts', () => {
+        let autoEmployeeId: string;
+        let autoToken: string;
+        beforeAll(async () => {
+          await prisma.organization.update({
+            where: { id: organizationId },
+            data: {
+              regularizationAutoApproveIfNoAction: true,
+              regularizationAutoApproveHours: 1,
+            },
+          });
+          const created = await request(app.getHttpServer())
+            .post('/employees')
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({
+              name: 'Auto Approve Employee',
+              email: 'att-e2e-reg-auto@example.test',
+              joiningDate: '2025-01-01',
+            });
+          const b = created.body as EmployeeCreateBody;
+          autoEmployeeId = b.employee.id;
+          const login = await request(app.getHttpServer())
+            .post('/auth/login')
+            .send({
+              email: 'att-e2e-reg-auto@example.test',
+              password: b.generatedPassword,
+            });
+          autoToken = (login.body as AuthBody).accessToken;
+        });
+        afterAll(async () => {
+          await prisma.organization.update({
+            where: { id: organizationId },
+            data: { regularizationAutoApproveIfNoAction: false },
+          });
+        });
+
+        const requestAt = async (
+          daysAgo: number,
+          inH: string,
+          outH: string,
+        ) => {
+          const date = offsetDate(daysAgo);
+          await request(app.getHttpServer())
+            .post('/attendance/regularization')
+            .set('Authorization', `Bearer ${autoToken}`)
+            .send({
+              date,
+              requestedInTime: istIso(date, inH),
+              requestedOutTime: istIso(date, outH),
+              reason: 'Auto-approval test',
+            })
+            .expect(201);
+          // Age the request past the window.
+          await prisma.attendance.updateMany({
+            where: { employeeId: autoEmployeeId, date },
+            data: { updatedAt: new Date(Date.now() - 3 * 3600000) },
+          });
+          return date;
+        };
+
+        it('approves from hours (a 2-hour day is not a full Present day), recalculates flags, and writes an audit entry', async () => {
+          const date = await requestAt(-1, '09:30', '11:30');
+          await attendanceService.autoApprovePendingWorkArrangementsAndRegularizations();
+          const row = await prisma.attendance.findFirstOrThrow({
+            where: { employeeId: autoEmployeeId, date },
+          });
+          expect((row.regularization as { status: string }).status).toBe(
+            'approved',
+          );
+          expect(row.status).toBe('ABSENT');
+          expect(row.source).toBe('REGULARIZED');
+          expect(row.isLate).toBe(false);
+          const audit = await prisma.auditLog.findFirst({
+            where: {
+              organizationId,
+              targetId: row.id,
+              action: 'REGULARIZATION_APPROVED',
+            },
+          });
+          expect((audit?.details as { source?: string })?.source).toBe(
+            'SCHEDULED',
+          );
+        });
+
+        it('leaves a request pending when its payroll month is locked', async () => {
+          const date = await requestAt(-6, '09:30', '18:30');
+          const y = Number(date.slice(0, 4));
+          const m = Number(date.slice(5, 7));
+          const run = await prisma.payrollRun.create({
+            data: {
+              organizationId,
+              employeeId: autoEmployeeId,
+              month: m,
+              year: y,
+              status: 'LOCKED',
+            },
+          });
+          try {
+            await attendanceService.autoApprovePendingWorkArrangementsAndRegularizations();
+            const row = await prisma.attendance.findFirstOrThrow({
+              where: { employeeId: autoEmployeeId, date },
+            });
+            expect((row.regularization as { status: string }).status).toBe(
+              'pending',
+            );
+          } finally {
+            await prisma.payrollRun.delete({ where: { id: run.id } });
+          }
+        });
+      });
     });
 
     it('rejecting leaves inTime/outTime/status/source untouched, only the regularization sub-fields change', async () => {
@@ -2015,6 +2240,7 @@ describe('Attendance (e2e)', () => {
           date,
           reason: 'Resubmitting with clearer evidence',
           requestedInTime: `${date}T00:30:00.000Z`,
+          requestedOutTime: `${date}T01:30:00.000Z`,
         })
         .expect(201);
       expect(
