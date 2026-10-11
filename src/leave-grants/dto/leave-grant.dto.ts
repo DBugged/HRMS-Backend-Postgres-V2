@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsIn,
   IsNotEmpty,
   IsNumber,
   IsOptional,
@@ -163,6 +164,6 @@ export class QueryGrantRequestsDto {
     enum: ['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'],
   })
   @IsOptional()
-  @IsString()
+  @IsIn(['PENDING', 'APPROVED', 'REJECTED', 'CANCELLED'])
   status?: string;
 }

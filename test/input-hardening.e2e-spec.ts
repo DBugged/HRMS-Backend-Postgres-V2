@@ -73,6 +73,33 @@ describe('Input hardening (e2e): body sanity, type/range validation, email escap
     await app.close();
   });
 
+  it('a NUL character in an id, a search or a body is a 400, not a 500', async () => {
+    const get = (url: string) =>
+      request(app.getHttpServer())
+        .get(url)
+        .set('Authorization', `Bearer ${adminToken}`);
+    await get('/employees/%00').expect(400);
+    await get('/employees?search=%00').expect(400);
+    await get('/payroll/%00').expect(400);
+    await admin('post', '/employees')
+      .send({ name: 'Nul\u0000Name', email: 'nul.name@example.test' })
+      .expect(400);
+  });
+
+  it('an invalid grant-request status filter is a 400, and a one-letter name is refused', async () => {
+    await request(app.getHttpServer())
+      .get('/leave-grants/requests?status=abc')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    await request(app.getHttpServer())
+      .get('/leave-grants/requests?status=PENDING')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await admin('post', '/employees')
+      .send({ name: 'A', email: 'one.letter@example.test' })
+      .expect(400);
+  });
+
   it('a top-level JSON array body is a 400, not a 500', async () => {
     await admin('patch', '/organizations/me').send([]).expect(400);
     await admin('put', '/payroll-settings').send([]).expect(400);

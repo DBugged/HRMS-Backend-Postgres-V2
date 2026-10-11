@@ -1,7 +1,9 @@
 // Purpose: Global sanity checks on every JSON request body, before any controller/DTO runs.
 // Responsibilities: rejects a top-level JSON array where an object is expected (it slipped past the DTO
 //   validation and surfaced as a 500) and caps the length of any string value, so a multi-thousand-character
-//   "name" can't be stored. Long free-text fields (HTML/body/message/notes...) get a much higher cap.
+//   "name" can't be stored. Long free-text fields (HTML/body/message/notes...) get a much higher cap. Also rejects
+//   a NUL character (\u0000, e.g. "%00" in an id or search) anywhere in the path params, query or body: Postgres
+//   refuses it, which used to surface as a 500.
 // Important: Applied via APP_INTERCEPTOR so it also covers the e2e app, not just main.ts. File uploads are
 //   multipart and never reach this check with a JSON body.
 import {
@@ -48,12 +50,32 @@ function findTooLong(value: unknown, key = '', depth = 0): string | null {
   return null;
 }
 
+/** True when a NUL character appears in any string (or object key) inside `value`. */
+export function containsNul(value: unknown, depth = 0): boolean {
+  if (depth > 12) return false;
+  if (typeof value === 'string') return value.includes('\u0000');
+  if (Array.isArray(value)) return value.some((v) => containsNul(v, depth + 1));
+  if (value && typeof value === 'object') {
+    return Object.entries(value).some(
+      ([k, v]) => k.includes('\u0000') || containsNul(v, depth + 1),
+    );
+  }
+  return false;
+}
+
 @Injectable()
 export class RequestSanityInterceptor implements NestInterceptor {
   intercept(context: ExecutionContext, next: CallHandler): Observable<unknown> {
     if (context.getType() !== 'http') return next.handle();
     const req = context.switchToHttp().getRequest<Request>();
     const body: unknown = req.body;
+    if (
+      containsNul(req.params) ||
+      containsNul(req.query) ||
+      containsNul(body)
+    ) {
+      throw new BadRequestException('Invalid character in the request.');
+    }
     if (Array.isArray(body)) {
       throw new BadRequestException('Request body must be a JSON object.');
     }
