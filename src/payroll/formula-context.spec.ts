@@ -45,6 +45,7 @@ function settings(overrides: Partial<OverlaidSettings> = {}): OverlaidSettings {
     roundingRule: 'nearest',
     roundingDecimals: 0,
     pfIncludeArrears: false,
+    pfOnActualWages: false,
     pfEnabled: true,
     esiEnabled: false,
     ptEnabled: false,

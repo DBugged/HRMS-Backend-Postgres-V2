@@ -85,6 +85,9 @@ export interface OverlaidSettings {
   pfUseWagesRule: boolean;
   // Arrears of Basic/DA attract PF in the month they are paid: when on, the ARREARS line is added to the PF wage base.
   pfIncludeArrears: boolean;
+  // Employee and employer PF (and EDLI / admin charges) on actual PF wages instead of wages capped at the ceiling, as the
+  // scheme allows by joint option. The EPS (pension) share stays limited to the ceiling.
+  pfOnActualWages: boolean;
   gratuityUseWagesRule: boolean;
   // Employer-only PF costs on top of the 12%: EDLI and administration charges, % of PF wages.
   pfEdliRate: number;
@@ -140,6 +143,7 @@ export function applyStatutoryOverrides(
     gratuityRate: settings.gratuityRate,
     pfUseWagesRule: false,
     pfIncludeArrears: false,
+    pfOnActualWages: false,
     gratuityUseWagesRule: false,
     pfEdliRate: 0.5,
     pfAdminRate: 0.5,
@@ -158,6 +162,7 @@ export function applyStatutoryOverrides(
       wageCeiling: number;
       applyFiftyPercentRule?: boolean;
       includeArrearsInWages?: boolean;
+      contributeOnActualWages?: boolean;
       edliRate?: number;
       adminChargeRate?: number;
       epsRate?: number;
@@ -165,6 +170,7 @@ export function applyStatutoryOverrides(
     };
     resolved.pfUseWagesRule = c.applyFiftyPercentRule === true;
     resolved.pfIncludeArrears = c.includeArrearsInWages === true;
+    resolved.pfOnActualWages = c.contributeOnActualWages === true;
     resolved.pfEdliRate = c.edliRate ?? resolved.pfEdliRate;
     resolved.pfAdminRate = c.adminChargeRate ?? resolved.pfAdminRate;
     resolved.pfEpsRate = c.epsRate ?? resolved.pfEpsRate;

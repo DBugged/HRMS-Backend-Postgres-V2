@@ -363,6 +363,63 @@ describe('payroll engine: statutory deductions and employer contributions', () =
     });
   });
 
+  describe('PF on actual wages (contributeOnActualWages)', () => {
+    const version = (actual: boolean) => ({
+      id: 'pf-1',
+      module: 'PF',
+      effectiveFrom: '2020-01-01',
+      effectiveTo: null,
+      isEnabled: true,
+      config: {
+        employeeRate: 12,
+        employerRate: 12,
+        wageCeiling: 15000,
+        edliRate: 0.5,
+        adminChargeRate: 0.5,
+        epsRate: 8.33,
+        edliMaxAmount: 75,
+        contributeOnActualWages: actual,
+      },
+    });
+
+    it('off (the default): 12% of Basic capped at the 15,000 ceiling', async () => {
+      const r = await run({
+        settings: defaultSettings({ pfEnabled: true }),
+        statutoryVersions: [version(false)],
+      });
+      expect(line(r.deductions, 'PF')).toBe(1800);
+    });
+
+    it('on: employee and employer PF are 12% of the full 30,000 Basic; EPS stays on the ceiling; EDLI stays capped', async () => {
+      const r = await run({
+        settings: defaultSettings({ pfEnabled: true }),
+        statutoryVersions: [version(true)],
+      });
+      expect(line(r.deductions, 'PF')).toBe(3600);
+      expect(line(r.employerContributions, 'PF_EMPLOYER')).toBe(3600);
+      expect(line(r.employerContributions, 'EDLI_EMPLOYER')).toBe(75);
+      const er = r.employerContributions.find(
+        (e) => e.code === 'PF_EMPLOYER',
+      ) as {
+        wages: number;
+        breakup: { eps: number; epf: number };
+      };
+      expect(er.wages).toBe(30000);
+      // EPS: 8.33% of the 15,000 ceiling = 1,250; the rest of the employer's 3,600 goes to EPF.
+      expect(er.breakup.eps).toBe(1250);
+      expect(er.breakup.epf).toBe(2350);
+    });
+
+    it('on, wages below the ceiling: same as off', async () => {
+      const r = await run({
+        settings: defaultSettings({ pfEnabled: true }),
+        statutoryVersions: [version(true)],
+        overrides: structure(10000),
+      });
+      expect(line(r.deductions, 'PF')).toBe(1200);
+    });
+  });
+
   it('PF below the ceiling is 12% of the actual wage', async () => {
     const r = await run({
       settings: defaultSettings({ pfEnabled: true }),

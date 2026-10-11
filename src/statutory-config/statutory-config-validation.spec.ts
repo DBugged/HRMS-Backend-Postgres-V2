@@ -300,3 +300,26 @@ describe('bonus calculation ceiling', () => {
     ).toThrow(/cannot be below/);
   });
 });
+
+describe('PF contributeOnActualWages', () => {
+  const pf = (extra: object) => ({
+    employeeRate: 12,
+    employerRate: 12,
+    wageCeiling: 15000,
+    ...extra,
+  });
+  it('accepts a boolean and rejects anything else', () => {
+    expect(() =>
+      validateModuleConfig(
+        StatutoryModule.PF,
+        pf({ contributeOnActualWages: true }),
+      ),
+    ).not.toThrow();
+    expect(() =>
+      validateModuleConfig(
+        StatutoryModule.PF,
+        pf({ contributeOnActualWages: 'yes' }),
+      ),
+    ).toThrow('contributeOnActualWages must be true or false.');
+  });
+});

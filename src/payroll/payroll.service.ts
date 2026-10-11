@@ -983,7 +983,19 @@ export class PayrollService {
     // Charge the month's PF wages at each period's own ceiling (see pf-ceiling-split.ts). The blended figure stands in
     // for the ceiling in every PF formula, the EPS/EPF split and the stored wages the ECR reads.
     let pfSettings = settings;
-    const blendedPf = blendedPfCeiling(afterEarnings.PF_WAGES ?? 0, pfSegments);
+    // "Contribute on actual wages": the PF formulas' ceiling becomes the employee's own PF wages for the month (never below
+    // the statutory ceiling). pfSettings keeps the real ceiling, which still limits EPS and the EDLI/ECR wage bases.
+    const pfOnActual =
+      settings.pfOnActualWages && settings.pfEnabled
+        ? Math.max(afterEarnings.PF_WAGES ?? 0, settings.pfWageCeiling)
+        : null;
+    if (pfOnActual !== null) {
+      afterEarnings.PF_WAGE_CEILING = pfOnActual;
+    }
+    const blendedPf =
+      pfOnActual !== null
+        ? null
+        : blendedPfCeiling(afterEarnings.PF_WAGES ?? 0, pfSegments);
     if (blendedPf) {
       const wageCeiling = Math.round(blendedPf.wageCeiling);
       const edliMax = Math.round(blendedPf.edliMax);
@@ -1398,10 +1410,13 @@ export class PayrollService {
                   ) ?? 0) >= EPS_PENSION_AGE
                 ),
               }),
-              wages: Math.min(
-                afterEarnings.PF_WAGES ?? 0,
-                pfSettings.pfWageCeiling,
-              ),
+              wages:
+                pfOnActual !== null
+                  ? (afterEarnings.PF_WAGES ?? 0)
+                  : Math.min(
+                      afterEarnings.PF_WAGES ?? 0,
+                      pfSettings.pfWageCeiling,
+                    ),
             }
           : {}),
         ...(e.code === 'ESI_EMPLOYER'
