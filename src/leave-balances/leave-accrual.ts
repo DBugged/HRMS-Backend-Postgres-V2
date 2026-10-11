@@ -238,3 +238,82 @@ export function annualEntitlement(
     ),
   );
 }
+
+export interface LedgerEntry {
+  id: string;
+  periodStart: string;
+  days: number;
+}
+
+export interface AccrualFix {
+  id: string;
+  periodStart: string;
+  from: number;
+  to: number;
+}
+
+export interface AccrualPlan {
+  /** Credits already made whose amount (or existence) no longer matches the type's rules. */
+  fixes: AccrualFix[];
+  /** New credits to make. */
+  credits: { due: AccrualCredit; days: number }[];
+}
+
+/**
+ * What a run must do for one employee and leave year: correct earlier credits to the type's CURRENT rules, then add the
+ * credits now due. A leave type can be edited after it has accrued (quota, days per credit, timing, frequency); without
+ * the correction the old amounts would stay and the new rule would be added on top of them.
+ * - A past credit is re-priced to what the current rule gives for that period; one for a period that is not due under the
+ *   current rule (e.g. switched from start to end of period) is withdrawn and returns when it falls due.
+ * - A reduction never takes the balance below what is already taken or pending, and an increase respects the cap, so the
+ *   plan is safe to apply as it stands.
+ */
+export function planAccrual(
+  rule: AccrualRule,
+  bounds: LeaveYearBounds,
+  joiningDateStr: string,
+  today: string,
+  entries: LedgerEntry[],
+  balance: { closing: number; pending: number },
+  maxBalance: number | null,
+): AccrualPlan {
+  const schedule = accrualSchedule(rule, bounds, joiningDateStr);
+  const dueNow = new Map(
+    schedule
+      .filter((c) => c.days > 0 && c.dueOn <= today)
+      .map((c) => [c.period.start, c]),
+  );
+  let running = balance.closing;
+  const fixes: AccrualFix[] = [];
+  for (const entry of entries) {
+    const want = dueNow.get(entry.periodStart)?.days ?? 0;
+    let delta = round2(want - entry.days);
+    if (Math.abs(delta) < 0.005) continue;
+    if (delta < 0) {
+      delta = -Math.min(-delta, Math.max(0, round2(running - balance.pending)));
+    } else if (maxBalance != null) {
+      delta = Math.min(delta, Math.max(0, round2(maxBalance - running)));
+    }
+    delta = round2(delta);
+    if (delta === 0) continue;
+    running = round2(running + delta);
+    fixes.push({
+      id: entry.id,
+      periodStart: entry.periodStart,
+      from: entry.days,
+      to: round2(entry.days + delta),
+    });
+  }
+  const recorded = new Set(entries.map((e) => e.periodStart));
+  const credits: AccrualPlan['credits'] = [];
+  for (const [start, due] of dueNow) {
+    if (recorded.has(start)) continue;
+    const room =
+      maxBalance != null ? Math.max(0, round2(maxBalance - running)) : due.days;
+    const days = round2(Math.min(due.days, room));
+    if (days <= 0) continue;
+    credits.push({ due, days });
+    running = round2(running + days);
+  }
+  return { fixes, credits };
+}

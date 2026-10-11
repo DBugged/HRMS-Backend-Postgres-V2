@@ -380,4 +380,31 @@ describe('Leave accrual (e2e)', () => {
       .send({ accrualBasis: 'LEAVE_YEAR' });
     expect(locked.status).toBe(400);
   });
+
+  it('editing the quota of an accruing type re-prices what it already credited', async () => {
+    const res = await createType({
+      name: 'Repriced',
+      code: 'RPR',
+      annualQuota: 12,
+      accrualMode: 'PERIODIC',
+      accrualFrequency: 'QUARTERLY',
+      accrueAt: 'START',
+    });
+    expect(res.status).toBe(201);
+    const id = (res.body as { id: string }).id;
+    const cycles = Math.floor(new Date().getUTCMonth() / 3) + 1;
+    expect((await balanceOf('RPR'))?.credited).toBeCloseTo(cycles * 3, 2);
+    const edit = await request(app.getHttpServer())
+      .put(`/leave-types/${id}`)
+      .set(auth(adminToken))
+      .send({ annualQuota: 6 });
+    expect(edit.status).toBe(200);
+    // 1.5 a quarter now - the earlier 3s are corrected, not left with a new credit added on top.
+    expect((await balanceOf('RPR'))?.credited).toBeCloseTo(cycles * 1.5, 2);
+    const sum = await prisma.leaveAccrualEntry.aggregate({
+      where: { leaveTypeId: id, employeeId },
+      _sum: { days: true },
+    });
+    expect(sum._sum.days).toBeCloseTo(cycles * 1.5, 2);
+  });
 });

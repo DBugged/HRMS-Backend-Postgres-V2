@@ -28,8 +28,9 @@ import {
 import {
   AccrualRule,
   annualEntitlement,
-  dueCredits,
+  LedgerEntry,
   nextCredit,
+  planAccrual,
 } from './leave-accrual';
 import {
   isPeriodicForYear,
@@ -60,12 +61,16 @@ export interface AccrualRunItem {
   periodStart: string;
   periodEnd: string;
   days: number;
+  /** True for a correction of an earlier credit rather than a new one (days may be negative). */
+  adjustment?: boolean;
 }
 
 export interface AccrualRunResult {
   dryRun: boolean;
   asOf: string;
   credits: number;
+  /** Earlier credits corrected to the leave type's current rules. */
+  adjustments: number;
   employees: number;
   totalDays: number;
   items: AccrualRunItem[];
@@ -131,6 +136,7 @@ export class LeaveAccrualService {
       dryRun,
       asOf: today,
       credits: 0,
+      adjustments: 0,
       employees: 0,
       totalDays: 0,
       items: [],
@@ -194,48 +200,44 @@ export class LeaveAccrualService {
         const [entries, rows] = await Promise.all([
           this.scopedPrisma.leaveAccrualEntry.findMany({
             where: { organizationId, leaveTypeId: type.id, year: key },
-            select: { employeeId: true, periodStart: true },
+            select: {
+              id: true,
+              employeeId: true,
+              periodStart: true,
+              days: true,
+            },
           }),
           this.scopedPrisma.leaveBalance.findMany({
             where: { organizationId, leaveTypeId: type.id, year: key },
           }),
         ]);
-        const doneBy = new Map<string, Set<string>>();
+        const entriesBy = new Map<string, LedgerEntry[]>();
         for (const e of entries) {
-          const set = doneBy.get(e.employeeId) ?? new Set<string>();
-          set.add(e.periodStart);
-          doneBy.set(e.employeeId, set);
+          const list = entriesBy.get(e.employeeId) ?? [];
+          list.push(e);
+          entriesBy.set(e.employeeId, list);
         }
         const rowBy = new Map(rows.map((r) => [r.employeeId, r]));
 
         for (const employee of applicable) {
-          const dues = dueCredits(
+          const joined = employee.joiningDate.toISOString().slice(0, 10);
+          const mine = entriesBy.get(employee.id) ?? [];
+          const preview = planAccrual(
             rule,
             bounds,
-            employee.joiningDate.toISOString().slice(0, 10),
+            joined,
             today,
-            doneBy.get(employee.id) ?? new Set(),
+            mine,
+            rowBy.get(employee.id) ?? { closing: 0, pending: 0 },
+            type.maxBalance,
           );
-          if (dues.length === 0) continue;
-          let running = rowBy.get(employee.id)?.closing ?? 0;
-          const planned: { due: (typeof dues)[number]; days: number }[] = [];
-          for (const due of dues) {
-            const room =
-              type.maxBalance != null
-                ? Math.max(0, type.maxBalance - running)
-                : due.days;
-            const days = round2(Math.min(due.days, room));
-            if (days <= 0) continue;
-            planned.push({ due, days });
-            running += days;
+          if (preview.fixes.length === 0 && preview.credits.length === 0) {
+            continue;
           }
-          if (planned.length === 0) continue;
 
-          const applied: typeof planned = [];
-          if (dryRun) {
-            applied.push(...planned);
-          } else {
-            await this.scopedPrisma.$transaction(async (tx) => {
+          let plan = preview;
+          if (!dryRun) {
+            plan = await this.scopedPrisma.$transaction(async (tx) => {
               const balance = await this.leaveBalanceService.ensureBalanceRow(
                 tx,
                 employee.id,
@@ -243,7 +245,35 @@ export class LeaveAccrualService {
                 key,
                 organizationId,
               );
-              for (const p of planned) {
+              // Planned again on the row as it is now, so a concurrent change is never overwritten.
+              const fresh = planAccrual(
+                rule,
+                bounds,
+                joined,
+                today,
+                mine,
+                balance,
+                type.maxBalance,
+              );
+              const done: typeof fresh = { fixes: [], credits: [] };
+              for (const f of fresh.fixes) {
+                const cas = await tx.leaveAccrualEntry.updateMany({
+                  where: { id: f.id, organizationId, days: f.from },
+                  data: { days: f.to },
+                });
+                if (cas.count === 0) continue;
+                await tx.leaveBalance.updateMany({
+                  where: { id: balance.id, organizationId },
+                  data: { credited: { increment: round2(f.to - f.from) } },
+                });
+                if (f.to <= 0) {
+                  await tx.leaveAccrualEntry.deleteMany({
+                    where: { id: f.id, organizationId },
+                  });
+                }
+                done.fixes.push(f);
+              }
+              for (const p of fresh.credits) {
                 const { count } = await tx.leaveAccrualEntry.createMany({
                   data: [
                     {
@@ -265,19 +295,35 @@ export class LeaveAccrualService {
                   where: { id: balance.id, organizationId },
                   data: { credited: { increment: p.days } },
                 });
-                applied.push(p);
+                done.credits.push(p);
               }
-              if (applied.length > 0) {
+              if (done.fixes.length > 0 || done.credits.length > 0) {
                 await this.leaveBalanceService.recalculate(
                   tx,
                   balance.id,
                   organizationId,
                 );
               }
+              return done;
             });
           }
-          for (const p of applied) {
-            result.credits += 1;
+          const changes = [
+            ...plan.fixes.map((f) => ({
+              start: f.periodStart,
+              end: null as string | null,
+              days: round2(f.to - f.from),
+              fix: true,
+            })),
+            ...plan.credits.map((p) => ({
+              start: p.due.period.start,
+              end: p.due.period.end as string | null,
+              days: p.days,
+              fix: false,
+            })),
+          ];
+          for (const p of changes) {
+            if (p.fix) result.adjustments += 1;
+            else result.credits += 1;
             result.totalDays = round2(result.totalDays + p.days);
             touched.add(employee.id);
             if (result.items.length < 500) {
@@ -287,9 +333,10 @@ export class LeaveAccrualService {
                 name: employee.name,
                 leaveType: type.name,
                 year: key,
-                periodStart: p.due.period.start,
-                periodEnd: p.due.period.end,
+                periodStart: p.start,
+                periodEnd: p.end ?? p.start,
                 days: p.days,
+                adjustment: p.fix,
               });
             }
           }
@@ -298,7 +345,7 @@ export class LeaveAccrualService {
     }
     result.employees = touched.size;
 
-    if (!dryRun && result.credits > 0) {
+    if (!dryRun && result.credits + result.adjustments > 0) {
       const actorId =
         opts.actorId ??
         (
@@ -317,6 +364,7 @@ export class LeaveAccrualService {
           details: {
             source: opts.source,
             credits: result.credits,
+            adjustments: result.adjustments,
             employees: result.employees,
             totalDaysCredited: result.totalDays,
             leaveTypes: types.map((t) => t.code),

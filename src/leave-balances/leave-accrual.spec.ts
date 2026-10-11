@@ -6,6 +6,7 @@ import {
   dueCredits,
   nextCredit,
   periodMonthsOf,
+  planAccrual,
   AccrualRule,
 } from './leave-accrual';
 import { leaveYearBounds } from './leave-year';
@@ -278,5 +279,92 @@ describe('joining-anniversary basis', () => {
       '2027-11-12',
       '2028-02-12',
     ]);
+  });
+});
+
+describe('planAccrual - leave type edited after it accrued', () => {
+  const r = (over: Partial<AccrualRule> = {}) =>
+    rule({
+      basis: 'JOINING_ANNIVERSARY',
+      accrualFrequency: AccrualFrequency.QUARTERLY,
+      annualQuota: 6,
+      accrueAt: 'START',
+      ...over,
+    });
+  // Joined 1 Apr 2026; today 11 Oct 2026: starts 1 Apr, 1 Jul, 1 Oct are due.
+  const today = '2026-10-11';
+  const join = '2026-04-01';
+
+  it('quota halved after two credits of 3: old credits are re-priced and the new one is not stacked on top', () => {
+    const entries = [
+      { id: 'a', periodStart: '2026-04-01', days: 3 },
+      { id: 'b', periodStart: '2026-07-01', days: 3 },
+    ];
+    const plan = planAccrual(
+      r(),
+      CAL2026,
+      join,
+      today,
+      entries,
+      { closing: 6, pending: 0 },
+      null,
+    );
+    expect(plan.fixes.map((f) => [f.periodStart, f.from, f.to])).toEqual([
+      ['2026-04-01', 3, 1.5],
+      ['2026-07-01', 3, 1.5],
+    ]);
+    expect(plan.credits.map((c) => [c.due.period.start, c.days])).toEqual([
+      ['2026-10-01', 1.5],
+    ]);
+    // 6 - 1.5 - 1.5 + 1.5 = 4.5
+  });
+
+  it('a reduction never takes the balance below what is used or pending', () => {
+    const entries = [{ id: 'a', periodStart: '2026-04-01', days: 3 }];
+    const plan = planAccrual(
+      r({ annualQuota: 0, accrualAmountPerCycle: 0.5 }),
+      CAL2026,
+      join,
+      today,
+      entries,
+      { closing: 1, pending: 0.5 },
+      null,
+    );
+    // wants 3 -> 0.5 (reduce 2.5) but only 0.5 of the balance is free
+    expect(plan.fixes[0]).toMatchObject({ from: 3, to: 2.5 });
+  });
+
+  it('start -> end timing withdraws the credit of the period still running', () => {
+    const entries = [{ id: 'c', periodStart: '2026-10-01', days: 1.5 }];
+    const plan = planAccrual(
+      r({ accrueAt: 'END' }),
+      CAL2026,
+      join,
+      today,
+      entries,
+      { closing: 1.5, pending: 0 },
+      null,
+    );
+    expect(plan.fixes).toEqual([
+      { id: 'c', periodStart: '2026-10-01', from: 1.5, to: 0 },
+    ]);
+  });
+
+  it('nothing to do when the ledger already matches', () => {
+    const entries = [
+      { id: 'a', periodStart: '2026-04-01', days: 1.5 },
+      { id: 'b', periodStart: '2026-07-01', days: 1.5 },
+      { id: 'c', periodStart: '2026-10-01', days: 1.5 },
+    ];
+    const plan = planAccrual(
+      r(),
+      CAL2026,
+      join,
+      today,
+      entries,
+      { closing: 4.5, pending: 0 },
+      null,
+    );
+    expect(plan).toEqual({ fixes: [], credits: [] });
   });
 });
