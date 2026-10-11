@@ -16,6 +16,13 @@ function fakeTx(rows: Record<string, unknown>[], joining: Date) {
   return {
     updates,
     tx: {
+      organization: {
+        findFirst: async () => ({
+          timezone: 'Asia/Kolkata',
+          leaveYearStartMonth: 1,
+          leaveYearAnchorYear: null,
+        }),
+      },
       leaveBalance: {
         findMany: async () => rows,
         updateMany: async (a: { data: Record<string, unknown> }) => {

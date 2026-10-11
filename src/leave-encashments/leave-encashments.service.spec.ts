@@ -52,6 +52,8 @@ function build(
       findFirst: async () => ({
         timezone: 'Asia/Kolkata',
         policies: opts.policies ?? {},
+        leaveYearStartMonth: 1,
+        leaveYearAnchorYear: null,
       }),
     },
     leaveBalance: {

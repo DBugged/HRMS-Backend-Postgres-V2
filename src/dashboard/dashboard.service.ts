@@ -6,6 +6,8 @@
 // Important: departmentHeadDashboard() intentionally ports a quirk from the old system — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { currentLeaveYear } from '../leave-balances/leave-year';
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import {
@@ -62,6 +64,16 @@ export class DashboardService {
     private readonly payrollSettingsService: PayrollSettingsService,
     private readonly compOffService: CompOffService,
   ) {}
+
+  // The leave year now in progress (the key leave balance rows are filed under) - the calendar year unless the
+  // organisation's leave year starts in another month.
+  private async currentLeaveYearKey(organizationId: string): Promise<number> {
+    const [cfg, tz] = await Promise.all([
+      getLeaveYearConfig(this.scopedPrisma, organizationId),
+      this.getOrgTimezone(organizationId),
+    ]);
+    return currentLeaveYear(todayInOrgTz(tz), cfg);
+  }
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
     const org = await this.scopedPrisma.organization.findFirst({
@@ -278,7 +290,10 @@ export class DashboardService {
       // one total per employee below, same convention the mobile Dashboard
       // already uses for its own "Leave Balance" stat.
       this.scopedPrisma.leaveBalance.findMany({
-        where: { organizationId, year: currentYear },
+        where: {
+          organizationId,
+          year: await this.currentLeaveYearKey(organizationId),
+        },
         include: {
           employee: { select: { id: true, name: true, employeeId: true } },
         },
@@ -498,7 +513,7 @@ export class DashboardService {
         where: {
           organizationId,
           employeeId: { in: ids },
-          year: currentYear,
+          year: await this.currentLeaveYearKey(organizationId),
           // Leave types switched off for the Leave Tracker stay hidden here too.
           leaveType: { showInLeaveTracker: true },
         },
@@ -862,7 +877,11 @@ export class DashboardService {
         take: 5,
       }),
       this.scopedPrisma.leaveBalance.findMany({
-        where: { organizationId, employeeId: actor.id, year: currentYear },
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          year: await this.currentLeaveYearKey(organizationId),
+        },
         include: {
           leaveType: {
             select: {

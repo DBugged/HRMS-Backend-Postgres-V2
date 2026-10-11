@@ -3,6 +3,8 @@
 // Responsibilities: Owns per-report row/column shaping and MANAGER dept-scoping (always forced to the
 // caller's own department, never a caller-chosen one); delegates headcount/attrition math to
 // DashboardService.computeHeadcountTrend so the numbers stay consistent with the Executive Dashboard.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { currentLeaveYear } from '../leave-balances/leave-year';
 import {
   EMPLOYEE_ORDER_BY,
   EMPLOYEE_RELATION_ORDER_BY,
@@ -215,7 +217,13 @@ export class ReportsService {
     actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
-    const targetYear = query.year ?? new Date().getFullYear();
+    const yearCfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    const { timezone: reportTz } = await resolveOrgTimeContext(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const targetYear =
+      query.year ?? currentLeaveYear(dateStrInOrgTz(reportTz), yearCfg);
 
     const where: Prisma.LeaveBalanceWhereInput = {
       organizationId,

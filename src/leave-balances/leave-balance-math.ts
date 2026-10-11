@@ -1,4 +1,5 @@
-import { AllocationType } from '@prisma/client';
+import { AllocationType, LeaveAccrualMode } from '@prisma/client';
+import { LeaveYearBounds, monthsBeforeFirstCountedMonth } from './leave-year';
 
 /**
  * Pure balance-math formulas for leave. No DB access: orchestration (persisting rows, looking up prior-year
@@ -13,6 +14,53 @@ export interface UpfrontCreditLeaveType {
   allocationType: AllocationType;
   annualQuota: number;
   prorateOnJoining: boolean;
+}
+
+/**
+ * Whether a leave type's balance for leave year `key` is built up by periodic accrual instead of an upfront credit:
+ * the type is PERIODIC and `key` is not before the year it was switched on (earlier years keep what they were granted).
+ */
+export function isPeriodicForYear(
+  leaveType: {
+    accrualMode?: LeaveAccrualMode | null;
+    periodicFromYear?: number | null;
+  },
+  key: number,
+): boolean {
+  return (
+    leaveType.accrualMode === LeaveAccrualMode.PERIODIC &&
+    (leaveType.periodicFromYear == null || key >= leaveType.periodicFromYear)
+  );
+}
+
+/**
+ * The upfront credit for a leave year of any length (12 months, or the extended 15 months of a transition):
+ * `quota x monthsCounted / 12`, where the months counted run from the joining date's first counted month (the 15th rule)
+ * for someone who joined inside the year and prorates, and from the year's start for everyone else. For a 12-month year
+ * this is exactly computeUpfrontCredit.
+ */
+export function computeUpfrontCreditInYear(
+  leaveType: UpfrontCreditLeaveType,
+  joiningDateStr: string,
+  bounds: LeaveYearBounds,
+): number {
+  if (
+    leaveType.allocationType !== AllocationType.FIXED_ANNUAL &&
+    leaveType.allocationType !== AllocationType.PRORATED_ON_JOINING &&
+    leaveType.allocationType !== AllocationType.EARNED_MONTHLY
+  ) {
+    return 0;
+  }
+  const joinedInside =
+    joiningDateStr >= bounds.start && joiningDateStr <= bounds.end;
+  const counted =
+    joinedInside && shouldProrateOnJoining(leaveType)
+      ? Math.max(
+          0,
+          bounds.months - monthsBeforeFirstCountedMonth(joiningDateStr, bounds),
+        )
+      : bounds.months;
+  return Math.round(((leaveType.annualQuota * counted) / 12) * 100) / 100;
 }
 
 // The days credited to a balance row when it is created for `balanceYear`:
@@ -140,6 +188,18 @@ export function forfeitedCarryIn(
   if (!expired || opening <= 0) return 0;
   const used = Math.min(opening, Math.max(0, availedBeforeExpiryDays));
   return Math.round((opening - used) * 100) / 100;
+}
+
+// The first day of a leave year plus `expiryMonths`, as YYYY-MM-DD - null when the carried-in balance never expires.
+// (computeCarriedInExpiry below is this for a calendar year.)
+export function computeCarriedInExpiryFrom(
+  yearStart: string,
+  expiryMonths: number | null | undefined,
+): string | null {
+  if (expiryMonths === null || expiryMonths === undefined) return null;
+  const d = new Date(`${yearStart}T00:00:00.000Z`);
+  d.setUTCMonth(d.getUTCMonth() + expiryMonths);
+  return d.toISOString().slice(0, 10);
 }
 
 // Jan 1 of `rolloverYear` plus `expiryMonths`, as YYYY-MM-DD — null if the

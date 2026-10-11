@@ -7,6 +7,11 @@
 // balance. review() converts that hold into an actual `encashed` deduction on APPROVED; it guards against
 // being replayed (a compare-and-swap status check inside the transaction) so a double-click or retried
 // request can't double-deduct.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import {
+  currentLeaveYear,
+  leaveYearBounds,
+} from '../leave-balances/leave-year';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -173,7 +178,11 @@ export class LeaveEncashmentsService {
         })
       )?.timezone ?? 'Asia/Kolkata';
     const orgToday = localDateStr(orgTz, now);
-    const year = Number(orgToday.slice(0, 4));
+    const yearCfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    // The balance row and the yearly cap belong to the leave year (which may start in a month other than January);
+    // the calendar month is still the payroll month the encashment is paid in.
+    const year = currentLeaveYear(orgToday, yearCfg);
+    const yearBounds = leaveYearBounds(year, yearCfg);
     const month = Number(orgToday.slice(5, 7));
 
     const created = await this.scopedPrisma
@@ -205,8 +214,11 @@ export class LeaveEncashmentsService {
                   employeeId: actor.id,
                   leaveTypeId: leaveType.id,
                   createdAt: {
-                    gte: new Date(Date.UTC(year, 0, 1)),
-                    lt: new Date(Date.UTC(year + 1, 0, 1)),
+                    gte: new Date(`${yearBounds.start}T00:00:00.000Z`),
+                    lt: new Date(
+                      new Date(`${yearBounds.end}T00:00:00.000Z`).getTime() +
+                        86400000,
+                    ),
                   },
                 },
               })
@@ -378,7 +390,15 @@ export class LeaveEncashmentsService {
       // Converts request()'s hold into an actual deduction: releases the
       // `pending` reserved at request time and moves it into `encashed`.
       if (dto.status === LeaveEncashmentStatus.APPROVED && row.leaveTypeId) {
-        const year = new Date().getFullYear();
+        const decisionCfg = await getLeaveYearConfig(tx, organizationId);
+        const decisionTz =
+          (
+            await tx.organization.findFirst({
+              where: { id: organizationId },
+              select: { timezone: true },
+            })
+          )?.timezone ?? 'Asia/Kolkata';
+        const year = currentLeaveYear(localDateStr(decisionTz), decisionCfg);
         const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
           tx,
           row.employeeId,

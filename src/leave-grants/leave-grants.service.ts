@@ -5,6 +5,8 @@
 //   reversal (status REVERSED, who/when/why), never a delete. Repeats are blocked by a partial unique index
 //   (one ACTIVE grant per employee, leave type and event date) and by the optional idempotency key, so retries and
 //   concurrent requests cannot grant twice.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { leaveYearOf } from '../leave-balances/leave-year';
 import {
   BadRequestException,
   ConflictException,
@@ -146,7 +148,12 @@ export class LeaveGrantsService {
     );
     if (problem) throw new BadRequestException(problem);
 
-    const balanceYear = Number(effectiveDate.slice(0, 4));
+    // The leave year the grant's effective date falls in (the calendar year unless the organisation's leave year starts
+    // in another month).
+    const balanceYear = leaveYearOf(
+      effectiveDate,
+      await getLeaveYearConfig(this.scopedPrisma, organizationId),
+    );
     let created: LeaveGrant;
     try {
       created = await this.scopedPrisma.$transaction(async (tx) => {

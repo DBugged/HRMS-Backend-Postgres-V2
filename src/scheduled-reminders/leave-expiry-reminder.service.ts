@@ -6,6 +6,11 @@
 // 30 days (LeaveBalance.carriedInExpiresOn). Leave years are calendar years, so year-end is 31 December.
 // Important: respects the org-wide carry-forward/encashment switches; unlimited, no-allocation and comp-off types
 // never lapse; the title carries the date so a re-run the same day is a no-op.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import {
+  currentLeaveYear,
+  leaveYearBounds,
+} from '../leave-balances/leave-year';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AllocationType, NotificationCategory } from '@prisma/client';
@@ -58,12 +63,16 @@ export class LeaveExpiryReminderService {
   }
 
   async remindForOrg(organizationId: string, today: string): Promise<number> {
-    const year = Number(today.slice(0, 4));
-    const yearEnd = `${year}-12-31`;
+    const leaveYearCfg = await getLeaveYearConfig(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const year = currentLeaveYear(today, leaveYearCfg);
+    const yearEnd = leaveYearBounds(year, leaveYearCfg).end;
     const yearEndDaysLeft = leaveExpiryDaysLeft(today, yearEnd);
     const upcomingCutoff = new Date(
       Date.UTC(
-        year,
+        Number(today.slice(0, 4)),
         Number(today.slice(5, 7)) - 1,
         Number(today.slice(8, 10)) + LEAVE_EXPIRY_LEAD_DAYS,
       ),

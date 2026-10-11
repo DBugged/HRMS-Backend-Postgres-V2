@@ -50,6 +50,13 @@ import {
   splitDaysByYear,
   LeaveRules,
 } from './leave-rules';
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import {
+  currentLeaveYear,
+  LeaveYearConfig,
+  leaveYearBounds,
+  leaveYearOf,
+} from '../leave-balances/leave-year';
 import {
   resolveShiftConfig,
   OrganizationAttendancePrefs,
@@ -95,20 +102,25 @@ const APPROVE_ROLES: Role[] = [Role.ADMIN, Role.HR, Role.MANAGER];
 // Old system's LEAVE_CONFIG_ROLES — HR override for cancellation.
 const CANCEL_OVERRIDE_ROLES: Role[] = [Role.ADMIN, Role.HR];
 
-function deriveLeaveYear(startDate: string): number {
-  return Number(startDate.slice(0, 4));
+function deriveLeaveYear(startDate: string, cfg: LeaveYearConfig): number {
+  return leaveYearOf(startDate, cfg);
 }
 
 // The balance years a leave is charged to and how many days each: the split recorded when it was applied, or all of
 // totalDays on its start year for a leave inside one year (and for every leave applied before the split existed).
-function yearPartsOf(leave: {
-  startDate: string;
-  totalDays: number;
-  yearSplit?: unknown;
-}): { year: number; days: number }[] {
+function yearPartsOf(
+  leave: {
+    startDate: string;
+    totalDays: number;
+    yearSplit?: unknown;
+  },
+  cfg: LeaveYearConfig,
+): { year: number; days: number }[] {
   const split = leave.yearSplit as { year: number; days: number }[] | null;
   if (Array.isArray(split) && split.length > 0) return split;
-  return [{ year: deriveLeaveYear(leave.startDate), days: leave.totalDays }];
+  return [
+    { year: deriveLeaveYear(leave.startDate, cfg), days: leave.totalDays },
+  ];
 }
 
 // Every distinct (month, year) a leave's date range touches, as
@@ -280,7 +292,14 @@ export class LeavesService {
       actor,
       organizationId,
     );
-    const resolvedYear = year ?? new Date().getFullYear();
+    const orgForYear = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const yearCfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    const todayStr = todayInOrgTz(orgForYear?.timezone ?? 'Asia/Kolkata');
+    const currentYear = currentLeaveYear(todayStr, yearCfg);
+    const resolvedYear = year ?? currentYear;
 
     const eligible = await this.leaveBalanceService.getEligibleLeaveTypes(
       targetEmployeeId,
@@ -345,8 +364,8 @@ export class LeavesService {
       this.scopedPrisma,
       balances,
       organizationId,
-      new Date().getFullYear() > resolvedYear
-        ? `${resolvedYear}-12-31`
+      currentYear > resolvedYear
+        ? leaveYearBounds(resolvedYear, yearCfg).end
         : todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
     );
     // `available` is what the employee can still apply for: closing minus the days already held by pending requests
@@ -693,7 +712,10 @@ export class LeavesService {
             organizationId,
           );
         } else if (!isUnbalancedType(leaveType)) {
-          for (const part of yearPartsOf(leave)) {
+          for (const part of yearPartsOf(
+            leave,
+            await getLeaveYearConfig(tx, organizationId),
+          )) {
             const row = await this.leaveBalanceService.ensureBalanceRow(
               tx,
               leave.employeeId,
@@ -721,7 +743,10 @@ export class LeavesService {
       } else if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
         // REJECTED/RETURNED — release the pending hold, nothing was ever
         // deducted from availed.
-        for (const part of yearPartsOf(leave)) {
+        for (const part of yearPartsOf(
+          leave,
+          await getLeaveYearConfig(tx, organizationId),
+        )) {
           const row = await this.leaveBalanceService.ensureBalanceRow(
             tx,
             leave.employeeId,
@@ -1076,7 +1101,10 @@ export class LeavesService {
     // Atomic decrement — see the comment on the apply() pending update
     // above for why `row.field - delta` here would lose an update under
     // concurrent cancellations/reversals. A leave that spans New Year gives back each year's own days.
-    for (const part of yearPartsOf(leave)) {
+    for (const part of yearPartsOf(
+      leave,
+      await getLeaveYearConfig(tx, organizationId),
+    )) {
       const row = await this.leaveBalanceService.ensureBalanceRow(
         tx,
         leave.employeeId,
@@ -1241,6 +1269,10 @@ export class LeavesService {
     }
     const totalDays = ruleResult.totalDays;
     const holidayDates = new Set(holidays.map((h) => h.date));
+    const leaveYearCfg: LeaveYearConfig = {
+      startMonth: org?.leaveYearStartMonth ?? 1,
+      anchorYear: org?.leaveYearAnchorYear ?? null,
+    };
     const yearParts = splitDaysByYear(
       rules,
       dto.startDate,
@@ -1248,6 +1280,7 @@ export class LeavesService {
       totalDays,
       holidayDates,
       weeklyOffs,
+      leaveYearCfg,
     );
 
     const created = await this.scopedPrisma.$transaction(async (tx) => {
@@ -1442,8 +1475,10 @@ export class LeavesService {
           remarks: dto.remarks ?? '',
           attachmentUrl: dto.attachmentUrl,
           editedFromLeaveId: replacing?.id ?? null,
+          // Stored when the leave spans a leave-year boundary, and always under a non-calendar leave year (so a later
+          // change of the leave-year setting cannot move where this leave's days were charged).
           yearSplit:
-            yearParts.length > 1
+            yearParts.length > 1 || leaveYearCfg.startMonth !== 1
               ? (yearParts as unknown as Prisma.InputJsonValue)
               : Prisma.JsonNull,
         },

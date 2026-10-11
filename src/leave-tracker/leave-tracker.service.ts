@@ -6,6 +6,8 @@
 // whole scoped list.
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { leaveYearBounds, leaveYearLabel } from '../leave-balances/leave-year';
 import { EMPLOYEE_ORDER_BY, compareEmployees } from '../common/employee-order';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import {
@@ -328,8 +330,12 @@ export class LeaveTrackerService {
       existingBalanceRows.map((r) => [`${r.employeeId}:${r.leaveTypeId}`, r]),
     );
 
-    const yearStart = `${query.year}-01-01`;
-    const yearEnd = `${query.year}-12-31`;
+    // The query's year is a leave-year key: its dates are the leave year's, which only equal 1 Jan - 31 Dec for the
+    // calendar year.
+    const yearCfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    const yearBounds = leaveYearBounds(query.year, yearCfg);
+    const yearStart = yearBounds.start;
+    const yearEnd = yearBounds.end;
 
     const balanceEmployeeIds = employees.map((e) => e.id);
 
@@ -419,8 +425,8 @@ export class LeaveTrackerService {
       this.scopedPrisma,
       [...existingBalanceByKey.values(), ...ensuredByKey.values()],
       organizationId,
-      new Date().getFullYear() > query.year
-        ? `${query.year}-12-31`
+      new Date().toISOString().slice(0, 10) > yearEnd
+        ? yearEnd
         : new Date().toISOString().slice(0, 10),
     );
 
@@ -579,9 +585,13 @@ export class LeaveTrackerService {
       return row;
     });
 
+    const labelCfg = await getLeaveYearConfig(
+      this.scopedPrisma,
+      organizationId,
+    );
     return {
       title: 'Leave & WFH Balances',
-      subtitle: `Year ${query.year}`,
+      subtitle: `Leave year ${leaveYearLabel(query.year, labelCfg)}`,
       columns,
       rows,
       filename: `leave-wfh-balances-${query.year}`,

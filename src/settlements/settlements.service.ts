@@ -16,6 +16,8 @@
 // with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
 // email goes to the employee's personalEmail, not their login email, since by process() time the account is
 // already deactivated.
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { leaveYearOf } from '../leave-balances/leave-year';
 import { todayInOrgTz } from '../common/org-date';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
@@ -284,6 +286,16 @@ export class SettlementsService {
       where: { organizationId },
     });
     let leaveDaysEncashed = 0;
+    // The balance to pay out is the one for the leave year the last working day falls in (not necessarily its calendar
+    // year when the organisation's leave year starts in another month).
+    const leaveYearCfg = await getLeaveYearConfig(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const lwdLeaveYear = leaveYearOf(
+      dto.lastWorkingDay.slice(0, 10),
+      leaveYearCfg,
+    );
     await this.scopedPrisma.$transaction(async (tx) => {
       for (const leaveType of encashableTypes) {
         const rule = (leaveType.encashment ?? {}) as EncashmentRule;
@@ -292,7 +304,7 @@ export class SettlementsService {
           tx,
           dto.employeeId,
           leaveType.id,
-          year,
+          lwdLeaveYear,
           organizationId,
         );
         // Carried-in days that lapsed unused by the last working day are not paid out: `closing` still counts them,

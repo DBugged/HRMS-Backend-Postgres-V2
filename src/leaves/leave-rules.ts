@@ -9,6 +9,12 @@ import {
   isWeeklyOff,
   WeeklyOffEntry,
 } from '../attendance/attendance-shift-config';
+import {
+  CALENDAR_LEAVE_YEAR,
+  LeaveYearConfig,
+  leaveYearOf,
+  splitRangeByLeaveYear,
+} from '../leave-balances/leave-year';
 
 export interface LeaveRules {
   minDurationDays: number;
@@ -223,26 +229,29 @@ export function splitDaysByYear(
   total: number,
   holidayDates: Set<string>,
   weeklyOffs: WeeklyOffEntry[],
+  cfg: LeaveYearConfig = CALENDAR_LEAVE_YEAR,
 ): { year: number; days: number }[] {
-  const startYear = Number(startDate.slice(0, 4));
-  const endYear = Number(endDate.slice(0, 4));
-  if (startYear === endYear) return [{ year: startYear, days: total }];
+  const ranges = splitRangeByLeaveYear(startDate, endDate, cfg);
+  if (ranges.length <= 1) {
+    return [{ year: leaveYearOf(startDate, cfg), days: total }];
+  }
   const calendar = rules.sandwichLeaveApplies || rules.countCalendarDays;
   const parts: { year: number; days: number }[] = [];
   let assigned = 0;
-  for (let year = startYear; year <= endYear; year += 1) {
-    if (year === endYear) {
-      parts.push({ year, days: Math.round((total - assigned) * 100) / 100 });
-      break;
+  ranges.forEach((r, i) => {
+    if (i === ranges.length - 1) {
+      parts.push({
+        year: r.key,
+        days: Math.round((total - assigned) * 100) / 100,
+      });
+      return;
     }
-    const from = year === startYear ? startDate : `${year}-01-01`;
-    const to = `${year}-12-31`;
     const days = calendar
-      ? countDaysInclusive(from, to)
-      : countWorkingDaysInclusive(from, to, holidayDates, weeklyOffs);
-    parts.push({ year, days });
+      ? countDaysInclusive(r.from, r.to)
+      : countWorkingDaysInclusive(r.from, r.to, holidayDates, weeklyOffs);
+    parts.push({ year: r.key, days });
     assigned += days;
-  }
+  });
   return parts;
 }
 

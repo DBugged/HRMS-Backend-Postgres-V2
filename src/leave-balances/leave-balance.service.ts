@@ -20,10 +20,20 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isEligible } from './leave-eligibility';
 import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
+import { getLeaveYearConfig } from './leave-year-config';
+import {
+  currentLeaveYear,
+  LeaveYearConfig,
+  leaveYearBounds,
+} from './leave-year';
+import { todayInOrgTz } from '../common/org-date';
 import {
   computeCarriedInExpiry,
   computeCarryOut,
+  computeCarriedInExpiryFrom,
   computeUpfrontCredit,
+  computeUpfrontCreditInYear,
+  isPeriodicForYear,
   availedBeforeExpiry,
   forfeitedCarryIn,
   isCarriedInExpired,
@@ -78,6 +88,7 @@ export class LeaveBalanceService {
     year: number,
     priorYearRow:
       { carriedForwardOut: number; closing?: number } | null | undefined,
+    cfg: LeaveYearConfig,
   ) {
     // Event-based leave never resets: whatever is left of a grant stays available in the next year (no cap, no
     // expiry), so a leave that runs into the new year still draws from the same grant.
@@ -85,7 +96,15 @@ export class LeaveBalanceService {
       leaveType.allocationType === AllocationType.EVENT_BASED
         ? Math.max(0, priorYearRow?.closing ?? 0)
         : (priorYearRow?.carriedForwardOut ?? 0);
-    const credited = computeUpfrontCredit(leaveType, joiningDate, year);
+    // A periodic type starts the year at nothing and builds up through the accrual run; everything else is credited
+    // upfront, for the leave year's own length (12 months, or the extended year of a transition).
+    const credited = isPeriodicForYear(leaveType, year)
+      ? 0
+      : computeUpfrontCreditInYear(
+          leaveType,
+          joiningDate.toISOString().slice(0, 10),
+          leaveYearBounds(year, cfg),
+        );
     return { opening, credited, lastAccrualPeriod: null as string | null };
   }
 
@@ -105,6 +124,7 @@ export class LeaveBalanceService {
   ): Promise<Map<string, LeaveBalance>> {
     const result = new Map<string, LeaveBalance>();
     if (pairs.length === 0) return result;
+    const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
     const joiningById = new Map(employees.map((e) => [e.id, e.joiningDate]));
     const typeById = new Map(leaveTypes.map((t) => [t.id, t]));
     const employeeIds = [...new Set(pairs.map((p) => p.employeeId))];
@@ -129,6 +149,7 @@ export class LeaveBalanceService {
         leaveType,
         year,
         priorByKey.get(`${pair.employeeId}:${pair.leaveTypeId}`),
+        cfg,
       );
       return [
         Prisma.sql`(${randomUUID()}, ${organizationId}, ${pair.employeeId}, ${pair.leaveTypeId}, ${year}, ${opening}, ${credited}, ${opening + credited}, ${lastAccrualPeriod}, now(), now())`,
@@ -175,6 +196,11 @@ export class LeaveBalanceService {
       return { rows: 0, totalDaysCredited: 0 };
     }
     const now = new Date();
+    const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    const orgRow = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
     const employees = await this.scopedPrisma.user.findMany({
       where: {
         organizationId,
@@ -196,7 +222,10 @@ export class LeaveBalanceService {
 
     const rows = await this.ensureBalanceRowsBulk(
       eligible.map((e) => ({ employeeId: e.id, leaveTypeId: leaveType.id })),
-      now.getFullYear(),
+      currentLeaveYear(
+        todayInOrgTz(orgRow?.timezone ?? 'Asia/Kolkata', now),
+        cfg,
+      ),
       organizationId,
       eligible,
       [leaveType],
@@ -255,6 +284,7 @@ export class LeaveBalanceService {
     });
     if (existing) return existing;
 
+    const cfg = await getLeaveYearConfig(tx, organizationId);
     const [employee, leaveType, priorYearRow] = await Promise.all([
       tx.user.findFirst({ where: { id: employeeId, organizationId } }),
       tx.leaveType.findFirst({ where: { id: leaveTypeId, organizationId } }),
@@ -285,6 +315,7 @@ export class LeaveBalanceService {
       leaveType,
       year,
       priorRow,
+      cfg,
     );
 
     await tx.$executeRaw`
@@ -312,7 +343,12 @@ export class LeaveBalanceService {
     tx: Prisma.TransactionClient,
     updated: LeaveType,
     organizationId: string,
-    options: { dryRun?: boolean } = {},
+    // `year` reconciles that leave year instead of the one in progress (the transition tops up the extended year).
+    options: {
+      dryRun?: boolean;
+      year?: number;
+      cfg?: LeaveYearConfig;
+    } = {},
   ): Promise<{
     rowsUpdated: number;
     changes: {
@@ -332,7 +368,17 @@ export class LeaveBalanceService {
     ) {
       return { rowsUpdated: 0, changes: [] };
     }
-    const year = new Date().getFullYear();
+    const cfg = options.cfg ?? (await getLeaveYearConfig(tx, organizationId));
+    const orgRow = await tx.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const year =
+      options.year ??
+      currentLeaveYear(todayInOrgTz(orgRow?.timezone ?? 'Asia/Kolkata'), cfg);
+    // A periodic type's balance is built by the accrual run, not set from the quota.
+    if (isPeriodicForYear(updated, year))
+      return { rowsUpdated: 0, changes: [] };
     const rows = await tx.leaveBalance.findMany({
       where: { organizationId, leaveTypeId: updated.id, year },
     });
@@ -354,7 +400,11 @@ export class LeaveBalanceService {
     for (const row of rows) {
       const employee = byId.get(row.employeeId);
       if (!employee) continue;
-      const upfront = computeUpfrontCredit(updated, employee.joiningDate, year);
+      const upfront = computeUpfrontCreditInYear(
+        updated,
+        employee.joiningDate.toISOString().slice(0, 10),
+        leaveYearBounds(year, cfg),
+      );
       const floor = Math.max(
         0,
         row.availed + row.encashed + row.pending - row.opening - row.adjusted,
@@ -433,6 +483,7 @@ export class LeaveBalanceService {
     );
     if (expired.length === 0) return result;
 
+    const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
     const years = expired.map((r) => r.year);
     const leaves = await db.leave.findMany({
       where: {
@@ -441,8 +492,8 @@ export class LeaveBalanceService {
         employeeId: { in: [...new Set(expired.map((r) => r.employeeId))] },
         leaveTypeId: { in: [...new Set(expired.map((r) => r.leaveTypeId))] },
         startDate: {
-          gte: `${Math.min(...years)}-01-01`,
-          lte: `${Math.max(...years)}-12-31`,
+          gte: leaveYearBounds(Math.min(...years), cfg).start,
+          lte: leaveYearBounds(Math.max(...years), cfg).end,
         },
       },
       select: {
@@ -454,12 +505,14 @@ export class LeaveBalanceService {
       },
     });
     for (const row of expired) {
+      const rowBounds = leaveYearBounds(row.year, cfg);
       const taken = availedBeforeExpiry(
         leaves.filter(
           (l) =>
             l.employeeId === row.employeeId &&
             l.leaveTypeId === row.leaveTypeId &&
-            l.startDate.startsWith(`${row.year}-`),
+            l.startDate >= rowBounds.start &&
+            l.startDate <= rowBounds.end,
         ),
         row.carriedInExpiresOn as string,
       );
@@ -547,11 +600,13 @@ export class LeaveBalanceService {
     // Carry-forward happens at the turn of the year, so a balance carried INTO the closing year is judged as of that
     // moment (1 Jan of the next year). Carried-in days that lapsed unused by then — the usual case for a 12-month
     // expiry, whose date is exactly that 1 Jan — are not carried a second time with a fresh expiry.
+    const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    const nextYearStart = leaveYearBounds(year + 1, cfg).start;
     const lapsedByRow = await this.forfeitedCarryIn(
       this.scopedPrisma,
       closingRows,
       organizationId,
-      `${year + 1}-01-01`,
+      nextYearStart,
     );
 
     let processed = 0;
@@ -583,8 +638,8 @@ export class LeaveBalanceService {
             where: { id: nextRow.id, organizationId },
             data: {
               opening: carryOut,
-              carriedInExpiresOn: computeCarriedInExpiry(
-                year + 1,
+              carriedInExpiresOn: computeCarriedInExpiryFrom(
+                nextYearStart,
                 cf.expiryMonths,
               ),
             },

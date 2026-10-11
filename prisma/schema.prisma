@@ -97,6 +97,11 @@ model Organization {
   regularizationAutoApproveHours      Int     @default(24)
   // How many days back an employee may ask to regularize a day (1-31). Was a fixed 7.
   regularizationWindowDays            Int     @default(7)
+  // The month the leave year starts (1 = January = the calendar year, the default). Changing it from January is a
+  // one-off transition that EXTENDS the calendar year in progress; leaveYearAnchorYear is the first year that starts
+  // in that month. See leave-balances/leave-year.ts.
+  leaveYearStartMonth                 Int     @default(1)
+  leaveYearAnchorYear                 Int?
   // Org-wide fallback shift config, used by AttendanceService whenever an
   // employee's Department has none set (or there's no department at all).
   // A department's own shift-config fields always win over these. NOT the
@@ -259,6 +264,7 @@ model Organization {
   payrollRuns                      PayrollRun[]
   reimbursements                   Reimbursement[]
   attendanceRegularizationRequests AttendanceRegularizationRequest[]
+  leaveAccrualEntries              LeaveAccrualEntry[]
   loans                            Loan[]
   loanRepayments                   LoanRepayment[]
   settlements                      Settlement[]
@@ -550,6 +556,7 @@ model User {
   payrollRunsCalculated            PayrollRun[]                      @relation("PayrollRunCalculatedBy")
   reimbursements                   Reimbursement[]                   @relation("ReimbursementEmployee")
   attendanceRegularizationRequests AttendanceRegularizationRequest[] @relation("RegularizationRequestEmployee")
+  leaveAccrualEntries              LeaveAccrualEntry[]               @relation("LeaveAccrualEmployee")
   reimbursementsApproved           Reimbursement[]                   @relation("ReimbursementApprovedBy")
   reimbursementsPaid               Reimbursement[]                   @relation("ReimbursementPaidBy")
   loans                            Loan[]                            @relation("LoanEmployee")
@@ -979,6 +986,19 @@ enum AllocationType {
   EVENT_BASED
 }
 
+// UPFRONT: the whole quota is credited when the year's balance row is created. PERIODIC: it is credited in instalments
+// (see LeaveType.accrualFrequency) by the nightly accrual run, each one recorded in leave_accrual_entries.
+enum LeaveAccrualMode {
+  UPFRONT
+  PERIODIC
+}
+
+// When in its period an instalment is credited.
+enum AccrualTiming {
+  START
+  END
+}
+
 enum AccrualFrequency {
   YEARLY
   HALF_YEARLY
@@ -1015,6 +1035,14 @@ model LeaveType {
   annualQuota           Float            @default(0)
   accrualFrequency      AccrualFrequency @default(YEARLY)
   accrualAmountPerCycle Float            @default(0)
+  // PERIODIC accrual (frequency = accrualFrequency; amount = accrualAmountPerCycle, or quota x months / 12 when 0).
+  accrualMode           LeaveAccrualMode @default(UPFRONT)
+  accrueAt              AccrualTiming    @default(END)
+  // Accrual stops once the balance reaches this many days (null = no cap).
+  maxBalance            Float?
+  // First leave year the PERIODIC mode applies to; earlier years keep their upfront credit. Set when an existing type is
+  // switched to PERIODIC mid-year, so nobody loses days already granted. Null = from the start.
+  periodicFromYear      Int?
   prorateOnJoining      Boolean          @default(true)
 
   // [] = applies to all. applicableGenders stores Gender enum values
@@ -1068,6 +1096,7 @@ model LeaveType {
   leaveEncashments LeaveEncashment[]
   leaveGrants      LeaveGrant[]
   grantRequests    LeaveGrantRequest[]
+  accrualEntries   LeaveAccrualEntry[]
 
   @@unique([organizationId, name])
   @@unique([organizationId, code])
@@ -1116,6 +1145,38 @@ model LeaveBalance {
   @@unique([organizationId, employeeId, leaveTypeId, year])
   @@index([organizationId])
   @@map("leave_balances")
+}
+
+enum LeaveAccrualSource {
+  SCHEDULED
+  MANUAL
+}
+
+// One credit of a PERIODIC leave type: employee x type x period. The unique key makes the nightly run idempotent, and the
+// rows are the audit trail of how a balance's `credited` came about.
+model LeaveAccrualEntry {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId  String
+  employee    User      @relation("LeaveAccrualEmployee", fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+
+  // The leave-year key the credit went to and the period it is for (first day, YYYY-MM-DD).
+  year        Int
+  periodStart String
+  periodEnd   String
+  days        Float
+  source      LeaveAccrualSource @default(SCHEDULED)
+  createdById String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([organizationId, employeeId, leaveTypeId, periodStart])
+  @@index([organizationId, employeeId, year])
+  @@map("leave_accrual_entries")
 }
 
 enum LeaveStatus {

@@ -5,6 +5,11 @@
 // Important: rules/carryForward/negativeBalance/encashment are opaque JSON columns validated only by the
 // DTO shape, not by a DB schema — keep leave-type-defaults.ts's shapes in sync with what the engine expects.
 import {
+  currentLeaveYear,
+  leaveYearBounds,
+} from '../leave-balances/leave-year';
+import { todayInOrgTz } from '../common/org-date';
+import {
   BadRequestException,
   ConflictException,
   Inject,
@@ -61,17 +66,34 @@ export class LeaveTypesService {
   // not run again, so later edits to January data are not silently re-carried.
   @Cron('0 3 * * *')
   async autoRunCarryForwardDailyCheck() {
-    const today = new Date();
-    if (today.getMonth() !== 0) return;
-    const previousYear = today.getFullYear() - 1;
-
     const organizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
-      select: { id: true },
+      select: {
+        id: true,
+        timezone: true,
+        leaveYearStartMonth: true,
+        leaveYearAnchorYear: true,
+      },
     });
     for (const org of organizations) {
       try {
-        await this.autoRunCarryForwardForOrg(org.id, previousYear);
+        // The closing year is the one before the leave year now in progress, and only during the first month of the new
+        // one (a missed first day is picked up the next day the server is up). For the calendar year that is January,
+        // as before; for an April year it is April; and the extended year of a transition is closed in April, not
+        // January.
+        const cfg = {
+          startMonth: org.leaveYearStartMonth,
+          anchorYear: org.leaveYearAnchorYear,
+        };
+        const today = todayInOrgTz(org.timezone ?? 'Asia/Kolkata');
+        const key = currentLeaveYear(today, cfg);
+        const sinceStart = Math.round(
+          (Date.parse(`${today}T00:00:00Z`) -
+            Date.parse(`${leaveYearBounds(key, cfg).start}T00:00:00Z`)) /
+            86400000,
+        );
+        if (sinceStart > 30) continue;
+        await this.autoRunCarryForwardForOrg(org.id, key - 1);
       } catch (err) {
         this.logger.error(
           `Auto carry-forward failed for org ${org.id}: ${err instanceof Error ? err.message : err}`,
@@ -583,7 +605,20 @@ export class LeaveTypesService {
     actorId: string,
     organizationId: string,
   ) {
-    const year = dto.year ?? new Date().getFullYear();
+    const yearOrg = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        timezone: true,
+        leaveYearStartMonth: true,
+        leaveYearAnchorYear: true,
+      },
+    });
+    const year =
+      dto.year ??
+      currentLeaveYear(todayInOrgTz(yearOrg?.timezone ?? 'Asia/Kolkata'), {
+        startMonth: yearOrg?.leaveYearStartMonth ?? 1,
+        anchorYear: yearOrg?.leaveYearAnchorYear ?? null,
+      });
     const { processed, disabledByOrg } =
       await this.leaveBalanceService.runYearEndCarryForward(
         year,
