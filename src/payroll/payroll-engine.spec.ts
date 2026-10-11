@@ -283,6 +283,86 @@ describe('payroll engine: statutory deductions and employer contributions', () =
     expect(r.netPay).toBe(r.grossSalary - r.totalDeductions);
   });
 
+  describe('PF wage ceiling changing mid-month (15,000 to 25,000 on 17-Sep-2026)', () => {
+    const pf = (
+      from: string,
+      to: string | null,
+      ceiling: number,
+      edli: number,
+    ) => ({
+      id: `pf-${from}`,
+      module: 'PF',
+      effectiveFrom: from,
+      effectiveTo: to,
+      isEnabled: true,
+      config: {
+        employeeRate: 12,
+        employerRate: 12,
+        wageCeiling: ceiling,
+        edliRate: 0.5,
+        adminChargeRate: 0.5,
+        epsRate: 8.33,
+        edliMaxAmount: edli,
+      },
+    });
+    const versions = [
+      pf('2020-01-01', '2026-09-16', 15000, 75),
+      pf('2026-09-17', null, 25000, 125),
+    ];
+
+    it('September 2026 charges 16 days at 15,000 and 14 days at 25,000 (Basic 30,000)', async () => {
+      const r = await run({
+        settings: defaultSettings({ pfEnabled: true }),
+        statutoryVersions: versions,
+      });
+      // 30,000 capped: (16*15,000 + 14*25,000)/30 = 19,667 -> 12% = 2,360
+      expect(line(r.deductions, 'PF')).toBe(2360);
+      expect(line(r.employerContributions, 'PF_EMPLOYER')).toBe(2360);
+      const er = r.employerContributions.find(
+        (e) => e.code === 'PF_EMPLOYER',
+      ) as {
+        wages: number;
+        breakup: { eps: number; epf: number };
+      };
+      expect(er.wages).toBe(19667);
+      expect(er.breakup.eps + er.breakup.epf).toBe(2360);
+    });
+
+    it('August 2026 (before the change) stays at 15,000 and October at 25,000', async () => {
+      const aug = await run(
+        {
+          settings: defaultSettings({ pfEnabled: true }),
+          statutoryVersions: versions,
+          attendance: monthRows(2026, 8),
+        },
+        8,
+        2026,
+        '2026-09-05',
+      );
+      expect(line(aug.deductions, 'PF')).toBe(1800);
+      const oct = await run(
+        {
+          settings: defaultSettings({ pfEnabled: true }),
+          statutoryVersions: versions,
+          attendance: monthRows(2026, 10),
+        },
+        10,
+        2026,
+        '2026-11-05',
+      );
+      expect(line(oct.deductions, 'PF')).toBe(3000);
+    });
+
+    it('wages below both ceilings are not affected by the split', async () => {
+      const r = await run({
+        settings: defaultSettings({ pfEnabled: true }),
+        statutoryVersions: versions,
+        overrides: structure(10000),
+      });
+      expect(line(r.deductions, 'PF')).toBe(1200);
+    });
+  });
+
   it('PF below the ceiling is 12% of the actual wage', async () => {
     const r = await run({
       settings: defaultSettings({ pfEnabled: true }),

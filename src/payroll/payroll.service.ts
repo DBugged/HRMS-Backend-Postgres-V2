@@ -72,6 +72,7 @@ import {
   type EffectiveConfigsByModule,
   type OverlaidSettings,
 } from './statutory-overlay';
+import { blendedPfCeiling, pfCeilingSegments } from './pf-ceiling-split';
 import {
   cycleKeyOf,
   describeVariablePay,
@@ -504,6 +505,10 @@ export class PayrollService {
       }
     }
     const settings = applyStatutoryOverrides(settingsRow, effectiveConfigs);
+    // A PF version that starts part-way through the month (e.g. the 17-Sep-2026 ceiling change) splits the PF ceiling.
+    const pfSegments = settings.pfEnabled
+      ? await this.pfCeilingSegmentsFor(month, year, periodDate, organizationId)
+      : [];
 
     const totalDaysInMonth = daysInMonth(month, year);
     const monthPrefix = `${year}-${String(month).padStart(2, '0')}`;
@@ -955,6 +960,21 @@ export class PayrollService {
           : false,
       ),
     );
+    // Charge the month's PF wages at each period's own ceiling (see pf-ceiling-split.ts). The blended figure stands in
+    // for the ceiling in every PF formula, the EPS/EPF split and the stored wages the ECR reads.
+    let pfSettings = settings;
+    const blendedPf = blendedPfCeiling(afterEarnings.PF_WAGES ?? 0, pfSegments);
+    if (blendedPf) {
+      const wageCeiling = Math.round(blendedPf.wageCeiling);
+      const edliMax = Math.round(blendedPf.edliMax);
+      afterEarnings.PF_WAGE_CEILING = wageCeiling;
+      afterEarnings.PF_EDLI_MAX = edliMax;
+      pfSettings = {
+        ...settings,
+        pfWageCeiling: wageCeiling,
+        pfEdliMax: edliMax,
+      };
+    }
 
     const deductionComponents = applicable.filter(
       (c) =>
@@ -1334,7 +1354,7 @@ export class PayrollService {
         amount: e.amount,
         ...(e.code === SALARY_COMPONENT_CODES.PF_EMPLOYER
           ? {
-              breakup: splitEmployerPf(e.amount, afterEarnings, settings, {
+              breakup: splitEmployerPf(e.amount, afterEarnings, pfSettings, {
                 epsEligible: !(
                   (ageOnDate(
                     (employee.personalData as Record<string, unknown> | null)
@@ -1345,7 +1365,7 @@ export class PayrollService {
               }),
               wages: Math.min(
                 afterEarnings.PF_WAGES ?? 0,
-                settings.pfWageCeiling,
+                pfSettings.pfWageCeiling,
               ),
             }
           : {}),
@@ -1376,6 +1396,35 @@ export class PayrollService {
       );
     }
     return result;
+  }
+
+  // The PF ceiling periods inside a month: empty unless a PF version starts after the 1st (the common month costs two
+  // cached lookups and no history query).
+  private async pfCeilingSegmentsFor(
+    month: number,
+    year: number,
+    periodDate: string,
+    organizationId: string,
+  ) {
+    const first = `${year}-${String(month).padStart(2, '0')}-01`;
+    const [start, end] = await Promise.all([
+      this.statutoryConfigService.getEffective(
+        StatutoryModule.PF,
+        first,
+        organizationId,
+      ),
+      this.statutoryConfigService.getEffective(
+        StatutoryModule.PF,
+        periodDate,
+        organizationId,
+      ),
+    ]);
+    if (start.version?.id === end.version?.id) return [];
+    const history = await this.statutoryConfigService.getHistory(
+      StatutoryModule.PF,
+      organizationId,
+    );
+    return pfCeilingSegments(history, month, year);
   }
 
   // "Today" (YYYY-MM-DD) in the organization's own timezone.

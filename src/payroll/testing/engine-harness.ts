@@ -31,6 +31,7 @@ export interface World {
   slabs: Row[];
   ratings?: Row[]; // approved performance ratings (payout %)
   companyPerf?: Row[]; // company / department achievement %
+  statutoryVersions?: Row[]; // StatutoryConfigVersion rows (module, effectiveFrom/To, config, isEnabled)
 }
 
 export const ORG = 'org-1';
@@ -322,7 +323,19 @@ export function makeEngine(world: World, today: string) {
   const service = new PayrollService(
     stub(prisma),
     stub({ getOrCreate: async () => world.settings }),
-    stub({ getEffective: async () => ({ version: null }) }),
+    stub({
+      getEffective: async (module: string, date: string) => ({
+        version:
+          (world.statutoryVersions ?? []).find(
+            (v) =>
+              v.module === module &&
+              (v.effectiveFrom as string) <= date &&
+              (v.effectiveTo === null || (v.effectiveTo as string) >= date),
+          ) ?? null,
+      }),
+      getHistory: async (module: string) =>
+        (world.statutoryVersions ?? []).filter((v) => v.module === module),
+    }),
     stub({ log: async () => undefined }),
     stub({ logEvent: async () => undefined }),
     stub({}),
