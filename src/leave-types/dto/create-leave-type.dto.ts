@@ -13,7 +13,13 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { AllocationType, AccrualFrequency, Gender } from '@prisma/client';
+import {
+  AllocationType,
+  AccrualFrequency,
+  AccrualTiming,
+  Gender,
+  LeaveAccrualMode,
+} from '@prisma/client';
 import {
   CarryForwardDto,
   EncashmentRulesDto,
@@ -66,24 +72,51 @@ export class CreateLeaveTypeDto {
   @IsNumber()
   annualQuota?: number;
 
-  // Retired: every quota is granted upfront (prorated for a mid-year joiner). Still accepted so an older client that
-  // sends it does not get a 400, but the value is ignored.
+  @ApiPropertyOptional({
+    enum: LeaveAccrualMode,
+    default: 'UPFRONT',
+    description:
+      'UPFRONT credits the whole yearly quota at the start of the leave year; PERIODIC credits it in instalments (see accrualFrequency).',
+  })
+  @IsOptional()
+  @IsEnum(LeaveAccrualMode)
+  accrualMode?: LeaveAccrualMode;
+
   @ApiPropertyOptional({
     enum: AccrualFrequency,
-    deprecated: true,
-    description: 'Ignored. Leave quotas are granted upfront.',
+    description: 'PERIODIC only: how often a credit is made.',
   })
   @IsOptional()
   @IsEnum(AccrualFrequency)
   accrualFrequency?: AccrualFrequency;
 
   @ApiPropertyOptional({
-    deprecated: true,
-    description: 'Ignored. Leave quotas are granted upfront.',
+    description:
+      'PERIODIC only: days per cycle. Leave empty to spread the yearly quota evenly.',
   })
   @IsOptional()
   @IsNumber()
+  @Min(0)
   accrualAmountPerCycle?: number;
+
+  @ApiPropertyOptional({
+    enum: AccrualTiming,
+    default: 'END',
+    description:
+      'PERIODIC only: START credits at the beginning of each period, END once it has been worked.',
+  })
+  @IsOptional()
+  @IsEnum(AccrualTiming)
+  accrueAt?: AccrualTiming;
+
+  @ApiPropertyOptional({
+    description:
+      'PERIODIC only: balance ceiling - a credit stops once the balance reaches it.',
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  maxBalance?: number;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()

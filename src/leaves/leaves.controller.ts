@@ -67,6 +67,29 @@ export class LeavesController {
     );
   }
 
+  @Get('accrual-history')
+  accrualHistory(
+    @Query('employeeId') employeeId: string | undefined,
+    @Query('year') year: string | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    const parsedYear = year ? Number(year) : undefined;
+    if (
+      parsedYear !== undefined &&
+      (!Number.isInteger(parsedYear) || parsedYear < 2000 || parsedYear > 2100)
+    ) {
+      throw new BadRequestException(
+        'year must be an integer between 2000 and 2100',
+      );
+    }
+    return this.leavesService.getAccrualHistory(
+      employeeId,
+      parsedYear,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   @Get('team-calendar')
   @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)

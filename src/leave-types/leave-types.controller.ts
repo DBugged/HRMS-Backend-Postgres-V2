@@ -17,6 +17,7 @@ import { Role, User } from '@prisma/client';
 import { LeaveTypesService } from './leave-types.service';
 import { CreateLeaveTypeDto } from './dto/create-leave-type.dto';
 import { UpdateLeaveTypeDto } from './dto/update-leave-type.dto';
+import { RunAccrualDto } from './dto/run-accrual.dto';
 import { RunCarryForwardDto } from './dto/run-carry-forward.dto';
 import { ListLeaveTypesQueryDto } from './dto/list-leave-types-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -37,6 +38,17 @@ export class LeaveTypesController {
   @Get('eligible/me')
   eligibleForMe(@CurrentUser() caller: Caller) {
     return this.leaveTypesService.getEligibleForMe(
+      caller.id,
+      caller.organizationId,
+    );
+  }
+
+  @Post('run-accrual')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  runAccrual(@Body() dto: RunAccrualDto, @CurrentUser() caller: Caller) {
+    return this.leaveTypesService.runAccrual(
+      dto,
       caller.id,
       caller.organizationId,
     );

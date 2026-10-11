@@ -32,6 +32,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { LeaveAccrualService } from '../leave-balances/leave-accrual.service';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
@@ -55,6 +56,7 @@ import {
   currentLeaveYear,
   LeaveYearConfig,
   leaveYearBounds,
+  leaveYearLabel,
   leaveYearOf,
 } from '../leave-balances/leave-year';
 import {
@@ -178,6 +180,7 @@ export class LeavesService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly leaveBalanceService: LeaveBalanceService,
+    private readonly leaveAccrualService: LeaveAccrualService,
     private readonly compOffService: CompOffService,
     private readonly attendanceService: AttendanceService,
     private readonly delegationService: ApprovalDelegationService,
@@ -368,6 +371,23 @@ export class LeavesService {
         ? leaveYearBounds(resolvedYear, yearCfg).end
         : todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
     );
+    const typeById = new Map(balanceEligible.map((t) => [t.id, t]));
+    const targetUser = await this.scopedPrisma.user.findFirst({
+      where: { id: targetEmployeeId, organizationId },
+      select: { joiningDate: true },
+    });
+    const accrualInfo = (leaveTypeId: string) => {
+      const type = typeById.get(leaveTypeId);
+      return type && targetUser
+        ? this.leaveAccrualService.describeForBalance(
+            type,
+            targetUser.joiningDate,
+            resolvedYear,
+            yearCfg,
+            todayStr,
+          )
+        : null;
+    };
     // `available` is what the employee can still apply for: closing minus the days already held by pending requests
     // (closing itself ignores pending), never below zero.
     const shown = balances.map((b) => {
@@ -377,9 +397,14 @@ export class LeavesService {
         0,
         Math.round((closing - b.pending) * 100) / 100,
       );
-      return lapsed > 0
-        ? { ...b, closing, available, forfeitedCarryIn: lapsed }
-        : { ...b, available };
+      const accrual = accrualInfo(b.leaveType.id);
+      return {
+        ...b,
+        ...(lapsed > 0 && { closing, forfeitedCarryIn: lapsed }),
+        available,
+        // Present only for a periodic type: yearly entitlement, how it accrues and the next credit.
+        ...(accrual && { accrual }),
+      };
     });
 
     const compOffAvailable = await this.compOffService.available(
@@ -387,7 +412,38 @@ export class LeavesService {
       organizationId,
     );
 
-    return { balances: shown, compOffAvailable };
+    const bounds = leaveYearBounds(resolvedYear, yearCfg);
+    return {
+      balances: shown,
+      compOffAvailable,
+      leaveYear: {
+        year: resolvedYear,
+        label: leaveYearLabel(resolvedYear, yearCfg),
+        start: bounds.start,
+        end: bounds.end,
+        startMonth: yearCfg.startMonth,
+        isCurrent: resolvedYear === currentYear,
+      },
+    };
+  }
+
+  // Accrual ledger for one employee (self; HR/Admin anyone; a manager their department) - the same visibility as balances.
+  async getAccrualHistory(
+    employeeIdParam: string | undefined,
+    year: number | undefined,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const targetEmployeeId = await this.resolveViewTarget(
+      employeeIdParam,
+      actor,
+      organizationId,
+    );
+    return this.leaveAccrualService.history(
+      targetEmployeeId,
+      year,
+      organizationId,
+    );
   }
 
   async getTeamCalendar(

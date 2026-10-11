@@ -18,7 +18,18 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AllocationType, LeaveType, Prisma, Role } from '@prisma/client';
+import {
+  AccrualFrequency,
+  AllocationType,
+  LeaveAccrualMode,
+  LeaveAccrualSource,
+  LeaveType,
+  Prisma,
+  Role,
+} from '@prisma/client';
+import { LeaveAccrualService } from '../leave-balances/leave-accrual.service';
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { RunAccrualDto } from './dto/run-accrual.dto';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
@@ -40,6 +51,7 @@ export class LeaveTypesService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly leaveBalanceService: LeaveBalanceService,
     private readonly auditLogService: AuditLogService,
+    private readonly leaveAccrualService: LeaveAccrualService,
   ) {}
 
   // The audit log needs a user as its actor, and a scheduled run has none. The organization's oldest active Admin
@@ -177,12 +189,126 @@ export class LeaveTypesService {
     }
   }
 
+  // The accrual settings a create/update will store, validated as a whole (an edit may send only one of the fields).
+  // Switching UPFRONT -> PERIODIC mid-year keeps this year's upfront credit as it is and starts accruing from the next
+  // leave year (periodicFromYear); switching back clears that. Returns only the fields that were sent (or that the
+  // switch implies), so an unrelated edit leaves them alone.
+  private async resolveAccrual(
+    existing: LeaveType | null,
+    dto: Partial<CreateLeaveTypeDto>,
+    organizationId: string,
+  ) {
+    const touched =
+      dto.accrualMode !== undefined ||
+      dto.accrualFrequency !== undefined ||
+      dto.accrualAmountPerCycle !== undefined ||
+      dto.accrueAt !== undefined ||
+      dto.maxBalance !== undefined ||
+      (existing !== null &&
+        (dto.allocationType !== undefined || dto.annualQuota !== undefined));
+    if (!touched) return {};
+
+    const mode =
+      dto.accrualMode ?? existing?.accrualMode ?? LeaveAccrualMode.UPFRONT;
+    const allocationType = dto.allocationType ?? existing?.allocationType;
+    const frequency =
+      dto.accrualFrequency ??
+      existing?.accrualFrequency ??
+      AccrualFrequency.YEARLY;
+    if (mode === LeaveAccrualMode.PERIODIC) {
+      if (
+        allocationType !== AllocationType.FIXED_ANNUAL &&
+        allocationType !== AllocationType.PRORATED_ON_JOINING &&
+        allocationType !== AllocationType.EARNED_MONTHLY
+      ) {
+        throw new BadRequestException(
+          'Periodic accrual needs a yearly quota (fixed annual, prorated on joining or earned monthly).',
+        );
+      }
+      if (frequency === AccrualFrequency.YEARLY) {
+        throw new BadRequestException(
+          'Choose how often leave accrues: monthly, every two months, quarterly or half-yearly.',
+        );
+      }
+    }
+    const data: Partial<
+      Pick<
+        LeaveType,
+        | 'accrualMode'
+        | 'accrualFrequency'
+        | 'accrualAmountPerCycle'
+        | 'accrueAt'
+        | 'maxBalance'
+        | 'periodicFromYear'
+      >
+    > = {};
+    if (dto.accrualMode !== undefined) data.accrualMode = dto.accrualMode;
+    if (dto.accrualFrequency !== undefined)
+      data.accrualFrequency = dto.accrualFrequency;
+    if (dto.accrualAmountPerCycle !== undefined)
+      data.accrualAmountPerCycle = dto.accrualAmountPerCycle;
+    if (dto.accrueAt !== undefined) data.accrueAt = dto.accrueAt;
+    if (dto.maxBalance !== undefined) data.maxBalance = dto.maxBalance;
+
+    const wasPeriodic = existing?.accrualMode === LeaveAccrualMode.PERIODIC;
+    if (mode === LeaveAccrualMode.PERIODIC && !wasPeriodic) {
+      if (existing === null) {
+        data.periodicFromYear = null; // a new type accrues from its first year
+      } else {
+        const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+        const org = await this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        });
+        data.periodicFromYear =
+          currentLeaveYear(todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'), cfg) +
+          1;
+      }
+    } else if (mode === LeaveAccrualMode.UPFRONT && wasPeriodic) {
+      data.periodicFromYear = null;
+    }
+    return data;
+  }
+
+  // Credits whatever is already due on a periodic type right after it is saved, so the balances do not wait for the
+  // night. Best effort: the nightly run picks up anything this misses.
+  private async accrueAfterSave(
+    type: LeaveType,
+    actorId: string | undefined,
+    organizationId: string,
+  ) {
+    if (type.accrualMode !== LeaveAccrualMode.PERIODIC || !type.isActive)
+      return;
+    try {
+      await this.leaveAccrualService.run(organizationId, {
+        leaveTypeId: type.id,
+        source: LeaveAccrualSource.MANUAL,
+        actorId,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `Accrual after saving leave type ${type.id} failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  // HR/Admin "run accrual now" (with a dry-run preview).
+  runAccrual(dto: RunAccrualDto, actorId: string, organizationId: string) {
+    return this.leaveAccrualService.run(organizationId, {
+      dryRun: dto.dryRun,
+      leaveTypeId: dto.leaveTypeId,
+      source: LeaveAccrualSource.MANUAL,
+      actorId,
+    });
+  }
+
   async create(
     dto: CreateLeaveTypeDto,
     organizationId: string,
     createdById: string,
   ) {
     await this.assertNoDuplicate(organizationId, dto.name, dto.code);
+    const accrual = await this.resolveAccrual(null, dto, organizationId);
     const created = await this.scopedPrisma.leaveType.create({
       data: {
         organizationId,
@@ -194,6 +320,7 @@ export class LeaveTypesService {
         displayOrder: dto.displayOrder ?? 0,
         allocationType: dto.allocationType,
         annualQuota: dto.annualQuota ?? 0,
+        ...accrual,
         prorateOnJoining: dto.prorateOnJoining ?? true,
         applicableDepartments: dto.applicableDepartments ?? [],
         applicableEmployeeTypes: dto.applicableEmployeeTypes ?? [],
@@ -229,6 +356,7 @@ export class LeaveTypesService {
       },
     });
     await this.creditNewType(created, createdById, organizationId);
+    await this.accrueAfterSave(created, createdById, organizationId);
     return created;
   }
 
@@ -324,11 +452,14 @@ export class LeaveTypesService {
       (dto.prorateOnJoining !== undefined &&
         dto.prorateOnJoining !== existing.prorateOnJoining);
 
+    const accrual = await this.resolveAccrual(existing, dto, organizationId);
+
     let rowsReconciled = 0;
     await this.scopedPrisma.$transaction(async (tx) => {
       await tx.leaveType.updateMany({
         where: { id, organizationId },
         data: {
+          ...accrual,
           ...(dto.name !== undefined && { name: dto.name }),
           ...(dto.code !== undefined && { code: dto.code }),
           ...(dto.description !== undefined && {
@@ -427,6 +558,7 @@ export class LeaveTypesService {
     });
 
     const updated = await this.findByIdOrThrow(id, organizationId);
+    await this.accrueAfterSave(updated, actorId, organizationId);
     await this.auditPolicyChange(
       existing,
       updated,
