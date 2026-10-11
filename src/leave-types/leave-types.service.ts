@@ -668,7 +668,13 @@ export class LeaveTypesService {
       );
     }
 
+    // Accrual credits alone do not make a type "in use" (like its untouched balance rows they are only what the type
+    // itself paid out), but the ledger references the type, so it has to go first - without this the delete hit the FK
+    // and came back as a 500.
     await this.scopedPrisma.$transaction([
+      this.scopedPrisma.leaveAccrualEntry.deleteMany({
+        where: { leaveTypeId: id, organizationId },
+      }),
       this.scopedPrisma.leaveBalance.deleteMany({
         where: { leaveTypeId: id, organizationId },
       }),

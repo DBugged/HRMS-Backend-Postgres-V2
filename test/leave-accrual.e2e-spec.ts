@@ -407,4 +407,27 @@ describe('Leave accrual (e2e)', () => {
     });
     expect(sum._sum.days).toBeCloseTo(cycles * 1.5, 2);
   });
+
+  it('a periodic type that has only accrued (no leave taken) can be removed', async () => {
+    const res = await createType({
+      name: 'Removable',
+      code: 'RMV',
+      annualQuota: 12,
+      accrualMode: 'PERIODIC',
+      accrualFrequency: 'MONTHLY',
+      accrueAt: 'START',
+    });
+    const id = (res.body as { id: string }).id;
+    expect(
+      await prisma.leaveAccrualEntry.count({ where: { leaveTypeId: id } }),
+    ).toBeGreaterThan(0);
+    const del = await request(app.getHttpServer())
+      .delete(`/leave-types/${id}`)
+      .set(auth(adminToken));
+    expect(del.status).toBe(200);
+    expect(await prisma.leaveType.count({ where: { id } })).toBe(0);
+    expect(
+      await prisma.leaveAccrualEntry.count({ where: { leaveTypeId: id } }),
+    ).toBe(0);
+  });
 });
