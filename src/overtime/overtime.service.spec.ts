@@ -204,7 +204,7 @@ describe('overtime: logging', () => {
     });
     await expect(
       service.log({ date: '2026-10-05', hours: 1 } as never, emp, 'org'),
-    ).rejects.toThrow(/already exists for 2026-10-05 \(status: approved\)/);
+    ).rejects.toThrow(/already exists for 05-10-2026 \(status: approved\)/);
   });
 
   it('tells the reviewers and is audited', async () => {

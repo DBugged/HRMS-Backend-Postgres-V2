@@ -1800,15 +1800,21 @@ describe('Attendance (e2e)', () => {
     });
 
     it('blocks a second regularization request while the first is still pending', async () => {
-      const date = offsetDate(0);
+      // A finished day with fixed past times: today's UTC-based times fall in the future between 00:00 and 05:30 IST
+      // (the org-local date is already ahead of UTC), which the future-time check refuses.
+      const date = offsetDate(-6);
+      // Another test in this file may already have a request on this date; start from a clean day.
+      await prisma.attendance.deleteMany({
+        where: { employeeId, date },
+      });
       await request(app.getHttpServer())
         .post('/attendance/regularization')
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({
           date,
           reason: 'First request',
-          requestedInTime: `${date}T00:30:00.000Z`,
-          requestedOutTime: `${date}T00:45:00.000Z`,
+          requestedInTime: `${date}T04:00:00.000Z`,
+          requestedOutTime: `${date}T04:15:00.000Z`,
         })
         .expect(201);
 
@@ -1818,8 +1824,8 @@ describe('Attendance (e2e)', () => {
         .send({
           date,
           reason: 'Trying again while pending',
-          requestedInTime: `${date}T00:30:00.000Z`,
-          requestedOutTime: `${date}T00:45:00.000Z`,
+          requestedInTime: `${date}T04:00:00.000Z`,
+          requestedOutTime: `${date}T04:15:00.000Z`,
         })
         .expect(409);
     });
