@@ -62,6 +62,7 @@ function build(employees: Row[], runs: Row[] = [], extraPrisma: Row = {}) {
         employees.find((e) => e.id === a?.where?.id && e.isActive) ?? null,
     },
     department: { findMany: async () => [] },
+    taxSlabConfig: { findMany: async () => [] },
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
     payrollRun: {
       findMany: async (a: Row) => store.filter((r) => match(r, a?.where)),
