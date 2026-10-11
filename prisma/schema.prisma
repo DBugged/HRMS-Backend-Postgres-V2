@@ -2162,6 +2162,9 @@ model PayrollRun {
   runSequence       Int         @default(0)
   // Free-text name for a supplementary run ("Diwali bonus", "Arrears Apr-Jun"); null on regular and F&F runs.
   runLabel          String?
+  // Supplementary arrears runs: [{ month, year, amount }] - the locked/paid months this payment makes good, so the same
+  // difference is never paid twice.
+  arrearsDetail     Json?
 
   // Point-in-time snapshot taken at calculation so a re-issued payslip keeps the designation/department/
   // grade the employee held that month. Nullable: older runs fall back to the live values.

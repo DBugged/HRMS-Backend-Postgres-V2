@@ -204,7 +204,12 @@ export class EmployeeSalaryComponentsService {
         const row = await this.applyRevision(
           employeeId,
           component,
-          { ...line, effectiveFrom: dto.effectiveFrom },
+          {
+            ...line,
+            effectiveFrom: dto.effectiveFrom,
+            backdateForArrears:
+              line.backdateForArrears ?? dto.backdateForArrears,
+          },
           actorId,
           organizationId,
         );
@@ -266,7 +271,11 @@ export class EmployeeSalaryComponentsService {
         `The new salary cannot start before the current one (${current.effectiveFrom}) for ${component.code}. Use ${current.effectiveFrom} to correct it, or a later date to revise it.`,
       );
     }
-    await this.assertNoFinalizedPayrollFrom(employeeId, from, organizationId);
+    // A deliberate backdated revision (to be paid as arrears) is allowed to start inside paid months; the locked
+    // payslips are left alone and the difference is paid via PayrollService.createArrears.
+    if (dto.backdateForArrears !== true) {
+      await this.assertNoFinalizedPayrollFrom(employeeId, from, organizationId);
+    }
     const sameDay = !!current && from === current.effectiveFrom;
 
     const values = {
@@ -404,7 +413,7 @@ export class EmployeeSalaryComponentsService {
     });
     if (finalized) {
       throw new BadRequestException(
-        `Cannot apply a salary revision effective ${effectiveFrom}: this employee's ${finalized.month}/${finalized.year} payroll is already ${finalized.status.toLowerCase()}. Unlock that payroll run first, or choose an effective date after it and pay any difference as arrears.`,
+        `Cannot apply a salary revision effective ${effectiveFrom}: this employee's ${finalized.month}/${finalized.year} payroll is already ${finalized.status.toLowerCase()}. Unlock that payroll run first, or choose an effective date after it and pay any difference as arrears, or send backdateForArrears to record a backdated revision and pay the difference through Arrears.`,
       );
     }
   }

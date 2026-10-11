@@ -121,6 +121,7 @@ import { amountInWords } from './number-to-words';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
 import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
+import { ArrearsPreviewDto, CreateArrearsDto } from './dto/arrears.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto, PayrollLineDto } from './dto/adjust-payroll.dto';
 import {
@@ -1886,6 +1887,9 @@ export class PayrollService {
     dto: CreateSupplementaryPayrollDto,
     actor: Actor,
     organizationId: string,
+    extra: {
+      arrearsDetail?: { month: number; year: number; amount: number }[];
+    } = {},
   ) {
     const today = await this.orgToday(organizationId);
     this.assertMonthStarted(dto.month, dto.year, today);
@@ -2030,6 +2034,12 @@ export class PayrollService {
             year: dto.year,
             runSequence,
             runLabel: dto.label.trim(),
+            ...(extra.arrearsDetail
+              ? {
+                  arrearsDetail:
+                    extra.arrearsDetail as unknown as Prisma.InputJsonValue,
+                }
+              : {}),
             financialYear: withExtra.financialYear,
             status: PayrollRunStatus.CALCULATED,
             payslipNumber,
@@ -2094,6 +2104,191 @@ export class PayrollService {
     }
     throw new ConflictException(
       'Could not create the supplementary payroll - please try again.',
+    );
+  }
+
+  // Arrears for a salary revision recorded with a backdated effective date (backdateForArrears) over months that are
+  // already locked/paid. Each such month is re-priced with the employee's current structure, keeping that payslip's own
+  // LOP days so attendance changes do not leak in, and compared with what was actually paid on the regular run. Only
+  // recurring earning lines count (encashment and non-monthly variable pay are excluded). Arrears already paid for a
+  // month through an earlier arrears run are deducted, so the same difference is never paid twice.
+  async previewArrears(dto: ArrearsPreviewDto, organizationId: string) {
+    const start = dto.fromYear * 12 + dto.fromMonth;
+    const end = dto.toYear * 12 + dto.toMonth;
+    if (end < start) {
+      throw new BadRequestException(
+        'The arrears period ends before it starts.',
+      );
+    }
+    if (end - start > 35) {
+      throw new BadRequestException(
+        'Arrears can cover at most 36 months at a time.',
+      );
+    }
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId },
+      select: { id: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
+    const periods: { month: number; year: number }[] = [];
+    for (let i = start; i <= end; i += 1) {
+      periods.push({
+        year: Math.floor((i - 1) / 12),
+        month: ((i - 1) % 12) + 1,
+      });
+    }
+    const [runs, arrearsRuns] = await Promise.all([
+      this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          employeeId: dto.employeeId,
+          isFinalSettlement: false,
+          runSequence: 0,
+          status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+          OR: periods,
+        },
+      }),
+      this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          employeeId: dto.employeeId,
+          runSequence: { gt: 0 },
+          arrearsDetail: { not: Prisma.DbNull },
+        },
+        select: { arrearsDetail: true },
+      }),
+    ]);
+    const alreadyPaid = new Map<string, number>();
+    for (const r of arrearsRuns) {
+      for (const d of (r.arrearsDetail ?? []) as unknown as {
+        month: number;
+        year: number;
+        amount: number;
+      }[]) {
+        const key = `${d.year}-${d.month}`;
+        alreadyPaid.set(key, (alreadyPaid.get(key) ?? 0) + d.amount);
+      }
+    }
+    const recurring = (
+      lines: { code: string; amount: number; cycleKey?: string }[],
+    ) =>
+      (lines ?? [])
+        .filter((l) => l.code !== 'LEAVE_ENCASHMENT' && !l.cycleKey)
+        .reduce((sum, l) => sum + l.amount, 0);
+
+    const months: {
+      month: number;
+      year: number;
+      paidGross: number;
+      revisedGross: number;
+      difference: number;
+      alreadyPaidAsArrears: number;
+      arrears: number;
+    }[] = [];
+    const failures: { month: number; year: number; message: string }[] = [];
+    for (const run of [...runs].sort(
+      (a, b) => a.year - b.year || a.month - b.month,
+    )) {
+      try {
+        const lop = (run.attendanceSummary as { lopDays?: number } | null)
+          ?.lopDays;
+        const recalculated = await this.calculatePayroll(
+          dto.employeeId,
+          run.month,
+          run.year,
+          organizationId,
+          lop === undefined ? undefined : { lopDaysOverride: lop },
+        );
+        const paidGross = recurring(run.earnings as never);
+        const revisedGross = recurring(recalculated.earnings as never);
+        const paidAsArrears = alreadyPaid.get(`${run.year}-${run.month}`) ?? 0;
+        const difference = Math.round((revisedGross - paidGross) * 100) / 100;
+        months.push({
+          month: run.month,
+          year: run.year,
+          paidGross,
+          revisedGross,
+          difference,
+          alreadyPaidAsArrears: paidAsArrears,
+          arrears: Math.max(
+            0,
+            Math.round((difference - paidAsArrears) * 100) / 100,
+          ),
+        });
+      } catch (err) {
+        failures.push({
+          month: run.month,
+          year: run.year,
+          message: err instanceof Error ? err.message : 'Unknown error',
+        });
+      }
+    }
+    const total =
+      Math.round(months.reduce((s, m) => s + m.arrears, 0) * 100) / 100;
+    return { employeeId: dto.employeeId, months, failures, total };
+  }
+
+  // Pays the previewed arrears as a supplementary run (taxed like any off-cycle payment) and records which months it
+  // made good.
+  async createArrears(
+    dto: CreateArrearsDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const preview = await this.previewArrears(dto, organizationId);
+    if (preview.failures.length > 0) {
+      throw new BadRequestException(
+        `Arrears could not be worked out for ${preview.failures
+          .map((f) => `${f.month}/${f.year}: ${f.message}`)
+          .join(' | ')}`,
+      );
+    }
+    const due = preview.months.filter((m) => m.arrears > 0);
+    if (preview.total <= 0 || due.length === 0) {
+      throw new BadRequestException(
+        'No arrears are due for this period - the revised salary is not higher than what was paid, or it has already been paid as arrears.',
+      );
+    }
+    const today = await this.orgToday(organizationId);
+    const payMonth = dto.payMonth ?? Number(today.slice(5, 7));
+    const payYear = dto.payYear ?? Number(today.slice(0, 4));
+    const hasArrearsComponent =
+      await this.scopedPrisma.salaryComponent.findFirst({
+        where: {
+          organizationId,
+          code: 'ARREARS',
+          isActive: true,
+          type: SalaryComponentType.EARNING,
+          isEmployerContribution: false,
+        },
+        select: { id: true },
+      });
+    const period = `${dto.fromMonth}/${dto.fromYear} - ${dto.toMonth}/${dto.toYear}`;
+    return this.createSupplementary(
+      {
+        employeeId: dto.employeeId,
+        month: payMonth,
+        year: payYear,
+        label: dto.label ?? `Arrears ${period}`,
+        reason: dto.reason,
+        earnings: [
+          {
+            name: `Salary arrears ${period}`,
+            amount: preview.total,
+            ...(hasArrearsComponent ? { componentCode: 'ARREARS' } : {}),
+          },
+        ],
+      },
+      actor,
+      organizationId,
+      {
+        arrearsDetail: due.map((m) => ({
+          month: m.month,
+          year: m.year,
+          amount: m.arrears,
+        })),
+      },
     );
   }
 

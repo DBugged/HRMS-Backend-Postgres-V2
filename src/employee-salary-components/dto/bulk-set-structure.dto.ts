@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsOptional,
   ValidateNested,
 } from 'class-validator';
@@ -24,4 +25,12 @@ export class BulkSetStructureDto {
   @IsOptional()
   @IsValidCalendarDateString()
   effectiveFrom?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Allow the effectiveFrom to fall in months whose payroll is already locked/paid; pay the difference as arrears.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  backdateForArrears?: boolean;
 }

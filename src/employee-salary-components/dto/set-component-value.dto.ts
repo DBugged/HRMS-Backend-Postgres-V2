@@ -70,6 +70,15 @@ export class SetComponentValueDto {
   isEnabled?: boolean;
 
   @ApiPropertyOptional({
+    description:
+      'Allow an effectiveFrom inside months whose payroll is already locked/paid. Those payslips stay as they are; the ' +
+      'difference is then paid through the Arrears preview/create endpoints.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  backdateForArrears?: boolean;
+
+  @ApiPropertyOptional({
     description: 'Defaults to today (server-local date) if omitted',
   })
   @IsOptional()

@@ -30,6 +30,7 @@ import { AdjustPayrollDto } from './dto/adjust-payroll.dto';
 import { BulkTransitionPayrollDto } from './dto/bulk-transition-payroll.dto';
 import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
 import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
+import { ArrearsPreviewDto, CreateArrearsDto } from './dto/arrears.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -154,6 +155,29 @@ export class PayrollController {
     @CurrentUser() caller: Caller,
   ) {
     return this.payrollService.createSupplementary(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Post('arrears/preview')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  previewArrears(
+    @Body() dto: ArrearsPreviewDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.previewArrears(dto, caller.organizationId);
+  }
+
+  @Post('arrears')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  createArrears(@Body() dto: CreateArrearsDto, @CurrentUser() caller: Caller) {
+    return this.payrollService.createArrears(
       dto,
       caller,
       caller.organizationId,
