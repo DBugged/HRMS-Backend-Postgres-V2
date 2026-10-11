@@ -75,6 +75,15 @@ function nextWeekday(targetDay: number, fromOffsetDays: number): string {
   }
 }
 
+// Shift times are the organisation's wall-clock times (the test organisation is Asia/Kolkata, UTC+5:30): the ISO
+// instant at which `hhmm` happens on `date` there.
+const IST_OFFSET_MS = 330 * 60000;
+function istIso(date: string, hhmm: string): string {
+  return new Date(
+    Date.parse(`${date}T${hhmm}:00.000Z`) - IST_OFFSET_MS,
+  ).toISOString();
+}
+
 function nextDateStr(dateStr: string): string {
   const d = new Date(`${dateStr}T00:00:00.000Z`);
   d.setUTCDate(d.getUTCDate() + 1);
@@ -295,8 +304,8 @@ describe('Attendance (e2e)', () => {
 
     it('HR can punch on behalf of an employee; two punches spanning >=8h yield PRESENT', async () => {
       const date = offsetDateAvoidingHolidays(-5);
-      const inTime = `${date}T09:00:00.000Z`;
-      const outTime = `${date}T18:00:00.000Z`;
+      const inTime = istIso(date, '09:00');
+      const outTime = istIso(date, '18:00');
 
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
@@ -461,7 +470,7 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employeeId, punchTime: `${date}T09:00:00.000Z` })
+        .send({ employeeId, punchTime: istIso(date, '09:00') })
         .expect(201);
 
       const before = await prisma.attendance.findFirstOrThrow({
@@ -474,7 +483,7 @@ describe('Attendance (e2e)', () => {
             requested: true,
             reason: 'Forgot to punch out',
             requestedInTime: null,
-            requestedOutTime: `${date}T18:00:00.000Z`,
+            requestedOutTime: istIso(date, '18:00'),
             status: 'pending',
             reviewedBy: null,
             reviewedAt: null,
@@ -486,7 +495,7 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employeeId, punchTime: `${date}T18:30:00.000Z` })
+        .send({ employeeId, punchTime: istIso(date, '18:30') })
         .expect(201);
 
       const after = await prisma.attendance.findFirstOrThrow({
@@ -534,8 +543,8 @@ describe('Attendance (e2e)', () => {
     it('pairs a late check-in with a post-midnight check-out into ONE PRESENT day, not two ABSENT days', async () => {
       const shiftDate = offsetDateAvoidingHolidays(-4);
       const nextDate = nextDateStr(shiftDate);
-      const checkIn = `${shiftDate}T22:15:00.000Z`;
-      const checkOut = `${nextDate}T06:30:00.000Z`;
+      const checkIn = istIso(shiftDate, '22:15');
+      const checkOut = istIso(nextDate, '06:30');
 
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
@@ -582,15 +591,15 @@ describe('Attendance (e2e)', () => {
     it('a checkout running past noon (in the quiet gap, nearer the shift end) still counts toward the previous night', async () => {
       const shiftDate = offsetDateAvoidingHolidays(-12);
       const nextDate = nextDateStr(shiftDate);
-      await manualPunchAt(`${shiftDate}T22:00:00.000Z`);
+      await manualPunchAt(istIso(shiftDate, '22:00'));
       // 12:30 is past the old hardcoded noon cutoff but still nearer the
       // 06:00 shift end than the 22:00 start (gap midpoint = 14:00).
-      await manualPunchAt(`${nextDate}T12:30:00.000Z`);
+      await manualPunchAt(istIso(nextDate, '12:30'));
 
       const row = await prisma.attendance.findFirstOrThrow({
         where: { employeeId: nightEmployeeId, date: shiftDate },
       });
-      expect(row.outTime?.toISOString()).toBe(`${nextDate}T12:30:00.000Z`);
+      expect(row.outTime?.toISOString()).toBe(istIso(nextDate, '12:30'));
       expect(row.workDurationMinutes).toBe(14 * 60 + 30);
       expect(row.status).toBe('PRESENT');
       // Nothing orphaned onto the calendar date the checkout landed on.
@@ -604,20 +613,20 @@ describe('Attendance (e2e)', () => {
       const shiftDate = offsetDateAvoidingHolidays(-16);
       const nextDate = nextDateStr(shiftDate);
       // 15:00 is past the 14:00 gap midpoint -> this evening's shift.
-      await manualPunchAt(`${shiftDate}T15:00:00.000Z`);
-      await manualPunchAt(`${nextDate}T02:00:00.000Z`);
+      await manualPunchAt(istIso(shiftDate, '15:00'));
+      await manualPunchAt(istIso(nextDate, '02:00'));
 
       const row = await prisma.attendance.findFirstOrThrow({
         where: { employeeId: nightEmployeeId, date: shiftDate },
       });
-      expect(row.inTime?.toISOString()).toBe(`${shiftDate}T15:00:00.000Z`);
-      expect(row.outTime?.toISOString()).toBe(`${nextDate}T02:00:00.000Z`);
+      expect(row.inTime?.toISOString()).toBe(istIso(shiftDate, '15:00'));
+      expect(row.outTime?.toISOString()).toBe(istIso(nextDate, '02:00'));
       expect(row.workDurationMinutes).toBe(11 * 60);
       const prevRow = await prisma.attendance.findFirst({
         where: {
           employeeId: nightEmployeeId,
           date: (() => {
-            const d = new Date(`${shiftDate}T00:00:00.000Z`);
+            const d = new Date(istIso(shiftDate, '00:00'));
             d.setUTCDate(d.getUTCDate() - 1);
             return d.toISOString().slice(0, 10);
           })(),
@@ -629,17 +638,106 @@ describe('Attendance (e2e)', () => {
     it('punches exactly at and just before the gap midpoint split between adjacent shift-days with no gap', async () => {
       const shiftDate = offsetDateAvoidingHolidays(-20);
       const nextDate = nextDateStr(shiftDate);
-      await manualPunchAt(`${nextDate}T13:59:59.000Z`);
-      await manualPunchAt(`${nextDate}T14:00:00.000Z`);
+      const justBefore = new Date(
+        Date.parse(istIso(nextDate, '14:00')) - 1000,
+      ).toISOString();
+      await manualPunchAt(justBefore);
+      await manualPunchAt(istIso(nextDate, '14:00'));
 
       const prevDay = await prisma.attendance.findFirstOrThrow({
         where: { employeeId: nightEmployeeId, date: shiftDate },
       });
-      expect(prevDay.inTime?.toISOString()).toBe(`${nextDate}T13:59:59.000Z`);
+      expect(prevDay.inTime?.toISOString()).toBe(justBefore);
       const thisDay = await prisma.attendance.findFirstOrThrow({
         where: { employeeId: nightEmployeeId, date: nextDate },
       });
-      expect(thisDay.inTime?.toISOString()).toBe(`${nextDate}T14:00:00.000Z`);
+      expect(thisDay.inTime?.toISOString()).toBe(istIso(nextDate, '14:00'));
+    });
+  });
+
+  describe('Late-in / early-out are judged on the organisation wall clock (shift 09:30-18:30, grace 15 min)', () => {
+    const day = async (
+      daysAgo: number,
+      inHHMM: string,
+      outHHMM: string,
+      zone: 'ist' | 'utc' = 'ist',
+    ) => {
+      const date = offsetDateAvoidingHolidays(daysAgo);
+      const at = (hhmm: string) =>
+        zone === 'ist' ? istIso(date, hhmm) : `${date}T${hhmm}:00.000Z`;
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          employeeId,
+          punchTime: at(inHHMM),
+          outPunchTime: at(outHHMM),
+        })
+        .expect(201);
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId, date },
+      });
+      return { date, isLate: row.isLate, isEarlyOut: row.isEarlyOut, row };
+    };
+
+    it('arriving before the shift and leaving at shift end is neither late nor early (09:25 - 18:30)', async () => {
+      const r = await day(-41, '09:25', '18:30');
+      expect([r.isLate, r.isEarlyOut]).toEqual([false, false]);
+    });
+
+    it('grace boundary: 09:45 is on time, 09:46 is late', async () => {
+      expect((await day(-42, '09:45', '18:30')).isLate).toBe(false);
+      expect((await day(-43, '09:46', '18:30')).isLate).toBe(true);
+    });
+
+    it('an hour late (10:30) is late', async () => {
+      expect((await day(-44, '10:30', '19:30')).isLate).toBe(true);
+    });
+
+    it('early-out boundary: leaving at 18:15 is within grace, 18:14 is early', async () => {
+      expect((await day(-45, '09:30', '18:15')).isEarlyOut).toBe(false);
+      expect((await day(-46, '09:30', '18:14')).isEarlyOut).toBe(true);
+    });
+
+    it('lateness never changes the day status: a late arrival who works the hours is still PRESENT', async () => {
+      const r = await day(-47, '10:30', '19:30');
+      expect(r.isLate).toBe(true);
+      expect(r.row.status).toBe('PRESENT');
+    });
+
+    it('an organisation in UTC reads the same shift times as UTC', async () => {
+      await prisma.organization.update({
+        where: { id: organizationId },
+        data: { timezone: 'UTC' },
+      });
+      try {
+        expect((await day(-48, '09:45', '18:30', 'utc')).isLate).toBe(false);
+        expect((await day(-49, '09:46', '18:30', 'utc')).isLate).toBe(true);
+        expect((await day(-50, '09:30', '18:14', 'utc')).isEarlyOut).toBe(true);
+      } finally {
+        await prisma.organization.update({
+          where: { id: organizationId },
+          data: { timezone: 'Asia/Kolkata' },
+        });
+      }
+    });
+
+    it('an early-morning punch (04:00 IST = 22:30 UTC the evening before) belongs to the organisation day it happened on', async () => {
+      const date = offsetDateAvoidingHolidays(-51);
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          employeeId,
+          punchTime: istIso(date, '04:00'),
+          outPunchTime: istIso(date, '14:00'),
+        })
+        .expect(201);
+      const row = await prisma.attendance.findFirst({
+        where: { employeeId, date },
+      });
+      expect(row).not.toBeNull();
+      expect(row?.workDurationMinutes).toBe(600);
     });
   });
 
@@ -2421,8 +2519,8 @@ describe('Attendance (e2e)', () => {
 
     it('creates a PENDING AUTO_PUNCH overtime record for a punch-out well past shift end', async () => {
       const date = offsetDateAvoidingHolidays(-30);
-      await punchAt(employeeId, `${date}T00:30:00.000Z`);
-      await punchAt(employeeId, `${date}T19:15:00.000Z`); // 45 min past 18:30.
+      await punchAt(employeeId, istIso(date, '09:30'));
+      await punchAt(employeeId, istIso(date, '19:15')); // 45 min past 18:30.
 
       const record = await prisma.overtimeRecord.findFirstOrThrow({
         where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
@@ -2454,8 +2552,8 @@ describe('Attendance (e2e)', () => {
       try {
         await setOvertimePay(false);
         const offDate = offsetDateAvoidingHolidays(-33);
-        await punchAt(employeeId, `${offDate}T09:30:00.000Z`);
-        await punchAt(employeeId, `${offDate}T19:15:00.000Z`); // 45 min past shift end
+        await punchAt(employeeId, istIso(offDate, '09:30'));
+        await punchAt(employeeId, istIso(offDate, '19:15')); // 45 min past shift end
         expect(
           await prisma.overtimeRecord.findFirst({
             where: { organizationId, employeeId, date: offDate },
@@ -2464,8 +2562,8 @@ describe('Attendance (e2e)', () => {
 
         await setOvertimePay(true);
         const onDate = offsetDateAvoidingHolidays(-34);
-        await punchAt(employeeId, `${onDate}T09:30:00.000Z`);
-        await punchAt(employeeId, `${onDate}T19:15:00.000Z`);
+        await punchAt(employeeId, istIso(onDate, '09:30'));
+        await punchAt(employeeId, istIso(onDate, '19:15'));
         expect(
           await prisma.overtimeRecord.findFirst({
             where: { organizationId, employeeId, date: onDate },
@@ -2478,8 +2576,8 @@ describe('Attendance (e2e)', () => {
 
     it('does not create a record for a punch-out only a few minutes past shift end', async () => {
       const date = offsetDateAvoidingHolidays(-31);
-      await punchAt(employeeId, `${date}T00:30:00.000Z`);
-      await punchAt(employeeId, `${date}T18:40:00.000Z`); // 10 min past.
+      await punchAt(employeeId, istIso(date, '09:30'));
+      await punchAt(employeeId, istIso(date, '18:40')); // 10 min past.
 
       const record = await prisma.overtimeRecord.findFirst({
         where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
@@ -2489,8 +2587,8 @@ describe('Attendance (e2e)', () => {
 
     it('a later correction that removes the overshoot deletes the still-PENDING suggestion', async () => {
       const date = offsetDateAvoidingHolidays(-32);
-      await punchAt(employeeId, `${date}T00:30:00.000Z`);
-      await punchAt(employeeId, `${date}T19:15:00.000Z`);
+      await punchAt(employeeId, istIso(date, '09:30'));
+      await punchAt(employeeId, istIso(date, '19:15'));
       const created = await prisma.overtimeRecord.findFirstOrThrow({
         where: { organizationId, employeeId, date, source: 'AUTO_PUNCH' },
       });
@@ -2503,9 +2601,9 @@ describe('Attendance (e2e)', () => {
         where: {
           employeeId,
           organizationId,
-          punchTime: new Date(`${date}T19:15:00.000Z`),
+          punchTime: new Date(istIso(date, '19:15')),
         },
-        data: { punchTime: new Date(`${date}T18:30:00.000Z`) },
+        data: { punchTime: new Date(istIso(date, '18:30')) },
       });
       await attendanceService.recalculateAttendanceForDay(
         scopedPrisma,
@@ -2524,11 +2622,11 @@ describe('Attendance (e2e)', () => {
   describe('Punch-out reminder', () => {
     it('nudges an employee still punched in with their shift ending soon, once per day', async () => {
       const now = new Date();
-      // Shift end 10 minutes from "now" (literal UTC, same convention as
-      // buildShiftDateTime/every other shift-config test in this file) —
+      // Shift end 10 minutes from "now" (the organisation's wall clock, Asia/Kolkata) —
       // lands inside the 15-minute reminder window.
       const soon = new Date(now.getTime() + 10 * 60000);
-      const shiftEndTime = `${String(soon.getUTCHours()).padStart(2, '0')}:${String(soon.getUTCMinutes()).padStart(2, '0')}`;
+      const istSoon = new Date(soon.getTime() + IST_OFFSET_MS);
+      const shiftEndTime = `${String(istSoon.getUTCHours()).padStart(2, '0')}:${String(istSoon.getUTCMinutes()).padStart(2, '0')}`;
 
       const dept = await request(app.getHttpServer())
         .post('/departments')
@@ -2584,7 +2682,8 @@ describe('Attendance (e2e)', () => {
     it('does not nudge an employee who has already punched out', async () => {
       const now = new Date();
       const soon = new Date(now.getTime() + 10 * 60000);
-      const shiftEndTime = `${String(soon.getUTCHours()).padStart(2, '0')}:${String(soon.getUTCMinutes()).padStart(2, '0')}`;
+      const istSoon = new Date(soon.getTime() + IST_OFFSET_MS);
+      const shiftEndTime = `${String(istSoon.getUTCHours()).padStart(2, '0')}:${String(istSoon.getUTCMinutes()).padStart(2, '0')}`;
 
       const dept = await request(app.getHttpServer())
         .post('/departments')

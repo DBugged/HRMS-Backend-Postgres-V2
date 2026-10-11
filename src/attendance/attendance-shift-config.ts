@@ -32,6 +32,9 @@ export interface ShiftConfig {
   // resolveAttendanceDateForPunch for how this changes punch-to-date
   // attribution and the check-in/check-out pairing window.
   crossesMidnight: boolean;
+  // IANA timezone the shift times are wall-clock in (the organisation's). Shift start/end, grace thresholds and the
+  // shift-day boundary are evaluated in it; absent = the schema default for organisations, Asia/Kolkata.
+  timezone?: string;
 }
 
 // Subset of Department's shift-config columns (all present with schema
@@ -105,6 +108,15 @@ function asWeeklyOffArray(
 // all, falls back field-by-field to the org's attendancePayrollPrefs, then
 // to the hardcoded literal if the org prefs are somehow malformed/missing.
 export function resolveShiftConfig(
+  department: DepartmentShiftFields | null | undefined,
+  orgPrefs: OrganizationAttendancePrefs | null | undefined,
+  timezone?: string,
+): ShiftConfig {
+  const resolved = resolveShiftConfigWithoutZone(department, orgPrefs);
+  return timezone ? { ...resolved, timezone } : resolved;
+}
+
+function resolveShiftConfigWithoutZone(
   department: DepartmentShiftFields | null | undefined,
   orgPrefs: OrganizationAttendancePrefs | null | undefined,
 ): ShiftConfig {

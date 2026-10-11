@@ -93,6 +93,7 @@ import {
   dateStrInOrgTz,
   yesterdayInOrgTz,
   dayRangeInOrgTz,
+  startOfDayInOrgTzUtc,
 } from '../common/org-date';
 import { isSelfieRequired } from '../common/selfie-requirement';
 
@@ -126,10 +127,22 @@ function utcDateStrOf(date: Date): string {
   return date.toISOString().slice(0, 10);
 }
 
-function buildShiftDateTime(dateStr: string, hhmm: string): Date {
+const DEFAULT_ORG_TIMEZONE = 'Asia/Kolkata';
+const tzOf = (shiftConfig: { timezone?: string }): string =>
+  shiftConfig.timezone ?? DEFAULT_ORG_TIMEZONE;
+
+// The instant at which `hhmm` on calendar day `dateStr` happens on the organisation's wall clock. Shift times are
+// entered (and shown, on the mobile app) as organisation-local times, so they must be placed on the timeline in the
+// organisation's timezone, not read as UTC - which put a 09:30 IST shift at 15:00 IST.
+function buildShiftDateTime(
+  dateStr: string,
+  hhmm: string,
+  timezone: string,
+): Date {
   const [h, m] = hhmm.split(':').map(Number);
   return new Date(
-    `${dateStr}T${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00.000Z`,
+    startOfDayInOrgTzUtc(dateStr, timezone).getTime() +
+      ((h || 0) * 60 + (m || 0)) * 60000,
   );
 }
 
@@ -183,13 +196,19 @@ function shiftPunchWindow(
   shiftConfig: Pick<
     ShiftConfig,
     'crossesMidnight' | 'shiftStartTime' | 'shiftEndTime'
-  >,
+  > & { timezone?: string },
 ): { gte: Date; lt: Date } {
   const offset = shiftDayBoundaryOffsetMs(shiftConfig);
-  const dayStart = new Date(`${dateStr}T00:00:00.000Z`).getTime();
+  const tz = tzOf(shiftConfig);
+  // Local midnights of this day and the next, so a day is the organisation's calendar day.
+  const dayStart = startOfDayInOrgTzUtc(dateStr, tz).getTime();
+  const nextDayStart = startOfDayInOrgTzUtc(
+    addDaysStr(dateStr, 1),
+    tz,
+  ).getTime();
   return {
     gte: new Date(dayStart + offset),
-    lt: new Date(dayStart + DAY_MS + offset),
+    lt: new Date(nextDayStart + offset),
   };
 }
 
@@ -202,10 +221,13 @@ function resolveAttendanceDateForPunch(
   shiftConfig: Pick<
     ShiftConfig,
     'crossesMidnight' | 'shiftStartTime' | 'shiftEndTime'
-  >,
+  > & { timezone?: string },
 ): string {
   const offset = shiftDayBoundaryOffsetMs(shiftConfig);
-  return utcDateStrOf(new Date(punchTime.getTime() - offset));
+  return dateStrInOrgTz(
+    tzOf(shiftConfig),
+    new Date(punchTime.getTime() - offset),
+  );
 }
 
 // Window within which a repeat punch from the same employee is treated as a
@@ -420,6 +442,7 @@ export class AttendanceService {
     const shiftConfig = resolveShiftConfig(
       departmentForShiftConfig,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      org?.timezone ?? DEFAULT_ORG_TIMEZONE,
     );
 
     const punches = await db.punch.findMany({
@@ -607,6 +630,7 @@ export class AttendanceService {
       const shiftStart = buildShiftDateTime(
         dateStr,
         shiftConfig.shiftStartTime,
+        tzOf(shiftConfig),
       );
       // shiftEndTime is on the *next* calendar day for a crossesMidnight
       // shift (e.g. 22:00-06:00 — shiftEnd is 06:00 the morning after
@@ -614,6 +638,7 @@ export class AttendanceService {
       const shiftEnd = buildShiftDateTime(
         shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
         shiftConfig.shiftEndTime,
+        tzOf(shiftConfig),
       );
 
       // Once the shift has actually ended, a dangling punch-in is missing
@@ -779,6 +804,7 @@ export class AttendanceService {
         const shiftConfig = resolveShiftConfig(
           department,
           org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+          org?.timezone ?? DEFAULT_ORG_TIMEZONE,
         );
         const outcome = await this.deriveDayOutcome(this.scopedPrisma, {
           organizationId,
@@ -863,6 +889,7 @@ export class AttendanceService {
     const shiftEnd = buildShiftDateTime(
       shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr,
       shiftConfig.shiftEndTime,
+      tzOf(shiftConfig),
     );
     const overshootMinutes = Math.round(
       (outTime.getTime() - shiftEnd.getTime()) / 60000,
@@ -1056,6 +1083,7 @@ export class AttendanceService {
     return resolveShiftConfig(
       employee?.department ?? null,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      org?.timezone ?? DEFAULT_ORG_TIMEZONE,
     );
   }
 
@@ -2044,7 +2072,11 @@ export class AttendanceService {
         org?.timezone ?? 'Asia/Kolkata',
         employee.createdAt,
       );
-      const shiftConfig = resolveShiftConfig(employee.department, orgPrefs);
+      const shiftConfig = resolveShiftConfig(
+        employee.department,
+        orgPrefs,
+        org?.timezone ?? DEFAULT_ORG_TIMEZONE,
+      );
       // The public row shape carries only the fields ATTENDANCE_LIST_EMPLOYEE_SELECT
       // picks — joiningDate/departmentId above are for this loop's own use only.
       const {
@@ -3118,6 +3150,7 @@ export class AttendanceService {
         const shiftConfig = resolveShiftConfig(
           departmentForShiftConfig,
           orgPrefs,
+          org?.timezone ?? DEFAULT_ORG_TIMEZONE,
         );
         // Same status/duration rules as punch-derived attendance
         // (shift thresholds, break, holiday, leave, weekly-off) — holiday/
@@ -3350,7 +3383,11 @@ export class AttendanceService {
         ).map((r) => r.date),
       );
       const missing = dates.filter((d) => d >= joined && !existing.has(d));
-      const shiftConfig = resolveShiftConfig(user.department, orgPrefs);
+      const shiftConfig = resolveShiftConfig(
+        user.department,
+        orgPrefs,
+        org?.timezone ?? DEFAULT_ORG_TIMEZONE,
+      );
       const wouldBe = { weeklyOff: 0, holiday: 0, other: 0 };
       for (const d of missing) {
         const isHoliday = holidays.some(
@@ -3508,10 +3545,15 @@ export class AttendanceService {
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
 
     for (const row of openRows) {
-      const shiftConfig = resolveShiftConfig(row.employee.department, orgPrefs);
+      const shiftConfig = resolveShiftConfig(
+        row.employee.department,
+        orgPrefs,
+        org?.timezone ?? DEFAULT_ORG_TIMEZONE,
+      );
       const shiftEnd = buildShiftDateTime(
         shiftConfig.crossesMidnight ? addDaysStr(row.date, 1) : row.date,
         shiftConfig.shiftEndTime,
+        tzOf(shiftConfig),
       );
       const minutesUntilEnd = Math.round(
         (shiftEnd.getTime() - now.getTime()) / 60000,
