@@ -361,4 +361,28 @@ describe('Event leave grant approval flow (e2e)', () => {
       .send({ regularizationWindowDays: 7 })
       .expect(200);
   });
+
+  it("myTeam narrows the directory to the caller's own reports for HR/Admin as well as managers", async () => {
+    const mine = async (token: string) =>
+      (
+        await request(app.getHttpServer())
+          .get('/employees')
+          .query({ myTeam: 'true' })
+          .set(auth(token))
+          .expect(200)
+      ).body as { data: { id: string }[] };
+    expect((await mine(managerToken)).data.map((e) => e.id)).toEqual([
+      employeeId,
+    ]);
+    // HR has no reports here: the filter applies (empty) instead of listing the whole organisation.
+    expect((await mine(hrToken)).data).toEqual([]);
+    const hrUser = await prisma.user.findFirstOrThrow({
+      where: { email: 'grantappr-e2e-hr@example.test' },
+    });
+    await prisma.user.update({
+      where: { id: employeeId },
+      data: { reportingManagerId: hrUser.id },
+    });
+    expect((await mine(hrToken)).data.map((e) => e.id)).toEqual([employeeId]);
+  });
 });

@@ -758,10 +758,15 @@ export class EmployeesService {
     actor: Actor,
     organizationId: string,
   ) {
-    // "My Team" (?myTeam=true): a MANAGER's reporting chain instead of
-    // their department — ADMIN/HR are unaffected (already unfiltered).
+    // "My Team" (?myTeam=true): the caller's reporting chain (their direct reports and everyone below them). For a
+    // MANAGER it replaces the department scope; for ADMIN/HR (otherwise unfiltered) it narrows the full list to
+    // their own reports. Anyone else is unaffected.
     const teamIds =
-      query.myTeam && actor.role === Role.MANAGER && actor.id
+      query.myTeam &&
+      (actor.role === Role.MANAGER ||
+        actor.role === Role.HR ||
+        actor.role === Role.ADMIN) &&
+      actor.id
         ? collectReportingChain(
             actor.id,
             await this.scopedPrisma.user.findMany({
