@@ -1207,9 +1207,8 @@ model CompOff {
   earnedForDate String
   reason        String  @default("")
   daysEarned    Float   @default(1)
-  // YYYY-MM-DD. Computed at creation from a hardcoded 90-day default (the
-  // old system's own PayrollSettings.compOffExpiryDays default) — a real
-  // per-org setting is Batch 5.
+  // YYYY-MM-DD. Computed at creation as earnedForDate + the org's
+  // PayrollSettings.compOffExpiryDays; null (days = 0) means never expires.
   expiryDate    String?
 
   status       CompOffStatus @default(PENDING)

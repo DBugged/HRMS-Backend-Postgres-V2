@@ -27,7 +27,6 @@ import { CreateCompOffDto } from './dto/create-comp-off.dto';
 import { ReviewCompOffDto } from './dto/review-comp-off.dto';
 import {
   consumeCompOff,
-  financialYearEnd,
   releaseCompOff,
   sumAvailable,
   sumAvailableOn,
@@ -183,11 +182,13 @@ export class CompOffService {
 
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
-    // Valid for the whole financial year it was earned in: it can be taken any time until that year ends.
-    const expiryDate = financialYearEnd(
-      dto.earnedForDate,
-      settings.financialYearStartMonth,
-    );
+    // Valid for the org's compOffExpiryDays after the date it was earned for; 0 means it never expires.
+    let expiryDate: string | null = null;
+    if (settings.compOffExpiryDays > 0) {
+      const expiry = new Date(`${dto.earnedForDate}T00:00:00.000Z`);
+      expiry.setUTCDate(expiry.getUTCDate() + settings.compOffExpiryDays);
+      expiryDate = expiry.toISOString().slice(0, 10);
+    }
 
     const compOff = await this.scopedPrisma.compOff.create({
       data: {
