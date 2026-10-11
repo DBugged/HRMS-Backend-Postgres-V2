@@ -235,4 +235,87 @@ describe('Payroll input integrity (e2e)', () => {
       expect((await runOf(7)).inputsChangedAt).toBeNull();
     });
   });
+
+  describe('F3 - the HR sweeps never rewrite locked months or regularized days', () => {
+    const regularize = (date: string) =>
+      prisma.attendance.updateMany({
+        where: { employeeId, date },
+        data: {
+          source: 'REGULARIZED',
+          status: 'PRESENT',
+          inTime: new Date(`${date}T04:00:00.000Z`),
+          outTime: new Date(`${date}T13:00:00.000Z`),
+        },
+      });
+    const lockMarch = async (id: string) => {
+      await calculate(3, id).expect(201);
+      const run = await runOf(3, id);
+      for (const step of ['verify', 'approve', 'lock']) {
+        await post(`/payroll/${run.id}/${step}`).expect(201);
+      }
+    };
+
+    it('absence alerts and backfill leave a locked month untouched', async () => {
+      await lockMarch(employeeId);
+      await lockMarch(hrId);
+      await regularize('2026-03-10');
+
+      const before = await prisma.attendance.count({
+        where: { employeeId: hrId, date: { startsWith: '2026-03' } },
+      });
+      const backfill = await post('/attendance/backfill-missing')
+        .send({ startDate: '2026-03-01', endDate: '2026-03-31', dryRun: false })
+        .expect(201);
+      expect(
+        (backfill.body as { skippedLockedDays: number }).skippedLockedDays,
+      ).toBeGreaterThan(0);
+      expect(
+        await prisma.attendance.count({
+          where: { employeeId: hrId, date: { startsWith: '2026-03' } },
+        }),
+      ).toBe(before);
+
+      const sweep = await post('/attendance/notify-absentees', hrToken)
+        .send({ date: '2026-03-10' })
+        .expect(201);
+      expect((sweep.body as { skippedLocked: number }).skippedLocked).toBe(2);
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId, date: '2026-03-10' },
+      });
+      expect(row.status).toBe('PRESENT');
+      expect(row.source).toBe('REGULARIZED');
+      expect(row.inTime).not.toBeNull();
+    });
+
+    it('a regularized or imported day in an open month survives the absence sweep', async () => {
+      await regularize('2026-08-04');
+      await prisma.attendance.updateMany({
+        where: { employeeId, date: '2026-08-05' },
+        data: {
+          source: 'EXCEL_IMPORT',
+          status: 'PRESENT',
+          inTime: new Date('2026-08-05T04:00:00.000Z'),
+          outTime: new Date('2026-08-05T13:00:00.000Z'),
+        },
+      });
+      await post('/attendance/notify-absentees', hrToken)
+        .send({ date: '2026-08-04' })
+        .expect(201);
+      await post('/attendance/notify-absentees', hrToken)
+        .send({ date: '2026-08-05' })
+        .expect(201);
+      for (const [date, source] of [
+        ['2026-08-04', 'REGULARIZED'],
+        ['2026-08-05', 'EXCEL_IMPORT'],
+      ]) {
+        const row = await prisma.attendance.findFirstOrThrow({
+          where: { employeeId, date },
+        });
+        expect(row.status).toBe('PRESENT');
+        expect(row.source).toBe(source);
+        expect(row.inTime).not.toBeNull();
+        expect(row.outTime).not.toBeNull();
+      }
+    });
+  });
 });

@@ -82,7 +82,10 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
-import { markPayrollInputsChanged } from '../payroll/payroll-period-guard';
+import {
+  markPayrollInputsChanged,
+  monthsBetween,
+} from '../payroll/payroll-period-guard';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { getOvertimeRates } from '../overtime/overtime.service';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
@@ -273,6 +276,26 @@ function parseImportTimestampUtc(value: string): Date | null {
     return null;
   }
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// Employees whose payroll for this month is already LOCKED or PAID. Used by the bulk sweeps, which skip them rather than
+// fail the whole batch the way a single edit does (assertPayrollPeriodUnlocked).
+async function lockedEmployeeIdsForMonth(
+  db: Db,
+  organizationId: string,
+  year: number,
+  month: number,
+): Promise<Set<string>> {
+  const runs = await db.payrollRun.findMany({
+    where: {
+      organizationId,
+      month,
+      year,
+      status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+    },
+    select: { employeeId: true },
+  });
+  return new Set(runs.map((r) => r.employeeId));
 }
 
 // Attendance feeding a LOCKED/PAID payroll run must not be rewritten out from
@@ -478,6 +501,18 @@ export class AttendanceService {
       },
       orderBy: { punchTime: 'asc' },
     });
+
+    // A day set by a regularization or an Excel import has no punches behind it. Deriving it from punches again would
+    // turn it into an absence and erase the approved or imported times, so such a row is left exactly as it is until
+    // someone records a real punch for the day.
+    if (
+      existing &&
+      punches.length === 0 &&
+      (existing.source === AttendanceSource.REGULARIZED ||
+        existing.source === AttendanceSource.EXCEL_IMPORT)
+    ) {
+      return existing;
+    }
 
     let inTime: Date | null = null;
     let outTime: Date | null = null;
@@ -3659,6 +3694,18 @@ export class AttendanceService {
       select: { id: true },
     });
 
+    // Attendance of a payroll month that is already locked or paid is never rewritten by a sweep: a payslip was issued
+    // against it. (An Admin unlocks the run first if a correction is really needed.)
+    const lockedEmployees = await lockedEmployeeIdsForMonth(
+      this.scopedPrisma,
+      organizationId,
+      Number(date.slice(0, 4)),
+      Number(date.slice(5, 7)),
+    );
+    const skippedLocked = employees.filter((e) =>
+      lockedEmployees.has(e.id),
+    ).length;
+
     // Bounded concurrency — each employee's own attendance row for this
     // one date, no shared state between them, so this is safe to run
     // several at a time instead of fully sequential (a few hundred
@@ -3666,6 +3713,7 @@ export class AttendanceService {
     // slow admin action otherwise).
     const employeeIds: string[] = [];
     await mapWithConcurrency(employees, 8, async (employee) => {
+      if (lockedEmployees.has(employee.id)) return;
       const row = await this.recalculateAttendanceForDay(
         this.scopedPrisma,
         employee.id,
@@ -3677,7 +3725,12 @@ export class AttendanceService {
       }
     });
 
-    return { date, notifiedCount: employeeIds.length, employeeIds };
+    return {
+      date,
+      notifiedCount: employeeIds.length,
+      employeeIds,
+      skippedLocked,
+    };
   }
 
   // One-off repair for the gap the nightly sweep used to leave: HR users were never swept, so on any day they did not
@@ -3736,6 +3789,21 @@ export class AttendanceService {
     const orgPrefs = (org?.attendancePayrollPrefs ??
       null) as OrganizationAttendancePrefs | null;
 
+    // Months of payroll that are already locked or paid are never backfilled: a payslip was issued against them.
+    const lockedMonths = new Set<string>();
+    for (const m of monthsBetween(dto.startDate, dto.endDate)) {
+      const ids = await lockedEmployeeIdsForMonth(
+        this.scopedPrisma,
+        organizationId,
+        m.year,
+        m.month,
+      );
+      for (const id of ids) {
+        lockedMonths.add(`${id}:${m.year}-${String(m.month).padStart(2, '0')}`);
+      }
+    }
+    let skippedLocked = 0;
+
     const report: {
       employeeId: string;
       name: string;
@@ -3758,7 +3826,18 @@ export class AttendanceService {
           })
         ).map((r) => r.date),
       );
-      const missing = dates.filter((d) => d >= joined && !existing.has(d));
+      const missing = dates.filter(
+        (d) =>
+          d >= joined &&
+          !existing.has(d) &&
+          !lockedMonths.has(`${user.id}:${d.slice(0, 7)}`),
+      );
+      skippedLocked += dates.filter(
+        (d) =>
+          d >= joined &&
+          !existing.has(d) &&
+          lockedMonths.has(`${user.id}:${d.slice(0, 7)}`),
+      ).length;
       const shiftConfig = resolveShiftConfig(
         user.department,
         orgPrefs,
@@ -3819,6 +3898,7 @@ export class AttendanceService {
       endDate: dto.endDate,
       users: report,
       totalMissingDays: totalMissing,
+      skippedLockedDays: skippedLocked,
       note: dryRun
         ? 'Nothing was changed. Send dryRun: false to create these records, then recalculate payroll for the open months.'
         : 'Records created. Recalculate payroll for the affected months that are still open.',
