@@ -64,15 +64,23 @@ export function effectiveLeaveRules(
 
 /**
  * Whether an application for this leave type has to carry a document. For an event-based type the supporting document
- * is collected (and checked by HR) when the grant is requested, so the application of dates does not ask for it again.
+ * is normally collected (and checked by HR) when the grant is requested, so the application of dates does not ask for
+ * it again - unless the type requires one and none of the employee's active grants carries it (a manual grant without
+ * a document, or days that predate the grant ledger). The employee can always attach one either way.
  */
-export function applicationDocumentRule(leaveType: {
-  allocationType: string;
-  documentsRequired: boolean;
-  documentRequiredAfterDays: number | null;
-}): { documentsRequired: boolean; documentRequiredAfterDays: number | null } {
+export function applicationDocumentRule(
+  leaveType: {
+    allocationType: string;
+    documentsRequired: boolean;
+    documentRequiredAfterDays: number | null;
+  },
+  opts: { grantHasDocument?: boolean } = {},
+): { documentsRequired: boolean; documentRequiredAfterDays: number | null } {
   if (leaveType.allocationType === 'EVENT_BASED') {
-    return { documentsRequired: false, documentRequiredAfterDays: null };
+    return {
+      documentsRequired: leaveType.documentsRequired && !opts.grantHasDocument,
+      documentRequiredAfterDays: null,
+    };
   }
   return {
     documentsRequired: leaveType.documentsRequired,

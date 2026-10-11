@@ -1297,6 +1297,19 @@ export class LeavesService {
     // Event-based leave drops the rules that do not apply to it and, in calendar days, charges every date in the range
     // (weekends/holidays included) - see effectiveLeaveRules.
     const rules = effectiveLeaveRules(baseRules, leaveType);
+    // Event-based leave: the document given with the grant request covers the application (see applicationDocumentRule).
+    const grantHasDocument =
+      leaveType.allocationType === AllocationType.EVENT_BASED &&
+      leaveType.documentsRequired &&
+      (await this.scopedPrisma.leaveGrant.count({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          leaveTypeId: leaveType.id,
+          status: 'ACTIVE',
+          documentRef: { not: null },
+        },
+      })) > 0;
     const ruleResult = checkLeaveRules(
       rules,
       {
@@ -1317,7 +1330,7 @@ export class LeavesService {
           isHalfDay: l.isHalfDay,
           halfDaySession: l.halfDaySession,
         })),
-        ...applicationDocumentRule(leaveType),
+        ...applicationDocumentRule(leaveType, { grantHasDocument }),
       },
     );
     if (!ruleResult.ok) {

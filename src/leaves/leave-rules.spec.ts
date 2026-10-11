@@ -526,14 +526,27 @@ describe('applicationDocumentRule', () => {
       }),
     ).toEqual({ documentsRequired: true, documentRequiredAfterDays: 2 });
   });
-  it('does not ask for the document again when applying for event-based leave', () => {
+  it('does not ask again when the grant already carries the document', () => {
+    expect(
+      applicationDocumentRule(
+        {
+          allocationType: 'EVENT_BASED',
+          documentsRequired: true,
+          documentRequiredAfterDays: null,
+        },
+        { grantHasDocument: true },
+      ),
+    ).toEqual({ documentsRequired: false, documentRequiredAfterDays: null });
+  });
+
+  it('asks for the document when the type requires one and no grant carries it', () => {
     expect(
       applicationDocumentRule({
         allocationType: 'EVENT_BASED',
         documentsRequired: true,
-        documentRequiredAfterDays: null,
+        documentRequiredAfterDays: 3,
       }),
-    ).toEqual({ documentsRequired: false, documentRequiredAfterDays: null });
+    ).toEqual({ documentsRequired: true, documentRequiredAfterDays: null });
   });
 });
 
