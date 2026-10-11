@@ -10,6 +10,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { formatDateDisplay } from '../src/payroll/format-date';
 import { PRISMA_CLIENT } from '../src/prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../src/prisma/prisma.module';
 import { AttendanceService } from '../src/attendance/attendance.service';
@@ -3176,7 +3177,7 @@ describe('Attendance (e2e)', () => {
 
       await attendanceService.remindUpcomingPunchOuts();
 
-      const title = `Punch-Out Reminder — ${attRow.date}`;
+      const title = `Punch-Out Reminder — ${formatDateDisplay(attRow.date)}`;
       const notifs = await prisma.notification.findMany({
         where: { organizationId, userId: remEmployeeId, title },
       });
