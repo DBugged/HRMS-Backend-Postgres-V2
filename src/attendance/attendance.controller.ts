@@ -4,6 +4,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
@@ -151,6 +152,40 @@ export class AttendanceController {
   ) {
     return this.attendanceService.requestRegularization(
       dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // No @Roles() - the form's lookback window, needed by every employee.
+  @Get('regularization/settings')
+  @ApiBearerAuth('access-token')
+  regularizationSettings(@CurrentUser() caller: Caller) {
+    return this.attendanceService.getRegularizationSettings(
+      caller.organizationId,
+    );
+  }
+
+  // The employee withdraws their own pending request (ownership is checked in the service).
+  @Delete('regularization/:id')
+  @ApiBearerAuth('access-token')
+  cancelRegularization(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.attendanceService.cancelRegularization(
+      id,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // Every request ever made for that day (employee: own; manager: team; HR/Admin: any).
+  @Get(':id/regularization-history')
+  @ApiBearerAuth('access-token')
+  regularizationHistory(
+    @Param('id') id: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.getRegularizationHistory(
+      id,
       caller,
       caller.organizationId,
     );

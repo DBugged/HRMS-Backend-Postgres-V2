@@ -109,7 +109,11 @@ export async function issueDocumentNumber(
   const entry = numbering[docType] ?? defaultEntry(docType);
 
   const { nextCounter, periodKey } = computeNextCounter(entry);
-  const formatted = formatDocumentNumber(entry.format, nextCounter, displayDate);
+  const formatted = formatDocumentNumber(
+    entry.format,
+    nextCounter,
+    displayDate,
+  );
 
   const updatedEntry: DocumentNumberingEntry = {
     ...entry,

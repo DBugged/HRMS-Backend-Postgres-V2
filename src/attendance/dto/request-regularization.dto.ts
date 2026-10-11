@@ -1,5 +1,11 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsISO8601, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsISO8601,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
 export class RequestRegularizationDto {
@@ -21,4 +27,13 @@ export class RequestRegularizationDto {
   @IsNotEmpty()
   @IsString()
   reason!: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Optional supporting document: the relativeKey returned by POST /files/upload/documents (JPEG, PNG or PDF).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  evidenceUrl?: string;
 }

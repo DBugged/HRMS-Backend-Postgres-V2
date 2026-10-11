@@ -40,6 +40,7 @@ import {
   Prisma,
   Punch,
   PunchSource,
+  RegularizationRequestStatus,
   Role,
   User,
   WfhApprovalStatus,
@@ -49,7 +50,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { effectiveWorkLocation } from '../common/effective-work-location';
-import { signFileToken } from '../files/file-token';
+import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
@@ -335,17 +336,49 @@ interface RegularizationState {
   reviewedBy: string | null;
   reviewedAt: string | null;
   reviewComments: string;
+  // Optional supporting document - a stored relativeKey, signed fresh by signedRegularization() on every read.
+  evidenceUrl?: string | null;
 }
+
+// A day with no request in force: what a new row starts with, and what withdrawing a pending request goes back to.
+const NO_REGULARIZATION: RegularizationState = {
+  requested: false,
+  reason: '',
+  requestedInTime: null,
+  requestedOutTime: null,
+  status: 'none',
+  reviewedBy: null,
+  reviewedAt: null,
+  reviewComments: '',
+  evidenceUrl: null,
+};
 
 // Adds the reviewer's display name next to the stored reviewedBy id, so the UI can say "Approved by …" without
 // a second lookup. Rows with no review are returned untouched.
 function withReviewerName(
   regularization: unknown,
   nameById: Map<string, string>,
+  organizationId: string,
 ): unknown {
   const reg = regularization as RegularizationState | null;
-  if (!reg || !reg.reviewedBy) return regularization;
-  return { ...reg, reviewedByName: nameById.get(reg.reviewedBy) ?? null };
+  if (!reg) return regularization;
+  const named = reg.reviewedBy
+    ? { ...reg, reviewedByName: nameById.get(reg.reviewedBy) ?? null }
+    : reg;
+  return signedEvidence(named, organizationId);
+}
+
+// The request's supporting document as a signed, short-lived URL (the stored value is a bare key that serves nothing).
+function signedEvidence<T extends { evidenceUrl?: string | null }>(
+  item: T,
+  organizationId: string,
+): T & { evidenceFileName?: string } {
+  if (!item.evidenceUrl) return item;
+  return {
+    ...item,
+    evidenceUrl: `/files/${signFileToken(organizationId, item.evidenceUrl)}`,
+    evidenceFileName: item.evidenceUrl.split('/').pop(),
+  };
 }
 
 // Untyped, client-parsed spreadsheet cells — coerces only actual
@@ -2001,6 +2034,7 @@ export class AttendanceService {
           regularization: withReviewerName(
             record.regularization,
             reviewerNameById,
+            record.organizationId,
           ),
           ...(holidayName !== undefined && { holidayName }),
           ...(leaveTypeName !== undefined && { leaveTypeName }),
@@ -2260,13 +2294,20 @@ export class AttendanceService {
         'Cannot request regularization for a future date.',
       );
     }
-    // 7-day lookback window — an employee can only regularize something
-    // recent, not reach arbitrarily far back into attendance history.
-    const earliestAllowedDate = addDaysStr(today, -7);
+    // Lookback window (Organization.regularizationWindowDays, 7 unless HR changed it) - an employee can only regularize
+    // something recent, not reach arbitrarily far back into attendance history.
+    const windowDays = await this.getRegularizationWindowDays(organizationId);
+    const earliestAllowedDate = addDaysStr(today, -windowDays);
     if (dto.date < earliestAllowedDate) {
       throw new BadRequestException(
-        'Regularization can only be requested for a date within the last 7 days.',
+        `Regularization can only be requested for a date within the last ${windowDays} day${windowDays === 1 ? '' : 's'}.`,
       );
+    }
+    if (dto.evidenceUrl !== undefined && dto.evidenceUrl !== '') {
+      // Only a file this organisation uploaded (the key's own prefix says so); nothing external, no path tricks.
+      if (!isKeyAllowedForOrg(organizationId, dto.evidenceUrl)) {
+        throw new BadRequestException('The supporting document is not valid.');
+      }
     }
     // The date can't be in the future (checked above), and neither can the times being asked for: a request dated
     // today could otherwise carry tomorrow's In/Out, and an Admin's own request applies immediately.
@@ -2361,6 +2402,7 @@ export class AttendanceService {
       reviewedBy: isSelfApproving ? actor.id : null,
       reviewedAt: isSelfApproving ? new Date().toISOString() : null,
       reviewComments: isSelfApproving ? 'Self-approved (Admin).' : '',
+      evidenceUrl: dto.evidenceUrl || null,
     };
 
     let inTime: Date | undefined;
@@ -2425,6 +2467,29 @@ export class AttendanceService {
       });
     }
 
+    const attendanceRow = await this.scopedPrisma.attendance.findFirstOrThrow({
+      where: { organizationId, employeeId: actor.id, date: dto.date },
+    });
+    // Every submission is kept, so a later resubmission or withdrawal does not erase it.
+    await this.scopedPrisma.attendanceRegularizationRequest.create({
+      data: {
+        organizationId,
+        attendanceId: attendanceRow.id,
+        employeeId: actor.id,
+        date: dto.date,
+        reason: dto.reason,
+        requestedInTime,
+        requestedOutTime,
+        evidenceUrl: dto.evidenceUrl || null,
+        status: isSelfApproving
+          ? RegularizationRequestStatus.APPROVED
+          : RegularizationRequestStatus.PENDING,
+        reviewedById: isSelfApproving ? actor.id : null,
+        reviewedAt: isSelfApproving ? new Date() : null,
+        reviewComments: isSelfApproving ? 'Self-approved (Admin).' : '',
+      },
+    });
+
     if (isSelfApproving) {
       // An Admin's own request applies at once, so the trail has to say so: a reviewer's approval is logged, this one
       // was not.
@@ -2433,7 +2498,7 @@ export class AttendanceService {
         action: 'REGULARIZATION_APPROVED',
         module: 'ATTENDANCE',
         organizationId,
-        targetId: existing?.id ?? null,
+        targetId: attendanceRow.id,
         details: {
           employeeId: actor.id,
           date: dto.date,
@@ -2454,6 +2519,160 @@ export class AttendanceService {
     return this.scopedPrisma.attendance.findFirstOrThrow({
       where: { organizationId, employeeId: actor.id, date: dto.date },
     });
+  }
+
+  // The lookback window for regularization requests (Organization.regularizationWindowDays; 7 until HR changes it).
+  async getRegularizationWindowDays(organizationId: string): Promise<number> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { regularizationWindowDays: true },
+    });
+    return org?.regularizationWindowDays ?? 7;
+  }
+
+  // What the request form needs to know before the employee fills it in.
+  async getRegularizationSettings(organizationId: string) {
+    return {
+      windowDays: await this.getRegularizationWindowDays(organizationId),
+    };
+  }
+
+  // Records the decision on the pending history row of a day (the request currently in force). A no-op for a request that
+  // pre-dates the history table and has no row.
+  private async closeRegularizationRequest(
+    attendanceId: string,
+    organizationId: string,
+    status: RegularizationRequestStatus,
+    extra: {
+      reviewedById: string | null;
+      reviewComments: string;
+      autoApproved?: boolean;
+    },
+  ): Promise<void> {
+    await this.scopedPrisma.attendanceRegularizationRequest.updateMany({
+      where: {
+        organizationId,
+        attendanceId,
+        status: RegularizationRequestStatus.PENDING,
+      },
+      data: {
+        status,
+        reviewedById: extra.reviewedById,
+        reviewedAt: new Date(),
+        reviewComments: extra.reviewComments,
+        autoApproved: extra.autoApproved ?? false,
+      },
+    });
+  }
+
+  // The employee withdraws their own request while it is still pending (a wrong date or time sent by mistake). The day
+  // goes back to having no request, so a corrected one can be submitted; the withdrawn one stays in the history.
+  async cancelRegularization(id: string, actor: Actor, organizationId: string) {
+    const row = await this.scopedPrisma.attendance.findFirst({
+      where: { id, organizationId },
+    });
+    if (!row) throw new NotFoundException('Attendance record not found.');
+    if (row.employeeId !== actor.id) {
+      throw new ForbiddenException('You can only withdraw your own request.');
+    }
+    const reg = row.regularization as unknown as RegularizationState;
+    if (reg?.status !== 'pending') {
+      throw new BadRequestException(
+        reg?.status === 'approved' || reg?.status === 'rejected'
+          ? 'This request has already been reviewed, so it can no longer be withdrawn.'
+          : 'There is no pending regularization request for this day.',
+      );
+    }
+    // Same guarded compare-and-swap as a review: a reviewer approving it at this moment wins, and the withdrawal then
+    // finds it already decided.
+    const { count } = await this.scopedPrisma.attendance.updateMany({
+      where: {
+        id,
+        organizationId,
+        regularization: { path: ['status'], equals: 'pending' },
+      },
+      data: {
+        regularization: NO_REGULARIZATION as unknown as Prisma.InputJsonValue,
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException(
+        'This request was reviewed just now, so it can no longer be withdrawn.',
+      );
+    }
+    await this.closeRegularizationRequest(
+      id,
+      organizationId,
+      RegularizationRequestStatus.CANCELLED,
+      { reviewedById: actor.id, reviewComments: 'Withdrawn by the employee.' },
+    );
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'REGULARIZATION_CANCELLED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: row.employeeId,
+        date: row.date,
+        requestedInTime: reg.requestedInTime ?? null,
+        requestedOutTime: reg.requestedOutTime ?? null,
+        reason: reg.reason,
+      },
+    });
+    return this.scopedPrisma.attendance.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+  }
+
+  // Every regularization request ever made for one day, newest first, with the reviewer's name and the supporting
+  // document as a signed URL. The employee sees their own; HR and Admin any; a manager only their team's.
+  async getRegularizationHistory(
+    id: string,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const row = await this.scopedPrisma.attendance.findFirst({
+      where: { id, organizationId },
+      select: { id: true, employeeId: true, date: true },
+    });
+    if (!row) throw new NotFoundException('Attendance record not found.');
+    if (actor.role === Role.EMPLOYEE && row.employeeId !== actor.id) {
+      throw new ForbiddenException('Not authorized to view this record.');
+    }
+    if (actor.role === Role.MANAGER && row.employeeId !== actor.id) {
+      await assertManagerScopeOrDelegate(
+        this.scopedPrisma,
+        this.delegationService,
+        actor,
+        organizationId,
+        row.employeeId,
+      );
+    }
+    const requests =
+      await this.scopedPrisma.attendanceRegularizationRequest.findMany({
+        where: { organizationId, attendanceId: id },
+        orderBy: { createdAt: 'desc' },
+      });
+    const reviewerIds = [
+      ...new Set(requests.map((r) => r.reviewedById).filter(Boolean)),
+    ] as string[];
+    const reviewers = reviewerIds.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { organizationId, id: { in: reviewerIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(reviewers.map((u) => [u.id, u.name]));
+    return {
+      date: row.date,
+      data: requests.map((r) => ({
+        ...signedEvidence(r, organizationId),
+        reviewedByName: r.reviewedById
+          ? (nameById.get(r.reviewedById) ?? null)
+          : null,
+      })),
+    };
   }
 
   // What approving a regularization does to the day, in one place for the three ways a request can be approved (a
@@ -2661,6 +2880,15 @@ export class AttendanceService {
         'This regularization request was already reviewed.',
       );
     }
+
+    await this.closeRegularizationRequest(
+      id,
+      organizationId,
+      dto.decision === 'APPROVED'
+        ? RegularizationRequestStatus.APPROVED
+        : RegularizationRequestStatus.REJECTED,
+      { reviewedById: actor.id, reviewComments: dto.comments ?? '' },
+    );
 
     await this.auditLogService.log({
       actorId: actor.id,
@@ -3921,6 +4149,17 @@ export class AttendanceService {
           data,
         });
         if (count === 0) continue;
+
+        await this.closeRegularizationRequest(
+          row.id,
+          organizationId,
+          RegularizationRequestStatus.APPROVED,
+          {
+            reviewedById: null,
+            reviewComments: AttendanceService.AUTO_APPROVE_COMMENT,
+            autoApproved: true,
+          },
+        );
 
         if (systemActor) {
           await this.auditLogService.log({

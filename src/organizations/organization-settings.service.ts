@@ -156,6 +156,7 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'wfhAutoApproveHours',
     'regularizationAutoApproveIfNoAction',
     'regularizationAutoApproveHours',
+    'regularizationWindowDays',
   ],
 };
 
@@ -295,6 +296,7 @@ export class OrganizationSettingsService {
       regularizationAutoApproveIfNoAction:
         org.regularizationAutoApproveIfNoAction,
       regularizationAutoApproveHours: org.regularizationAutoApproveHours,
+      regularizationWindowDays: org.regularizationWindowDays,
     };
   }
 
@@ -308,6 +310,7 @@ export class OrganizationSettingsService {
       'wfhAutoApproveHours',
       'regularizationAutoApproveIfNoAction',
       'regularizationAutoApproveHours',
+      'regularizationWindowDays',
     ];
     const data: Record<string, unknown> = {};
     for (const field of allowedFields) {

@@ -70,6 +70,7 @@ export const FIELD_KINDS: Record<string, FieldKind> = {
   wfhAutoApproveHours: 'number',
   regularizationAutoApproveIfNoAction: 'boolean',
   regularizationAutoApproveHours: 'number',
+  regularizationWindowDays: 'number',
 };
 
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -449,6 +450,12 @@ export function validateSectionData(data: Record<string, unknown>) {
   ]) {
     checkNumber(data, field, field, { min: 1, max: 720, integer: true });
   }
+  // How many days back a regularization may go: a month at most, so it stays inside a payroll cut-off.
+  checkNumber(data, 'regularizationWindowDays', 'regularizationWindowDays', {
+    min: 1,
+    max: 31,
+    integer: true,
+  });
 
   for (const field of ['primaryColor', 'secondaryColor']) {
     const v = data[field];

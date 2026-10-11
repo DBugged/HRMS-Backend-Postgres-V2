@@ -2250,6 +2250,254 @@ describe('Attendance (e2e)', () => {
     });
   });
 
+  describe('Regularization history, supporting document, configurable window and withdrawal', () => {
+    let reqToken: string;
+    let reqEmployeeId: string;
+    let otherReqToken: string;
+
+    beforeAll(async () => {
+      const make = async (name: string, email: string) => {
+        const created = await request(app.getHttpServer())
+          .post('/employees')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ name, email, joiningDate: '2025-01-01' });
+        const b = created.body as EmployeeCreateBody;
+        const login = await request(app.getHttpServer())
+          .post('/auth/login')
+          .send({ email, password: b.generatedPassword });
+        return {
+          id: b.employee.id,
+          token: (login.body as AuthBody).accessToken,
+        };
+      };
+      const a = await make(
+        'Reg History Employee',
+        'att-e2e-reg-hist@example.test',
+      );
+      reqToken = a.token;
+      reqEmployeeId = a.id;
+      otherReqToken = (
+        await make('Reg History Other', 'att-e2e-reg-hist2@example.test')
+      ).token;
+    });
+
+    const submit = (token: string, date: string, extra: object = {}) =>
+      request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          date,
+          requestedInTime: istIso(date, '09:30'),
+          requestedOutTime: istIso(date, '18:30'),
+          reason: 'Biometric was down',
+          ...extra,
+        });
+    const history = (token: string, attendanceId: string) =>
+      request(app.getHttpServer())
+        .get(`/attendance/${attendanceId}/regularization-history`)
+        .set('Authorization', `Bearer ${token}`);
+
+    it('keeps every attempt: a rejected request is still on record after the employee resubmits', async () => {
+      const date = offsetDate(-2);
+      const first = await submit(reqToken, date).expect(201);
+      const attendanceId = (first.body as { id: string }).id;
+      await request(app.getHttpServer())
+        .patch(`/attendance/regularization/${attendanceId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'REJECTED', comments: 'Need the exact times' })
+        .expect(200);
+      await submit(reqToken, date, {
+        reason: 'Second attempt, exact times',
+      }).expect(201);
+
+      const res = await history(reqToken, attendanceId).expect(200);
+      const rows = (
+        res.body as {
+          data: {
+            status: string;
+            reason: string;
+            reviewComments: string;
+            reviewedByName: string | null;
+          }[];
+        }
+      ).data;
+      expect(rows.map((r) => r.status)).toEqual(['PENDING', 'REJECTED']);
+      expect(rows[1].reason).toBe('Biometric was down'); // the first reason survived
+      expect(rows[1].reviewComments).toBe('Need the exact times');
+      expect(rows[1].reviewedByName).not.toBeNull();
+      expect(rows[0].reason).toBe('Second attempt, exact times');
+    });
+
+    it('another employee cannot read the history; HR can', async () => {
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: reqEmployeeId, date: offsetDate(-2) },
+      });
+      await history(otherReqToken, row.id).expect(403);
+      await history(hrToken, row.id).expect(200);
+    });
+
+    it('withdraw: a pending request is cancelled, the day is clear for a new one, and the attempt stays in the history', async () => {
+      const date = offsetDate(-3);
+      const created = await submit(reqToken, date).expect(201);
+      const id = (created.body as { id: string }).id;
+
+      // Someone else cannot withdraw it.
+      await request(app.getHttpServer())
+        .delete(`/attendance/regularization/${id}`)
+        .set('Authorization', `Bearer ${otherReqToken}`)
+        .expect(403);
+
+      const res = await request(app.getHttpServer())
+        .delete(`/attendance/regularization/${id}`)
+        .set('Authorization', `Bearer ${reqToken}`)
+        .expect(200);
+      expect(
+        (res.body as { regularization: { status: string } }).regularization
+          .status,
+      ).toBe('none');
+
+      const h = (await history(reqToken, id).expect(200)).body as {
+        data: { status: string }[];
+      };
+      expect(h.data.map((r) => r.status)).toEqual(['CANCELLED']);
+      // Nothing left for a reviewer to act on, and a corrected request can go in.
+      await request(app.getHttpServer())
+        .patch(`/attendance/regularization/${id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(400);
+      await submit(reqToken, date, { reason: 'Corrected times' }).expect(201);
+      const audit = await prisma.auditLog.findFirst({
+        where: {
+          organizationId,
+          action: 'REGULARIZATION_CANCELLED',
+          targetId: id,
+        },
+      });
+      expect(audit).not.toBeNull();
+    });
+
+    it('an approved request cannot be withdrawn, and withdrawing a day with no request is refused', async () => {
+      const date = offsetDate(-4);
+      const created = await submit(reqToken, date).expect(201);
+      const id = (created.body as { id: string }).id;
+      await request(app.getHttpServer())
+        .patch(`/attendance/regularization/${id}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .delete(`/attendance/regularization/${id}`)
+        .set('Authorization', `Bearer ${reqToken}`)
+        .expect(400);
+      const h = (await history(reqToken, id).expect(200)).body as {
+        data: { status: string }[];
+      };
+      expect(h.data[0].status).toBe('APPROVED');
+    });
+
+    it("supporting document: optional, shown signed to the reviewer and in the history, and only this organisation's own files are accepted", async () => {
+      const date = offsetDate(-5);
+      const upload = await request(app.getHttpServer())
+        .post('/files/upload/documents')
+        .set('Authorization', `Bearer ${reqToken}`)
+        .attach('file', Buffer.from('%PDF-1.4 fake pdf', 'ascii'), {
+          filename: 'proof.pdf',
+          contentType: 'application/pdf',
+        })
+        .expect(201);
+      const key = (upload.body as { relativeKey: string }).relativeKey;
+
+      // A foreign organisation's key, an absolute URL and a path trick are all refused.
+      await submit(reqToken, date, {
+        evidenceUrl: '00000000-0000-4000-8000-000000000000/documents/x.pdf',
+      }).expect(400);
+      await submit(reqToken, date, {
+        evidenceUrl: 'https://evil.example/x.pdf',
+      }).expect(400);
+      await submit(reqToken, date, {
+        evidenceUrl: `${organizationId}/../x.pdf`,
+      }).expect(400);
+
+      const created = await submit(reqToken, date, { evidenceUrl: key }).expect(
+        201,
+      );
+      const id = (created.body as { id: string }).id;
+      const listed = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ from: date, to: date, employeeId: reqEmployeeId })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const rec = (
+        listed.body as {
+          data: {
+            id: string;
+            regularization: { evidenceUrl?: string; evidenceFileName?: string };
+          }[];
+        }
+      ).data.find((r) => r.id === id);
+      expect(rec?.regularization.evidenceUrl).toMatch(/^\/files\//);
+      expect(rec?.regularization.evidenceFileName).toMatch(/\.pdf$/);
+      const h = (await history(hrToken, id).expect(200)).body as {
+        data: { evidenceUrl: string | null }[];
+      };
+      expect(h.data[0].evidenceUrl).toMatch(/^\/files\//);
+      // The signed link actually serves the document.
+      await request(app.getHttpServer())
+        .get(h.data[0].evidenceUrl!)
+        .expect(200);
+    });
+
+    it('configurable window: HR sets it, employees read it, and it is enforced', async () => {
+      const read = () =>
+        request(app.getHttpServer())
+          .get('/attendance/regularization/settings')
+          .set('Authorization', `Bearer ${reqToken}`)
+          .expect(200);
+      expect((await read()).body).toEqual({ windowDays: 7 });
+
+      await request(app.getHttpServer())
+        .patch('/organizations/settings/auto-approval')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ regularizationWindowDays: 0 })
+        .expect(400);
+      await request(app.getHttpServer())
+        .patch('/organizations/settings/auto-approval')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ regularizationWindowDays: 40 })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .patch('/organizations/settings/auto-approval')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ regularizationWindowDays: 3 })
+        .expect(200);
+      try {
+        expect((await read()).body).toEqual({ windowDays: 3 });
+        const tooOld = await submit(reqToken, offsetDate(-4)).expect(400);
+        expect(JSON.stringify(tooOld.body)).toContain('last 3 days');
+        // Day 3 is inside, day 4 is not (the 7-day fixture days above are all outside now).
+        await request(app.getHttpServer())
+          .post('/attendance/regularization')
+          .set('Authorization', `Bearer ${otherReqToken}`)
+          .send({
+            date: offsetDate(-3),
+            requestedInTime: istIso(offsetDate(-3), '09:30'),
+            requestedOutTime: istIso(offsetDate(-3), '18:30'),
+            reason: 'inside the 3-day window',
+          })
+          .expect(201);
+      } finally {
+        await request(app.getHttpServer())
+          .patch('/organizations/settings/auto-approval')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ regularizationWindowDays: 7 })
+          .expect(200);
+      }
+      expect((await read()).body).toEqual({ windowDays: 7 });
+    });
+  });
+
   describe('Bulk import', () => {
     let managerToken: string;
     let importEmployeeHumanId: string;

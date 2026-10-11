@@ -140,7 +140,7 @@ export class EmailDomainService {
       status = 'pending';
       message =
         'No TXT record was found yet. DNS changes can take a few minutes ' +
-        '(sometimes longer) to propagate — add the record if you haven\'t ' +
+        "(sometimes longer) to propagate — add the record if you haven't " +
         'already, then try again shortly.';
     } else if (result.token === org.emailDomainVerificationToken) {
       status = 'verified';
