@@ -415,11 +415,8 @@ export class OrganizationSettingsService {
       // frontend/src/utils/date.js and backend-v2/src/payroll/format-date.ts)
       // — same "read from Policies, apply everywhere" pattern as
       // currencySymbol above, not hardcoded to DD-MM-YYYY/12-hour.
-      dateFormat: ['DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD'].includes(
-        policies.dateFormat ?? '',
-      )
-        ? policies.dateFormat
-        : 'DD-MM-YYYY',
+      // Fixed for every organisation: dates are always DD-MM-YYYY (the General Settings field is read-only).
+      dateFormat: 'DD-MM-YYYY',
       timeFormat: policies.timeFormat === '24' ? '24' : '12',
       // Org-wide "employee can't see or do anything on Tax Declaration"
       // switch — defaults to enabled (undefined !== false) so orgs that
@@ -488,6 +485,12 @@ export class OrganizationSettingsService {
     const jsonObjectFields = Object.keys(data).filter(
       (f) => FIELD_KINDS[f] === 'object',
     );
+    // The date format is fixed at DD-MM-YYYY: whatever a client sends (or an older save left behind) is stored as that.
+    const incomingPolicies = data.policies as
+      Record<string, unknown> | undefined;
+    if (incomingPolicies && typeof incomingPolicies === 'object') {
+      incomingPolicies.dateFormat = 'DD-MM-YYYY';
+    }
     if (jsonObjectFields.length > 0) {
       const existingOrg = await this.findOrThrow(organizationId);
       for (const field of jsonObjectFields) {

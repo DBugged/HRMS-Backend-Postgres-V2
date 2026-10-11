@@ -32,6 +32,7 @@ import {
   QueryGrantRequestsDto,
   RejectGrantRequestDto,
 } from './dto/leave-grant.dto';
+import { formatDateDisplay } from '../payroll/format-date';
 
 type Caller = Omit<User, 'password'>;
 
@@ -197,7 +198,7 @@ export class LeaveGrantRequestsService {
       organizationId,
       requester: employee,
       title: 'Event Leave Requested',
-      message: `${employee.name} requested ${dto.days} day(s) of ${leaveType.name} for an event on ${dto.eventDate}.`,
+      message: `${employee.name} requested ${dto.days} day(s) of ${leaveType.name} for an event on ${formatDateDisplay(dto.eventDate)}.`,
       category: NotificationCategory.LEAVE,
       managerFirst: true,
     });
@@ -379,7 +380,7 @@ export class LeaveGrantRequestsService {
       organizationId,
       request.employeeId,
       'Event Leave Approved',
-      `Your event leave request for an event on ${request.eventDate} was approved for ${grant.days} day(s).`,
+      `Your event leave request for an event on ${formatDateDisplay(request.eventDate)} was approved for ${grant.days} day(s).`,
     );
     return this.scopedPrisma.leaveGrantRequest.findFirstOrThrow({
       where: { id, organizationId },
@@ -434,7 +435,7 @@ export class LeaveGrantRequestsService {
       organizationId,
       request.employeeId,
       'Event Leave Rejected',
-      `Your event leave request for an event on ${request.eventDate} was rejected: ${dto.note.trim()}`,
+      `Your event leave request for an event on ${formatDateDisplay(request.eventDate)} was rejected: ${dto.note.trim()}`,
     );
     return this.scopedPrisma.leaveGrantRequest.findFirstOrThrow({
       where: { id, organizationId },

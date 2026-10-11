@@ -3949,7 +3949,7 @@ export class AttendanceService {
         continue;
       }
 
-      const title = `Punch-Out Reminder — ${row.date}`;
+      const title = `Punch-Out Reminder — ${formatDateDisplay(row.date)}`;
       const alreadyNotified = await this.scopedPrisma.notification.findFirst({
         where: { organizationId, userId: row.employeeId, title },
       });

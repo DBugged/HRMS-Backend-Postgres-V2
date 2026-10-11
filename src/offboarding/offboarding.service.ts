@@ -175,7 +175,7 @@ export class OffboardingService {
     });
     if (overlappingLeave) {
       throw new BadRequestException(
-        `This employee has an approved leave (${overlappingLeave.startDate} to ${overlappingLeave.endDate}) extending past the chosen last working day. Adjust the last working day, or cancel/shorten the leave first.`,
+        `This employee has an approved leave (${formatDateDisplay(overlappingLeave.startDate)} to ${formatDateDisplay(overlappingLeave.endDate)}) extending past the chosen last working day. Adjust the last working day, or cancel/shorten the leave first.`,
       );
     }
 

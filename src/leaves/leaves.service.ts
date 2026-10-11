@@ -1227,7 +1227,7 @@ export class LeavesService {
     });
     if (openOffboarding && dto.startDate <= openOffboarding.lastWorkingDay) {
       throw new BadRequestException(
-        `You're serving notice with a last working day of ${openOffboarding.lastWorkingDay} — new leave can't be applied for during the notice period.`,
+        `You're serving notice with a last working day of ${formatDateDisplay(openOffboarding.lastWorkingDay)} — new leave can't be applied for during the notice period.`,
       );
     }
 

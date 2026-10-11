@@ -41,16 +41,13 @@ describe('formatDateTimeDisplay', () => {
   });
 });
 
-describe('formatDateDisplay with an explicit pattern', () => {
-  it('formats MM-DD-YYYY', () => {
+describe('the date format is fixed at DD-MM-YYYY', () => {
+  it('ignores any other pattern a caller passes', () => {
     expect(formatDateDisplay('2026-01-05', '', 'MM-DD-YYYY')).toBe(
-      '01-05-2026',
+      '05-01-2026',
     );
-  });
-
-  it('formats YYYY-MM-DD', () => {
     expect(formatDateDisplay('2026-01-05', '', 'YYYY-MM-DD')).toBe(
-      '2026-01-05',
+      '05-01-2026',
     );
   });
 });
@@ -63,10 +60,10 @@ describe('formatDateTimeDisplay with an explicit pattern', () => {
     );
   });
 
-  it('combines a non-default date pattern with a 24-hour clock', () => {
+  it('keeps DD-MM-YYYY with a 24-hour clock whatever pattern is passed', () => {
     const d = new Date(2026, 3, 9, 9, 5);
     expect(formatDateTimeDisplay(d, '', 'YYYY-MM-DD', '24')).toBe(
-      '2026-04-09, 09:05',
+      '09-04-2026, 09:05',
     );
   });
 });
@@ -94,7 +91,7 @@ describe('resolveOrgDateTimeFormat', () => {
     ).resolves.toEqual({ dateFormat: 'DD-MM-YYYY', timeFormat: '12' });
   });
 
-  it('reads the org-configured format when valid', async () => {
+  it('reads the time format but always returns DD-MM-YYYY, even for an older saved value', async () => {
     const scopedPrisma = {
       organization: {
         findFirst: jest.fn().mockResolvedValue({
@@ -104,7 +101,7 @@ describe('resolveOrgDateTimeFormat', () => {
     };
     await expect(
       resolveOrgDateTimeFormat(scopedPrisma as any, 'org-1'),
-    ).resolves.toEqual({ dateFormat: 'YYYY-MM-DD', timeFormat: '24' });
+    ).resolves.toEqual({ dateFormat: 'DD-MM-YYYY', timeFormat: '24' });
   });
 });
 

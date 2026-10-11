@@ -25,6 +25,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { frontendUrl } from '../common/frontend-url';
 import { ReminderNotifier, ReminderUser } from './reminder-notifier.service';
 import { isEscalationDue } from './reminder-dates';
+import { formatDateDisplay } from '../payroll/format-date';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_LISTED = 5;
@@ -164,7 +165,7 @@ export class ApprovalEscalationService {
           reviewUrl: frontendUrl(),
         },
         // The date keeps each day's escalation distinct from the previous one for dedupe purposes.
-        title: `Escalation: ${items.length} request(s) waiting ${thresholdDays}+ days (${today})`,
+        title: `Escalation: ${items.length} request(s) waiting ${thresholdDays}+ days (${formatDateDisplay(today)})`,
         message: listed.join('; '),
         category: NotificationCategory.GENERAL,
         dedupeWithinHours: 20,
@@ -257,11 +258,16 @@ export class ApprovalEscalationService {
       add(
         'REGULARIZATION',
         a.employee,
-        `Attendance regularization for ${a.date}`,
+        `Attendance regularization for ${formatDateDisplay(a.date)}`,
         a.updatedAt,
       );
     for (const a of wfh)
-      add('WFH', a.employee, `Work From Home for ${a.date}`, a.updatedAt);
+      add(
+        'WFH',
+        a.employee,
+        `Work From Home for ${formatDateDisplay(a.date)}`,
+        a.updatedAt,
+      );
     for (const o of overtime)
       add('OVERTIME', o.employee, `Overtime (${o.hours}h)`, o.createdAt);
     for (const c of compOffs)

@@ -14,6 +14,8 @@
  */
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 
+// The date format is fixed at DD-MM-YYYY for every organisation (General Settings no longer offers a choice). The
+// type keeps the other names so older callers and stored settings still type-check, but they are never honoured.
 export type DateFormatPattern = 'DD-MM-YYYY' | 'MM-DD-YYYY' | 'YYYY-MM-DD';
 export type TimeFormatPattern = '12' | '24';
 
@@ -41,9 +43,6 @@ function toDateObject(value: unknown): Date | null {
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
-function isDateFormatPattern(v: unknown): v is DateFormatPattern {
-  return v === 'DD-MM-YYYY' || v === 'MM-DD-YYYY' || v === 'YYYY-MM-DD';
-}
 function isTimeFormatPattern(v: unknown): v is TimeFormatPattern {
   return v === '12' || v === '24';
 }
@@ -57,17 +56,8 @@ export function formatDateDisplay(
 ): string {
   const d = toDateObject(value);
   if (!d) return fallback;
-  const dd = pad2(d.getDate());
-  const mm = pad2(d.getMonth() + 1);
-  const yyyy = String(d.getFullYear());
-  switch (dateFormat) {
-    case 'MM-DD-YYYY':
-      return `${mm}-${dd}-${yyyy}`;
-    case 'YYYY-MM-DD':
-      return `${yyyy}-${mm}-${dd}`;
-    default:
-      return `${dd}-${mm}-${yyyy}`;
-  }
+  void dateFormat; // fixed format - see DateFormatPattern
+  return `${pad2(d.getDate())}-${pad2(d.getMonth() + 1)}-${String(d.getFullYear())}`;
 }
 
 // Same as formatDateDisplay but also appends the time, per `timeFormat`
@@ -115,9 +105,8 @@ export async function resolveOrgDateTimeFormat(
     timeFormat?: unknown;
   };
   return {
-    dateFormat: isDateFormatPattern(policies.dateFormat)
-      ? policies.dateFormat
-      : DEFAULT_DATE_FORMAT,
+    // Fixed: whatever an older organisation saved, dates are DD-MM-YYYY.
+    dateFormat: DEFAULT_DATE_FORMAT,
     timeFormat: isTimeFormatPattern(policies.timeFormat)
       ? policies.timeFormat
       : DEFAULT_TIME_FORMAT,

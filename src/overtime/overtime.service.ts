@@ -134,7 +134,7 @@ export class OvertimeService {
           attendance.status === AttendanceStatus.INCOMPLETE)
       ) {
         throw new BadRequestException(
-          `Cannot log ${type.toLowerCase()} overtime for ${dto.date} — attendance for that day is marked ${attendance.status.toLowerCase().replace('_', ' ')}.`,
+          `Cannot log ${type.toLowerCase()} overtime for ${formatDateDisplay(dto.date)} — attendance for that day is marked ${attendance.status.toLowerCase().replace('_', ' ')}.`,
         );
       }
     }
@@ -149,7 +149,7 @@ export class OvertimeService {
     });
     if (existing) {
       throw new ConflictException(
-        `An overtime record already exists for ${dto.date} (status: ${existing.status.toLowerCase()}). Edit or cancel it instead of logging a new one.`,
+        `An overtime record already exists for ${formatDateDisplay(dto.date)} (status: ${existing.status.toLowerCase()}). Edit or cancel it instead of logging a new one.`,
       );
     }
 

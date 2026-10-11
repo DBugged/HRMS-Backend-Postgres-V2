@@ -42,6 +42,7 @@ import {
   statementDueDate,
   taxYearOf,
 } from './tds-math';
+import { formatDateDisplay } from '../payroll/format-date';
 
 interface Actor {
   id: string;
@@ -296,7 +297,7 @@ export class TdsComplianceService {
       : 'No challan recorded';
     return {
       title: `Monthly TDS Statement — ${s.monthLabel}`,
-      subtitle: `Due ${s.dueDate} | TDS deducted ${s.totalTds} | Deposited ${s.deposited} | Shortfall ${s.shortfall} | ${challanText}`,
+      subtitle: `Due ${formatDateDisplay(s.dueDate)} | TDS deducted ${s.totalTds} | Deposited ${s.deposited} | Shortfall ${s.shortfall} | ${challanText}`,
       columns: this.deducteeColumns(),
       rows: s.rows.map((r) => this.deducteeReportRow(r)),
       filename: `tds_monthly_${year}_${pad(month)}`,
@@ -378,7 +379,7 @@ export class TdsComplianceService {
       if (m.totalTds > 0 && m.challans.length === 0)
         checks.push({
           level: 'error',
-          message: `${m.monthLabel}: TDS of ${m.totalTds} deducted but no challan recorded (due ${m.dueDate}).`,
+          message: `${m.monthLabel}: TDS of ${m.totalTds} deducted but no challan recorded (due ${formatDateDisplay(m.dueDate)}).`,
         });
       else if (m.shortfall > 0)
         checks.push({
@@ -393,13 +394,13 @@ export class TdsComplianceService {
       if (m.lateDepositCount > 0)
         checks.push({
           level: 'warning',
-          message: `${m.monthLabel}: ${m.lateDepositCount} challan(s) deposited after the due date ${m.dueDate} — interest u/s 201(1A) may apply.`,
+          message: `${m.monthLabel}: ${m.lateDepositCount} challan(s) deposited after the due date ${formatDateDisplay(m.dueDate)} — interest u/s 201(1A) may apply.`,
         });
     }
     if (!statement)
       checks.push({
         level: 'warning',
-        message: `No acknowledgement number recorded yet for this quarter's statement (due ${statementDueDate(taxYear, q)}).`,
+        message: `No acknowledgement number recorded yet for this quarter's statement (due ${formatDateDisplay(statementDueDate(taxYear, q))}).`,
       });
     return {
       financialYear: taxYear,
@@ -462,7 +463,7 @@ export class TdsComplianceService {
     );
     return {
       title: `Quarterly TDS Return (Form ${s.form}) Annexure I — Q${quarter} FY ${taxYear}`,
-      subtitle: `Deductor TAN: ${org?.tan || 'not set'} | PAN: ${org?.pan || 'not set'} | Statement due ${s.statementDueDate}${s.statement ? ` | Receipt ${s.statement.receiptNumber}` : ''}`,
+      subtitle: `Deductor TAN: ${org?.tan || 'not set'} | PAN: ${org?.pan || 'not set'} | Statement due ${formatDateDisplay(s.statementDueDate)}${s.statement ? ` | Receipt ${s.statement.receiptNumber}` : ''}`,
       columns,
       rows: s.rows.map((r) => ({
         ...this.deducteeReportRow(r),

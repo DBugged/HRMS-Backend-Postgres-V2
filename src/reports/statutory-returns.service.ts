@@ -18,6 +18,7 @@ import {
 } from './esic-return';
 import { buildPtReturn, NO_STATE, type PtMemberInput } from './pt-return';
 import type { ReportPayload } from './reports.service';
+import { formatDateDisplay } from '../payroll/format-date';
 
 interface Line {
   code: string;
@@ -422,7 +423,7 @@ export class StatutoryReturnsService {
         r.states
           .map(
             (s) =>
-              `${s.state}: PT ${s.totalPt}${s.dueDate ? ` (due ${s.dueDate})` : ''}`,
+              `${s.state}: PT ${s.totalPt}${s.dueDate ? ` (due ${formatDateDisplay(s.dueDate)})` : ''}`,
           )
           .join(' | ') || undefined,
       columns: [
@@ -465,7 +466,12 @@ export class StatutoryReturnsService {
           tax: sl.tax,
           totalWages: i === 0 ? s.totalWages : '',
           totalPt: i === 0 ? s.totalPt : '',
-          dueDate: i === 0 ? (s.dueDate ?? 'per state rules') : '',
+          dueDate:
+            i === 0
+              ? s.dueDate
+                ? formatDateDisplay(s.dueDate)
+                : 'per state rules'
+              : '',
         })),
       ),
       filename: `pt_return_summary_${year}_${pad(month)}`,
