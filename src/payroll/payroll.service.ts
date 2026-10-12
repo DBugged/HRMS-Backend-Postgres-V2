@@ -3248,8 +3248,12 @@ export class PayrollService {
     // leaving the loan charged. Refuse it instead, saying why.
     await this.assertLoanRepaymentsReversible(run, organizationId);
 
-    await this.scopedPrisma.payrollRun.updateMany({
-      where: { id, organizationId },
+    // The status is re-asserted in the write itself: two simultaneous unlocks (a double-click, a retry, two admins) both
+    // pass the status check above on the same snapshot, and each used to go on to reverse the run's effects, write an
+    // audit row and send the employee a "payslip withdrawn" notice. Only the request whose update matches the run still
+    // being in the status read above carries on; the other is told the run was already unlocked.
+    const { count: unlocked } = await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId, status: run.status },
       data: {
         status: PayrollRunStatus.CALCULATED,
         unlockedById: actor.id,
@@ -3270,6 +3274,11 @@ export class PayrollService {
         payslipEmailSentAt: null,
       },
     });
+    if (unlocked === 0) {
+      throw new ConflictException(
+        'This payroll run was already unlocked (or its status changed) while you were doing this. Reload it to see its current state.',
+      );
+    }
     const updated = await this.scopedPrisma.payrollRun.findFirstOrThrow({
       where: { id, organizationId },
     });
