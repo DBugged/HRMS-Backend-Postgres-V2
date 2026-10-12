@@ -151,6 +151,44 @@ describe('Overtime (e2e)', () => {
         password: (deptEmpCreate.body as EmployeeCreateBody).generatedPassword,
       });
     deptEmployeeToken = (deptEmpLogin.body as AuthBody).accessToken;
+
+    // Overtime must be backed by a worked day and follow the calendar: seed 10 worked hours on every date the tests
+    // log for, and make 3 July a company holiday.
+    const orgId = (
+      await prisma.user.findFirstOrThrow({ where: { id: employeeId } })
+    ).organizationId;
+    await prisma.holiday.create({
+      data: {
+        organizationId: orgId,
+        name: 'Test Holiday',
+        date: '2026-07-03',
+        year: 2026,
+      },
+    });
+    const workedDates = [
+      '2026-07-02',
+      '2026-07-03',
+      '2026-07-05',
+      '2026-07-06',
+      '2026-07-07',
+      '2026-07-10',
+      '2026-07-13',
+      '2026-07-20',
+      '2026-07-21',
+      '2026-07-08',
+      '2026-07-09',
+    ];
+    for (const id of [employeeId, managerId, deptEmployeeId]) {
+      await prisma.attendance.createMany({
+        data: workedDates.map((date) => ({
+          organizationId: orgId,
+          employeeId: id,
+          date,
+          status: 'PRESENT' as const,
+          workDurationMinutes: 600,
+        })),
+      });
+    }
   });
 
   afterAll(async () => {
@@ -177,8 +215,8 @@ describe('Overtime (e2e)', () => {
   it.each([
     ['REGULAR', 1.5, '2026-07-02'],
     ['HOLIDAY', 2, '2026-07-03'],
-    ['WEEKEND', 2, '2026-07-04'],
-    ['NIGHT', 1.75, '2026-07-05'],
+    ['WEEKEND', 2, '2026-07-05'],
+    ['NIGHT', 1.75, '2026-07-06'],
   ])(
     // Distinct dates per case — one overtime record per employee/day is now
     // enforced (unique constraint), so these can't all share a date.
@@ -215,7 +253,7 @@ describe('Overtime (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ date: '2026-07-11', hours: 1 })
+      .send({ date: '2026-07-13', hours: 1 })
       .expect(201);
     expect((res.body as OvertimeBody).employeeId).toBe(employeeId);
 
@@ -224,7 +262,7 @@ describe('Overtime (e2e)', () => {
     await request(app.getHttpServer())
       .post('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({ date: '2026-07-11', hours: 1, employeeId: 'someone-else' })
+      .send({ date: '2026-07-13', hours: 1, employeeId: 'someone-else' })
       .expect(400);
   });
 
@@ -290,14 +328,14 @@ describe('Overtime (e2e)', () => {
       const managerOt = await request(app.getHttpServer())
         .post('/overtime')
         .set('Authorization', `Bearer ${managerToken}`)
-        .send({ date: '2026-07-05', hours: 2, type: 'REGULAR' })
+        .send({ date: '2026-07-07', hours: 2, type: 'REGULAR' })
         .expect(201);
       managerOtId = (managerOt.body as OvertimeBody).id;
 
       const deptEmpOt = await request(app.getHttpServer())
         .post('/overtime')
         .set('Authorization', `Bearer ${deptEmployeeToken}`)
-        .send({ date: '2026-07-05', hours: 3, type: 'REGULAR' })
+        .send({ date: '2026-07-07', hours: 3, type: 'REGULAR' })
         .expect(201);
       deptEmployeeOtId = (deptEmpOt.body as OvertimeBody).id;
     });
@@ -394,6 +432,79 @@ describe('Overtime (e2e)', () => {
         .set('Authorization', `Bearer ${employeeToken}`)
         .send({ date: '2026-07-21', hours: 1, type: 'REGULAR' })
         .expect(201);
+    });
+  });
+
+  describe('calendar and punch rules', () => {
+    const log = (token: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/overtime')
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+
+    it('refuses weekend or holiday rate on an ordinary weekday', async () => {
+      const res = await log(employeeToken, {
+        date: '2026-07-08',
+        hours: 1,
+        type: 'WEEKEND',
+      }).expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/regular overtime, not weekend/);
+      await log(employeeToken, {
+        date: '2026-07-08',
+        hours: 1,
+        type: 'HOLIDAY',
+      }).expect(400);
+    });
+
+    it('refuses regular overtime on a weekly off (Sunday)', async () => {
+      await prisma.attendance.create({
+        data: {
+          organizationId: (
+            await prisma.user.findFirstOrThrow({
+              where: { id: otherEmployeeId },
+            })
+          ).organizationId,
+          employeeId: otherEmployeeId,
+          date: '2026-07-12',
+          status: 'PRESENT',
+          workDurationMinutes: 600,
+        },
+      });
+      const res = await log(otherEmployeeToken, {
+        date: '2026-07-12',
+        hours: 1,
+        type: 'REGULAR',
+      }).expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/weekend overtime/);
+    });
+
+    it('refuses a future date', async () => {
+      const res = await log(employeeToken, {
+        date: '2099-01-05',
+        hours: 1,
+        type: 'REGULAR',
+      }).expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/not happened yet/);
+    });
+
+    it('refuses overtime on a day with no punches, and hours beyond the time worked', async () => {
+      const none = await log(employeeToken, {
+        date: '2026-07-14',
+        hours: 1,
+        type: 'REGULAR',
+      }).expect(400);
+      expect(JSON.stringify(none.body)).toMatch(/regularized/);
+      const tooMany = await log(employeeToken, {
+        date: '2026-07-09',
+        hours: 11,
+        type: 'REGULAR',
+      }).expect(400);
+      expect(JSON.stringify(tooMany.body)).toMatch(/Only 10 hour/);
+      await log(employeeToken, {
+        date: '2026-07-09',
+        hours: 10,
+        type: 'REGULAR',
+      }).expect(201);
     });
   });
 });

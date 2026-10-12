@@ -30,6 +30,11 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LogOvertimeDto } from './dto/log-overtime.dto';
+import { overtimeDayProblem, type DayKind } from './overtime-day-rules';
+import {
+  isWeeklyOff,
+  resolveShiftConfig,
+} from '../attendance/attendance-shift-config';
 import { ReviewOvertimeDto } from './dto/review-overtime.dto';
 import { QueryOvertimeDto } from './dto/query-overtime.dto';
 import { paginate, skip } from '../common/pagination';
@@ -139,6 +144,8 @@ export class OvertimeService {
       }
     }
 
+    await this.assertDayAllowsOvertime(dto, type, actor, organizationId);
+
     // One overtime record per employee/day, regardless of source — without
     // this, a manual log here and AttendanceService's own auto-suggestion
     // (source=AUTO_PUNCH, created when a punch-out overshoots shift end)
@@ -195,6 +202,67 @@ export class OvertimeService {
     });
 
     return record;
+  }
+
+  // The type picks the pay rate, so it has to match the calendar (weekly off -> weekend, holiday -> holiday, else
+  // regular/night), the date cannot be in the future, and the hours have to fit inside the time actually punched.
+  private async assertDayAllowsOvertime(
+    dto: LogOvertimeDto,
+    type: OvertimeType,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const [org, employee, attendance] = await Promise.all([
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { attendancePayrollPrefs: true, timezone: true },
+      }),
+      this.scopedPrisma.user.findFirst({
+        where: { id: actor.id, organizationId },
+        include: { department: true },
+      }),
+      this.scopedPrisma.attendance.findFirst({
+        where: { organizationId, employeeId: actor.id, date: dto.date },
+      }),
+    ]);
+    const timeZone = org?.timezone || 'Asia/Kolkata';
+    const shiftConfig = resolveShiftConfig(
+      employee?.department ?? null,
+      org?.attendancePayrollPrefs as never,
+      timeZone,
+    );
+    const holiday = await this.scopedPrisma.holiday.findFirst({
+      where: {
+        organizationId,
+        isActive: true,
+        date: dto.date,
+        OR: employee?.departmentId
+          ? [{ departmentId: null }, { departmentId: employee.departmentId }]
+          : [{ departmentId: null }],
+      },
+    });
+    // A holiday wins over a weekly off, same as the attendance engine.
+    const dayKind: DayKind = holiday
+      ? 'HOLIDAY'
+      : isWeeklyOff(dto.date, shiftConfig.weeklyOffs)
+        ? 'WEEKLY_OFF'
+        : 'WORKING';
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date());
+    const problem = overtimeDayProblem({
+      type,
+      date: dto.date,
+      today,
+      dayKind,
+      workedMinutes: attendance?.workDurationMinutes ?? 0,
+      hours: dto.hours,
+      breakMinutes: shiftConfig.breakMinutes ?? 0,
+    });
+    if (problem) throw new BadRequestException(problem);
   }
 
   // Current multipliers for each overtime type, so the log form can show

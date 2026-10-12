@@ -236,7 +236,69 @@ export class EmployeeSalaryComponentsService {
       );
     }
 
-    return { count: created.length, rows: created, failed };
+    const warnings: string[] = [];
+    if (created.length > 0) {
+      const warning = await this.basicShareWarning(
+        employeeId,
+        dto.effectiveFrom,
+        organizationId,
+      );
+      if (warning) warnings.push(warning);
+    }
+
+    return { count: created.length, rows: created, failed, warnings };
+  }
+
+  // The new Labour Code wants Basic + DA to be at least half of the total monthly pay. This never blocks a save (a
+  // structure can be half-built while HR is still entering lines); it tells HR when the saved structure is below it.
+  private async basicShareWarning(
+    employeeId: string,
+    asOfParam: string | undefined,
+    organizationId: string,
+  ): Promise<string | null> {
+    const asOf =
+      asOfParam ?? localDateStr(await this.getOrgTimezone(organizationId));
+    const { structure } = await this.getStructure(
+      employeeId,
+      asOf,
+      organizationId,
+    );
+    const monthlyEarnings = structure.filter((r) => {
+      const ref = r.componentRef as
+        | {
+            type: string;
+            isEmployerContribution?: boolean;
+            payFrequency?: string;
+          }
+        | null
+        | undefined;
+      return (
+        ref &&
+        ref.type === 'EARNING' &&
+        !ref.isEmployerContribution &&
+        ref.payFrequency === 'MONTHLY' &&
+        r.isEnabled !== false &&
+        !('applyOnlyForMonth' in r && r.applyOnlyForMonth) &&
+        r.componentCode !== 'OVERTIME_PAY'
+      );
+    });
+    let gross = 0;
+    let wages = 0;
+    for (const r of monthlyEarnings) {
+      const value = await this.getCurrentMonthlyValue(
+        employeeId,
+        r.componentCode,
+        asOf,
+        organizationId,
+      );
+      gross += value;
+      if (r.componentCode === 'BASIC' || r.componentCode === 'DA') {
+        wages += value;
+      }
+    }
+    if (gross <= 0 || wages * 2 >= gross - 0.005) return null;
+    const pct = Math.round((wages / gross) * 1000) / 10;
+    return `Basic + DA is ${pct}% of the monthly pay (₹${Math.round(wages)} of ₹${Math.round(gross)}). Under the new Labour Code it should be at least 50%, otherwise PF and gratuity are worked out on a higher wage than the structure shows.`;
   }
 
   // Shared revision logic — close out the current open row (effectiveTo

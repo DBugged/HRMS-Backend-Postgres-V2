@@ -6,6 +6,12 @@ import {
 } from './overtime.service';
 import { isOvertimePayEnabled } from './overtime-pay';
 
+// The calendar/punch rules have their own spec (overtime-day-rules.spec.ts); here they are stubbed so these tests stay about logging.
+jest.mock('./overtime-day-rules', () => ({
+  overtimeDayProblem: jest.fn(() => null),
+}));
+import { overtimeDayProblem } from './overtime-day-rules';
+
 type Row = Record<string, any>;
 
 function build(
@@ -50,7 +56,14 @@ function build(
               ...opts.rates,
             },
     },
-    organization: { findFirst: async () => ({ policies: {} }) },
+    organization: {
+      findFirst: async () => ({
+        policies: {},
+        attendancePayrollPrefs: null,
+        timezone: 'Asia/Kolkata',
+      }),
+    },
+    holiday: { findFirst: async () => null },
     user: {
       findFirst: async () => ({
         id: 'e1',
@@ -205,6 +218,21 @@ describe('overtime: logging', () => {
     await expect(
       service.log({ date: '2026-10-05', hours: 1 } as never, emp, 'org'),
     ).rejects.toThrow(/already exists for 05-10-2026 \(status: approved\)/);
+  });
+
+  it('is refused when the calendar/punch rules reject the day, and nothing is saved', async () => {
+    (overtimeDayProblem as jest.Mock).mockReturnValueOnce(
+      '2026-10-07 is a working day.',
+    );
+    const { service, records } = build();
+    await expect(
+      service.log(
+        { date: '2026-10-07', hours: 2, type: 'WEEKEND' } as never,
+        emp,
+        'org',
+      ),
+    ).rejects.toThrow('working day');
+    expect(records).toHaveLength(0);
   });
 
   it('tells the reviewers and is audited', async () => {
