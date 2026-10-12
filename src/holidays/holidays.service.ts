@@ -285,6 +285,9 @@ export class HolidaysService {
       description: string;
       isOptional: boolean;
       departmentId: null;
+      // false for a date that has already passed: kept as a reference record only (see below).
+      isActive: boolean;
+      isReference: boolean;
     }[] = [];
     const seenInBatch = new Set<string>();
 
@@ -340,16 +343,11 @@ export class HolidaysService {
         return;
       }
 
-      if (date < today) {
-        failed.push({
-          row: rowNum,
-          name,
-          date,
-          error:
-            "Holiday date has already passed - past holidays can't be added",
-        });
-        return;
-      }
+      // A date that has already passed is still accepted, so a whole-year calendar loads in one go, but it is saved as
+      // an INACTIVE reference record. Attendance, leave, overtime and payroll all read only active holidays, so
+      // it never changes anything already calculated; and a past holiday stays read-only (cannot be edited, activated or
+      // deleted afterwards) like every other past one.
+      const isPast = date < today;
 
       const type = VALID_TYPES.has(typeRaw.toUpperCase() as HolidayType)
         ? (typeRaw.toUpperCase() as HolidayType)
@@ -375,6 +373,8 @@ export class HolidaysService {
         description,
         isOptional: type === HolidayType.OPTIONAL,
         departmentId: null,
+        isActive: !isPast,
+        isReference: isPast,
       });
     });
 
@@ -388,11 +388,20 @@ export class HolidaysService {
         action: 'HOLIDAY_BULK_IMPORTED',
         module: 'HOLIDAY',
         organizationId,
-        details: { created: created.count, failed: failed.length },
+        details: {
+          created: created.count,
+          failed: failed.length,
+          pastReferenceOnly: toCreate.filter((h) => !h.isActive).length,
+        },
       });
     }
 
-    return { created: created.count, failed };
+    // `pastReferenceOnly`: how many of the created rows were already in the past (saved as reference records).
+    return {
+      created: created.count,
+      pastReferenceOnly: toCreate.filter((h) => !h.isActive).length,
+      failed,
+    };
   }
 
   private async assertNoDuplicate(

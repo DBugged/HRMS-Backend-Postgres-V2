@@ -684,6 +684,10 @@ model Holiday {
   // eligibility calculations that read the calendar going forward — see
   // every `isActive: true` filter alongside a holiday.findMany/findFirst.
   isActive    Boolean     @default(true)
+  // Loaded from a calendar upload after its date had already passed. Saved inactive, so nothing already calculated
+  // (attendance, leave, overtime, payroll all read only active holidays) changes, and read-only like every past
+  // holiday; the flag lets the calendar still show it as a past holiday instead of an ordinary deactivated one.
+  isReference Boolean     @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
