@@ -727,7 +727,13 @@ export class LettersService {
       : computedParagraphs;
 
     const documentNumber = await this.scopedPrisma.$transaction((tx) =>
-      issueDocumentNumber(tx, organizationId, key),
+      issueDocumentNumber(
+        tx,
+        organizationId,
+        key,
+        new Date(),
+        employee.employeeId,
+      ),
     );
 
     const signatories = (organization.signatories ?? []) as Array<{

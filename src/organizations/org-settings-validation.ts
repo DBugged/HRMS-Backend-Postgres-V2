@@ -287,7 +287,7 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
   }
 }
 
-const NUMBERING_TOKENS = /^(YYYYMM|DD_MM_YYYY|MM_YYYY|YYYY|MM|DD|\d+)$/;
+const NUMBERING_TOKENS = /^(YYYYMM|DD_MM_YYYY|MM_YYYY|YYYY|MM|DD|EMPID|\d+)$/;
 
 function validateDocumentNumbering(n: Record<string, unknown>) {
   for (const [type, entry] of Object.entries(n)) {
@@ -307,8 +307,12 @@ function validateDocumentNumbering(n: Record<string, unknown>) {
       const tokens = [...format.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
       if (tokens.some((t) => !NUMBERING_TOKENS.test(t))) {
         bad(
-          `${where}.format has an unknown {token}. Use {YYYY}, {MM}, {DD}, {YYYYMM}, {MM_YYYY}, {DD_MM_YYYY} and one counter like {00001}.`,
+          `${where}.format has an unknown {token}. Use {YYYY}, {MM}, {DD}, {YYYYMM}, {MM_YYYY}, {DD_MM_YYYY}, {EMPID} and one counter like {00001}.`,
         );
+      }
+      // {EMPID} carries an employee's ID into a document number; the employee ID's own format cannot contain it.
+      if (type === 'employeeId' && tokens.includes('EMPID')) {
+        bad(`${where}.format cannot contain {EMPID}.`);
       }
       if (tokens.filter((t) => /^\d+$/.test(t)).length !== 1) {
         bad(

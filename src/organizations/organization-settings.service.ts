@@ -852,7 +852,10 @@ export class OrganizationSettingsService {
     if (!entry) {
       throw new BadRequestException(`Unknown document type: ${type}`);
     }
-    return { preview: previewDocumentNumber(entry) };
+    // A sample employee ID for {EMPID}: the next one the employee-ID format would issue.
+    const empEntry = numbering.employeeId;
+    const sample = empEntry ? previewDocumentNumber(empEntry) : 'EMP-00001';
+    return { preview: previewDocumentNumber(entry, sample) };
   }
 }
 

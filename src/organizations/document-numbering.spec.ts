@@ -23,6 +23,16 @@ describe('formatDocumentNumber', () => {
     expect(formatDocumentNumber('X-{00000}', 3, date)).toBe('X-00003');
   });
 
+  it("carries the employee's ID into the number with {EMPID}", () => {
+    expect(
+      formatDocumentNumber('PS-{EMPID}-{YYYYMM}-{0001}', 2, date, 'DP-00002'),
+    ).toBe('PS-DP-00002-202603-0002');
+  });
+
+  it('drops {EMPID} when no employee is given', () => {
+    expect(formatDocumentNumber('PS-{EMPID}-{0001}', 2, date)).toBe('PS--0002');
+  });
+
   it('leaves an unrecognized token untouched', () => {
     expect(formatDocumentNumber('X-{FOO}-{0001}', 2, date)).toBe(
       'X-{FOO}-0002',

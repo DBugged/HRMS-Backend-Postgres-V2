@@ -14,10 +14,15 @@ export interface DocumentNumberingEntry {
   lastPeriodKey: string | null;
 }
 
+// {EMPID} is the employee's own ID (e.g. DP-00002), so a payslip or letter number can carry the person it belongs to.
+// It is only replaced where an employee code is given; the employee-ID sequence itself never uses it.
+export const EMPLOYEE_ID_TOKEN = '{EMPID}';
+
 export function formatDocumentNumber(
   format: string,
   counterValue: number,
   date: Date = new Date(),
+  employeeCode?: string | null,
 ): string {
   const yyyy = String(date.getFullYear());
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -29,6 +34,7 @@ export function formatDocumentNumber(
     .replace(/\{YYYY\}/g, yyyy)
     .replace(/\{MM\}/g, mm)
     .replace(/\{DD\}/g, dd)
+    .replace(/\{EMPID\}/g, employeeCode ?? '')
     .replace(/\{(\d+)\}/g, (_match, digits: string) =>
       String(counterValue).padStart(digits.length, '0'),
     );
@@ -65,9 +71,17 @@ function computeNextCounter(
 
 // Non-mutating preview of the *next* formatted document number — shown in
 // the Setup Wizard. Does not consume a number.
-export function previewDocumentNumber(entry: DocumentNumberingEntry): string {
+export function previewDocumentNumber(
+  entry: DocumentNumberingEntry,
+  sampleEmployeeCode?: string | null,
+): string {
   const { nextCounter } = computeNextCounter(entry);
-  return formatDocumentNumber(entry.format, nextCounter);
+  return formatDocumentNumber(
+    entry.format,
+    nextCounter,
+    new Date(),
+    sampleEmployeeCode,
+  );
 }
 
 function defaultEntry(docType: string): DocumentNumberingEntry {
@@ -95,6 +109,8 @@ export async function issueDocumentNumber(
   // month so the number says which period it is for, not the day it happened to be calculated. The counter and its
   // reset period still follow the day of issue, so numbers stay unique.
   displayDate: Date = new Date(),
+  // The employee's ID, for formats that contain {EMPID}.
+  employeeCode?: string | null,
 ): Promise<string> {
   const rows = await tx.$queryRaw<{ documentNumbering: unknown }[]>`
     SELECT "documentNumbering" FROM organizations WHERE id = ${organizationId} FOR UPDATE
@@ -113,6 +129,7 @@ export async function issueDocumentNumber(
     entry.format,
     nextCounter,
     displayDate,
+    employeeCode,
   );
 
   const updatedEntry: DocumentNumberingEntry = {

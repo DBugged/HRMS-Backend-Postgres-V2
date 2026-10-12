@@ -64,3 +64,23 @@ describe('India-only organization settings', () => {
     );
   });
 });
+
+describe('document numbering {EMPID}', () => {
+  const numbering = (type: string, format: string) => ({
+    documentNumbering: {
+      [type]: { label: 'X', format, resetRule: 'never', counter: 0 },
+    },
+  });
+
+  it('accepts {EMPID} in a letter or payslip format', () => {
+    expect(() =>
+      validateSectionData(numbering('payslip', 'PS-{EMPID}-{YYYYMM}-{00001}')),
+    ).not.toThrow();
+  });
+
+  it("refuses {EMPID} in the employee ID's own format", () => {
+    expect(() =>
+      validateSectionData(numbering('employeeId', '{EMPID}-{00001}')),
+    ).toThrow(/cannot contain \{EMPID\}/);
+  });
+});
