@@ -3272,6 +3272,12 @@ export class PayrollService {
         paidById: null,
         // A corrected payslip is a new payslip: allow the e-mail to go out again when it is re-paid.
         payslipEmailSentAt: null,
+        // The bank reference, mode and date confirmed a payment of the amounts that are now being corrected. Left in place
+        // they would sit on the corrected payslip and show up in the bank export as if it had been paid with that UTR.
+        // The old values stay in the audit entry below.
+        paymentMode: null,
+        paymentReference: null,
+        paymentDate: null,
       },
     });
     if (unlocked === 0) {
@@ -3292,6 +3298,13 @@ export class PayrollService {
       details: {
         reason: dto.reason.trim(),
         previousStatus: run.status,
+        previousPayment: run.paymentReference
+          ? {
+              mode: run.paymentMode,
+              reference: run.paymentReference,
+              date: run.paymentDate,
+            }
+          : null,
         reversedLoanRepayments: reversal.reversedLoanRepaymentIds,
         revertedLeaveEncashments: reversal.revertedEncashmentIds,
       },

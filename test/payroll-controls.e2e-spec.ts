@@ -212,4 +212,31 @@ describe('Payroll controls (e2e)', () => {
       expect((await runOf(6)).status).toBe('CALCULATED');
     });
   });
+
+  describe('C-2 - unlock clears the old payment details', () => {
+    it('the bank reference, mode and date leave the run (and stay in the audit entry)', async () => {
+      const run = await progress(5, 'PAID');
+      await patch(`/payroll/${run.id}/payment`)
+        .send({ paymentMode: 'NEFT', paymentReference: 'UTR-OLD-1' })
+        .expect(200);
+      expect((await runOf(5)).paymentReference).toBe('UTR-OLD-1');
+
+      await post(`/payroll/${run.id}/unlock`)
+        .send({ reason: 'Bank rejected the transfer' })
+        .expect(201);
+      const reopened = await runOf(5);
+      expect(reopened.status).toBe('CALCULATED');
+      expect(reopened.paymentReference).toBeNull();
+      expect(reopened.paymentMode).toBeNull();
+      expect(reopened.paymentDate).toBeNull();
+
+      const audit = await prisma.auditLog.findFirstOrThrow({
+        where: { targetId: run.id, action: 'PAYROLL_UNLOCKED' },
+      });
+      expect(
+        (audit.details as { previousPayment: { reference: string } })
+          .previousPayment.reference,
+      ).toBe('UTR-OLD-1');
+    });
+  });
 });
