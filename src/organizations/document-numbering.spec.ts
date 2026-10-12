@@ -1,4 +1,5 @@
 import {
+  documentNameToken,
   previewDocumentNumber,
   formatDocumentNumber,
   issueDocumentNumber,
@@ -27,6 +28,25 @@ describe('formatDocumentNumber', () => {
     expect(
       formatDocumentNumber('PS-{EMPID}-{YYYYMM}-{0001}', 2, date, 'DP-00002'),
     ).toBe('PS-DP-00002-202603-0002');
+  });
+
+  it("carries a cleaned employee name with {EMPNAME}, after the ID", () => {
+    expect(
+      formatDocumentNumber(
+        'PS-{DD_MM_YYYY}-{00001}-{EMPID}-{EMPNAME}',
+        7,
+        date,
+        'DP-00002',
+        "Rohit  Mane-D'Souza",
+      ),
+    ).toBe('PS-05_03_2026-00007-DP-00002-ROHITMANEDSOUZA');
+  });
+
+  it('caps {EMPNAME} at 20 characters and strips accents', () => {
+    expect(documentNameToken('Ñandú Ramírez Venkatasubramanian Iyer')).toBe(
+      'NANDURAMIREZVENKATAS',
+    );
+    expect(documentNameToken('')).toBe('');
   });
 
   it('drops {EMPID} when no employee is given', () => {

@@ -876,7 +876,7 @@ export class OrganizationSettingsService {
     // A sample employee ID for {EMPID}: the next one the employee-ID format would issue.
     const empEntry = numbering.employeeId;
     const sample = empEntry ? previewDocumentNumber(empEntry) : 'EMP-00001';
-    return { preview: previewDocumentNumber(entry, sample) };
+    return { preview: previewDocumentNumber(entry, sample, 'SAMPLE') };
   }
 }
 

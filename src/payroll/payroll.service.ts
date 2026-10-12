@@ -1947,6 +1947,7 @@ export class PayrollService {
               'payslip',
               new Date(dto.year, dto.month, 0),
               employee.employeeId,
+              employee.name,
             ),
           ));
         const data = {
@@ -2303,6 +2304,7 @@ export class PayrollService {
             'payslip',
             new Date(dto.year, dto.month, 0),
             employee.employeeId,
+            employee.name,
           ),
         );
         const run = await this.scopedPrisma.payrollRun.create({

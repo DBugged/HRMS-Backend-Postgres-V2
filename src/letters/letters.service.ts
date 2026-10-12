@@ -744,6 +744,7 @@ export class LettersService {
         key,
         new Date(),
         employee.employeeId,
+        employee.name,
       ),
     );
 

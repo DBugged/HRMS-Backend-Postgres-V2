@@ -18,11 +18,25 @@ export interface DocumentNumberingEntry {
 // It is only replaced where an employee code is given; the employee-ID sequence itself never uses it.
 export const EMPLOYEE_ID_TOKEN = '{EMPID}';
 
+// {EMPNAME} is the employee's name for a number that should read as theirs at a glance: upper case, letters and digits
+// only (spaces and punctuation dropped), at most 20 characters, so it is safe in file names and can never break the
+// number. The number is fixed when it is issued, so a later rename does not change documents already numbered.
+export const EMPLOYEE_NAME_MAX = 20;
+export function documentNameToken(name?: string | null): string {
+  return (name ?? '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '')
+    .slice(0, EMPLOYEE_NAME_MAX);
+}
+
 export function formatDocumentNumber(
   format: string,
   counterValue: number,
   date: Date = new Date(),
   employeeCode?: string | null,
+  employeeName?: string | null,
 ): string {
   const yyyy = String(date.getFullYear());
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -35,6 +49,7 @@ export function formatDocumentNumber(
     .replace(/\{MM\}/g, mm)
     .replace(/\{DD\}/g, dd)
     .replace(/\{EMPID\}/g, employeeCode ?? '')
+    .replace(/\{EMPNAME\}/g, documentNameToken(employeeName))
     .replace(/\{(\d+)\}/g, (_match, digits: string) =>
       String(counterValue).padStart(digits.length, '0'),
     );
@@ -74,6 +89,7 @@ function computeNextCounter(
 export function previewDocumentNumber(
   entry: DocumentNumberingEntry,
   sampleEmployeeCode?: string | null,
+  sampleEmployeeName?: string | null,
 ): string {
   const { nextCounter } = computeNextCounter(entry);
   return formatDocumentNumber(
@@ -81,6 +97,7 @@ export function previewDocumentNumber(
     nextCounter,
     new Date(),
     sampleEmployeeCode,
+    sampleEmployeeName,
   );
 }
 
@@ -111,6 +128,8 @@ export async function issueDocumentNumber(
   displayDate: Date = new Date(),
   // The employee's ID, for formats that contain {EMPID}.
   employeeCode?: string | null,
+  // The employee's name, for formats that contain {EMPNAME}.
+  employeeName?: string | null,
 ): Promise<string> {
   const rows = await tx.$queryRaw<{ documentNumbering: unknown }[]>`
     SELECT "documentNumbering" FROM organizations WHERE id = ${organizationId} FOR UPDATE
@@ -130,6 +149,7 @@ export async function issueDocumentNumber(
     nextCounter,
     displayDate,
     employeeCode,
+    employeeName,
   );
 
   const updatedEntry: DocumentNumberingEntry = {

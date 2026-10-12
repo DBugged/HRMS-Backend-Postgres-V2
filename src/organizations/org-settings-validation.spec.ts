@@ -78,9 +78,20 @@ describe('document numbering {EMPID}', () => {
     ).not.toThrow();
   });
 
-  it("refuses {EMPID} in the employee ID's own format", () => {
+  it("refuses {EMPID} and {EMPNAME} in the employee ID's own format", () => {
     expect(() =>
       validateSectionData(numbering('employeeId', '{EMPID}-{00001}')),
-    ).toThrow(/cannot contain \{EMPID\}/);
+    ).toThrow(/cannot contain \{EMPID\} or \{EMPNAME\}/);
+    expect(() =>
+      validateSectionData(numbering('employeeId', 'E-{EMPNAME}-{00001}')),
+    ).toThrow(/cannot contain/);
+  });
+
+  it('accepts {EMPNAME} after the counter in a payslip format', () => {
+    expect(() =>
+      validateSectionData(
+        numbering('payslip', 'PS-{YYYYMM}-{00001}-{EMPID}-{EMPNAME}'),
+      ),
+    ).not.toThrow();
   });
 });
