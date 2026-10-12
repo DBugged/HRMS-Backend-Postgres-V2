@@ -93,6 +93,21 @@ export function resolveIncomingFileValue(
 }
 
 export function verifyFileToken(token: string): FileTokenClaim | null {
+  return decodeFileToken(token, false);
+}
+
+// Same signature check, but an expired token still decodes. Used only to re-sign a link a signed-in user already
+// held (POST /files/refresh), never to serve a file.
+export function verifyFileTokenIgnoringExpiry(
+  token: string,
+): FileTokenClaim | null {
+  return decodeFileToken(token, true);
+}
+
+function decodeFileToken(
+  token: string,
+  ignoreExpiry: boolean,
+): FileTokenClaim | null {
   try {
     const [json, sig] = String(token).split('.');
     if (!json || !sig) return null;
@@ -110,7 +125,7 @@ export function verifyFileToken(token: string): FileTokenClaim | null {
       p: string;
       e: number;
     };
-    if (!payload.e || Date.now() > payload.e) return null;
+    if (!payload.e || (!ignoreExpiry && Date.now() > payload.e)) return null;
     return { organizationId: payload.o, relativeKey: payload.p };
   } catch {
     return null;

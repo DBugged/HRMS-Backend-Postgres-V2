@@ -3,6 +3,7 @@
 // Important: Any authenticated user may upload — access control lives downstream, in what each domain field does with the returned key.
 import {
   BadRequestException,
+  Body,
   Controller,
   Post,
   UploadedFile,
@@ -14,6 +15,12 @@ import { User } from '@prisma/client';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { FILE_CATEGORIES, makeStorage } from './file-storage.config';
 import { FilesService } from './files.service';
+import {
+  SESSION_ASSET_TTL_SECONDS,
+  isKeyAllowedForOrg,
+  signFileToken,
+  verifyFileTokenIgnoringExpiry,
+} from './file-token';
 import {
   ALLOWED_MIME_TYPES,
   describeAllowedTypes,
@@ -56,6 +63,32 @@ function categoryInterceptor(category: string) {
 @Controller('files')
 export class FilesController {
   constructor(private readonly filesService: FilesService) {}
+
+  // A signed file link lives for minutes, but a page keeps the link it loaded with. The client sends back the (possibly
+  // expired) link it holds and gets a fresh one for the same file - only for a link that carries this server's own
+  // signature, was issued for the caller's own organization, and points at an allowed key.
+  @Post('refresh')
+  refresh(@CurrentUser() caller: Caller, @Body() body: { url?: unknown }) {
+    const raw = typeof body?.url === 'string' ? body.url : '';
+    const marker = raw.indexOf('/files/');
+    const claim =
+      marker >= 0
+        ? verifyFileTokenIgnoringExpiry(raw.slice(marker + '/files/'.length))
+        : null;
+    if (
+      !claim ||
+      claim.organizationId !== caller.organizationId ||
+      !isKeyAllowedForOrg(caller.organizationId, claim.relativeKey)
+    ) {
+      throw new BadRequestException('This file link cannot be refreshed.');
+    }
+    const token = signFileToken(
+      claim.organizationId,
+      claim.relativeKey,
+      SESSION_ASSET_TTL_SECONDS,
+    );
+    return { url: `/files/${token}` };
+  }
 
   @Post('upload/documents')
   @ApiConsumes('multipart/form-data')

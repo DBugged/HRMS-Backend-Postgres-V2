@@ -1,4 +1,8 @@
-import { signFileToken, verifyFileToken } from './file-token';
+import {
+  signFileToken,
+  verifyFileToken,
+  verifyFileTokenIgnoringExpiry,
+} from './file-token';
 
 describe('signFileToken / verifyFileToken', () => {
   const ORIGINAL_ENV = process.env.FILE_TOKEN_SECRET;
@@ -18,6 +22,17 @@ describe('signFileToken / verifyFileToken', () => {
       organizationId: 'org-1',
       relativeKey: 'org-1/documents/abc.pdf',
     });
+  });
+
+  it('decodes an expired token only when expiry is ignored, and never a forged one', () => {
+    const expired = signFileToken('org-1', 'org-1/documents/abc.pdf', -60);
+    expect(verifyFileToken(expired)).toBeNull();
+    expect(verifyFileTokenIgnoringExpiry(expired)).toEqual({
+      organizationId: 'org-1',
+      relativeKey: 'org-1/documents/abc.pdf',
+    });
+    const [json] = expired.split('.');
+    expect(verifyFileTokenIgnoringExpiry(`${json}.forged`)).toBeNull();
   });
 
   it('rejects a tampered payload', () => {
