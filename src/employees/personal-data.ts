@@ -114,6 +114,99 @@ export function assertValidAddress(patch: Record<string, unknown>): void {
   }
 }
 
+// Every key the app itself reads or writes inside personalData. A patch may only add keys from this list (a key already
+// stored on the record is always allowed back, so a form that re-sends a whole older record never fails on it).
+export const KNOWN_PERSONAL_DATA_KEYS = new Set([
+  'aadharNumber',
+  'bankAccountHolderName',
+  'bankAccountNo',
+  'bankIFSC',
+  'bankName',
+  'bloodGroup',
+  'cancelledChequeUrl',
+  'currentAddress',
+  'currentCTC',
+  'currentOrganization',
+  'dateOfBirth',
+  'education',
+  'emergencyContact1Name',
+  'emergencyContact1Number',
+  'emergencyContact2Name',
+  'emergencyContact2Number',
+  'esicNumber',
+  'fatherContact',
+  'fatherName',
+  'fatherOccupation',
+  'fullNameAsPerGovtId',
+  'gender',
+  'maritalStatus',
+  'motherContact',
+  'motherName',
+  'motherOccupation',
+  'panNumber',
+  'passportNumber',
+  'personalEmail',
+  'pfNumber',
+  'previousEmployment',
+  'privacyAnonymizedAt',
+  'profileCompleted',
+  'profileCompletedAt',
+  'references',
+  'relevantExperience',
+  'totalExperience',
+  'uanNumber',
+]);
+
+// A single text value (a name, an address, a note) longer than this is not a profile entry, it is abuse or a mistake.
+export const PERSONAL_DATA_MAX_TEXT_LENGTH = 500;
+// Everything in one save, as JSON.
+export const PERSONAL_DATA_MAX_TOTAL_LENGTH = 20000;
+
+function longestText(value: unknown): { path: string; length: number } | null {
+  let worst: { path: string; length: number } | null = null;
+  const walk = (v: unknown, path: string) => {
+    if (typeof v === 'string') {
+      if (v.length > PERSONAL_DATA_MAX_TEXT_LENGTH) {
+        if (!worst || v.length > worst.length) {
+          worst = { path, length: v.length };
+        }
+      }
+    } else if (Array.isArray(v)) {
+      v.forEach((item, i) => walk(item, `${path}[${i}]`));
+    } else if (v && typeof v === 'object') {
+      for (const [k, item] of Object.entries(v)) walk(item, `${path}.${k}`);
+    }
+  };
+  walk(value, 'personalData');
+  return worst;
+}
+
+/** Rejects keys the app does not know and oversized values, before a personalData patch is merged. */
+export function assertPersonalDataShape(
+  patch: Record<string, unknown>,
+  current: Record<string, unknown>,
+): void {
+  const unknown = Object.keys(patch).filter(
+    (key) => !KNOWN_PERSONAL_DATA_KEYS.has(key) && !(key in current),
+  );
+  if (unknown.length > 0) {
+    throw new BadRequestException(
+      `Unknown personal data field(s): ${unknown.slice(0, 5).join(', ')}.`,
+    );
+  }
+  if (JSON.stringify(patch).length > PERSONAL_DATA_MAX_TOTAL_LENGTH) {
+    throw new BadRequestException(
+      `Personal data is too large (more than ${PERSONAL_DATA_MAX_TOTAL_LENGTH} characters in one save).`,
+    );
+  }
+  const worst = longestText(patch);
+  if (worst) {
+    throw new BadRequestException(
+      `${worst.path.replace('personalData.', '')} is too long: ${worst.length} characters, at most ${PERSONAL_DATA_MAX_TEXT_LENGTH} allowed.`,
+    );
+  }
+}
+
 export function assertValidIdentifiers(patch: Record<string, unknown>): void {
   assertValidAddress(patch);
   for (const [key, { pattern, label, example }] of Object.entries(

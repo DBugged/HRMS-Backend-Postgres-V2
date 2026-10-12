@@ -147,16 +147,25 @@ describe('Password rotation enforcement (e2e)', () => {
       .set('Authorization', `Bearer ${tempToken}`)
       .expect(403);
 
-    await request(app.getHttpServer())
+    // The token has to be issued in a later second than the temporary one: tokens carry whole seconds.
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    const changed = await request(app.getHttpServer())
       .post('/auth/change-password')
       .set('Authorization', `Bearer ${tempToken}`)
       .send({ currentPassword: tempPassword, newPassword: 'RotatedPass123!' })
       .expect(201);
 
-    // Same token as before the rotation — no re-login required.
+    // No re-login needed: the change hands back a fresh token for this session, and that one works.
+    const fresh = (changed.body as { accessToken: string }).accessToken;
+    await request(app.getHttpServer())
+      .get('/leaves')
+      .set('Authorization', `Bearer ${fresh}`)
+      .expect(200);
+
+    // The temporary token from before the change no longer works.
     await request(app.getHttpServer())
       .get('/leaves')
       .set('Authorization', `Bearer ${tempToken}`)
-      .expect(200);
+      .expect(401);
   });
 });

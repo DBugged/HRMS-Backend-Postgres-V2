@@ -682,6 +682,8 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     const body = res.body as OrgSettingsBody;
     expect(body.isInitialized).toBe(true);
     expect(body.initializedAt).not.toBeNull();
+    // finishing setup moves the saved wizard position to the last step (it used to stay where the last save left it)
+    expect(body.setupStep).toBe(7);
 
     const publicView = await request(app.getHttpServer())
       .get('/organizations/settings/public')

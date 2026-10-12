@@ -36,6 +36,17 @@ export class JwtAccessStrategy extends PassportStrategy(
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Session is no longer valid.');
     }
+    // A password change or reset ends every older session at once: an access token signed before it is refused
+    // (compared in whole seconds, the resolution of the token's own issue time).
+    if (
+      user.passwordChangedAt &&
+      typeof payload.iat === 'number' &&
+      payload.iat < Math.floor(user.passwordChangedAt.getTime() / 1000)
+    ) {
+      throw new UnauthorizedException(
+        'Your password was changed. Please sign in again.',
+      );
+    }
     return user; // becomes request.user (hash + reset fields omitted in the query)
   }
 }

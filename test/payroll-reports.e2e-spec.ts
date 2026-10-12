@@ -221,9 +221,14 @@ describe('Payroll Reports (e2e)', () => {
     expect(bank).toContain('MISSING BANK DETAILS');
   });
 
-  it('form16 requires financialYear', async () => {
+  it('form16 defaults to the current financial year when none is given, and still refuses a malformed one', async () => {
     await request(app.getHttpServer())
       .get('/reports/payroll/form16')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get('/reports/payroll/form16')
+      .query({ financialYear: '2026' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
   });

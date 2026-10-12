@@ -53,8 +53,15 @@ export function detectRasterExtension(
 // tab/CR) as a formula. Prefixing such strings with an apostrophe forces
 // them to be read as literal text (CSV/formula injection). Idempotent.
 const FORMULA_TRIGGER_RE = /^[=+\-@\t\r]/;
+// A lone dash ("no value"), a signed number ("-250", "+91 98765 43210") is data, not a formula: guarding it put a
+// visible apostrophe in front of every empty cell ("'-"). Anything with an operator or letters after the sign still is.
+const PLAIN_SIGNED_VALUE_RE = /^[+-]\s*[\d.,\s-]*$/;
 export function sanitizeSpreadsheetValue<T>(value: T): T {
-  if (typeof value === 'string' && FORMULA_TRIGGER_RE.test(value)) {
+  if (
+    typeof value === 'string' &&
+    FORMULA_TRIGGER_RE.test(value) &&
+    !PLAIN_SIGNED_VALUE_RE.test(value)
+  ) {
     return `'${value}` as T;
   }
   return value;

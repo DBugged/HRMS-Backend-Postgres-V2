@@ -489,7 +489,7 @@ describe('Performance Ratings (e2e)', () => {
       await request(app.getHttpServer())
         .patch(`/performance-ratings/${rating.id}/reject`)
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({})
+        .send({ reason: 'Not my call' })
         .expect(403);
     });
   });

@@ -75,9 +75,17 @@ export class ReportsService {
     organizationId: string,
   ): Promise<ReportPayload> {
     const where: Prisma.AttendanceWhereInput = { organizationId };
-    if (query.from || query.to) {
+    // No dates given used to mean every day anyone ever punched - thousands of rows and several seconds. It now means
+    // the current month, the same period the screen opens on; a caller who wants more names a from/to.
+    const now = new Date();
+    const from =
+      query.from ??
+      (query.to
+        ? undefined
+        : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`);
+    if (from || query.to) {
       where.date = {};
-      if (query.from) where.date.gte = query.from;
+      if (from) where.date.gte = from;
       if (query.to) where.date.lte = query.to;
     }
     if (actor.role === Role.MANAGER) {

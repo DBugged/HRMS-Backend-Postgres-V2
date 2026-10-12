@@ -275,9 +275,15 @@ describe('Payroll - payment tracking, bank file and journal (e2e)', () => {
     expect(res.text).toContain('TOTAL (balanced)');
     expect(res.text).toContain('Net Salary Payable');
     expect(res.text).toContain(String(run.netPay));
+    // No month/year: the month that has just ended (nothing to post for it here, but not an error).
     await request(app.getHttpServer())
       .get('/reports/payroll/journal')
       .query({ format: 'csv' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .get('/reports/payroll/journal')
+      .query({ month: 13, year: YEAR, format: 'csv' })
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(400);
   });

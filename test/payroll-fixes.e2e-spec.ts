@@ -150,9 +150,20 @@ describe('Payroll correctness fixes (e2e)', () => {
   });
 
   afterAll(async () => {
-    await prisma.$executeRawUnsafe(
-      'TRUNCATE TABLE "organizations" RESTART IDENTITY CASCADE',
-    );
+    // Background work started by the last requests (attendance recalculation after a punch) can still be writing:
+    // wait for it to settle, and retry if the clean-up collides with it.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    for (let attempt = 0; attempt < 4; attempt++) {
+      try {
+        await prisma.$executeRawUnsafe(
+          'TRUNCATE TABLE "organizations" RESTART IDENTITY CASCADE',
+        );
+        break;
+      } catch (err) {
+        if (attempt === 3) throw err;
+        await new Promise((resolve) => setTimeout(resolve, 700));
+      }
+    }
     await app.close();
   });
 
@@ -262,16 +273,6 @@ describe('Payroll correctness fixes (e2e)', () => {
       });
       const run = await calculate(id, 6, 2026);
       const earnings = run.payrolls[0].earnings;
-      console.log(
-        'DBG',
-        JSON.stringify(earnings),
-        JSON.stringify(
-          await prisma.salaryComponent.findFirst({
-            where: { organizationId, code: 'OVERTIME_PAY' },
-            select: { formula: true, calcType: true },
-          }),
-        ),
-      );
       expect(line(earnings, 'BASIC')).toBe(50000);
       // 4 h x 1.5 = 6 weighted hours x (1,00,000 / 208)
       expect(line(earnings, 'OVERTIME_PAY')).toBe(
@@ -728,6 +729,55 @@ describe('Payroll correctness fixes (e2e)', () => {
           where: { employeeId: id, date: '2026-08-12' },
         }),
       ).toBe(0);
+    });
+  });
+
+  describe('ESI report lists only people ESI is charged on', () => {
+    it('a high earner (ESI 0) is left out, a covered employee is in', async () => {
+      const high = await mkEmployee(
+        'Esi High Earner',
+        'pf-esi-high@example.test',
+        '2025-01-01',
+      );
+      const low = await mkEmployee(
+        'Esi Covered Person',
+        'pf-esi-low@example.test',
+        '2025-01-01',
+      );
+      await setStructure(
+        high,
+        [{ componentCode: 'BASIC', fixedAmount: 50000 }],
+        '2026-01-01',
+      );
+      await setStructure(
+        low,
+        [{ componentCode: 'BASIC', fixedAmount: 12000 }],
+        '2026-01-01',
+      );
+      await request(app.getHttpServer())
+        .put('/payroll-settings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ esiEnabled: true })
+        .expect(200);
+      const ids: string[] = [];
+      for (const id of [high, low]) {
+        await fillAttendance(id, 2026, 10);
+        ids.push((await calculate(id, 10, 2026)).payrolls[0].id);
+      }
+      for (const action of ['verify', 'approve', 'lock']) {
+        const res = await post('/payroll/bulk-transition').send({
+          ids,
+          action,
+        });
+        expect(res.status).toBe(201);
+      }
+      const report = await request(app.getHttpServer())
+        .get('/reports/payroll/esi?month=10&year=2026&format=csv')
+        .set('Authorization', `Bearer ${adminToken}`);
+      expect(report.status).toBe(200);
+      const text = report.text;
+      expect(text).toContain('Esi Covered Person');
+      expect(text).not.toContain('Esi High Earner');
     });
   });
 });

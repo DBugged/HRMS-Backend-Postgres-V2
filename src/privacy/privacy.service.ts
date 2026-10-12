@@ -6,6 +6,7 @@
 // Important: Published notice versions are immutable (a change = a new version row). Retention rules default to
 // periodMonths=null ("Not configured"); no legal period is ever invented. retentionReview() only REPORTS candidates
 // — nothing here deletes data. All queries are org-scoped through scopedPrisma (tenant guard).
+import { cleanNoticeText } from './privacy-text';
 import {
   BadRequestException,
   ConflictException,
@@ -345,8 +346,8 @@ export class PrivacyService {
           data: {
             organizationId,
             version,
-            title: dto.title,
-            body: dto.body,
+            title: cleanNoticeText(dto.title),
+            body: cleanNoticeText(dto.body),
             createdById: actor.id,
             ...(publish
               ? {
@@ -400,8 +401,8 @@ export class PrivacyService {
     await this.scopedPrisma.privacyNoticeVersion.updateMany({
       where: { id, organizationId: actor.organizationId, status: 'DRAFT' },
       data: {
-        ...(dto.title !== undefined && { title: dto.title }),
-        ...(dto.body !== undefined && { body: dto.body }),
+        ...(dto.title !== undefined && { title: cleanNoticeText(dto.title) }),
+        ...(dto.body !== undefined && { body: cleanNoticeText(dto.body) }),
         ...(dto.effectiveFrom !== undefined && {
           effectiveFrom: new Date(dto.effectiveFrom),
         }),
@@ -644,6 +645,14 @@ export class PrivacyService {
 
   // -- breaches --
 
+  // An incident is recorded after it was detected; a detection time in the future can only be a typo.
+  private assertNotFuture(detectedAt: string) {
+    // A little slack so a browser clock a minute ahead of the server is not refused.
+    if (new Date(detectedAt).getTime() > Date.now() + 5 * 60 * 1000) {
+      throw new BadRequestException('Detected at cannot be in the future.');
+    }
+  }
+
   async listBreaches(query: ListBreachesQueryDto, organizationId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
@@ -675,6 +684,7 @@ export class PrivacyService {
 
   async createBreach(dto: CreateBreachDto, actor: Caller, ctx: ReqCtx) {
     const organizationId = actor.organizationId;
+    this.assertNotFuture(dto.detectedAt);
     for (let attempt = 0; attempt < 3; attempt++) {
       const last = await this.scopedPrisma.breachIncident.findFirst({
         where: { organizationId },
@@ -720,6 +730,7 @@ export class PrivacyService {
       throw new ConflictException('A closed incident cannot be edited.');
     }
     const { detectedAt, ...rest } = dto;
+    if (detectedAt) this.assertNotFuture(detectedAt);
     await this.scopedPrisma.breachIncident.updateMany({
       where: { id, organizationId: actor.organizationId },
       data: {

@@ -30,7 +30,11 @@ import { issueDocumentNumber } from '../organizations/document-numbering';
 import { formatDateDisplay } from '../payroll/format-date';
 import { amountInWords } from '../payroll/number-to-words';
 import { LetterPdfService } from './letter-pdf.service';
-import { splitRichTextIntoParagraphs } from './rich-text-blocks';
+import {
+  editedTextToParagraphs,
+  editedTextToTitle,
+  splitRichTextIntoParagraphs,
+} from './rich-text-blocks';
 import { LetterTemplatesService } from '../letter-templates/letter-templates.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
@@ -518,11 +522,13 @@ export class LettersService {
     });
     const isCustomized = !!override;
     if (override) {
-      title = override.title;
-      paragraphs = override.body
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
+      // HR may have typed {{placeholders}} while editing: they are filled in here too, not printed as written.
+      title = editedTextToTitle(
+        this.letterTemplatesService.render(override.title, variables),
+      );
+      paragraphs = editedTextToParagraphs(
+        this.letterTemplatesService.render(override.body, variables),
+      );
     }
 
     return {
@@ -533,6 +539,7 @@ export class LettersService {
       title,
       paragraphs,
       isCustomized,
+      variables,
     };
   }
 
@@ -716,14 +723,18 @@ export class LettersService {
       companyName,
       title: computedTitle,
       paragraphs: computedParagraphs,
+      variables,
     } = await this.computeLetterContent(employeeId, key, actor, organizationId);
 
-    const title = overrides?.title?.trim() || computedTitle;
+    // The one-off edit made in the Send box: placeholders HR typed are filled in and stray HTML never reaches the PDF.
+    const title =
+      editedTextToTitle(
+        this.letterTemplatesService.render(overrides?.title ?? '', variables),
+      ) || computedTitle;
     const paragraphs = overrides?.body?.trim()
-      ? overrides.body
-          .split('\n')
-          .map((line) => line.trim())
-          .filter(Boolean)
+      ? editedTextToParagraphs(
+          this.letterTemplatesService.render(overrides.body, variables),
+        )
       : computedParagraphs;
 
     const documentNumber = await this.scopedPrisma.$transaction((tx) =>
@@ -781,7 +792,11 @@ export class LettersService {
 
     return {
       buffer,
-      filename: `${key}-${employee.employeeId}.pdf`,
+      // "DP-00005-Appointment Letter.pdf": the employee ID, then the letter's name as HR sees it.
+      filename: `${`${employee.employeeId}-${template.name}`
+        .replace(/[\\/:*?"<>|\r\n]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()}.pdf`,
     };
   }
 

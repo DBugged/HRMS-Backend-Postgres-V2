@@ -1,6 +1,7 @@
 // Purpose: The EPFO ECR upload file for a month — a JSON pre-upload check and the .txt download.
 // Important: ADMIN/HR only, audited as an export. A file with blocking issues (e.g. a member without a UAN) is
 //   refused unless the caller explicitly asks to leave those members out.
+import { previousMonthPeriod } from './report-period';
 import {
   BadRequestException,
   Controller,
@@ -26,17 +27,20 @@ import { EcrService } from './ecr.service';
 type Caller = Omit<User, 'password'>;
 
 export class EcrQueryDto {
+  // Not given: the month that has just ended (the one a return is filed for).
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(12)
-  month!: number;
+  month: number = previousMonthPeriod().month;
 
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(2000)
   @Max(2100)
-  year!: number;
+  year: number = previousMonthPeriod().year;
 
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')

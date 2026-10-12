@@ -1,16 +1,24 @@
 import { ApiPropertyOptional, ApiProperty } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import {
+  IsEnum,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { EmployeeDocumentCategory } from '@prisma/client';
 
 export class CreateEmployeeDocumentDto {
   @ApiProperty()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(500)
   docType!: string;
 
   @ApiProperty()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(1000)
   fileName!: string;
 
   // A relativeKey from POST /files/upload/documents.

@@ -609,6 +609,7 @@ export class AuthService {
         where: { id: user.id, organizationId: user.organizationId },
         data: {
           password: hashedPassword,
+          passwordChangedAt: new Date(),
           resetPasswordToken: null,
           resetPasswordExpires: null,
           mustChangePassword: false,
@@ -668,7 +669,11 @@ export class AuthService {
     await this.scopedPrisma.$transaction([
       this.scopedPrisma.user.updateMany({
         where: { id: user.id, organizationId: user.organizationId },
-        data: { password: hashedPassword, mustChangePassword: false },
+        data: {
+          password: hashedPassword,
+          mustChangePassword: false,
+          passwordChangedAt: new Date(),
+        },
       }),
       this.scopedPrisma.refreshToken.updateMany({
         where: {

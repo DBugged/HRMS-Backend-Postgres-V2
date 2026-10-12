@@ -488,8 +488,8 @@ describe('Employees + Departments (e2e)', () => {
       .expect(403);
   });
 
-  it('self-update strips locked fields silently — role/department/designation stay unchanged, name applies', async () => {
-    await request(app.getHttpServer())
+  it('self-update that tries to change locked fields is refused (403) naming them; the allowed name change alone applies', async () => {
+    const refused = await request(app.getHttpServer())
       .patch(`/employees/${engEmployeeId}`)
       .set('Authorization', `Bearer ${engEmployeeToken}`)
       .send({
@@ -498,6 +498,15 @@ describe('Employees + Departments (e2e)', () => {
         departmentId: salesDepartmentId,
         designation: 'CEO',
       })
+      .expect(403);
+    expect(JSON.stringify(refused.body)).toMatch(
+      /role.*departmentId.*designation|designation/,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/employees/${engEmployeeId}`)
+      .set('Authorization', `Bearer ${engEmployeeToken}`)
+      .send({ name: 'Renamed By Self' })
       .expect(200);
 
     const check = await request(app.getHttpServer())
@@ -550,14 +559,23 @@ describe('Employees + Departments (e2e)', () => {
       .expect(403);
   });
 
-  it('HR update applies locked fields but still cannot change designation (Admin-only)', async () => {
-    await request(app.getHttpServer())
+  it('HR update applies locked fields but a designation change is refused (Admin-only) and says so', async () => {
+    const refused = await request(app.getHttpServer())
       .patch(`/employees/${engEmployeeId}`)
       .set('Authorization', `Bearer ${hrToken}`)
       .send({
         departmentId: salesDepartmentId,
         designation: 'Should Not Apply',
       })
+      .expect(403);
+    expect(JSON.stringify(refused.body)).toMatch(
+      /Only an Admin can change Designation/,
+    );
+
+    await request(app.getHttpServer())
+      .patch(`/employees/${engEmployeeId}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ departmentId: salesDepartmentId })
       .expect(200);
 
     const check = await request(app.getHttpServer())

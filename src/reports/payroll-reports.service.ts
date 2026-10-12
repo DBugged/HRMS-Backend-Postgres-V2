@@ -6,6 +6,7 @@
 // than re-deriving current settings/statutory-overlay for the period, since a run's own snapshot is
 // authoritative for what applied at that time even if settings changed since. bankTransferReport's account
 // fields read from personalData.bank* (see that method).
+import { previousMonthPeriod } from './report-period';
 import { EXPORTABLE_RUNS, isExportableRun } from '../payroll/exportable-runs';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
@@ -287,8 +288,9 @@ export class PayrollReportsService {
     query: PayrollReportQueryDto,
     organizationId: string,
   ): Promise<ReportPayload> {
+    // A journal is for one month: not given, the month that has just ended.
     if (!query.month || !query.year) {
-      throw new BadRequestException('month and year are required.');
+      query = { ...query, ...previousMonthPeriod() };
     }
     const runs = await this.fetchRuns(query, organizationId);
     const debit = new Map<string, number>();
@@ -617,10 +619,15 @@ export class PayrollReportsService {
 
   // ESIC contribution report: IP number, days worked, total wages and both contributions per employee.
   async esiReport(query: PayrollReportQueryDto, organizationId: string) {
+    // Only people ESI is actually charged on: a run carries an ESI line (at 0) for every employee whose wages are above
+    // the ceiling, who are not covered and have no business in this report.
     const runs = (await this.fetchRuns(query, organizationId)).filter(
       (r) =>
-        findLine(r.deductions, SALARY_COMPONENT_CODES.ESI) ||
-        findLine(r.employerContributions, SALARY_COMPONENT_CODES.ESI_EMPLOYER),
+        lineAmount(r.deductions, SALARY_COMPONENT_CODES.ESI) > 0 ||
+        lineAmount(
+          r.employerContributions,
+          SALARY_COMPONENT_CODES.ESI_EMPLOYER,
+        ) > 0,
     );
     const ident = await this.identifiersFor(
       runs.map((r) => r.employeeId),

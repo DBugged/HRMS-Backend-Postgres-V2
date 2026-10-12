@@ -105,3 +105,42 @@ export function splitRichTextIntoParagraphs(body: string): string[] {
 
   return paragraphs;
 }
+
+// Inline formatting a letter's PDF knows how to draw. Anything else in text that reached the PDF would print as literal
+// "<span ...>" characters.
+const INLINE_RE = /<(\/?)(b|strong|i|em|u)\b[^>]*>/gi;
+const ANY_TAG_RE = /<\/?[a-zA-Z][^>]*>/g;
+const KEEP = '\u0001';
+
+/**
+ * Text HR typed or edited into a letter (a saved edit, or the one-off edit made when sending) as paragraphs for the
+ * PDF: line breaks and list items stay, bold/italic/underline tags are kept in their plain form, every other tag is
+ * dropped (it used to be printed literally) and HTML entities are decoded once (&amp; shows as &).
+ */
+export function editedTextToParagraphs(text: string): string[] {
+  const kept: string[] = [];
+  const masked = text
+    .replace(/<\s*br\s*\/?>|<\/\s*(p|li|div)\s*>/gi, '\n')
+    .replace(/<\s*li\b[^>]*>/gi, '•  ')
+    .replace(INLINE_RE, (_m, close: string, tag: string) => {
+      kept.push(`<${close}${tag.toLowerCase()}>`);
+      return `${KEEP}${kept.length - 1}${KEEP}`;
+    })
+    .replace(ANY_TAG_RE, '');
+  return masked
+    .split('\n')
+    .map((line) =>
+      decodeEntities(line)
+        .replace(
+          new RegExp(`${KEEP}(\\d+)${KEEP}`, 'g'),
+          (_m, i: string) => kept[Number(i)],
+        )
+        .trim(),
+    )
+    .filter(Boolean);
+}
+
+/** A letter title typed by HR: no tags, entities decoded. */
+export function editedTextToTitle(text: string): string {
+  return decodeEntities(text.replace(ANY_TAG_RE, '')).trim();
+}

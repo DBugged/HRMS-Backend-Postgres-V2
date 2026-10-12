@@ -74,7 +74,11 @@ export class LettersController {
       caller.organizationId,
     );
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
+    // Quoted (the name has spaces) plus the UTF-8 form for names that are not plain ASCII.
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${filename.replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(filename)}`,
+    );
     res.send(buffer);
   }
 

@@ -47,6 +47,7 @@ import {
   isPlainObject,
   validateSectionData,
   validateSetupStep,
+  WIZARD_STEP_COUNT,
 } from './org-settings-validation';
 import { RedisCacheService } from '../common/redis-cache';
 import {
@@ -92,6 +93,8 @@ const ATTENDANCE_PREFS_KEYS = [
   'defaultMinHoursForPresent',
   'defaultMinHoursForHalfDay',
   'weekendDays',
+  // 2nd/4th Saturday style weeks: [{ day: 6, occurrences: [2, 4] }]
+  'alternateWeeklyOffs',
   'defaultBreakMinutes',
 ] as const;
 
@@ -695,8 +698,22 @@ export class OrganizationSettingsService {
             Number.isInteger(d) && (d as number) >= 0 && (d as number) <= 6,
         )
       : (byWorkWeek[String(prefs.defaultWorkWeek)] ?? [0]);
+    // 2nd/4th Saturday style weeks: a day that is off only on some weeks of the month. It is never also an "always
+    // worked" day (the schedule rejects that overlap), so it leaves the working days and becomes an alternate off.
+    const alternateWeeklyOffs = (
+      Array.isArray(prefs.alternateWeeklyOffs)
+        ? (prefs.alternateWeeklyOffs as unknown[])
+        : []
+    ).filter(
+      (a): a is { day: number; occurrences: number[] } =>
+        isPlainObject(a) &&
+        Number.isInteger(a.day) &&
+        Array.isArray(a.occurrences) &&
+        a.occurrences.length > 0,
+    );
+    const alternateDays = alternateWeeklyOffs.map((a) => a.day);
     const workingDays = [0, 1, 2, 3, 4, 5, 6].filter(
-      (d) => !weekend.includes(d),
+      (d) => !weekend.includes(d) && !alternateDays.includes(d),
     );
     if (workingDays.length === 0) return;
     // The schedule's break comes from the organization's Default Break. Not set yet = nothing to create from (it used
@@ -714,7 +731,7 @@ export class OrganizationSettingsService {
         endTime: end,
         // Whole minutes (the column is an integer, while the setting allows e.g. 1.5).
         breakMinutes: Math.round(breakMinutes),
-        alternateWeeklyOffs: [],
+        alternateWeeklyOffs,
       },
     });
   }
@@ -742,6 +759,9 @@ export class OrganizationSettingsService {
         isInitialized: true,
         initializedAt: new Date(),
         initializedById: actorId,
+        // Setup is finished, so the wizard's saved position moves to the last step (it used to stay wherever the
+        // admin last saved a section, e.g. step 4).
+        setupStep: WIZARD_STEP_COUNT,
       },
     });
 

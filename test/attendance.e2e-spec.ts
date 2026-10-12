@@ -1135,16 +1135,17 @@ describe('Attendance (e2e)', () => {
         .expect(201);
     });
 
-    it('a plain employee cannot set requireWorkLocationForPunch on themselves', async () => {
+    it('a plain employee cannot set requireWorkLocationForPunch on themselves (403, and nothing changes)', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${noDeptEmployeeId}`)
         .set('Authorization', `Bearer ${noDeptEmployeeToken}`)
         .send({ requireWorkLocationForPunch: true })
-        .expect(200);
-      expect(
-        (res.body as { requireWorkLocationForPunch: boolean })
-          .requireWorkLocationForPunch,
-      ).toBe(false);
+        .expect(403);
+      expect(JSON.stringify(res.body)).toMatch(/requireWorkLocationForPunch/);
+      const row = await prisma.user.findFirstOrThrow({
+        where: { id: noDeptEmployeeId },
+      });
+      expect(row.requireWorkLocationForPunch).toBe(false);
     });
   });
 

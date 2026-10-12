@@ -279,6 +279,34 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       );
     }
   }
+  if (p.alternateWeeklyOffs !== undefined) {
+    const alt = p.alternateWeeklyOffs;
+    const wellFormed =
+      Array.isArray(alt) &&
+      alt.every(
+        (a) =>
+          isPlainObject(a) &&
+          typeof a.day === 'number' &&
+          Number.isInteger(a.day) &&
+          a.day >= 0 &&
+          a.day <= 6 &&
+          Array.isArray(a.occurrences) &&
+          a.occurrences.length > 0 &&
+          a.occurrences.every(
+            (o: unknown) =>
+              typeof o === 'number' && Number.isInteger(o) && o >= 1 && o <= 5,
+          ),
+      );
+    if (!wellFormed) {
+      bad(
+        `${path('alternateWeeklyOffs')} must be a list of { day: 0-6, occurrences: [1-5, ...] } (for example 2nd and 4th Saturday: { day: 6, occurrences: [2, 4] }).`,
+      );
+    }
+    const days = (alt as { day: number }[]).map((a) => a.day);
+    if (new Set(days).size !== days.length) {
+      bad(`${path('alternateWeeklyOffs')} lists the same day more than once.`);
+    }
+  }
   if (
     p.requireSelfieForPunch !== undefined &&
     typeof p.requireSelfieForPunch !== 'boolean'

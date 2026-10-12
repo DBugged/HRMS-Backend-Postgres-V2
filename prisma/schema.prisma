@@ -415,6 +415,9 @@ model User {
   mustChangePassword Boolean   @default(true)
   emailVerified      Boolean   @default(true)
   lastLoginAt        DateTime?
+  // When the password was last changed or reset. An access token issued before it stops working immediately (see
+  // JwtAccessStrategy), instead of staying valid until its own expiry.
+  passwordChangedAt  DateTime?
 
   // Standing opt-out from bulk payroll runs (PayrollService.targetEmployees)
   // — for someone tracked in the HRMS (attendance/leave) but never actually
@@ -3379,6 +3382,8 @@ model BreachIncident {
 
   seqNo              Int
   incidentNo         String
+  // Short headline for the register (what happened, in a few words).
+  title              String                   @default("")
   detectedAt         DateTime
   reportedBy         String                   @default("")
   affectedSystem     String                   @default("")

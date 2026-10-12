@@ -60,3 +60,34 @@ export function stripLockedFields(
 
   return clean;
 }
+
+const asComparable = (v: unknown): string => {
+  if (v === null || v === undefined) return '';
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(v)) {
+    return v.slice(0, 10);
+  }
+  return String(v);
+};
+
+/**
+ * The fields the caller sent that stripLockedFields() would throw away AND that really differ from what is stored. A
+ * client that re-sends a locked field with its current value (a form posting everything back) is not trying to change
+ * it, so that is not an attempt. Used to answer with a clear 403 instead of a "200 OK" for a change that never happened.
+ */
+export function lockedFieldAttempts(
+  dto: UpdateEmployeeDto,
+  current: Record<string, unknown>,
+  actorRole: Role,
+): string[] {
+  const stripped = stripLockedFields(dto, actorRole);
+  const attempts: string[] = [];
+  for (const key of Object.keys(dto) as (keyof UpdateEmployeeDto)[]) {
+    if (dto[key] === undefined) continue;
+    if (key in stripped) continue;
+    if (asComparable(dto[key]) !== asComparable(current[key])) {
+      attempts.push(key);
+    }
+  }
+  return attempts;
+}

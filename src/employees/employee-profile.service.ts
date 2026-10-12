@@ -46,6 +46,7 @@ import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
 import {
   areMandatoryDocumentsUploaded,
   assertValidDates,
+  assertPersonalDataShape,
   assertValidIdentifiers,
   mergePersonalData,
 } from './personal-data';
@@ -234,6 +235,7 @@ export class EmployeeProfileService {
         );
       }
     }
+    assertPersonalDataShape(patch, before);
     assertValidIdentifiers(patch);
     assertValidDates(patch);
     // One PAN / UAN / Aadhaar / ESIC / PF / bank account / passport number belongs to one person. Compared after
@@ -437,14 +439,84 @@ export class EmployeeProfileService {
   // employee's role/designation/department changes in one place rather
   // than one profile at a time.
   async listAllRoleHistory(organizationId: string) {
-    return this.scopedPrisma.employeeRoleHistory.findMany({
+    const rows = await this.scopedPrisma.employeeRoleHistory.findMany({
       where: { organizationId },
       include: {
-        employee: { select: { id: true, name: true, employeeId: true } },
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            role: true,
+            department: { select: { name: true } },
+          },
+        },
         changedBy: { select: { id: true, name: true } },
       },
       orderBy: { changedAt: 'desc' },
       take: 500,
+    });
+    if (rows.length === 0) return [];
+
+    // Department ids in the history are shown as names.
+    const departmentIds = [
+      ...new Set(
+        rows.flatMap((r) => [r.previousDepartmentId, r.newDepartmentId]),
+      ),
+    ].filter((id): id is string => !!id);
+    const departments = departmentIds.length
+      ? await this.scopedPrisma.department.findMany({
+          where: { organizationId, id: { in: departmentIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const departmentName = new Map(departments.map((d) => [d.id, d.name]));
+
+    // The effective date, reason and whether it was a promotion live on the movement recorded by the same save
+    // (same employee, same person, moments apart).
+    const movements = await this.scopedPrisma.employeeMovement.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: [...new Set(rows.map((r) => r.employeeId))] },
+      },
+      select: {
+        employeeId: true,
+        changedById: true,
+        type: true,
+        effectiveDate: true,
+        reason: true,
+        createdAt: true,
+      },
+    });
+    const SAME_SAVE_MS = 15_000;
+    return rows.map((r) => {
+      const movement = movements
+        .filter(
+          (m) =>
+            m.employeeId === r.employeeId &&
+            m.changedById === r.changedById &&
+            Math.abs(m.createdAt.getTime() - r.changedAt.getTime()) <=
+              SAME_SAVE_MS,
+        )
+        .sort(
+          (a, b) =>
+            Math.abs(a.createdAt.getTime() - r.changedAt.getTime()) -
+            Math.abs(b.createdAt.getTime() - r.changedAt.getTime()),
+        );
+      const promotion = movement.find((m) => m.type === 'PROMOTION');
+      const picked = promotion ?? movement[0];
+      return {
+        ...r,
+        previousDepartmentName: r.previousDepartmentId
+          ? (departmentName.get(r.previousDepartmentId) ?? null)
+          : null,
+        newDepartmentName: r.newDepartmentId
+          ? (departmentName.get(r.newDepartmentId) ?? null)
+          : null,
+        effectiveDate: picked?.effectiveDate ?? null,
+        reason: picked?.reason ?? null,
+        isPromotion: !!promotion,
+      };
     });
   }
 

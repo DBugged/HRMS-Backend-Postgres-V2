@@ -61,6 +61,9 @@ export interface OrganizationAttendancePrefs {
   defaultMinHoursForPresent?: number;
   defaultMinHoursForHalfDay?: number;
   weekendDays?: number[];
+  // Days that are off only on some weeks of the month (2nd/4th Saturday): [{ day: 6, occurrences: [2, 4] }]. Such a day
+  // is listed in weekendDays too (the wizard keeps it there); here it becomes the occurrence-limited entry.
+  alternateWeeklyOffs?: { day: number; occurrences: number[] }[];
   defaultBreakMinutes?: number;
   // Org-wide default for departments with no explicit override — there's
   // no per-department UI gap here the way there is for weeklyOffs, this
@@ -92,6 +95,29 @@ function isWeeklyOffEntry(v: unknown): v is WeeklyOffEntry {
       (o) => typeof o === 'number',
     )
   );
+}
+
+// A day that is off only on some weeks (2nd/4th Saturday) replaces its "off every week" entry.
+function withAlternateOffs(
+  offs: WeeklyOffEntry[],
+  alternates: unknown,
+): WeeklyOffEntry[] {
+  if (!Array.isArray(alternates) || alternates.length === 0) return offs;
+  const valid = alternates.filter(
+    (a): a is { day: number; occurrences: number[] } =>
+      !!a &&
+      typeof a === 'object' &&
+      Number.isInteger((a as { day: unknown }).day) &&
+      Array.isArray((a as { occurrences: unknown }).occurrences) &&
+      (a as { occurrences: unknown[] }).occurrences.length > 0 &&
+      (a as { occurrences: unknown[] }).occurrences.every(
+        (o) => Number.isInteger(o) && (o as number) >= 1 && (o as number) <= 5,
+      ),
+  );
+  if (valid.length === 0) return offs;
+  const altDays = new Set(valid.map((a) => a.day));
+  const plain = offs.filter((o) => typeof o !== 'number' || !altDays.has(o));
+  return [...plain, ...valid];
 }
 
 function asWeeklyOffArray(
@@ -157,9 +183,9 @@ function resolveShiftConfigWithoutZone(
     // Org-level default weekend stays the simple day-list shape — alternate
     // Saturday-style patterns are only configurable per-department (via
     // Work Schedules), not as an org-wide default.
-    weeklyOffs: asWeeklyOffArray(
-      orgPrefs?.weekendDays,
-      HARDCODED_FALLBACK.weeklyOffs,
+    weeklyOffs: withAlternateOffs(
+      asWeeklyOffArray(orgPrefs?.weekendDays, HARDCODED_FALLBACK.weeklyOffs),
+      orgPrefs?.alternateWeeklyOffs,
     ),
     breakMinutes:
       orgPrefs?.defaultBreakMinutes ?? HARDCODED_FALLBACK.breakMinutes,

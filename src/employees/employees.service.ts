@@ -54,7 +54,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
-import { stripLockedFields } from './employee-field-lock';
+import { lockedFieldAttempts, stripLockedFields } from './employee-field-lock';
 import { mergePersonalData } from './personal-data';
 import {
   Actor,
@@ -891,6 +891,18 @@ export class EmployeesService {
       isPromotion,
       ...updateFields
     } = dto;
+    const blocked = lockedFieldAttempts(
+      updateFields,
+      before as unknown as Record<string, unknown>,
+      actor.role,
+    );
+    if (blocked.length > 0) {
+      throw new ForbiddenException(
+        actor.role === Role.HR && blocked.every((f) => f === 'designation')
+          ? 'Only an Admin can change Designation.'
+          : `You are not allowed to change: ${blocked.join(', ')}. Ask HR or an Admin to update it.`,
+      );
+    }
     const clean = stripLockedFields(updateFields, actor.role);
     await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
     await this.assertOrgReferences(

@@ -33,23 +33,27 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { sendReportBranded } from './report-branding';
+import { currentFinancialYear, previousMonthPeriod } from './report-period';
 import type { ReportFormat } from './report-export';
 import { StatutoryReturnsService } from './statutory-returns.service';
 
 type Caller = Omit<User, 'password'>;
 
 export class ReturnQueryDto {
+  // Not given: the month that has just ended (the one a return is filed for).
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(12)
-  month!: number;
+  month: number = previousMonthPeriod().month;
 
+  @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(2000)
   @Max(2100)
-  year!: number;
+  year: number = previousMonthPeriod().year;
 
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true')
@@ -62,11 +66,12 @@ export class ReturnQueryDto {
 }
 
 export class BonusQueryDto {
-  // Financial year as YYYY-YY, e.g. 2026-27.
+  // Financial year as YYYY-YY, e.g. 2026-27. Not given: the current one.
+  @IsOptional()
   @Matches(/^\d{4}-\d{2}$/, {
     message: 'financialYear must look like 2026-27.',
   })
-  financialYear!: string;
+  financialYear: string = currentFinancialYear();
 }
 
 @ApiTags('reports')

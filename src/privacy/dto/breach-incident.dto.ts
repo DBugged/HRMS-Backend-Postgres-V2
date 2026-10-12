@@ -18,6 +18,11 @@ import {
 } from 'class-validator';
 
 export class CreateBreachDto {
+  @ApiPropertyOptional({ description: 'Short headline for the incident.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
   @ApiProperty() @IsDateString() detectedAt!: string;
   @ApiPropertyOptional()
   @IsOptional()
@@ -70,6 +75,11 @@ export class CreateBreachDto {
 }
 
 export class UpdateBreachDto {
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() detectedAt?: string;
   @ApiPropertyOptional()
   @IsOptional()
