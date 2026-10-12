@@ -94,4 +94,25 @@ describe('document numbering {EMPID}', () => {
       ),
     ).not.toThrow();
   });
+
+  it('allows no running number when the format carries the Employee ID', () => {
+    expect(() =>
+      validateSectionData(numbering('payslip', 'PS-{YYYYMM}-{EMPID}')),
+    ).not.toThrow();
+  });
+
+  it('refuses no running number without the Employee ID, and for the Employee ID itself', () => {
+    expect(() =>
+      validateSectionData(numbering('payslip', 'PS-{YYYYMM}')),
+    ).toThrow(/needs a counter/);
+    expect(() =>
+      validateSectionData(numbering('employeeId', 'DEMO')),
+    ).toThrow(/must contain a counter/);
+  });
+
+  it('refuses two counters', () => {
+    expect(() =>
+      validateSectionData(numbering('payslip', 'PS-{0001}-{0002}')),
+    ).toThrow(/only one counter/);
+  });
 });

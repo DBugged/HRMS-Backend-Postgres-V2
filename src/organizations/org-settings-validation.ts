@@ -346,10 +346,21 @@ function validateDocumentNumbering(n: Record<string, unknown>) {
       ) {
         bad(`${where}.format cannot contain {EMPID} or {EMPNAME}.`);
       }
-      if (tokens.filter((t) => /^\d+$/.test(t)).length !== 1) {
-        bad(
-          `${where}.format must contain exactly one counter such as {00001}.`,
-        );
+      // At most one running number. A format may leave it out ("None") only when it carries the Employee ID, which is
+      // then what tells two documents apart; the Employee ID's own format always needs it (it is the sequence itself).
+      const counters = tokens.filter((t) => /^\d+$/.test(t)).length;
+      if (counters > 1) {
+        bad(`${where}.format can contain only one counter such as {00001}.`);
+      }
+      if (counters === 0) {
+        if (type === 'employeeId') {
+          bad(`${where}.format must contain a counter such as {00001}.`);
+        }
+        if (!tokens.includes('EMPID')) {
+          bad(
+            `${where}.format needs a counter such as {00001} or {EMPID}, otherwise two documents would get the same number.`,
+          );
+        }
       }
       if (/[{}]/.test(format.replace(/\{[^}]*\}/g, ''))) {
         bad(`${where}.format has an unmatched brace.`);
