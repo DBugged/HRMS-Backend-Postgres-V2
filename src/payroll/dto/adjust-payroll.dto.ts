@@ -1,10 +1,11 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
   IsBoolean,
   IsNumber,
   IsOptional,
   IsString,
+  MinLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -45,10 +46,13 @@ export class AdjustPayrollDto {
   @Type(() => PayrollLineDto)
   deductions?: PayrollLineDto[];
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  // Mandatory: a manual change to money must say why (it is kept in the audit trail with the before and after).
+  @ApiProperty({
+    description: 'Why the payroll is being edited (min 5 characters)',
+  })
   @IsString()
-  reason?: string;
+  @MinLength(5)
+  reason!: string;
 
   // Manual correction to this one run's LOP day count — calculate() derives
   // it from attendance/leave records, but a real-world exception (a missed

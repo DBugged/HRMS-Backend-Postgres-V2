@@ -345,4 +345,60 @@ describe('Payroll controls (e2e)', () => {
       await get(`/payroll/${run.id}/revisions/0/pdf`, otherToken).expect(404);
     });
   });
+
+  describe('C-4 - a manual edit must say why and is recorded with before and after', () => {
+    it('no reason or an unknown component is refused; a valid edit is audited with the figures that moved', async () => {
+      await post('/payroll/calculate')
+        .send({ month: 7, year: YEAR, employeeId })
+        .expect(201);
+      const run = await runOf(7);
+
+      await patch(`/payroll/${run.id}`)
+        .send({ earnings: [{ code: 'BASIC', name: 'Basic', amount: 31000 }] })
+        .expect(400);
+      await patch(`/payroll/${run.id}`)
+        .send({
+          earnings: [{ code: 'BASIC', name: 'Basic', amount: 31000 }],
+          reason: 'x',
+        })
+        .expect(400);
+      const unknown = await patch(`/payroll/${run.id}`)
+        .send({
+          earnings: [{ code: 'MADE_UP', name: 'Made up', amount: 5000 }],
+          reason: 'extra payment agreed verbally',
+        })
+        .expect(400);
+      expect(JSON.stringify(unknown.body)).toContain('MADE_UP');
+      expect((await runOf(7)).grossSalary).toBe(run.grossSalary);
+
+      await patch(`/payroll/${run.id}`)
+        .send({
+          earnings: [{ code: 'BASIC', name: 'Basic', amount: 31000 }],
+          reason: 'Basic corrected after revision letter',
+        })
+        .expect(200);
+      const entry = await prisma.auditLog.findFirstOrThrow({
+        where: { targetId: run.id, action: 'PAYROLL_ADJUSTED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      const details = entry.details as {
+        reason: string;
+        before: { grossSalary: number };
+        after: { grossSalary: number };
+        changedLines: { code: string; from: number; to: number }[];
+      };
+      expect(details.reason).toBe('Basic corrected after revision letter');
+      expect(details.before.grossSalary).toBe(run.grossSalary);
+      expect(details.after.grossSalary).toBe(31000);
+      expect(details.changedLines).toContainEqual(
+        expect.objectContaining({
+          code: 'BASIC',
+          from: (
+            run.earnings as unknown as { code: string; amount: number }[]
+          ).find((l) => l.code === 'BASIC')?.amount,
+          to: 31000,
+        }),
+      );
+    });
+  });
 });

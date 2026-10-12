@@ -242,7 +242,7 @@ describe('Payroll - supplementary (off-cycle) runs (e2e)', () => {
     const adjust = await request(app.getHttpServer())
       .patch(`/payroll/${second.id}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ lopDaysOverride: 1 })
+      .send({ lopDaysOverride: 1, reason: 'try to adjust a supplementary run' })
       .expect(400);
     expect(JSON.stringify(adjust.body)).toContain('supplementary');
     // Paid one: refused.

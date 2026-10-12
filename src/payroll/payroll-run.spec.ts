@@ -66,12 +66,16 @@ function build(employees: Row[], runs: Row[] = [], extraPrisma: Row = {}) {
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
     payrollRun: {
       findMany: async (a: Row) => store.filter((r) => match(r, a?.where)),
-      findFirst: async (a: Row) =>
-        store.find((r) => match(r, a?.where)) ?? null,
+      // Copies, like a real read: the row is updated in place later and a caller holding the earlier read must keep
+      // seeing what it read (adjust() compares before and after).
+      findFirst: async (a: Row) => {
+        const r = store.find((x) => match(x, a?.where));
+        return r ? { ...r } : null;
+      },
       findFirstOrThrow: async (a: Row) => {
         const r = store.find((x) => match(x, a?.where));
         if (!r) throw new Error('not found');
-        return r;
+        return { ...r };
       },
       createMany: async (a: Row) => {
         a.data.forEach((d: Row) =>
@@ -435,6 +439,10 @@ describe('payroll manual adjustment', () => {
   });
   const setup = (run: Row) => {
     const b = build([emp('emp')], [run]);
+    const scoped = (b.service as never as Row).scopedPrisma as Row;
+    scoped.salaryComponent = scoped.salaryComponent ?? {
+      findMany: async () => [],
+    };
     (b.service as never as Row).payrollSettingsService = {
       getOrCreate: async () => ({
         roundingRule: 'nearest',
@@ -448,7 +456,10 @@ describe('payroll manual adjustment', () => {
     const { service, store } = setup(stored());
     await service.adjust(
       'r1',
-      { deductions: [{ code: 'PF', name: 'PF', amount: 1000 }] } as never,
+      {
+        deductions: [{ code: 'PF', name: 'PF', amount: 1000 }],
+        reason: 'correcting the PF figure',
+      } as never,
       admin,
       'org',
     );
@@ -465,7 +476,10 @@ describe('payroll manual adjustment', () => {
     await expect(
       service.adjust(
         'r1',
-        { deductions: [{ code: 'PF', name: 'PF', amount: 99999 }] } as never,
+        {
+          deductions: [{ code: 'PF', name: 'PF', amount: 99999 }],
+          reason: 'correcting the PF figure',
+        } as never,
         admin,
         'org',
       ),
@@ -476,18 +490,97 @@ describe('payroll manual adjustment', () => {
     const { service, store } = setup(stored({ status: 'VERIFIED' }));
     await service.adjust(
       'r1',
-      { deductions: [{ code: 'PF', name: 'PF', amount: 1000 }] } as never,
+      {
+        deductions: [{ code: 'PF', name: 'PF', amount: 1000 }],
+        reason: 'correcting the PF figure',
+      } as never,
       admin,
       'org',
     );
     expect(store[0].status).toBe('CALCULATED');
   });
 
+  it('an edit without a reason is refused', async () => {
+    const { service } = setup(stored());
+    await expect(
+      service.adjust('r1', { deductions: [] } as never, admin, 'org'),
+    ).rejects.toThrow(/reason/);
+    await expect(
+      service.adjust(
+        'r1',
+        { deductions: [], reason: ' ok ' } as never,
+        admin,
+        'org',
+      ),
+    ).rejects.toThrow(/reason/);
+  });
+
+  it('a line with an unknown salary component code is refused', async () => {
+    const { service } = setup(stored());
+    await expect(
+      service.adjust(
+        'r1',
+        {
+          earnings: [{ code: 'MADE_UP', name: 'Made up', amount: 5000 }],
+          reason: 'extra payment',
+        } as never,
+        admin,
+        'org',
+      ),
+    ).rejects.toThrow(/Unknown salary component: MADE_UP/);
+  });
+
+  it('a one-off CUSTOM_ line added by hand is accepted', async () => {
+    const { service, store } = setup(stored());
+    await service.adjust(
+      'r1',
+      {
+        earnings: [
+          { code: 'BASIC', name: 'Basic', amount: 42000 },
+          { code: 'CUSTOM_1700000000000', name: 'Spot award', amount: 2000 },
+        ],
+        reason: 'spot award approved by the CEO',
+      } as never,
+      admin,
+      'org',
+    );
+    expect(store[0].grossSalary).toBe(44000);
+  });
+
+  it('the audit entry records the reason and the figures before and after', async () => {
+    const { service, audit } = setup(
+      stored({ grossSalary: 42000, totalDeductions: 1800, netPay: 40200 }),
+    );
+    await service.adjust(
+      'r1',
+      {
+        deductions: [{ code: 'PF', name: 'PF', amount: 1000 }],
+        reason: 'PF base corrected',
+      } as never,
+      admin,
+      'org',
+    );
+    expect(audit.at(-1)).toMatchObject({
+      action: 'PAYROLL_ADJUSTED',
+      details: {
+        reason: 'PF base corrected',
+        before: { grossSalary: 42000, totalDeductions: 1800, netPay: 40200 },
+        after: { grossSalary: 42000, totalDeductions: 1000, netPay: 41000 },
+        changedLines: [{ code: 'PF', kind: 'deduction', from: 1800, to: 1000 }],
+      },
+    });
+  });
+
   it('Approved, Locked and Paid runs cannot be edited', async () => {
     for (const status of ['APPROVED', 'LOCKED', 'PAID']) {
       const { service } = setup(stored({ status }));
       await expect(
-        service.adjust('r1', { deductions: [] } as never, admin, 'org'),
+        service.adjust(
+          'r1',
+          { deductions: [], reason: 'correcting the figures' } as never,
+          admin,
+          'org',
+        ),
       ).rejects.toThrow(/can no longer be edited/);
     }
   });
@@ -497,14 +590,19 @@ describe('payroll manual adjustment', () => {
     await expect(
       own.service.adjust(
         'r1',
-        { deductions: [] } as never,
+        { deductions: [], reason: 'correcting the figures' } as never,
         hrUser('me'),
         'org',
       ),
     ).rejects.toThrow(/your own payslip/);
     const none = setup(stored());
     await expect(
-      none.service.adjust('ghost', { deductions: [] } as never, admin, 'org'),
+      none.service.adjust(
+        'ghost',
+        { deductions: [], reason: 'correcting the figures' } as never,
+        admin,
+        'org',
+      ),
     ).rejects.toThrow(/not found/);
   });
 
@@ -519,6 +617,7 @@ describe('payroll manual adjustment', () => {
       'r1',
       {
         deductions: [{ code: 'INCOME_TAX', name: 'TDS', amount: 800 }],
+        reason: 'TDS corrected after proof',
       } as never,
       admin,
       'org',
@@ -534,7 +633,10 @@ describe('payroll manual adjustment', () => {
     const { service, store } = setup(stored());
     await service.adjust(
       'r1',
-      { earnings: [{ code: 'BASIC', name: 'Basic', amount: 40000 }] } as never,
+      {
+        earnings: [{ code: 'BASIC', name: 'Basic', amount: 40000 }],
+        reason: 'basic corrected',
+      } as never,
       admin,
       'org',
     );

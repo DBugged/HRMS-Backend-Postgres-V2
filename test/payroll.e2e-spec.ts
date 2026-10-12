@@ -751,7 +751,10 @@ describe('Payroll (e2e)', () => {
       const res = await request(app.getHttpServer())
         .patch(`/payroll/${runId}`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ earnings: [{ code: 'BASIC', name: 'Basic', amount: 51000 }] })
+        .send({
+          earnings: [{ code: 'BASIC', name: 'Basic', amount: 51000 }],
+          reason: 'Corrected after the run was verified',
+        })
         .expect(200);
       expect((res.body as PayrollRunBody).status).toBe('CALCULATED');
 

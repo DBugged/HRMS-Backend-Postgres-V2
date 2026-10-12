@@ -456,6 +456,35 @@ const REVISION_FIELDS = [
   'gradeLevel',
 ] as const;
 
+// Lines whose amount differs between two versions of a payroll, as {code, kind, from, to} (a missing line counts as 0).
+export function changedPayrollLines(
+  oldEarnings: { code: string; amount: number }[],
+  newEarnings: { code: string; amount: number }[],
+  oldDeductions: { code: string; amount: number }[],
+  newDeductions: { code: string; amount: number }[],
+): { code: string; kind: 'earning' | 'deduction'; from: number; to: number }[] {
+  const diff = (
+    kind: 'earning' | 'deduction',
+    before: { code: string; amount: number }[],
+    after: { code: string; amount: number }[],
+  ) => {
+    const was = new Map(before.map((l) => [l.code, Number(l.amount) || 0]));
+    const now = new Map(after.map((l) => [l.code, Number(l.amount) || 0]));
+    return [...new Set([...was.keys(), ...now.keys()])]
+      .filter((code) => (was.get(code) ?? 0) !== (now.get(code) ?? 0))
+      .map((code) => ({
+        code,
+        kind,
+        from: was.get(code) ?? 0,
+        to: now.get(code) ?? 0,
+      }));
+  };
+  return [
+    ...diff('earning', oldEarnings ?? [], newEarnings ?? []),
+    ...diff('deduction', oldDeductions ?? [], newDeductions ?? []),
+  ];
+}
+
 export function revisionSnapshotOf(run: PayrollRun): Record<string, unknown> {
   const snapshot: Record<string, unknown> = {};
   for (const key of REVISION_FIELDS) snapshot[key] = run[key] ?? null;
@@ -2891,6 +2920,12 @@ export class PayrollService {
     assertNotFinalSettlementRun(run);
     assertNotOwnPayroll(actor, run.employeeId, 'edit');
     assertNotSupplementaryRun(run, 'edited');
+    // The DTO enforces this too; checked here as well so no caller can edit money without saying why.
+    if ((dto.reason ?? '').trim().length < 5) {
+      throw new BadRequestException(
+        'A reason (at least 5 characters) is required to edit a payroll.',
+      );
+    }
     if (
       run.status === PayrollRunStatus.APPROVED ||
       run.status === PayrollRunStatus.LOCKED ||
@@ -2923,6 +2958,31 @@ export class PayrollService {
       run.earnings) as unknown as PayrollLineDto[];
     const baselineDeductions = (recalculated?.deductions ??
       run.deductions) as unknown as PayrollLineDto[];
+
+    // A line may only use a salary component the organisation has defined, one already on this run (arrears, leave
+    // encashment and the like), or be a one-off CUSTOM_ line added by hand: any other invented code would put money on
+    // the payslip that no register, report or statutory return knows how to classify.
+    if (dto.earnings || dto.deductions) {
+      const known = new Set<string>([
+        ...baselineEarnings.map((l) => l.code),
+        ...baselineDeductions.map((l) => l.code),
+        ...(
+          await this.scopedPrisma.salaryComponent.findMany({
+            where: { organizationId },
+            select: { code: true },
+          })
+        ).map((c) => c.code),
+      ]);
+      // CUSTOM_* is the code the edit screen gives a one-off line added by hand ("Add earning" / "Add deduction").
+      const unknown = [...(dto.earnings ?? []), ...(dto.deductions ?? [])]
+        .map((l) => l.code)
+        .filter((code) => !known.has(code) && !code.startsWith('CUSTOM_'));
+      if (unknown.length > 0) {
+        throw new BadRequestException(
+          `Unknown salary component${unknown.length > 1 ? 's' : ''}: ${[...new Set(unknown)].join(', ')}. Use a component defined in Salary Components, or one already on this payroll.`,
+        );
+      }
+    }
 
     // The org's configured rounding rule/decimals — not a hardcoded
     // 'nearest'/2 — so a manually-adjusted run rounds the same way a
@@ -3058,7 +3118,20 @@ export class PayrollService {
       targetId: id,
       details: {
         netPay,
-        reason: dto.reason ?? '',
+        reason: dto.reason.trim(),
+        // What the edit changed, so the trail shows the money moving and not just the new total.
+        before: {
+          grossSalary: run.grossSalary,
+          totalDeductions: run.totalDeductions,
+          netPay: run.netPay,
+        },
+        after: { grossSalary, totalDeductions, netPay },
+        changedLines: changedPayrollLines(
+          run.earnings as unknown as PayrollLineDto[],
+          earnings,
+          run.deductions as unknown as PayrollLineDto[],
+          deductions,
+        ),
         ...(dto.lopDaysOverride !== undefined
           ? { lopDaysOverride: dto.lopDaysOverride }
           : {}),
