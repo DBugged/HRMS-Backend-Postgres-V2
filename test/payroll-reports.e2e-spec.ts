@@ -183,26 +183,42 @@ describe('Payroll Reports (e2e)', () => {
     }
   });
 
-  it('the salary register leaves out an unapproved run and includes it once approved', async () => {
-    const pull = async () =>
+  it('registers and the bank file leave out a run until it is locked, and flag missing bank details', async () => {
+    const pull = async (report: string) =>
       (
         await request(app.getHttpServer())
-          .get('/reports/payroll/salary-register')
+          .get(`/reports/payroll/${report}`)
           .query({ month: MONTH, year: YEAR, format: 'csv' })
           .set('Authorization', `Bearer ${adminToken}`)
           .expect(200)
       ).text;
     // CALCULATED figures can still change, so they are not in the register (or any statutory report).
-    expect(await pull()).not.toContain('BASIC');
+    expect(await pull('salary-register')).not.toContain('BASIC');
 
+    // APPROVED can still be sent back for recalculation, so it is not final either: no register line, no bank row.
     await prisma.payrollRun.updateMany({
       where: { employeeId, month: MONTH, year: YEAR },
       data: { status: 'APPROVED' },
     });
-    const csv = await pull();
+    expect(await pull('salary-register')).not.toContain('BASIC');
+    expect(await pull('bank-transfer')).not.toContain('Payslip No\n');
+    expect(
+      (await pull('bank-transfer')).split('\n').filter((l) => l.trim()),
+    ).toHaveLength(1);
+
+    await prisma.payrollRun.updateMany({
+      where: { employeeId, month: MONTH, year: YEAR },
+      data: { status: 'LOCKED' },
+    });
+    const csv = await pull('salary-register');
     expect(csv).toContain('BASIC');
     expect(csv).toContain('30000');
     expect(csv).toContain('Regular');
+    const bank = await pull('bank-transfer');
+    expect(bank.split('\n').filter((l) => l.trim())).toHaveLength(2);
+    // this employee has no bank account on file: the standard layout now carries the same flag as the bulk one
+    expect(bank).toContain('Check');
+    expect(bank).toContain('MISSING BANK DETAILS');
   });
 
   it('form16 requires financialYear', async () => {

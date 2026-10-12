@@ -2,8 +2,8 @@
 // Responsibilities: reads finalized PayrollRun snapshots (regular and final-settlement runs, merged to one line per
 //   member), decrypts the UAN, resolves the PF wage ceiling in force, and hands the rows to buildEcr.
 // Important: the PF wage base is the one payroll stored on each run, never recomputed here.
+import { EXPORTABLE_RUNS } from '../payroll/exportable-runs';
 import { Inject, Injectable } from '@nestjs/common';
-import { PayrollRunStatus } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
@@ -16,11 +16,6 @@ interface Line {
   breakup?: { eps: number; epf: number; epsWages?: number };
 }
 
-const PAID_OUT: PayrollRunStatus[] = [
-  PayrollRunStatus.APPROVED,
-  PayrollRunStatus.LOCKED,
-  PayrollRunStatus.PAID,
-];
 // Settlement lines that are not wages for PF purposes.
 const NON_WAGE_SETTLEMENT = new Set([
   'GRATUITY',
@@ -49,7 +44,7 @@ export class EcrService {
     const asOf = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
 
     const runs = await this.scopedPrisma.payrollRun.findMany({
-      where: { organizationId, month, year, status: { in: PAID_OUT } },
+      where: { organizationId, month, year, ...EXPORTABLE_RUNS },
       orderBy: [{ isFinalSettlement: 'asc' }, { createdAt: 'asc' }],
     });
     // Only members who are on PF this month (a PF line, even a zero one for a full-LOP month).

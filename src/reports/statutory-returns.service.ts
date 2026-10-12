@@ -4,13 +4,10 @@
 //   decrypts the ESIC number through a top-level user read, resolves each employee's work-location state for PT, and
 //   hands the rows to the pure builders (esic-return.ts / pt-return.ts).
 // Important: the wages and contributions are the ones payroll stored on each run; nothing is recomputed here.
+import { EXPORTABLE_RUNS } from '../payroll/exportable-runs';
 import { Inject, Injectable } from '@nestjs/common';
 import ExcelJS from 'exceljs';
-import {
-  PayrollRunStatus,
-  SettlementStatus,
-  StatutoryModule,
-} from '@prisma/client';
+import { SettlementStatus, StatutoryModule } from '@prisma/client';
 import {
   computeStatutoryBonus,
   type BonusMonthInput,
@@ -34,11 +31,6 @@ interface Line {
   wages?: number;
 }
 
-const PAID_OUT: PayrollRunStatus[] = [
-  PayrollRunStatus.APPROVED,
-  PayrollRunStatus.LOCKED,
-  PayrollRunStatus.PAID,
-];
 const MONTH_NAMES = [
   '',
   'January',
@@ -73,7 +65,7 @@ export class StatutoryReturnsService {
   async esic(month: number, year: number, organizationId: string) {
     const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
     const runs = await this.scopedPrisma.payrollRun.findMany({
-      where: { organizationId, month, year, status: { in: PAID_OUT } },
+      where: { organizationId, month, year, ...EXPORTABLE_RUNS },
       orderBy: [{ isFinalSettlement: 'asc' }, { createdAt: 'asc' }],
     });
     const esiRuns = runs.filter(
@@ -97,9 +89,8 @@ export class StatutoryReturnsService {
       ? await this.scopedPrisma.payrollRun.findMany({
           where: {
             organizationId,
-            status: { in: PAID_OUT },
+            AND: [EXPORTABLE_RUNS, { OR: periodMonths }],
             employeeId: { in: [...new Set(esiRuns.map((r) => r.employeeId))] },
-            OR: periodMonths,
           },
           select: { employeeId: true, deductions: true },
         })
@@ -240,7 +231,7 @@ export class StatutoryReturnsService {
 
   async pt(month: number, year: number, organizationId: string) {
     const runs = await this.scopedPrisma.payrollRun.findMany({
-      where: { organizationId, month, year, status: { in: PAID_OUT } },
+      where: { organizationId, month, year, ...EXPORTABLE_RUNS },
     });
     const ptRuns = runs.filter((r) =>
       hasLine(r.deductions, SALARY_COMPONENT_CODES.PT),
@@ -334,7 +325,7 @@ export class StatutoryReturnsService {
         organizationId,
         financialYear,
         runSequence: 0,
-        status: { in: PAID_OUT },
+        ...EXPORTABLE_RUNS,
       },
       select: {
         employeeId: true,
@@ -403,7 +394,7 @@ export class StatutoryReturnsService {
   // months a state's schedule says (e.g. June and December), so most months are empty.
   async lwf(month: number, year: number, organizationId: string) {
     const runs = await this.scopedPrisma.payrollRun.findMany({
-      where: { organizationId, month, year, status: { in: PAID_OUT } },
+      where: { organizationId, month, year, ...EXPORTABLE_RUNS },
     });
     const lwfRuns = runs.filter(
       (r) =>

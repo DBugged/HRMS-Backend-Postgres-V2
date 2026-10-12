@@ -6,14 +6,10 @@
 // than re-deriving current settings/statutory-overlay for the period, since a run's own snapshot is
 // authoritative for what applied at that time even if settings changed since. bankTransferReport's account
 // fields read from personalData.bank* (see that method).
+import { EXPORTABLE_RUNS, isExportableRun } from '../payroll/exportable-runs';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import { BadRequestException, Inject, Injectable } from '@nestjs/common';
-import {
-  AuditModule,
-  PayrollRunStatus,
-  Prisma,
-  TaxRegime,
-} from '@prisma/client';
+import { AuditModule, Prisma, TaxRegime } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { ReportColumn } from './report-export';
@@ -43,15 +39,9 @@ interface TaxDetailsShape {
   totalAnnualTax?: number;
 }
 
-// Reports (salary register, statutory returns, tax, bank file) are built only from runs that have been signed off,
-// so a statutory challan or the register can never be generated from figures that can still change and always
-// reconcile with the bank transfer file.
-const PAID_OUT_STATUSES: PayrollRunStatus[] = [
-  PayrollRunStatus.APPROVED,
-  PayrollRunStatus.LOCKED,
-  PayrollRunStatus.PAID,
-];
-const FINALIZED_STATUSES = PAID_OUT_STATUSES;
+// Reports (salary register, statutory returns, tax, bank file) are built only from runs that are LOCKED or PAID (see
+// exportable-runs.ts), so a statutory challan, the register and the bank transfer file can never be generated from
+// figures that can still change, and always reconcile with each other.
 
 const linesOf = (json: unknown): PayrollLine[] =>
   (json as PayrollLine[] | null) ?? [];
@@ -88,7 +78,7 @@ export class PayrollReportsService {
     // register, bank file and returns as the regular run; rows carry a Type to tell them apart.
     const where: Prisma.PayrollRunWhereInput = {
       organizationId,
-      status: { in: FINALIZED_STATUSES },
+      ...EXPORTABLE_RUNS,
     };
     if (query.month) where.month = query.month;
     if (query.year) where.year = query.year;
@@ -183,9 +173,7 @@ export class PayrollReportsService {
   ): Promise<ReportPayload> {
     const runs = await this.fetchRuns(query, organizationId);
     // Only runs with something to transfer: a settlement that nets to a recovery (zero or negative) has no payout.
-    const paidRuns = runs.filter(
-      (r) => PAID_OUT_STATUSES.includes(r.status) && r.netPay > 0,
-    );
+    const paidRuns = runs.filter((r) => isExportableRun(r) && r.netPay > 0);
     const employeeIds = [...new Set(paidRuns.map((r) => r.employeeId))];
     const personalDataById = new Map(
       employeeIds.length
@@ -279,6 +267,8 @@ export class PayrollReportsService {
       { header: 'Payment Mode', key: 'paymentMode', width: 14 },
       { header: 'Payment Reference', key: 'paymentReference', width: 22 },
       { header: 'Payment Date', key: 'paymentDate', width: 14 },
+      // Same flag as the bulk layout: a transfer cannot be made to an account that is not on file.
+      { header: 'Check', key: 'check', width: 22 },
     ];
 
     return {
@@ -823,7 +813,7 @@ export class PayrollReportsService {
         where: {
           organizationId,
           financialYear: query.financialYear,
-          status: { in: PAID_OUT_STATUSES },
+          ...EXPORTABLE_RUNS,
         },
         include: {
           employee: {
