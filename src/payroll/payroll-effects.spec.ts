@@ -487,6 +487,7 @@ describe('payroll: who can read which payslip', () => {
     run({ id: 'b', employeeId: 'emp', status: 'CALCULATED' }),
     run({ id: 'c', employeeId: 'emp', status: 'APPROVED' }),
     run({ id: 'd', employeeId: 'emp', status: 'PAID', month: 8 }),
+    run({ id: 'f', employeeId: 'emp', status: 'LOCKED', month: 7 }),
     run({ id: 'e', employeeId: 'other', status: 'PAID' }),
   ];
   const ids = async (p: Promise<unknown>) =>
@@ -501,19 +502,19 @@ describe('payroll: who can read which payslip', () => {
     return b;
   };
 
-  it('an employee sees only their own payslips, and only once they are Approved, Locked or Paid', async () => {
+  it('an employee sees only their own payslips, and only once they are Locked or Paid (an Approved one can still change)', async () => {
     const { service } = wrap();
     const me = { id: 'emp', role: Role.EMPLOYEE } as never;
-    expect(await ids(service.findAll(q(), me, 'org'))).toEqual(['c', 'd']);
+    expect(await ids(service.findAll(q(), me, 'org'))).toEqual(['d', 'f']);
   });
 
   it("a manager is treated the same way: never their reports' payslips", async () => {
     const { service } = wrap();
     const mgr = { id: 'emp', role: Role.MANAGER } as never;
-    expect(await ids(service.findAll(q(), mgr, 'org'))).toEqual(['c', 'd']);
+    expect(await ids(service.findAll(q(), mgr, 'org'))).toEqual(['d', 'f']);
     expect(
       await ids(service.findAll(q({ employeeId: 'other' }), mgr, 'org')),
-    ).toEqual(['c', 'd']);
+    ).toEqual(['d', 'f']);
   });
 
   it('HR sees every status, and can narrow by employee', async () => {
@@ -524,6 +525,7 @@ describe('payroll: who can read which payslip', () => {
       'c',
       'd',
       'e',
+      'f',
     ]);
     expect(
       await ids(service.findAll(q({ employeeId: 'other' }), hr, 'org')),
@@ -533,13 +535,19 @@ describe('payroll: who can read which payslip', () => {
   it("one payslip: your own is readable, someone else's is forbidden, an unfinished one does not exist for you", async () => {
     const { service } = wrap();
     const me = { id: 'emp', role: Role.EMPLOYEE } as never;
-    expect((await service.findOne('c', me, 'org')).id).toBe('c');
+    expect((await service.findOne('f', me, 'org')).id).toBe('f');
+    expect((await service.findOne('d', me, 'org')).id).toBe('d');
     await expect(service.findOne('e', me, 'org')).rejects.toThrow(
       /Not authorized/,
     );
     await expect(service.findOne('b', me, 'org')).rejects.toThrow(
       /Payslip not found/,
     );
+    // approved but not yet locked: still can change, so not visible to the employee
+    await expect(service.findOne('c', me, 'org')).rejects.toThrow(
+      /Payslip not found/,
+    );
+    expect((await service.findOne('c', hr, 'org')).id).toBe('c');
     await expect(service.findOne('ghost', me, 'org')).rejects.toThrow(
       /Payslip not found/,
     );

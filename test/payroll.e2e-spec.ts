@@ -518,12 +518,12 @@ describe('Payroll (e2e)', () => {
   });
 
   describe('GET scoping', () => {
-    // An employee only sees a payslip once it is approved, so approve this employee's run for MONTH first.
+    // An employee only sees a payslip once it is final (locked), so lock this employee's run for MONTH first.
     beforeAll(async () => {
       const run = await prisma.payrollRun.findFirstOrThrow({
         where: { employeeId, month: MONTH, year: YEAR },
       });
-      for (const step of ['verify', 'approve']) {
+      for (const step of ['verify', 'approve', 'lock']) {
         await request(app.getHttpServer())
           .post(`/payroll/${run.id}/${step}`)
           .set('Authorization', `Bearer ${adminToken}`);
@@ -599,10 +599,10 @@ describe('Payroll (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ month: MONTH, year: YEAR, employeeId: managerId })
         .expect(201);
-      // ... and approved, because an employee only sees an approved payslip.
+      // ... and locked, because an employee only sees a final payslip.
       const managerRunId = (calc.body as { payrolls: { id: string }[] })
         .payrolls[0].id;
-      for (const step of ['verify', 'approve']) {
+      for (const step of ['verify', 'approve', 'lock']) {
         await request(app.getHttpServer())
           .post(`/payroll/${managerRunId}/${step}`)
           .set('Authorization', `Bearer ${adminToken}`);
@@ -996,10 +996,29 @@ describe('Payroll (e2e)', () => {
         .expect(403);
     });
 
-    it('streams a valid PDF once the run is approved', async () => {
+    it('an employee cannot see or download a payslip that is only approved (it can still change); HR can preview it', async () => {
       await prisma.payrollRun.update({
         where: { id: runId },
         data: { status: PayrollRunStatus.APPROVED },
+      });
+      await request(app.getHttpServer())
+        .get(`/payroll/${runId}/pdf`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(404);
+      await request(app.getHttpServer())
+        .get(`/payroll/${runId}`)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(404);
+      await request(app.getHttpServer())
+        .get(`/payroll/${runId}/pdf`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+    });
+
+    it('streams a valid PDF once the run is locked', async () => {
+      await prisma.payrollRun.update({
+        where: { id: runId },
+        data: { status: PayrollRunStatus.LOCKED },
       });
 
       const res = await request(app.getHttpServer())

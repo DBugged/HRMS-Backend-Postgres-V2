@@ -324,8 +324,10 @@ export interface CalculatedPayroll {
 
 // What an employee may see of their own payroll. Draft and calculated rows are still being worked on by HR and can
 // change, so they are not shown (the payslip PDF is already limited to the same statuses).
+// An employee sees a payslip only once it is final (LOCKED or PAID). An APPROVED run can still be sent back for
+// recalculation when attendance, leave or overtime changes, and the employee must not be shown - or download - amounts
+// that may then change.
 const EMPLOYEE_VISIBLE_STATUSES: PayrollRunStatus[] = [
-  PayrollRunStatus.APPROVED,
   PayrollRunStatus.LOCKED,
   PayrollRunStatus.PAID,
 ];

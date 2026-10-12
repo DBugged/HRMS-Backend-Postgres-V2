@@ -850,13 +850,8 @@ export class DashboardService {
         where: {
           organizationId,
           employeeId: actor.id,
-          status: {
-            in: [
-              PayrollRunStatus.APPROVED,
-              PayrollRunStatus.LOCKED,
-              PayrollRunStatus.PAID,
-            ],
-          },
+          // Final payslips only: an approved one can still change (see EMPLOYEE_VISIBLE_STATUSES in payroll.service.ts).
+          status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
         },
         orderBy: [{ year: 'desc' }, { month: 'desc' }],
       }),
