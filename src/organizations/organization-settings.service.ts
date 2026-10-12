@@ -40,7 +40,7 @@ import {
   resolveIncomingFileValue,
   SESSION_ASSET_TTL_SECONDS,
 } from '../files/file-token';
-import { validateOrgFields } from './org-validators';
+import { normalizeOrgFields, validateOrgFields } from './org-validators';
 import {
   FIELD_KINDS,
   deepMerge,
@@ -551,6 +551,7 @@ export class OrganizationSettingsService {
       section === 'contact' ||
       section === 'profile'
     ) {
+      normalizeOrgFields(data as Record<string, unknown>);
       const error = validateOrgFields(data);
       if (error) throw new BadRequestException(error);
     }

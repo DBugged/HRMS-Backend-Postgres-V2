@@ -35,6 +35,34 @@ const TEXT_LIMITS: Record<string, number> = {
   city: 100,
 };
 
+// Identifier-style values never contain whitespace and are always upper case; every pattern-checked value loses
+// leading/trailing spaces. Done before validation so a value that is fine apart from a pasted space is saved clean
+// instead of refused as "not in a valid format". Mutates and returns `data`.
+const IDENTIFIER_FIELDS = new Set([
+  'gstin',
+  'pan',
+  'tan',
+  'cin',
+  'epfoEstablishmentCode',
+  'esicEmployerCode',
+  'ptRegistrationNumber',
+]);
+
+export function normalizeOrgFields(
+  data: Record<string, unknown>,
+): Record<string, unknown> {
+  for (const field of Object.keys(ORG_FIELD_PATTERNS)) {
+    const value = data[field];
+    if (typeof value !== 'string') continue;
+    let next = value.trim();
+    if (IDENTIFIER_FIELDS.has(field)) {
+      next = next.replace(/\s+/g, '').toUpperCase();
+    }
+    data[field] = next;
+  }
+  return data;
+}
+
 export function validateOrgFields(
   data: Record<string, unknown>,
 ): string | null {
