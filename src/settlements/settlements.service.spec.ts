@@ -282,6 +282,8 @@ describe('final settlement: the amounts', () => {
     expect(options.finalSettlement).toEqual({
       extraTaxableEarnings: 3000 + 4000,
       monthAlreadyPaid: false,
+      // the pending salary stops at the last working day
+      lastWorkingDay: '2026-10-06',
     });
   });
 

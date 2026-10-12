@@ -608,6 +608,7 @@ export class AttendanceService {
       status,
       outTime,
       shiftConfig,
+      workDurationMinutes,
     );
 
     await this.notifyLateOrAbsent(
@@ -933,6 +934,7 @@ export class AttendanceService {
     status: AttendanceStatus,
     outTime: Date | null,
     shiftConfig: ShiftConfig,
+    workDurationMinutes: number,
   ): Promise<void> {
     if (!outTime) return;
     // Overtime Pay is off: overtime could never be paid, so don't suggest any (existing suggestions are left as they
@@ -951,9 +953,14 @@ export class AttendanceService {
       shiftConfig.shiftEndTime,
       tzOf(shiftConfig),
     );
-    const overshootMinutes = Math.round(
-      (outTime.getTime() - shiftEnd.getTime()) / 60000,
-    );
+    // A weekly off or holiday has no regular shift to go past: everything worked that day (less the unpaid break) is
+    // overtime, at the weekend/holiday rate. On an ordinary day only the time beyond the shift end counts.
+    const isHolidayDay = status === AttendanceStatus.HOLIDAY;
+    const isOffDay =
+      isHolidayDay || isWeeklyOff(dateStr, shiftConfig.weeklyOffs);
+    const overshootMinutes = isOffDay
+      ? Math.max(0, workDurationMinutes - (shiftConfig.breakMinutes ?? 0))
+      : Math.round((outTime.getTime() - shiftEnd.getTime()) / 60000);
 
     // Looked up WITHOUT filtering by source: OvertimeRecord now has a
     // (organizationId, employeeId, date) unique constraint (one overtime
@@ -984,12 +991,13 @@ export class AttendanceService {
     // so don't also create a second, auto-suggested one for the same day.
     if (existing && !existingAuto) return;
 
-    const type =
-      status === AttendanceStatus.HOLIDAY
-        ? OvertimeType.HOLIDAY
-        : status === AttendanceStatus.WEEKLY_OFF
-          ? OvertimeType.WEEKEND
-          : OvertimeType.REGULAR;
+    // By the calendar, not the attendance status: a weekly off with real punches is marked PRESENT, which used to
+    // make its overtime REGULAR (1.5x) instead of weekend (2x).
+    const type = isHolidayDay
+      ? OvertimeType.HOLIDAY
+      : isOffDay
+        ? OvertimeType.WEEKEND
+        : OvertimeType.REGULAR;
     const hours = Math.round((overshootMinutes / 60) * 100) / 100;
     const rateMultiplier = (await getOvertimeRates(db, organizationId))[type];
 

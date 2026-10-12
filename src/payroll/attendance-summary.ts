@@ -1,4 +1,8 @@
-import { AttendanceStatus, OvertimeType } from '@prisma/client';
+import {
+  AttendanceSource,
+  AttendanceStatus,
+  OvertimeType,
+} from '@prisma/client';
 import { clampLeaveDaysToMonth, daysInMonth } from './payroll-date-math';
 
 /**
@@ -20,6 +24,9 @@ export interface AttendanceRowLike {
   // YYYY-MM-DD. When every row carries it, payable days are resolved per calendar day so a day can never be
   // paid twice (attendance row + approved leave) — see resolveDayPay. Rows without it fall back to the plain sum.
   date?: string;
+  // See DatedAttendanceRowLike.
+  source?: AttendanceSource;
+  leaveOverriddenStatus?: AttendanceStatus | null;
 }
 
 export interface LeaveRowWithType {
@@ -179,6 +186,10 @@ export function computeAttendanceSummary(
 export interface DatedAttendanceRowLike {
   date: string;
   status: AttendanceStatus;
+  // Set on rows read from the database. A HALF_DAY row written by an approved half-day leave (source SYSTEM) is only
+  // that leave's stamp, not half a day of work: what the employee actually did that day is the status it replaced.
+  source?: AttendanceSource;
+  leaveOverriddenStatus?: AttendanceStatus | null;
 }
 
 const rowPay = (status: AttendanceStatus): number =>
@@ -213,14 +224,31 @@ export function resolveDayPay(
   from: string,
   to: string,
 ): Map<string, number> {
+  const halfLeaveDates = new Set<string>();
+  for (const leave of leaveRows) {
+    if (!leave.isHalfDay) continue;
+    for (const d of datesBetween(leave.startDate, leave.endDate)) {
+      halfLeaveDates.add(d);
+    }
+  }
   const rowByDate = new Map<string, number>();
   for (const r of attendanceRows) {
     if (r.date < from || r.date > to) continue;
+    // The half-day leave's own stamp is paid for what the employee did on the other half (nothing when no row was
+    // there before), not as a worked half day: the leave itself pays its half below. Counting both paid a full day
+    // for a half-day leave with no punch at all.
+    const isLeaveStamp =
+      r.status === AttendanceStatus.HALF_DAY &&
+      r.source === AttendanceSource.SYSTEM &&
+      r.leaveOverriddenStatus !== undefined &&
+      halfLeaveDates.has(r.date);
+    const pay = isLeaveStamp
+      ? r.leaveOverriddenStatus
+        ? rowPay(r.leaveOverriddenStatus)
+        : 0
+      : rowPay(r.status);
     // Duplicate rows for one date must not add up.
-    rowByDate.set(
-      r.date,
-      Math.max(rowByDate.get(r.date) ?? 0, rowPay(r.status)),
-    );
+    rowByDate.set(r.date, Math.max(rowByDate.get(r.date) ?? 0, pay));
   }
   const paid = new Map<string, number>();
   const unpaid = new Map<string, number>();

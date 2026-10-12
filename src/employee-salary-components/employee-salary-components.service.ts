@@ -251,8 +251,33 @@ export class EmployeeSalaryComponentsService {
     actorId: string,
     organizationId: string,
   ): Promise<EmployeeSalaryComponent> {
+    // A one-month entry (arrears, bonus, incentive) covers exactly that calendar month.
+    const onlyMonth = dto.applyOnlyForMonth;
+    const monthStart = onlyMonth ? `${onlyMonth}-01` : undefined;
+    const monthEnd = onlyMonth
+      ? `${onlyMonth}-${String(
+          new Date(
+            Date.UTC(
+              Number(onlyMonth.slice(0, 4)),
+              Number(onlyMonth.slice(5, 7)),
+              0,
+            ),
+          ).getUTCDate(),
+        ).padStart(2, '0')}`
+      : undefined;
+    if (
+      onlyMonth &&
+      dto.effectiveFrom &&
+      (dto.effectiveFrom < (monthStart as string) ||
+        dto.effectiveFrom > (monthEnd as string))
+    ) {
+      throw new BadRequestException(
+        `effectiveFrom ${dto.effectiveFrom} is outside ${onlyMonth}; leave it out for a one-month entry.`,
+      );
+    }
     const from =
       dto.effectiveFrom ??
+      monthStart ??
       localDateStr(await this.getOrgTimezone(organizationId));
 
     const current = await this.scopedPrisma.employeeSalaryComponent.findFirst({
@@ -263,6 +288,82 @@ export class EmployeeSalaryComponentsService {
         effectiveTo: null,
       },
     });
+    if (onlyMonth) {
+      if (current) {
+        throw new BadRequestException(
+          `${component.code} is already a running entry for this employee. Stop or edit that entry instead of adding a one-month one.`,
+        );
+      }
+      if (dto.backdateForArrears !== true) {
+        await this.assertNoFinalizedPayrollFrom(
+          employeeId,
+          from,
+          organizationId,
+        );
+      }
+      const values = {
+        valueType: dto.valueType ?? component.calcType,
+        fixedAmount: dto.fixedAmount ?? null,
+        percentageValue: dto.percentageValue ?? null,
+        percentageOf: dto.percentageOf ?? null,
+        formula: dto.formula ?? null,
+        amountBasis: dto.amountBasis ?? 'MONTHLY',
+        isEnabled: dto.isEnabled ?? true,
+        revisionNote: dto.revisionNote ?? '',
+      };
+      // The same month entered twice corrects the earlier entry rather than adding a second one.
+      const sameMonth =
+        await this.scopedPrisma.employeeSalaryComponent.findFirst({
+          where: {
+            organizationId,
+            employeeId,
+            componentCode: component.code,
+            effectiveFrom: monthStart,
+            effectiveTo: monthEnd,
+          },
+        });
+      const saved = sameMonth
+        ? await this.scopedPrisma.$transaction(async (tx) => {
+            await tx.employeeSalaryComponent.updateMany({
+              where: { id: sameMonth.id, organizationId },
+              data: values,
+            });
+            return tx.employeeSalaryComponent.findFirstOrThrow({
+              where: { id: sameMonth.id, organizationId },
+            });
+          })
+        : await this.scopedPrisma.employeeSalaryComponent.create({
+            data: {
+              organizationId,
+              employeeId,
+              componentId: component.id,
+              componentCode: component.code,
+              ...values,
+              effectiveFrom: monthStart as string,
+              effectiveTo: monthEnd as string,
+              createdById: actorId,
+            },
+          });
+      await this.auditLogService.log({
+        actorId,
+        action: 'EMPLOYEE_SALARY_COMPONENT_SET',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: employeeId,
+        details: {
+          employeeId,
+          componentCode: component.code,
+          oneMonthOnly: onlyMonth,
+          after: {
+            ...values,
+            effectiveFrom: monthStart,
+            effectiveTo: monthEnd,
+          },
+        },
+      });
+      return saved;
+    }
+
     // A revision starts after the row it closes out. On the SAME day it corrects that row in place (a salary entered
     // by mistake can be fixed straight away, without waiting a day); a date before it would corrupt the history, so
     // that is refused. Either way a month that is already paid is never touched.

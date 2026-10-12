@@ -1,4 +1,8 @@
-import { AttendanceStatus, OvertimeType } from '@prisma/client';
+import {
+  AttendanceSource,
+  AttendanceStatus,
+  OvertimeType,
+} from '@prisma/client';
 import {
   computeAttendanceSummary,
   payableDaysInRange,
@@ -240,6 +244,94 @@ describe('payable days are per calendar day (audit B1)', () => {
       [paidLeave('2026-11-10', '2026-11-10', true)],
       [],
       11,
+      2026,
+    );
+    expect(s.payableDays).toBe(1);
+  });
+});
+
+describe('a half-day leave pays one day only when the other half was worked (B8)', () => {
+  const stamp = (
+    date: string,
+    leaveOverriddenStatus: AttendanceStatus | null,
+  ) => ({
+    date,
+    status: AttendanceStatus.HALF_DAY,
+    isLate: false,
+    source: AttendanceSource.SYSTEM,
+    leaveOverriddenStatus,
+  });
+  const halfLeave = (date: string) => ({
+    startDate: date,
+    endDate: date,
+    isHalfDay: true,
+    leaveType: { isPaid: true, salaryImpactPercent: 100 },
+  });
+
+  it('no punch on the day: the leave stamp pays only its half', () => {
+    const s = computeAttendanceSummary(
+      [stamp('2026-07-08', null)],
+      [halfLeave('2026-07-08')],
+      [],
+      7,
+      2026,
+    );
+    expect(s.payableDays).toBe(0.5);
+  });
+
+  it('the employee had worked half a day before the leave: half work + half leave = one day', () => {
+    const s = computeAttendanceSummary(
+      [stamp('2026-07-08', AttendanceStatus.HALF_DAY)],
+      [halfLeave('2026-07-08')],
+      [],
+      7,
+      2026,
+    );
+    expect(s.payableDays).toBe(1);
+  });
+
+  it('the day was a full present day before the leave: still one day', () => {
+    const s = computeAttendanceSummary(
+      [stamp('2026-07-08', AttendanceStatus.PRESENT)],
+      [halfLeave('2026-07-08')],
+      [],
+      7,
+      2026,
+    );
+    expect(s.payableDays).toBe(1);
+  });
+
+  it('a real half day worked (not a leave stamp) plus a half-day leave is one day', () => {
+    const s = computeAttendanceSummary(
+      [
+        {
+          date: '2026-07-08',
+          status: AttendanceStatus.HALF_DAY,
+          isLate: false,
+          source: AttendanceSource.FACE_API,
+          leaveOverriddenStatus: null,
+        },
+      ],
+      [halfLeave('2026-07-08')],
+      [],
+      7,
+      2026,
+    );
+    expect(s.payableDays).toBe(1);
+  });
+
+  it('rows without source information keep the earlier behaviour', () => {
+    const s = computeAttendanceSummary(
+      [
+        {
+          date: '2026-07-08',
+          status: AttendanceStatus.HALF_DAY,
+          isLate: false,
+        },
+      ],
+      [halfLeave('2026-07-08')],
+      [],
+      7,
       2026,
     );
     expect(s.payableDays).toBe(1);

@@ -158,15 +158,20 @@ describe('Payroll input integrity (e2e)', () => {
       [7, 31],
       [8, 31],
     ]) {
-      await prisma.attendance.createMany({
-        data: Array.from({ length: days }, (_, i) => ({
-          organizationId,
-          employeeId,
-          date: `${YEAR}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`,
-          status: 'PRESENT' as const,
-          source: 'FACE_API' as const,
-        })),
-      });
+      // March is also locked for HR below: a month with no attended day is not payable, so HR gets a few present days
+      // (the rest stay missing - the backfill sweep is expected to find them and skip them as locked).
+      for (const id of month === 3 ? [employeeId, hrId] : [employeeId]) {
+        const present = id === hrId ? 5 : days;
+        await prisma.attendance.createMany({
+          data: Array.from({ length: present }, (_, i) => ({
+            organizationId,
+            employeeId: id,
+            date: `${YEAR}-${String(month).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`,
+            status: 'PRESENT' as const,
+            source: 'FACE_API' as const,
+          })),
+        });
+      }
     }
     lwpId = (
       await prisma.leaveType.findFirstOrThrow({

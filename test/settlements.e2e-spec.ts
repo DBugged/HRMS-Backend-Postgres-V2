@@ -67,6 +67,11 @@ const BASIC_MONTHLY = 30000;
 // now contributes to gross pay alongside BASIC.
 const HRA_MONTHLY = BASIC_MONTHLY * 0.4;
 const DAYS_IN_MONTH = 30;
+// The pending salary stops at the last working day (the 15th): 15 of 30 days of Basic + HRA, even though attendance
+// rows exist for the rest of the month.
+const LWD_DAYS = 15;
+const PENDING_SALARY =
+  ((BASIC_MONTHLY + HRA_MONTHLY) * LWD_DAYS) / DAYS_IN_MONTH;
 // An APPROVED-but-unpaid reimbursement is settled with the final payout.
 const REIMBURSEMENT_AMOUNT = 700;
 
@@ -279,8 +284,7 @@ describe('Settlements (e2e)', () => {
     expectedGratuity = calculateGratuity(BASIC_MONTHLY, yearsOfService);
     const expectedLeaveEncashment = Math.round(24 * (BASIC_MONTHLY / 30));
     expectedNet = Math.round(
-      BASIC_MONTHLY +
-        HRA_MONTHLY +
+      PENDING_SALARY +
         expectedLeaveEncashment +
         2000 +
         expectedGratuity +
@@ -317,7 +321,7 @@ describe('Settlements (e2e)', () => {
         .reimbursementAmount,
     ).toBe(REIMBURSEMENT_AMOUNT);
     expect(body.status).toBe('DRAFT');
-    expect(body.pendingSalaryAmount).toBe(BASIC_MONTHLY + HRA_MONTHLY); // full month present
+    expect(body.pendingSalaryAmount).toBe(PENDING_SALARY); // 15 of 30 days, up to the last working day
     expect(body.leaveEncashmentAmount).toBe(expectedLeaveEncashment);
     expect(body.loanBalanceRecovered).toBe(5000);
     expect(body.gratuityAmount).toBe(expectedGratuity);
@@ -432,9 +436,11 @@ describe('Settlements (e2e)', () => {
     // P4: the pending salary is carried as the month's real lines, not one net PENDING_SALARY figure.
     expect(earnings.find((e) => e.code === 'PENDING_SALARY')).toBeUndefined();
     expect(earnings.find((e) => e.code === 'BASIC')?.amount).toBe(
-      BASIC_MONTHLY,
+      (BASIC_MONTHLY * LWD_DAYS) / DAYS_IN_MONTH,
     );
-    expect(earnings.find((e) => e.code === 'HRA')?.amount).toBe(HRA_MONTHLY);
+    expect(earnings.find((e) => e.code === 'HRA')?.amount).toBe(
+      (HRA_MONTHLY * LWD_DAYS) / DAYS_IN_MONTH,
+    );
     const run = await prisma.payrollRun.findFirstOrThrow({
       where: { id: body.payrollRun.id },
     });
@@ -770,8 +776,8 @@ describe('Settlements (e2e)', () => {
           (1000 * 60 * 60 * 24 * 365.25);
         expect(settlement.gratuityAmount).toBe(calculateGratuity(BASIC, years));
         expect(settlement.gratuityAmount).toBeGreaterThan(0);
-        // Gross 28,000 (Basic + 40% HRA) less PF: 12% of Basic capped at the (legacy default) 15,000 ceiling.
-        expect(settlement.pendingSalaryAmount).toBe(28000 - 1800);
+        // 20 of the month's 31 days (last working day 20 May): Basic 12,903 + HRA 5,161 less PF at 12% of the Basic paid.
+        expect(settlement.pendingSalaryAmount).toBe(12903 + 5161 - 1548);
 
         const processed = await request(app.getHttpServer())
           .post(`/settlements/${settlement.id}/process`)
@@ -789,18 +795,18 @@ describe('Settlements (e2e)', () => {
         expect(
           earnings.find((e) => e.code === 'PENDING_SALARY'),
         ).toBeUndefined();
-        expect(earnings.find((e) => e.code === 'BASIC')?.amount).toBe(BASIC);
+        expect(earnings.find((e) => e.code === 'BASIC')?.amount).toBe(12903);
         expect(earnings.find((e) => e.code === 'GRATUITY')?.amount).toBe(
           settlement.gratuityAmount,
         );
-        expect(deductions.find((d) => d.code === 'PF')?.amount).toBe(1800);
+        expect(deductions.find((d) => d.code === 'PF')?.amount).toBe(1548);
         expect(employer.find((e) => e.code === 'PF_EMPLOYER')?.amount).toBe(
-          1800,
+          1548,
         );
-        // Gratuity accrual (4.81% of 20,000) is on too, via the same GRATUITY version.
+        // Gratuity accrual (4.81% of the 12,903 Basic paid) is on too, via the same GRATUITY version.
         expect(
           employer.find((e) => e.code === 'GRATUITY_ACCRUAL')?.amount,
-        ).toBe(962);
+        ).toBe(621);
         expect(run.totalEmployerContributions).toBe(
           employer.reduce((s, e) => s + e.amount, 0),
         );

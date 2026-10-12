@@ -343,6 +343,7 @@ export class SettlementsService {
             // together with the last month's pay, on income actually earned (no projection past the exit).
             extraTaxableEarnings: leaveEncashmentAmount + bonusForTax,
             monthAlreadyPaid: monthAlreadyPaidForTax,
+            lastWorkingDay: lwdDate,
           },
         },
       );
@@ -687,8 +688,9 @@ export class SettlementsService {
   // Locks in the settlement: creates the linked PayrollRun (isFinalSettlement)
   // with a full earnings/deductions snapshot so the same universal payslip
   // renderer/PDF can be used, closes out any active loans (they've just been
-  // fully recovered via the deduction line above), and deactivates the
-  // employee.
+  // fully recovered via the deduction line above). It does NOT deactivate the employee - that is the offboarding
+  // completion step (see the note at the top of this file); until then regular payroll skips them (see
+  // PayrollService.settledEmployees).
   async process(id: string, actor: Actor, organizationId: string) {
     const settlement = await this.scopedPrisma.settlement.findFirst({
       where: { id, organizationId },

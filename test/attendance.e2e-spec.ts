@@ -64,6 +64,18 @@ function offsetDateAvoidingHolidays(days: number): string {
   return date;
 }
 
+// Like offsetDateAvoidingHolidays, but also skips Saturdays and Sundays (the default weekly offs): work on a weekly off
+// is overtime for the whole day at the weekend rate, so tests of ordinary past-shift-end overtime need a working day.
+function offsetWeekdayAvoidingHolidays(days: number): string {
+  let d = days;
+  let date = offsetDateAvoidingHolidays(d);
+  while ([0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay())) {
+    d += 1;
+    date = offsetDateAvoidingHolidays(d);
+  }
+  return date;
+}
+
 // Finds the next date (from a UTC anchor) matching the given getUTCDay()
 // value, so weekly-off tests aren't flaky depending on when the suite runs.
 function nextWeekday(targetDay: number, fromOffsetDays: number): string {
@@ -3053,7 +3065,7 @@ describe('Attendance (e2e)', () => {
         .expect(201);
 
     it('creates a PENDING AUTO_PUNCH overtime record for a punch-out well past shift end', async () => {
-      const date = offsetDateAvoidingHolidays(-30);
+      const date = offsetWeekdayAvoidingHolidays(-30);
       await punchAt(employeeId, istIso(date, '09:30'));
       await punchAt(employeeId, istIso(date, '19:15')); // 45 min past 18:30.
 
@@ -3086,7 +3098,7 @@ describe('Attendance (e2e)', () => {
         });
       try {
         await setOvertimePay(false);
-        const offDate = offsetDateAvoidingHolidays(-33);
+        const offDate = offsetWeekdayAvoidingHolidays(-33);
         await punchAt(employeeId, istIso(offDate, '09:30'));
         await punchAt(employeeId, istIso(offDate, '19:15')); // 45 min past shift end
         expect(
@@ -3096,7 +3108,7 @@ describe('Attendance (e2e)', () => {
         ).toBeNull();
 
         await setOvertimePay(true);
-        const onDate = offsetDateAvoidingHolidays(-34);
+        const onDate = offsetWeekdayAvoidingHolidays(-34);
         await punchAt(employeeId, istIso(onDate, '09:30'));
         await punchAt(employeeId, istIso(onDate, '19:15'));
         expect(
@@ -3110,7 +3122,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('does not create a record for a punch-out only a few minutes past shift end', async () => {
-      const date = offsetDateAvoidingHolidays(-31);
+      const date = offsetWeekdayAvoidingHolidays(-31);
       await punchAt(employeeId, istIso(date, '09:30'));
       await punchAt(employeeId, istIso(date, '18:40')); // 10 min past.
 
@@ -3121,7 +3133,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('a later correction that removes the overshoot deletes the still-PENDING suggestion', async () => {
-      const date = offsetDateAvoidingHolidays(-32);
+      const date = offsetWeekdayAvoidingHolidays(-32);
       await punchAt(employeeId, istIso(date, '09:30'));
       await punchAt(employeeId, istIso(date, '19:15'));
       const created = await prisma.overtimeRecord.findFirstOrThrow({

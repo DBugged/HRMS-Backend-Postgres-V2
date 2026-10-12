@@ -201,14 +201,14 @@ describe('payroll engine: attendance, leave and proration', () => {
     expect(r.grossSalary).toBe(Math.round((42000 * 25) / 30));
   });
 
-  it('a month of nothing but absence still pays the weekly offs and never goes negative', async () => {
+  it('a month of nothing but absence pays nothing (not even the weekly offs) and never goes negative', async () => {
     const all: Record<string, S> = {};
     for (let d = 1; d <= 30; d++) {
       const date = `2026-09-${String(d).padStart(2, '0')}`;
       if (new Date(`${date}T00:00:00Z`).getUTCDay() !== 0) all[date] = S.ABSENT;
     }
     const r = await run({ attendance: monthRows(2026, 9, all) });
-    expect(r.attendanceSummary.payableDays).toBe(4);
+    expect(r.attendanceSummary.payableDays).toBe(0);
     expect(r.netPay).toBeGreaterThanOrEqual(0);
     expect(r.taxDetails?.monthlyTDS ?? 0).toBeGreaterThanOrEqual(0);
   });

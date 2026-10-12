@@ -1,4 +1,4 @@
-import { CalcType } from '@prisma/client';
+import { CalcType, PayFrequency } from '@prisma/client';
 import {
   compileFormula,
   evaluateFormula,
@@ -26,6 +26,8 @@ export interface ComponentLike {
   percentageValue: number | null;
   percentageOf: string | null;
   formula: string | null;
+  // How often the component is paid (monthly when absent). Needed to turn an ANNUAL amount into one payout.
+  payFrequency?: PayFrequency | null;
 }
 
 export interface ComponentOverrideLike {
@@ -37,6 +39,14 @@ export interface ComponentOverrideLike {
   amountBasis: 'MONTHLY' | 'ANNUAL';
   isEnabled: boolean;
 }
+
+// Months between two payouts of a component.
+const CYCLE_MONTHS: Partial<Record<PayFrequency, number>> = {
+  [PayFrequency.MONTHLY]: 1,
+  [PayFrequency.QUARTERLY]: 3,
+  [PayFrequency.HALF_YEARLY]: 6,
+  [PayFrequency.YEARLY]: 12,
+};
 
 export function resolveComponentValue(
   component: ComponentLike,
@@ -58,8 +68,15 @@ export function resolveComponentValue(
     raw = formula ? evaluateFormula(formula, context) : 0;
   }
 
+  // An ANNUAL amount is the year's total, so one payout is its share for the component's own cycle: 1/12 for a
+  // monthly component, but the whole amount for a yearly one (it is only paid once, in the last month of the year)
+  // and 1/2 or 1/4 for half-yearly / quarterly. Dividing every ANNUAL amount by 12 paid a yearly Variable Pay of
+  // 50,000 as 4,167 in March.
   const basis = override?.amountBasis ?? 'MONTHLY';
-  return basis === 'ANNUAL' ? raw / 12 : raw;
+  if (basis !== 'ANNUAL') return raw;
+  const cycleMonths =
+    CYCLE_MONTHS[component.payFrequency ?? PayFrequency.MONTHLY] ?? 1;
+  return (raw * cycleMonths) / 12;
 }
 
 export function extractDependencies(

@@ -156,6 +156,19 @@ describe('Employee Timeline (e2e)', () => {
         effectiveFrom: '2026-01-01',
       })
       .expect(201);
+    // A month with no attended day is not payable, so the employee needs attendance for the month paid below.
+    const { organizationId } = await prisma.user.findFirstOrThrow({
+      where: { id: employeeId },
+    });
+    await prisma.attendance.createMany({
+      data: Array.from({ length: 30 }, (_, i) => ({
+        organizationId,
+        employeeId,
+        date: `2026-06-${String(i + 1).padStart(2, '0')}`,
+        status: 'PRESENT' as const,
+        source: 'FACE_API' as const,
+      })),
+    });
     const calc = await request(app.getHttpServer())
       .post('/payroll/calculate')
       .set('Authorization', `Bearer ${adminToken}`)

@@ -143,6 +143,48 @@ export function missingOffDayRows(
   return rows;
 }
 
+/**
+ * True when the employee has at least one working day in [from, to] but did not work on, or take paid leave on, any of
+ * them. Weekly offs and holidays between absences are then not paid: a person who never came in all month is not paid
+ * for the Saturdays and Sundays of that month. A window with no working day at all (the first days of a joiner's or a
+ * running month falling on a weekend) is not judged.
+ */
+export function hasNoAttendedDay(
+  rows: { status: AttendanceStatus; date: string }[],
+  leaves: LeaveRowWithType[],
+  calendar: OffDayCalendar,
+  from: string,
+  to: string,
+): boolean {
+  if (from > to) return false;
+  let workingDays = 0;
+  for (const date of enumerateDateStrings(from, to)) {
+    if (
+      !calendar.weeklyOffDates.has(date) &&
+      !calendar.holidayDates.has(date)
+    ) {
+      workingDays += 1;
+    }
+  }
+  if (workingDays === 0) return false;
+  if (
+    rows.some(
+      (r) =>
+        r.status === AttendanceStatus.PRESENT ||
+        r.status === AttendanceStatus.HALF_DAY,
+    )
+  ) {
+    return false;
+  }
+  return !leaves.some(
+    (l) =>
+      l.endDate >= from &&
+      l.startDate <= to &&
+      l.leaveType.isPaid &&
+      (l.leaveType.salaryImpactPercent ?? 100) > 0,
+  );
+}
+
 export type LeaveRowWithSandwich = LeaveRowWithType & {
   // The leave type's "sandwich leave applies" rule. When it is off, a weekly off or holiday inside a leave is not a
   // leave day and stays paid; when it is on, those days belong to the leave (unpaid if the leave is unpaid).

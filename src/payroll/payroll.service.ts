@@ -23,6 +23,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AttendanceStatus,
   CalcType,
   EmployeeSalaryComponent,
   LeaveEncashmentStatus,
@@ -39,6 +40,7 @@ import {
   Role,
   SalaryComponent,
   SalaryComponentType,
+  SettlementStatus,
   StatutoryKey,
   StatutoryModule,
   TaxDeclarationStatus,
@@ -97,6 +99,7 @@ import {
 import {
   dropLeaveRowsOnOffDays,
   employmentWindow,
+  hasNoAttendedDay,
   lastCountedDay,
   missingOffDayRows,
   offDayCalendar,
@@ -571,6 +574,9 @@ export class PayrollService {
         extraTaxableEarnings: number;
         // The LWD month was already paid (and taxed) by a locked regular run — only the extras are taxed now.
         monthAlreadyPaid: boolean;
+        // YYYY-MM-DD last working day. Days after it are outside the employment, so they pay nothing and count as
+        // neither unpaid nor paid weekly offs.
+        lastWorkingDay: string;
       };
       // Supplementary run tax probe: adds this much taxable pay to the month's income, so the difference in annual tax
       // against a run without it is the tax the supplementary payment itself causes. Nothing else changes.
@@ -688,7 +694,9 @@ export class PayrollService {
       employee.joiningDate,
       month,
       year,
-      options?.finalSettlement ? undefined : lastCountedDay(today, month, year),
+      options?.finalSettlement
+        ? options.finalSettlement.lastWorkingDay
+        : lastCountedDay(today, month, year),
     );
     const elapsedAttendanceRows = attendanceRows.filter(
       (r) => r.date <= employed.to,
@@ -725,14 +733,28 @@ export class PayrollService {
       calendar,
       leaveInputs,
     );
-    const attendanceForPay = [
-      ...keptRows,
-      ...missingOffDayRows(calendar, new Set(keptRows.map((r) => r.date))),
-    ];
     const leaves: LeaveRowWithSandwich[] = splitLeavesAroundOffDays(
       leaveInputs,
       new Set([...calendar.weeklyOffDates, ...calendar.holidayDates]),
     );
+    // Nobody who was absent on every working day of the period is paid for the weekly offs and holidays in between.
+    const absentThroughout = hasNoAttendedDay(
+      keptRows,
+      leaves,
+      calendar,
+      employed.from,
+      employed.to,
+    );
+    const attendanceForPay = absentThroughout
+      ? keptRows.filter(
+          (r) =>
+            r.status !== AttendanceStatus.WEEKLY_OFF &&
+            r.status !== AttendanceStatus.HOLIDAY,
+        )
+      : [
+          ...keptRows,
+          ...missingOffDayRows(calendar, new Set(keptRows.map((r) => r.date))),
+        ];
     const attendanceSummary = computeAttendanceSummary(
       attendanceForPay,
       leaves,
@@ -1715,6 +1737,36 @@ export class PayrollService {
     };
   }
 
+  // Employees whose final settlement is processed or paid and whose last working day falls in `month`/`year` or
+  // earlier: employeeId -> last working day.
+  private async settledEmployees(
+    employeeIds: string[],
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<Map<string, string>> {
+    if (employeeIds.length === 0) return new Map();
+    const monthEnd = lastDayOfMonth(month, year);
+    const settlements = await this.scopedPrisma.settlement.findMany({
+      where: {
+        organizationId,
+        employeeId: { in: employeeIds },
+        status: { in: [SettlementStatus.PROCESSED, SettlementStatus.PAID] },
+        lastWorkingDay: { lte: monthEnd },
+      },
+      select: { employeeId: true, lastWorkingDay: true },
+    });
+    // A settlement's last working day month must not be after the month being run: it ends the employment for that
+    // month and every later one. An earlier month (before the exit) still runs normally.
+    const settled = new Map<string, string>();
+    for (const row of settlements) {
+      if (row.lastWorkingDay.slice(0, 7) <= monthEnd.slice(0, 7)) {
+        settled.set(row.employeeId, row.lastWorkingDay);
+      }
+    }
+    return settled;
+  }
+
   async calculate(
     dto: CalculatePayrollDto,
     actor: Actor,
@@ -1781,7 +1833,44 @@ export class PayrollService {
     // not accumulated), and results.push/failures.push from concurrent
     // workers is safe — JS has no true parallelism, so a synchronous
     // array push is never interleaved by another worker mid-operation.
+    // Whoever's final settlement is already processed or paid has been paid for their last month (and nothing is due
+    // after it) through that settlement, so a regular run for that month or a later one would pay them twice.
+    const settledByEmployeeId = await this.settledEmployees(
+      employees.map((e) => e.id),
+      dto.month,
+      dto.year,
+      organizationId,
+    );
+
     await mapWithConcurrency(employees, 8, async (employee) => {
+      const settledOn = settledByEmployeeId.get(employee.id);
+      const existingForSettled = existingRunByEmployeeId.get(employee.id);
+      if (
+        settledOn &&
+        !(
+          existingForSettled &&
+          (existingForSettled.status === PayrollRunStatus.APPROVED ||
+            existingForSettled.status === PayrollRunStatus.LOCKED ||
+            existingForSettled.status === PayrollRunStatus.PAID)
+        )
+      ) {
+        skipped.push({
+          employeeId: employee.id,
+          name: employee.name,
+          code: employee.employeeId,
+          reason: `Final settlement (last working day ${settledOn}) is already processed - paid through the settlement, not a regular run.`,
+        });
+        if (
+          existingForSettled &&
+          (existingForSettled.status === PayrollRunStatus.DRAFT ||
+            existingForSettled.status === PayrollRunStatus.CALCULATED)
+        ) {
+          await this.scopedPrisma.payrollRun.deleteMany({
+            where: { id: existingForSettled.id, organizationId },
+          });
+        }
+        return;
+      }
       // Not employed yet: no payroll for a month that ended before the joining date.
       const notOnPayroll = notOnPayrollReason(
         employee.joiningDate,
@@ -4215,14 +4304,16 @@ export class PayrollService {
     const edges: Record<string, string[]> = {};
     for (const c of components) {
       const override = overridesByCode.get(c.code) ?? null;
-      edges[c.code] = extractDependencies(c, override).filter((code) =>
-        byCode.has(code),
-      );
+      // BASIC_RATE is Basic before attendance proration, so a formula using it has to wait for BASIC.
+      edges[c.code] = extractDependencies(c, override)
+        .map((name) => (name === 'BASIC_RATE' ? 'BASIC' : name))
+        .filter((code) => byCode.has(code));
     }
     const order = topoSortComponents(edges);
 
     const results: ResolvedLine[] = [];
     const localContext = { ...context };
+    localContext.BASIC_RATE ??= 0;
 
     for (const code of order) {
       const component = byCode.get(code);
@@ -4238,6 +4329,11 @@ export class PayrollService {
         );
       }
 
+      // The month's full Basic rate, before the attendance proration below. Overtime pays at this rate: a part
+      // month (joiner, leave, LOP) must not lower the hourly rate of the overtime actually worked.
+      if (code === 'BASIC') {
+        localContext.BASIC_RATE = roundAmount(Math.max(0, value));
+      }
       if (valueType === CalcType.FIXED) {
         value = value * prorationFactor;
       }
@@ -4347,7 +4443,16 @@ export class PayrollService {
       for (const line of results) {
         const valueType =
           overrides.get(line.code)?.valueType ?? line.component?.calcType;
-        const isLumpSum = valueType === CalcType.MANUAL;
+        // Overtime (a formula on BASIC_RATE and the month's approved hours) is a month-level amount too: it is paid
+        // once, at the month-end rate. Splitting it by each segment's share of the calendar days cut a joiner's
+        // overtime by the days before their joining, since no structure applies to those days.
+        const isLumpSum =
+          valueType === CalcType.MANUAL ||
+          (!!line.component &&
+            extractDependencies(
+              line.component,
+              overrides.get(line.code) ?? null,
+            ).includes('BASIC_RATE'));
         if (isLumpSum && index !== lastIndex) continue;
         const amount = isLumpSum ? line.amount : line.amount * weight;
         const existing = combined.get(line.code);

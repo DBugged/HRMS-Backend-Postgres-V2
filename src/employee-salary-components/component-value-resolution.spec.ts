@@ -1,4 +1,4 @@
-import { CalcType } from '@prisma/client';
+import { CalcType, PayFrequency } from '@prisma/client';
 import {
   extractDependencies,
   resolveComponentValue,
@@ -102,5 +102,69 @@ describe('extractDependencies', () => {
   it('an unparseable formula yields no dependencies rather than throwing', () => {
     const c = component({ calcType: CalcType.FORMULA, formula: 'BASIC +' });
     expect(extractDependencies(c, null)).toEqual([]);
+  });
+});
+
+describe('resolveComponentValue: ANNUAL basis follows the pay frequency', () => {
+  const annual = (amount: number): ComponentOverrideLike => ({
+    valueType: CalcType.FIXED,
+    fixedAmount: amount,
+    percentageValue: null,
+    percentageOf: null,
+    formula: null,
+    amountBasis: 'ANNUAL',
+    isEnabled: true,
+  });
+  const withFreq = (payFrequency: PayFrequency) => ({
+    calcType: CalcType.FIXED,
+    defaultValue: 0,
+    percentageValue: null,
+    percentageOf: null,
+    formula: null,
+    payFrequency,
+  });
+
+  it('monthly component: a year total is paid 1/12 a month', () => {
+    expect(
+      resolveComponentValue(withFreq(PayFrequency.MONTHLY), annual(120000), {}),
+    ).toBe(10000);
+  });
+  it('yearly component: the whole year total is paid in its one payout', () => {
+    expect(
+      resolveComponentValue(withFreq(PayFrequency.YEARLY), annual(50000), {}),
+    ).toBe(50000);
+  });
+  it('half-yearly component: half the year total per payout', () => {
+    expect(
+      resolveComponentValue(
+        withFreq(PayFrequency.HALF_YEARLY),
+        annual(60000),
+        {},
+      ),
+    ).toBe(30000);
+  });
+  it('quarterly component: a quarter of the year total per payout', () => {
+    expect(
+      resolveComponentValue(
+        withFreq(PayFrequency.QUARTERLY),
+        annual(60000),
+        {},
+      ),
+    ).toBe(15000);
+  });
+  it('no frequency given keeps the old monthly behaviour', () => {
+    expect(
+      resolveComponentValue(
+        {
+          calcType: CalcType.FIXED,
+          defaultValue: 0,
+          percentageValue: null,
+          percentageOf: null,
+          formula: null,
+        },
+        annual(120000),
+        {},
+      ),
+    ).toBe(10000);
   });
 });

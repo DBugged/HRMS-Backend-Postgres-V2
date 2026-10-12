@@ -70,6 +70,8 @@ export const SYSTEM_VARS = [
   // payroll/formula-context.ts (buildBaseContext + deriveStatutoryContext).
   'BASIC_DA',
   'BASIC_DA_RATE',
+  // Basic for a full month, before attendance proration (the hourly rate of overtime is based on it).
+  'BASIC_RATE',
   'PF_WAGES',
   'GRATUITY_WAGES',
   'NPS_WAGES',

@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  Matches,
   IsBoolean,
   IsEnum,
   IsNumber,
@@ -84,6 +85,19 @@ export class SetComponentValueDto {
   @IsOptional()
   @IsValidCalendarDateString()
   effectiveFrom?: string;
+
+  @ApiPropertyOptional({
+    example: '2026-09',
+    description:
+      'Pay this component for ONE month only (YYYY-MM) - an arrears, bonus or incentive that must not repeat every ' +
+      'month. It starts on the 1st and ends on the last day of that month, so the following month no longer includes ' +
+      'it. Refused when the employee already has the component as a running (open-ended) entry.',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, {
+    message: 'applyOnlyForMonth must be a month in YYYY-MM format.',
+  })
+  applyOnlyForMonth?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

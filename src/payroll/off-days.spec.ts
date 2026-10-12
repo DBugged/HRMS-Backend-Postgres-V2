@@ -2,6 +2,7 @@ import { AttendanceStatus } from '@prisma/client';
 import {
   dropLeaveRowsOnOffDays,
   employmentWindow,
+  hasNoAttendedDay,
   missingOffDayRows,
   monthBounds,
   offDayCalendar,
@@ -286,5 +287,80 @@ describe('lastCountedDay', () => {
       lastCountedDay('2026-10-10', 10, 2026),
     );
     expect(w.from > w.to).toBe(true);
+  });
+});
+
+describe('hasNoAttendedDay (absent on every working day)', () => {
+  const calendar = offDayCalendar('2026-09-01', '2026-09-30', [], []);
+  const withOffs = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, []);
+  const unpaidLeave = {
+    startDate: '2026-09-01',
+    endDate: '2026-09-30',
+    isHalfDay: false,
+    leaveType: { isPaid: false, salaryImpactPercent: 100 },
+  };
+  const paidLeave = {
+    ...unpaidLeave,
+    leaveType: { isPaid: true, salaryImpactPercent: 100 },
+  };
+
+  it('no rows, no leave: absent throughout', () => {
+    expect(hasNoAttendedDay([], [], withOffs, '2026-09-01', '2026-09-30')).toBe(
+      true,
+    );
+  });
+  it('one present day anywhere: not absent throughout', () => {
+    expect(
+      hasNoAttendedDay(
+        [{ status: AttendanceStatus.PRESENT, date: '2026-09-10' }],
+        [],
+        withOffs,
+        '2026-09-01',
+        '2026-09-30',
+      ),
+    ).toBe(false);
+  });
+  it('a half day counts as attended', () => {
+    expect(
+      hasNoAttendedDay(
+        [{ status: AttendanceStatus.HALF_DAY, date: '2026-09-10' }],
+        [],
+        withOffs,
+        '2026-09-01',
+        '2026-09-30',
+      ),
+    ).toBe(false);
+  });
+  it('a month of paid leave is not absence', () => {
+    expect(
+      hasNoAttendedDay([], [paidLeave], withOffs, '2026-09-01', '2026-09-30'),
+    ).toBe(false);
+  });
+  it('a month of unpaid leave is absence', () => {
+    expect(
+      hasNoAttendedDay([], [unpaidLeave], withOffs, '2026-09-01', '2026-09-30'),
+    ).toBe(true);
+  });
+  it('only weekly-off rows and no attended day: absent throughout', () => {
+    expect(
+      hasNoAttendedDay(
+        [{ status: AttendanceStatus.WEEKLY_OFF, date: '2026-09-05' }],
+        [],
+        withOffs,
+        '2026-09-01',
+        '2026-09-30',
+      ),
+    ).toBe(true);
+  });
+  it('a window of only weekend days is not judged', () => {
+    const weekend = offDayCalendar('2026-09-05', '2026-09-06', SAT_SUN, []);
+    expect(hasNoAttendedDay([], [], weekend, '2026-09-05', '2026-09-06')).toBe(
+      false,
+    );
+  });
+  it('an empty window is not judged', () => {
+    expect(hasNoAttendedDay([], [], calendar, '2026-09-30', '2026-09-01')).toBe(
+      false,
+    );
   });
 });
