@@ -83,7 +83,18 @@ function build(
       return { count: n };
     },
   });
-  const tx = { loan: model(loans), loanRepayment: model(repayments) };
+  const revisions: Row[] = [];
+  const tx = {
+    loan: model(loans),
+    loanRepayment: model(repayments),
+    payrollRun: model(runs),
+    payrollRunRevision: {
+      create: async (a: Row) => {
+        revisions.push(a.data);
+        return a.data;
+      },
+    },
+  };
   const prisma: Row = new Proxy(
     {
       payrollRun: model(runs),
@@ -169,6 +180,7 @@ function build(
     mails,
     queued,
     recorded,
+    revisions,
   };
 }
 
@@ -400,9 +412,17 @@ describe('payroll unlock: taking it all back', () => {
   });
 
   it('a payslip the employee already received is withdrawn with a notification', async () => {
-    const { service, notes } = build({ runs: [locked({ status: 'PAID' })] });
+    const { service, notes, revisions } = build({
+      runs: [locked({ status: 'PAID' })],
+    });
     await service.unlock('r1', { reason: 'wrong tax' } as never, admin, 'org');
     expect(notes.at(-1)?.title).toBe('Payslip for 9/2026 withdrawn');
+    // what had been finalised is saved before the run is corrected
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0]).toMatchObject({
+      previousStatus: 'PAID',
+      reason: 'wrong tax',
+    });
   });
 
   it('an unlock that never reached the employee sends nothing', async () => {

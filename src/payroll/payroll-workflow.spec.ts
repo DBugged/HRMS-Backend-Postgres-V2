@@ -6,6 +6,7 @@ type Row = Record<string, any>;
 // An in-memory payroll_runs table plus "everything else is empty", enough to drive the sign-off workflow.
 function build(runs: Row[], extra: Record<string, Row> = {}) {
   const audit: Row[] = [];
+  const revisions: Row[] = [];
   const store = runs.map((r) => ({ ...r }));
   const match = (r: Row, where: Row = {}) =>
     Object.entries(where).every(([k, v]) => {
@@ -24,8 +25,12 @@ function build(runs: Row[], extra: Record<string, Row> = {}) {
     {
       payrollRun: {
         findMany: async (a: Row) => store.filter((r) => match(r, a?.where)),
-        findFirst: async (a: Row) =>
-          store.find((r) => match(r, a?.where)) ?? null,
+        // A copy, like a real read: the row is later updated in place and a caller holding the earlier read must keep
+        // seeing what it read.
+        findFirst: async (a: Row) => {
+          const r = store.find((x) => match(x, a?.where));
+          return r ? { ...r } : null;
+        },
         findFirstOrThrow: async (a: Row) => {
           const r = store.find((x) => match(x, a?.where));
           if (!r) throw new Error('not found');
@@ -42,6 +47,13 @@ function build(runs: Row[], extra: Record<string, Row> = {}) {
         findUnique: async () => ({ timezone: 'Asia/Kolkata' }),
       },
       user: { findFirst: async () => null },
+      payrollRunRevision: {
+        create: async (a: Row) => {
+          revisions.push(a.data);
+          return a.data;
+        },
+      },
+      $transaction: async (fn: (t: Row) => unknown) => fn(prisma),
       ...extra,
     } as Row,
     { get: (t, p: string) => t[p] ?? empty },
@@ -60,7 +72,7 @@ function build(runs: Row[], extra: Record<string, Row> = {}) {
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
     stub({}),
   );
-  return { service, store, audit };
+  return { service, store, audit, revisions };
 }
 
 const run = (over: Row = {}): Row => ({
@@ -274,7 +286,7 @@ describe('payroll workflow: unlock', () => {
   });
 
   it('a Locked run goes back to Calculated with its sign-off marks cleared and the reason kept', async () => {
-    const { service, store, audit } = build([
+    const { service, store, audit, revisions } = build([
       run({
         status: 'LOCKED',
         verifiedById: 'v',
@@ -300,6 +312,13 @@ describe('payroll workflow: unlock', () => {
       payslipEmailSentAt: null,
     });
     expect(audit.at(-1)?.action).toBe('PAYROLL_UNLOCKED');
+    expect(revisions).toHaveLength(1);
+    expect(revisions[0].snapshot).toMatchObject({
+      status: 'LOCKED',
+      netPay: 42000,
+    });
+    // the database does the increment; the in-memory fake just stores the instruction
+    expect(store[0].revisionNumber).toEqual({ increment: 1 });
   });
 
   it('a Paid run can be reopened only by an Admin', async () => {
