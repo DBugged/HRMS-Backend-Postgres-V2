@@ -1,5 +1,6 @@
 import { IsIndianMobile } from '../../common/indian-mobile';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEmail,
@@ -127,11 +128,17 @@ export class CreatePayrollTemplateDto {
   @IsOptional()
   @IsEnum(HeaderStyle)
   headerStyle?: HeaderStyle;
-  @ApiPropertyOptional()
+  // Blank means "use the Primary Color" (that is what the editor's label says and what the form starts with). An empty
+  // string used to reach the hex check and be refused as 'headerColor must be a hex color', so saving or previewing a
+  // new template failed until a colour was typed. Blank is now stored as null.
+  @ApiPropertyOptional({ nullable: true })
+  @Transform(({ value }) =>
+    typeof value === 'string' && value.trim() === '' ? null : value,
+  )
   @IsOptional()
   @IsString()
   @Matches(HEX_COLOR, { message: HEX_MESSAGE })
-  headerColor?: string;
+  headerColor?: string | null;
   @ApiPropertyOptional({ enum: PayslipFontFamily })
   @IsOptional()
   @IsEnum(PayslipFontFamily)
