@@ -401,4 +401,104 @@ describe('Payroll controls (e2e)', () => {
       );
     });
   });
+
+  describe('C-7 - the audit trail records role, outcome, request id and refused attempts', () => {
+    it('an entry carries the actor role, request id (echoed as X-Request-Id), client address and outcome', async () => {
+      await post('/payroll/calculate')
+        .set('X-Request-Id', 'audit-request-0001')
+        .send({ month: 8, year: YEAR, employeeId })
+        .expect(201)
+        .expect('X-Request-Id', 'audit-request-0001');
+      const entry = await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'PAYROLL_CALCULATED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(entry.actorRole).toBe('ADMIN');
+      expect(entry.requestId).toBe('audit-request-0001');
+      expect(entry.outcome).toBe('SUCCESS');
+      expect(entry.ipAddress).not.toBe('');
+
+      const res = await post('/payroll/calculate')
+        .send({ month: 8, year: YEAR, employeeId })
+        .expect(201);
+      expect(res.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+
+      const listed = await get('/audit-logs?module=PAYROLL&limit=5');
+      const first = (
+        listed.body as {
+          data: { actorRole: string; outcome: string; requestId: string }[];
+        }
+      ).data[0];
+      expect(first.actorRole).toBe('ADMIN');
+      expect(first.outcome).toBe('SUCCESS');
+      expect(first.requestId).toBeTruthy();
+    });
+
+    it('a refused attempt is recorded as a failure: no permission, and a sign-off that breaks segregation of duties', async () => {
+      const before = await prisma.auditLog.count({
+        where: { action: 'ACCESS_DENIED' },
+      });
+      await post('/payroll/calculate', employeeToken)
+        .send({ month: 8, year: YEAR })
+        .expect(403);
+      const denied = await prisma.auditLog.findMany({
+        where: { action: 'ACCESS_DENIED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      expect(denied.length).toBe(before + 1);
+      expect(denied[0]).toMatchObject({
+        actorId: employeeId,
+        actorRole: 'EMPLOYEE',
+        outcome: 'FAILURE',
+        module: 'PAYROLL',
+      });
+      expect((denied[0].details as { path: string; method: string }).path).toBe(
+        '/payroll/calculate',
+      );
+
+      // HR calculates and verifies, then tries to approve the same run
+      await post('/payroll/calculate', hrToken)
+        .send({ month: 3, year: YEAR, employeeId })
+        .expect(201);
+      const run = await runOf(3);
+      await post(`/payroll/${run.id}/verify`, hrToken).expect(201);
+      await post(`/payroll/${run.id}/approve`, hrToken).expect(400);
+      const refused = await prisma.auditLog.findFirstOrThrow({
+        where: { targetId: run.id, action: 'PAYROLL_SIGNOFF_REFUSED' },
+      });
+      expect(refused.outcome).toBe('FAILURE');
+      expect(refused.actorRole).toBe('HR');
+      expect((refused.details as { attempted: string }).attempted).toBe(
+        'APPROVED',
+      );
+    });
+
+    it('an imported bank statement is recorded row by row (which payslips, which references, which refused)', async () => {
+      const run = await progress(5, 'PAID', hrId);
+      const imp = await post('/payroll/payments/import')
+        .send({
+          rows: [
+            { payslipNumber: run.payslipNumber, paymentReference: 'UTR-IMP-1' },
+            { payslipNumber: 'PS-NOPE-0001', paymentReference: 'UTR-IMP-2' },
+          ],
+        })
+        .expect(201);
+      expect((imp.body as { updated: number }).updated).toBe(1);
+      const entry = await prisma.auditLog.findFirstOrThrow({
+        where: { action: 'PAYROLL_PAYMENTS_IMPORTED' },
+        orderBy: { createdAt: 'desc' },
+      });
+      const details = entry.details as {
+        updatedPayslips: { payslipNumber: string; paymentReference: string }[];
+        failedRows: { payslipNumber: string; error: string }[];
+      };
+      expect(details.updatedPayslips).toEqual([
+        expect.objectContaining({
+          payslipNumber: run.payslipNumber,
+          paymentReference: 'UTR-IMP-1',
+        }),
+      ]);
+      expect(details.failedRows[0].payslipNumber).toBe('PS-NOPE-0001');
+    });
+  });
 });

@@ -9,6 +9,7 @@ import {
 import type { Request, Response } from 'express';
 import { Prisma } from '@prisma/client';
 import { captureException } from '../sentry';
+import { AuditLogService } from '../../audit-log/audit-log.service';
 import {
   MULTER_FILE_TOO_LARGE,
   describeFileTooLarge,
@@ -66,11 +67,58 @@ function asBodyParserError(
 // timestamp are new. Never leaks a raw stack trace or driver error to
 // the client for a non-HttpException (5xx) — those are logged
 // server-side only.
+// Routes whose refused calls are worth a place in the audit trail: payroll and the data it is built from.
+const AUDITED_DENIAL_PREFIXES = [
+  '/payroll',
+  '/reports/payroll',
+  '/employee-salary',
+  '/statutory-config',
+  '/tax-slabs',
+  '/leave-balances',
+  '/audit-logs',
+];
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
 
-  catch(exception: unknown, host: ArgumentsHost) {
+  constructor(private readonly auditLogService: AuditLogService) {}
+
+  // A signed-in user refused (403) on a sensitive route is recorded as ACCESS_DENIED / FAILURE, so attempts to reach
+  // payroll without permission leave a trace. The write is awaited (a few milliseconds, only on a refused call to these
+  // routes) so that it is on record before the caller sees the refusal; it never fails the response (log() swallows
+  // its own errors).
+  private auditDenial(
+    request: Request,
+    status: number,
+    message: unknown,
+  ): Promise<void> | undefined {
+    if (status !== 403) return undefined;
+    const user = (
+      request as Request & {
+        user?: { id?: string; organizationId?: string };
+      }
+    ).user;
+    const path = (request.originalUrl ?? request.url).split('?')[0];
+    if (!user?.id || !user.organizationId) return undefined;
+    if (!AUDITED_DENIAL_PREFIXES.some((p) => path.startsWith(p))) {
+      return undefined;
+    }
+    return this.auditLogService.log({
+      actorId: user.id,
+      organizationId: user.organizationId,
+      action: 'ACCESS_DENIED',
+      module: 'PAYROLL',
+      outcome: 'FAILURE',
+      details: {
+        method: request.method,
+        path,
+        message: Array.isArray(message) ? message.join('; ') : String(message),
+      },
+    });
+  }
+
+  async catch(exception: unknown, host: ArgumentsHost) {
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
@@ -131,6 +179,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
       captureException(exception);
     }
+
+    // Only a refused call to a sensitive route waits for its audit write; every other error is answered at once.
+    const denial = this.auditDenial(request, status, message);
+    if (denial) await denial;
 
     response.status(status).json({
       statusCode: status,

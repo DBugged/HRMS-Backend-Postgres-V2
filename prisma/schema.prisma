@@ -2684,6 +2684,11 @@ model AuditLog {
   targetId  String?
   details   Json        @default("{}")
   ipAddress String      @default("")
+  // The actor's role when it happened (their role today may differ), SUCCESS or FAILURE (a refused or denied attempt),
+  // and the id of the HTTP request (also returned to the caller as X-Request-Id) for correlating with server logs.
+  actorRole String?
+  outcome   String      @default("SUCCESS")
+  requestId String?
 
   createdAt DateTime @default(now())
 

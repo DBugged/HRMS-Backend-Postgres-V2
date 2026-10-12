@@ -1,4 +1,10 @@
-import { Module } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
+import { requestContextMiddleware } from './common/request-context';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { RequestSanityInterceptor } from './common/request-sanity.interceptor';
 import { ScheduleModule } from '@nestjs/schedule';
@@ -194,4 +200,14 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  // Every request gets an id (X-Request-Id) and its client IP / user are made available to the audit trail.
+  configure(consumer: MiddlewareConsumer) {
+    // Not the sign-in routes: they are hit in bursts by anonymous callers, carry their own IP into the audit trail, and
+    // have no signed-in user to attribute anyway.
+    consumer
+      .apply(requestContextMiddleware)
+      .exclude({ path: 'auth/*path', method: RequestMethod.ALL })
+      .forRoutes('*path');
+  }
+}

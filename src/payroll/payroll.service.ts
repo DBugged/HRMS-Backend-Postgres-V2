@@ -2548,6 +2548,11 @@ export class PayrollService {
     });
     const byNumber = new Map(runs.map((r) => [r.payslipNumber, r]));
     const updated: string[] = [];
+    const importedRows: {
+      payslipNumber: string;
+      paymentReference: string;
+      paymentDate: string;
+    }[] = [];
     const failed: { row: number; payslipNumber: string; error: string }[] = [];
     for (const [i, row] of dto.rows.entries()) {
       const payslipNumber = row.payslipNumber.trim();
@@ -2587,13 +2592,25 @@ export class PayrollService {
         },
       });
       updated.push(run.id);
+      importedRows.push({
+        payslipNumber,
+        paymentReference: row.paymentReference.trim(),
+        paymentDate,
+      });
     }
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'PAYROLL_PAYMENTS_IMPORTED',
       module: 'PAYROLL',
       organizationId,
-      details: { updated: updated.length, failed: failed.length },
+      // Which payslips were marked as paid (with the bank reference) and which rows were refused and why, not only the
+      // counts: this is the record of what the bank file said. Capped so one large import cannot bloat the entry.
+      details: {
+        updated: updated.length,
+        failed: failed.length,
+        updatedPayslips: importedRows.slice(0, 200),
+        failedRows: failed.slice(0, 200),
+      },
     });
     return { updated: updated.length, failed };
   }
@@ -3763,6 +3780,22 @@ export class PayrollService {
             status: 'separation_of_duties',
             reason: blocked,
           });
+          // A refused sign-off is part of the trail too: who tried to approve or pay what they must not.
+          await this.auditLogService.log({
+            actorId: actor.id,
+            action: 'PAYROLL_SIGNOFF_REFUSED',
+            module: 'PAYROLL',
+            outcome: 'FAILURE',
+            organizationId,
+            targetId: run.id,
+            details: {
+              attempted: config.toStatus,
+              employeeId: run.employeeId,
+              month: run.month,
+              year: run.year,
+              reason: blocked,
+            },
+          });
           continue;
         }
       }
@@ -3830,6 +3863,7 @@ export class PayrollService {
             actorId: actor.id,
             action: 'PAYROLL_LOCK_REFUSED',
             module: 'PAYROLL',
+            outcome: 'FAILURE',
             organizationId,
             targetId: run.id,
             details: { reason: lockProblem },

@@ -12,6 +12,7 @@ import { AuditModule, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { QueryAuditLogDto } from './dto/query-audit-log.dto';
+import { currentRequest } from '../common/request-context';
 import { paginate } from '../common/pagination';
 
 type Actor = Omit<User, 'password'>;
@@ -24,6 +25,10 @@ export interface LogAuditInput {
   targetId?: string | null;
   details?: Record<string, unknown>;
   ipAddress?: string;
+  // Defaults to the role of the signed-in user when they are the actor (else looked up).
+  actorRole?: string;
+  // 'FAILURE' for a refused or denied attempt; defaults to 'SUCCESS'.
+  outcome?: 'SUCCESS' | 'FAILURE';
 }
 
 // Roles whose activity an HR viewer must not see — ADMIN and MANAGER
@@ -71,6 +76,22 @@ export class AuditLogService {
   // documenting, same as the old system's logAudit util.
   async log(input: LogAuditInput): Promise<void> {
     try {
+      // Where it came from: the request's id and client address, and the actor's role at this moment. A scheduled job
+      // has no request, so it records no request id and the role is looked up.
+      const request = currentRequest();
+      const actorRole =
+        input.actorRole ??
+        (request?.user?.id === input.actorId
+          ? request.user.role
+          : ((
+              await this.scopedPrisma.user.findFirst({
+                where: {
+                  id: input.actorId,
+                  organizationId: input.organizationId,
+                },
+                select: { role: true },
+              })
+            )?.role ?? null));
       await this.scopedPrisma.auditLog.create({
         data: {
           organizationId: input.organizationId,
@@ -79,7 +100,10 @@ export class AuditLogService {
           module: input.module,
           targetId: input.targetId ?? null,
           details: (input.details ?? {}) as Prisma.InputJsonValue,
-          ipAddress: input.ipAddress ?? '',
+          ipAddress: input.ipAddress ?? request?.ip ?? '',
+          actorRole,
+          outcome: input.outcome ?? 'SUCCESS',
+          requestId: request?.requestId ?? null,
         },
       });
     } catch (err) {

@@ -324,6 +324,7 @@ export class AuthService {
       if (locked) {
         await this.auditLogService.log({
           actorId: user.id,
+          actorRole: user.role,
           action: 'LOGIN_LOCKED',
           module: 'AUTH',
           organizationId: user.organizationId,
@@ -353,6 +354,7 @@ export class AuthService {
     );
     await this.auditLogService.log({
       actorId: user.id,
+      actorRole: user.role,
       action: 'LOGIN',
       module: 'AUTH',
       organizationId: user.organizationId,
