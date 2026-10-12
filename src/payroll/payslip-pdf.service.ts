@@ -316,6 +316,64 @@ export class PayslipPdfService {
     return this.renderPayslipPdf(run, template, settings, ytd, printInfo);
   }
 
+  // The payslip as it was when this revision of the run was finalised (the run itself now holds the corrected figures).
+  // Built from the revision's saved figures; branding, template and settings are the current ones.
+  async buildRevisionPayslipPdfBuffer(
+    runId: string,
+    revision: number,
+    organizationId: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const [run, saved] = await Promise.all([
+      this.scopedPrisma.payrollRun.findFirst({
+        where: { id: runId, organizationId },
+        include: {
+          employee: {
+            select: {
+              id: true,
+              name: true,
+              employeeId: true,
+              designation: true,
+              joiningDate: true,
+              department: { select: { name: true } },
+              personalData: true,
+            },
+          },
+        },
+      }),
+      this.scopedPrisma.payrollRunRevision.findFirst({
+        where: { organizationId, payrollRunId: runId, revision },
+      }),
+    ]);
+    if (!run || !saved) throw new NotFoundException('Payslip not found.');
+    const snapshot = saved.snapshot as Record<string, unknown>;
+    const asFinalised = { ...run, ...snapshot } as typeof run;
+    const [template, settings, ytd, printInfo] = await Promise.all([
+      this.getActiveTemplate(organizationId),
+      this.payrollSettingsService.getOrCreate(organizationId),
+      run.financialYear
+        ? this.computeYtdTotals(
+            run.employeeId,
+            run.financialYear,
+            run.month,
+            run.year,
+            organizationId,
+          )
+        : Promise.resolve(null),
+      this.getOrgPrintInfo(organizationId),
+    ]);
+    const rendered = await this.renderPayslipPdf(
+      asFinalised,
+      template,
+      settings,
+      ytd,
+      printInfo,
+    );
+    return {
+      buffer: rendered.buffer,
+      filename: rendered.filename.replace(/\.pdf$/, `-rev${revision}.pdf`),
+    };
+  }
+
   // Organization Settings > Branding > "Watermark this logo on generated
   // documents" — a behavior switch, not a branding value, so it's read
   // from Organization even though PayrollTemplate's own company* fields

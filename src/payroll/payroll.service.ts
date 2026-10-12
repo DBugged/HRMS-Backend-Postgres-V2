@@ -419,6 +419,49 @@ export function nonFiniteMoneyField(run: {
   return null;
 }
 
+// The financial and lifecycle fields of a run that a revision keeps. Everything a payslip, the register and the bank
+// export are built from; nothing is derived or looked up later.
+const REVISION_FIELDS = [
+  'financialYear',
+  'status',
+  'attendanceSummary',
+  'earnings',
+  'deductions',
+  'employerContributions',
+  'taxDetails',
+  'heldVariablePay',
+  'grossSalary',
+  'taxableGross',
+  'totalDeductions',
+  'totalEmployerContributions',
+  'netPay',
+  'ctcMonthly',
+  'netPayInWords',
+  'payslipNumber',
+  'calculatedAt',
+  'calculatedById',
+  'verifiedAt',
+  'verifiedById',
+  'approvedAt',
+  'approvedById',
+  'lockedAt',
+  'lockedById',
+  'paidAt',
+  'paidById',
+  'paymentMode',
+  'paymentReference',
+  'paymentDate',
+  'designation',
+  'departmentName',
+  'gradeLevel',
+] as const;
+
+export function revisionSnapshotOf(run: PayrollRun): Record<string, unknown> {
+  const snapshot: Record<string, unknown> = {};
+  for (const key of REVISION_FIELDS) snapshot[key] = run[key] ?? null;
+  return snapshot;
+}
+
 @Injectable()
 export class PayrollService {
   constructor(
@@ -2708,6 +2751,54 @@ export class PayrollService {
     return run;
   }
 
+  // The corrected-payroll history of one run: each time it was unlocked, the figures it had been finalised with (and
+  // who reopened it, when and why). ADMIN/HR only - the route is restricted; the run must belong to the organisation.
+  async listRevisions(id: string, organizationId: string) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+      select: { id: true, revisionNumber: true },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    const rows = await this.scopedPrisma.payrollRunRevision.findMany({
+      where: { organizationId, payrollRunId: id },
+      orderBy: { revision: 'desc' },
+    });
+    const users = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        id: { in: [...new Set(rows.map((r) => r.createdById))] },
+      },
+      select: { id: true, name: true, employeeId: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return {
+      currentRevision: run.revisionNumber,
+      data: rows.map((r) => {
+        const snap = r.snapshot as Record<string, unknown>;
+        return {
+          revision: r.revision,
+          createdAt: r.createdAt,
+          reopenedBy: byId.get(r.createdById) ?? null,
+          reason: r.reason,
+          previousStatus: r.previousStatus,
+          grossSalary: snap.grossSalary ?? null,
+          totalDeductions: snap.totalDeductions ?? null,
+          netPay: snap.netPay ?? null,
+          paymentReference: snap.paymentReference ?? null,
+          payslipNumber: snap.payslipNumber ?? null,
+        };
+      }),
+    };
+  }
+
+  async getRevision(id: string, revision: number, organizationId: string) {
+    const row = await this.scopedPrisma.payrollRunRevision.findFirst({
+      where: { organizationId, payrollRunId: id, revision },
+    });
+    if (!row) throw new NotFoundException('Payroll revision not found.');
+    return row;
+  }
+
   // Every draft/calculate/adjust/verify/approve/lock/pay/unlock action,
   // newest first — sourced from the audit log rather than a dedicated
   // table, same as LeavesService.getCreditHistory. Batch-level actions
@@ -3252,34 +3343,58 @@ export class PayrollService {
     // pass the status check above on the same snapshot, and each used to go on to reverse the run's effects, write an
     // audit row and send the employee a "payslip withdrawn" notice. Only the request whose update matches the run still
     // being in the status read above carries on; the other is told the run was already unlocked.
-    const { count: unlocked } = await this.scopedPrisma.payrollRun.updateMany({
-      where: { id, organizationId, status: run.status },
-      data: {
-        status: PayrollRunStatus.CALCULATED,
-        unlockedById: actor.id,
-        unlockedAt: new Date(),
-        unlockReason: dto.reason.trim(),
-        // Back to Calculated means none of the later steps have happened any more: leaving their dates behind showed
-        // an old Pay Date on the payslip of a run that is not paid (the audit log keeps the history).
-        verifiedAt: null,
-        verifiedById: null,
-        approvedAt: null,
-        approvedById: null,
-        lockedAt: null,
-        lockedById: null,
-        lockEffectsAppliedAt: null,
-        paidAt: null,
-        paidById: null,
-        // A corrected payslip is a new payslip: allow the e-mail to go out again when it is re-paid.
-        payslipEmailSentAt: null,
-        // The bank reference, mode and date confirmed a payment of the amounts that are now being corrected. Left in place
-        // they would sit on the corrected payslip and show up in the bank export as if it had been paid with that UTR.
-        // The old values stay in the audit entry below.
-        paymentMode: null,
-        paymentReference: null,
-        paymentDate: null,
-      },
+    // The figures as they stand now (what was finalised, and possibly paid) are written to PayrollRunRevision in the
+    // same transaction as the reopening, so the original result stays reproducible after the run is corrected and
+    // recalculated; revisionNumber counts the corrections.
+    const unlocked = await this.scopedPrisma.$transaction(async (tx) => {
+      const { count } = await tx.payrollRun.updateMany({
+        where: { id, organizationId, status: run.status },
+        data: {
+          status: PayrollRunStatus.CALCULATED,
+          unlockedById: actor.id,
+          unlockedAt: new Date(),
+          unlockReason: dto.reason.trim(),
+          // Back to Calculated means none of the later steps have happened any more: leaving their dates behind showed
+          // an old Pay Date on the payslip of a run that is not paid (the audit log keeps the history).
+          verifiedAt: null,
+          verifiedById: null,
+          approvedAt: null,
+          approvedById: null,
+          lockedAt: null,
+          lockedById: null,
+          lockEffectsAppliedAt: null,
+          paidAt: null,
+          paidById: null,
+          // A corrected payslip is a new payslip: allow the e-mail to go out again when it is re-paid.
+          payslipEmailSentAt: null,
+          // The bank reference, mode and date confirmed a payment of the amounts that are now being corrected. Left in place
+          // they would sit on the corrected payslip and show up in the bank export as if it had been paid with that UTR.
+          // The old values stay in the audit entry below.
+          paymentMode: null,
+          paymentReference: null,
+          paymentDate: null,
+          revisionNumber: { increment: 1 },
+        },
+      });
+      if (count === 0) return 0;
+      await tx.payrollRunRevision.create({
+        data: {
+          organizationId,
+          payrollRunId: run.id,
+          employeeId: run.employeeId,
+          month: run.month,
+          year: run.year,
+          runSequence: run.runSequence,
+          revision: run.revisionNumber,
+          previousStatus: run.status,
+          reason: dto.reason.trim(),
+          createdById: actor.id,
+          snapshot: revisionSnapshotOf(run) as unknown as Prisma.InputJsonValue,
+        },
+      });
+      return count;
     });
+
     if (unlocked === 0) {
       throw new ConflictException(
         'This payroll run was already unlocked (or its status changed) while you were doing this. Reload it to see its current state.',

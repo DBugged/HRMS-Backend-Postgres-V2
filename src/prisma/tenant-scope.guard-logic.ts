@@ -49,6 +49,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'LeaveGrant',
   'LeaveGrantRequest',
   'LeaveAccrualEntry',
+  'PayrollRunRevision',
   'PayrollRun',
   'Reimbursement',
   'Loan',

@@ -301,6 +301,7 @@ model Organization {
   privacyAuditLogs                 PrivacyAuditLog[]
 
   @@map("organizations")
+  payrollRunRevisions PayrollRunRevision[]
 }
 
 model Department {
@@ -2214,6 +2215,32 @@ model LeaveEncashment {
   @@map("leave_encashments")
 }
 
+// The figures of a finalised payroll run as they were when it was unlocked for correction, so the original result
+// (what was paid, on which payslip) stays reproducible after the run is recalculated. Written once, never updated.
+// Self-contained on purpose (no foreign key to the run): the history must outlive anything that happens to the run.
+model PayrollRunRevision {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  payrollRunId   String
+  employeeId     String
+  month          Int
+  year           Int
+  runSequence    Int          @default(0)
+  // 0 = the first finalised version; the run's own revisionNumber moves up by one when this row is written.
+  revision       Int
+  previousStatus PayrollRunStatus
+  reason         String
+  createdById    String
+  createdAt      DateTime     @default(now())
+  snapshot       Json
+
+  @@unique([payrollRunId, revision])
+  @@index([organizationId, payrollRunId])
+  @@map("payroll_run_revisions")
+}
+
 enum PayrollRunStatus {
   DRAFT
   CALCULATED
@@ -2238,6 +2265,9 @@ model PayrollRun {
   // Set when attendance, leave or overtime changes after this run was calculated, so its figures no longer match the
   // records; cleared by the next calculation. A run with this set cannot be verified, approved or locked.
   inputsChangedAt DateTime?
+  // How many times this run has been unlocked and corrected; the figures as finalised before each correction are kept in
+  // PayrollRunRevision. 0 = the original, never reopened.
+  revisionNumber  Int       @default(0)
 
   // {workingDays, presentDays, paidLeaveDays, unpaidLeaveDays, halfDays,
   // overtimeHours, lateMarks, holidayWorkDays, weekendWorkDays, lopDays,

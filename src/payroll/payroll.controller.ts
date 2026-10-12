@@ -8,6 +8,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   Query,
@@ -124,6 +125,52 @@ export class PayrollController {
       targetUserId: run.employeeId,
       entity: 'PayrollRun',
       entityId: id,
+    });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename=${filename}`,
+    });
+    res.send(buffer);
+  }
+
+  // The figures a run was finalised with before each correction (ADMIN/HR).
+  @Get(':id/revisions')
+  @Roles(Role.ADMIN, Role.HR)
+  revisions(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.payrollService.listRevisions(id, caller.organizationId);
+  }
+
+  @Get(':id/revisions/:revision')
+  @Roles(Role.ADMIN, Role.HR)
+  revision(
+    @Param('id') id: string,
+    @Param('revision', ParseIntPipe) revision: number,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.getRevision(id, revision, caller.organizationId);
+  }
+
+  // The payslip as it was issued in that earlier version of the run.
+  @Get(':id/revisions/:revision/pdf')
+  @Roles(Role.ADMIN, Role.HR)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  async revisionPdf(
+    @Param('id') id: string,
+    @Param('revision', ParseIntPipe) revision: number,
+    @CurrentUser() caller: Caller,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } =
+      await this.payslipPdfService.buildRevisionPayslipPdfBuffer(
+        id,
+        revision,
+        caller.organizationId,
+      );
+    auditSensitive(this.privacyAudit, caller, {
+      action: 'PAYSLIP_DOWNLOADED',
+      category: 'PAYSLIP',
+      entity: 'PayrollRunRevision',
+      entityId: `${id}#${revision}`,
     });
     res.set({
       'Content-Type': 'application/pdf',
