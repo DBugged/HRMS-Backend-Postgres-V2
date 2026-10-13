@@ -1073,6 +1073,76 @@ describe('Employees + Departments (e2e)', () => {
     expect((res.body as { isActive: boolean }).isActive).toBe(false);
   });
 
+  describe('HR cannot change their own employment status or decide their own probation', () => {
+    const meId = async (token: string) =>
+      (
+        (
+          await request(app.getHttpServer())
+            .get('/auth/me')
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200)
+        ).body as { id: string }
+      ).id;
+
+    it('HR is refused when moving their own status, and nothing changes', async () => {
+      const hrId = await meId(hrToken);
+      const before = await prisma.user.findUniqueOrThrow({
+        where: { id: hrId },
+      });
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${hrId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'ON_HOLD' })
+        .expect(403);
+      expect(JSON.stringify(res.body)).toMatch(
+        /cannot change your own employment status/,
+      );
+      const after = await prisma.user.findUniqueOrThrow({
+        where: { id: hrId },
+      });
+      expect(after.employmentStatus).toBe(before.employmentStatus);
+    });
+
+    it('HR is refused deciding their own probation', async () => {
+      const hrId = await meId(hrToken);
+      await request(app.getHttpServer())
+        .patch(`/employees/${hrId}/probation-decision`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'confirmed' })
+        .expect(403);
+    });
+
+    it("HR can still change another employee's status", async () => {
+      await request(app.getHttpServer())
+        .patch(`/employees/${engEmployeeId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'ON_HOLD' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch(`/employees/${engEmployeeId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'CONFIRMED' })
+        .expect(200);
+    });
+
+    it('an Admin may move their own status (and it is put back)', async () => {
+      const adminId = await meId(adminToken);
+      const before = await prisma.user.findUniqueOrThrow({
+        where: { id: adminId },
+      });
+      await request(app.getHttpServer())
+        .patch(`/employees/${adminId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ employmentStatus: 'ON_HOLD' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .patch(`/employees/${adminId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ employmentStatus: before.employmentStatus })
+        .expect(200);
+    });
+  });
+
   describe('self-deactivation is blocked', () => {
     it('an Admin cannot deactivate themselves via PATCH /employees/:id/deactivate', async () => {
       const me = await request(app.getHttpServer())

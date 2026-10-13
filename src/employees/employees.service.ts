@@ -1027,6 +1027,14 @@ export class EmployeesService {
     const statusChanging =
       clean.employmentStatus !== undefined &&
       clean.employmentStatus !== before.employmentStatus;
+    // HR cannot move their own employment status (confirm their own probation, put themselves on hold or into
+    // notice): another HR user or an Admin has to. An Admin is the top authority with no one above, so an Admin may -
+    // same split as salary revision. The change is still in the status history and the audit log.
+    if (statusChanging && actor.id === id && actor.role === Role.HR) {
+      throw new ForbiddenException(
+        'You cannot change your own employment status. An Admin or another HR user must do it.',
+      );
+    }
     if (statusChanging) {
       const allowed = EMPLOYMENT_STATUS_TRANSITIONS[before.employmentStatus];
       if (!allowed.includes(clean.employmentStatus as EmploymentStatus)) {

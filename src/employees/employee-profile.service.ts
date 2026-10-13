@@ -551,6 +551,12 @@ export class EmployeeProfileService {
     actor: Actor,
     organizationId: string,
   ) {
+    // Same rule as changing the status from the edit form: HR does not decide their own probation.
+    if (actor.id === id && actor.role === Role.HR) {
+      throw new ForbiddenException(
+        'You cannot decide your own probation. An Admin or another HR user must do it.',
+      );
+    }
     const employee = await this.findEmployeeOrThrow(id, organizationId);
     if (!employee.isActive) {
       throw new BadRequestException(
