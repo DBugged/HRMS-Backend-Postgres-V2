@@ -152,6 +152,16 @@ export class UsersService {
     return { locked: lockedNow === 1 };
   }
 
+  // A correct password from an address the account already signed in from lifts the lock outright (see
+  // AuthService.login) - an outsider's failed attempts must not keep the owner out.
+  async clearLoginLock(id: string, organizationId: string): Promise<boolean> {
+    const { count } = await this.prisma.user.updateMany({
+      where: { id, organizationId },
+      data: { failedLoginAttempts: 0, lockedUntil: null },
+    });
+    return count === 1;
+  }
+
   // Success-path counterpart of recordFailedLogin: clears the counters only
   // if the account is not locked *right now*. login() checks lockedUntil on
   // the row it loaded before the (slow) bcrypt compare, so a concurrent burst

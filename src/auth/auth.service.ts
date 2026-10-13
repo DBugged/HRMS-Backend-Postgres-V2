@@ -332,7 +332,14 @@ export class AuthService {
     // reply would confirm that an email exists. A locked-out legitimate user
     // still has a self-service way back in — completing a password reset
     // clears the lock (see resetPassword below).
-    if (user.lockedUntil && user.lockedUntil > new Date()) {
+    // A lock exists to stop guessing, but anyone can trigger it for someone else's account by failing 10 times. An
+    // address this account has successfully signed in from recently is therefore still allowed to try (and, with the
+    // right password, to clear the lock), so a stranger cannot lock the owner out of their usual place.
+    const lockedNow = !!user.lockedUntil && user.lockedUntil > new Date();
+    const knownAddress = lockedNow
+      ? await this.signedInFromRecently(user, meta.ip)
+      : false;
+    if (lockedNow && !knownAddress) {
       await bcrypt.compare(dto.password, await decoyPasswordHash());
       throw new UnauthorizedException('Invalid email or password.');
     }
@@ -361,10 +368,12 @@ export class AuthService {
     // Always runs (not only when the loaded row showed failures): it is the
     // atomic re-check that a concurrent burst of wrong guesses didn't lock
     // the account while this request's bcrypt compare was in flight.
-    const stillUnlocked = await this.usersService.clearLoginFailuresIfUnlocked(
-      user.id,
-      user.organizationId,
-    );
+    const stillUnlocked = knownAddress
+      ? await this.usersService.clearLoginLock(user.id, user.organizationId)
+      : await this.usersService.clearLoginFailuresIfUnlocked(
+          user.id,
+          user.organizationId,
+        );
     if (!stillUnlocked) {
       throw new UnauthorizedException('Invalid email or password.');
     }
@@ -399,6 +408,26 @@ export class AuthService {
         mustChangePassword: user.mustChangePassword,
       },
     };
+  }
+
+  // Whether this account signed in successfully from this address in the last 30 days (recorded in the audit log).
+  private async signedInFromRecently(
+    user: { id: string; organizationId: string },
+    ip: string | undefined,
+  ): Promise<boolean> {
+    if (!ip) return false;
+    const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const hit = await this.scopedPrisma.auditLog.findFirst({
+      where: {
+        organizationId: user.organizationId,
+        actorId: user.id,
+        action: 'LOGIN',
+        ipAddress: ip,
+        createdAt: { gte: since },
+      },
+      select: { id: true },
+    });
+    return !!hit;
   }
 
   async refresh(
