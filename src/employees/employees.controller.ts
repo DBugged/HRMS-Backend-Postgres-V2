@@ -80,6 +80,18 @@ export class EmployeesController {
     return this.employeesService.findAll(query, caller, caller.organizationId);
   }
 
+  // Mandatory-document progress for everyone still onboarding - feeds the Pending Onboarding list. Declared before
+  // the :id routes so "onboarding-documents" is not read as an id.
+  @Get('onboarding-documents')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  onboardingDocuments(@CurrentUser() caller: Caller) {
+    return this.employeeProfileService.onboardingDocumentProgress(
+      caller,
+      caller.organizationId,
+    );
+  }
+
   // Org-wide variants — must come before the :id routes below, or Nest
   // would match "assets"/"role-history" as an :id value instead.
   @Get('assets')

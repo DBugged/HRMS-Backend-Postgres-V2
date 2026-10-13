@@ -173,6 +173,78 @@ export class EmployeeProfileService {
     return areMandatoryDocumentsUploaded(requirements, documents);
   }
 
+  // One row per active employee still onboarding (Onboarding / Probation / Extended Probation): how far their
+  // mandatory documents are. Drives the Documents column on the Pending Onboarding list so HR sees who needs a
+  // review or an upload without opening every profile. Each active mandatory requirement counts once, by the best
+  // state any of the employee's documents of that type reached: APPROVED > PENDING (awaiting review) > REJECTED
+  // (needs a new upload) > missing. Counts only - no file names or links. An HR/Admin employee's row is left out
+  // for anyone but an Admin (or themselves), the same rule as their Documents tab (assertMayAccessDocumentsFor).
+  async onboardingDocumentProgress(actor: Actor, organizationId: string) {
+    const [requirements, employees] = await Promise.all([
+      this.scopedPrisma.documentRequirement.findMany({
+        where: { organizationId, isMandatory: true, isActive: true },
+        select: { name: true },
+      }),
+      this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          employmentStatus: {
+            in: ['ONBOARDING', 'PROBATION', 'EXTENDED_PROBATION'],
+          },
+        },
+        select: { id: true, role: true },
+      }),
+    ]);
+    const visible = employees.filter(
+      (e) =>
+        actor.id === e.id ||
+        actor.role === Role.ADMIN ||
+        !(e.role === Role.ADMIN || e.role === Role.HR),
+    );
+    const documents = visible.length
+      ? await this.scopedPrisma.employeeDocument.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: visible.map((e) => e.id) },
+            category: EmployeeDocumentCategory.DOCUMENT,
+          },
+          select: { employeeId: true, docType: true, status: true },
+        })
+      : [];
+    const byEmployee = new Map<string, { docType: string; status: string }[]>();
+    for (const d of documents) {
+      const list = byEmployee.get(d.employeeId) ?? [];
+      list.push(d);
+      byEmployee.set(d.employeeId, list);
+    }
+    const data = visible.map((e) => {
+      const docs = byEmployee.get(e.id) ?? [];
+      let approved = 0;
+      let pending = 0;
+      let rejected = 0;
+      let missing = 0;
+      for (const r of requirements) {
+        const statuses = docs
+          .filter((d) => d.docType === r.name)
+          .map((d) => d.status);
+        if (statuses.includes('APPROVED')) approved += 1;
+        else if (statuses.includes('PENDING')) pending += 1;
+        else if (statuses.includes('REJECTED')) rejected += 1;
+        else missing += 1;
+      }
+      return {
+        employeeId: e.id,
+        required: requirements.length,
+        approved,
+        pending,
+        rejected,
+        missing,
+      };
+    });
+    return { data };
+  }
+
   // Re-derives personalData.profileCompleted from the employee's *current*
   // documents, without changing any other personalData field — called after
   // a document is added/removed/reviewed, since those can flip completion
