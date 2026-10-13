@@ -18,6 +18,5 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
   ],
   controllers: [LettersController],
   providers: [LettersService, LetterPdfService],
-  exports: [LettersService],
 })
 export class LettersModule {}

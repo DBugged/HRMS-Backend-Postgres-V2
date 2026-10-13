@@ -8,12 +8,15 @@ import {
   Param,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { ForbiddenException } from '@nestjs/common';
 import { Role, User } from '@prisma/client';
 import { EmployeeSalaryComponentsService } from './employee-salary-components.service';
+import { SalaryStructurePdfService } from './salary-structure-pdf.service';
 import { SetComponentValueDto } from './dto/set-component-value.dto';
 import { BulkSetStructureDto } from './dto/bulk-set-structure.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -40,6 +43,7 @@ function assertMayChangeSalaryOf(caller: Caller, employeeId: string): void {
 export class EmployeeSalaryComponentsController {
   constructor(
     private readonly employeeSalaryComponentsService: EmployeeSalaryComponentsService,
+    private readonly salaryStructurePdf: SalaryStructurePdfService,
   ) {}
 
   // Employees whose Basic + DA is under 50% of the monthly pay (new Labour Code), for HR to correct.
@@ -65,6 +69,29 @@ export class EmployeeSalaryComponentsController {
       asOf,
       caller.organizationId,
     );
+  }
+
+  // The one-page Salary Structure document (what the Print button shows and what is mailed after a revision).
+  // Same access as the structure itself: the employee, HR or an Admin.
+  @Get(':id/structure/pdf')
+  @SelfOrRoles('id', Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  async structurePdf(
+    @Param('id') id: string,
+    @Query('asOf') asOf: string | undefined,
+    @CurrentUser() caller: Caller,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename } = await this.salaryStructurePdf.build(
+      id,
+      caller.organizationId,
+      asOf,
+    );
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="${filename}"`,
+    });
+    res.send(buffer);
   }
 
   @Get(':id/history')

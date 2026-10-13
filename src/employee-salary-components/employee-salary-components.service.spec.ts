@@ -50,7 +50,8 @@ function build(
   const audit: Row[] = [];
   const timeline: Row[] = [];
   const notifications: Row[] = [];
-  const letters: Row[] = [];
+  const emails: Row[] = [];
+  const built: unknown[][] = [];
   let seq = 0;
   const match = (r: Row, w: Row = {}) =>
     Object.entries(w).every(
@@ -112,11 +113,25 @@ function build(
     { log: async (e: Row) => audit.push(e) } as never,
     { logEvent: async (e: Row) => timeline.push(e) } as never,
     { create: async (n: Row) => notifications.push(n) } as never,
+    { send: async (m: Row) => emails.push(m) } as never,
     {
-      sendRevisedCtcLetter: async (...a: unknown[]) => letters.push({ a }),
+      renderOccasion: async (_org: string, key: string, vars: Row) => ({
+        subject: key,
+        html: JSON.stringify(vars),
+      }),
+      defaultFor: () => ({ subject: 's', html: 'h' }),
+    } as never,
+    {
+      build: async (...a: unknown[]) => {
+        built.push(a);
+        return {
+          buffer: Buffer.from('pdf'),
+          filename: 'E1-Salary Structure.pdf',
+        };
+      },
     } as never,
   );
-  return { service, rows, audit, timeline, notifications, letters };
+  return { service, rows, audit, timeline, notifications, emails, built };
 }
 
 const open = (code: string, amount: number, from: string, over: Row = {}) => ({
@@ -460,8 +475,8 @@ describe('salary structure: telling the employee', () => {
       'org',
     );
 
-  it('sends an in-app notification and the Revised CTC letter, with no amount in the notice', async () => {
-    const { service, notifications, letters } = build();
+  it('sends an in-app notification and emails the Salary Structure PDF, with no amount in the notice', async () => {
+    const { service, notifications, emails, built } = build();
     await revise(service);
     await flush();
     expect(notifications).toHaveLength(1);
@@ -471,13 +486,20 @@ describe('salary structure: telling the employee', () => {
     });
     expect(notifications[0].message).toContain('01-10-2026');
     expect(JSON.stringify(notifications)).not.toContain('30000');
-    // letter sent to the employee, for the revision's effective date
-    expect(letters).toHaveLength(1);
-    expect(letters[0].a).toEqual(['e1', 'admin', 'org', '2026-10-01']);
+    // the document is built for the revision's effective date and attached
+    expect(built).toEqual([['e1', 'org', '2026-10-01']]);
+    expect(emails).toHaveLength(1);
+    expect(emails[0]).toMatchObject({ to: 'e1@x.test' });
+    expect(emails[0].attachments).toEqual([
+      { filename: 'E1-Salary Structure.pdf', content: Buffer.from('pdf') },
+    ]);
+    // the email body states the effective date but no pay figure
+    expect(String(emails[0].html)).toContain('01-10-2026');
+    expect(String(emails[0].html)).not.toContain('30000');
   });
 
-  it('a bulk revision sends one notice and one letter, not one per line', async () => {
-    const { service, notifications, letters } = build();
+  it('a bulk revision sends one notice and one email, not one per line', async () => {
+    const { service, notifications, emails } = build();
     await service.bulkSetStructure(
       'e1',
       {
@@ -497,24 +519,24 @@ describe('salary structure: telling the employee', () => {
     );
     await flush();
     expect(notifications).toHaveLength(1);
-    expect(letters).toHaveLength(1);
+    expect(emails).toHaveLength(1);
   });
 
   it('says nothing when a person revises their own salary', async () => {
-    const { service, notifications, letters } = build();
+    const { service, notifications, emails } = build();
     await revise(service, 'e1');
     await flush();
     expect(notifications).toHaveLength(0);
-    expect(letters).toHaveLength(0);
+    expect(emails).toHaveLength(0);
   });
 
   it('says nothing when the organisation turned the notice off', async () => {
-    const { service, notifications, letters } = build({
+    const { service, notifications, emails } = build({
       prefs: { notifySalaryRevision: false },
     });
     await revise(service);
     await flush();
     expect(notifications).toHaveLength(0);
-    expect(letters).toHaveLength(0);
+    expect(emails).toHaveLength(0);
   });
 });

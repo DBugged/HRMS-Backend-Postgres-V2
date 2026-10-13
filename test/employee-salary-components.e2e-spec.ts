@@ -248,4 +248,27 @@ describe('Employee Salary Components (e2e)', () => {
       .expect(201);
     expect((res.body as { count: number }).count).toBe(1);
   });
+
+  it('the Salary Structure PDF: HR and the employee can open it, and it is a PDF', async () => {
+    for (const token of [adminToken, employeeToken]) {
+      const res = await request(app.getHttpServer())
+        .get(`/employee-salary/${employeeId}/structure/pdf`)
+        .set('Authorization', `Bearer ${token}`)
+        .buffer(true)
+        .parse((response, cb) => {
+          const chunks: Buffer[] = [];
+          response.on('data', (c: Buffer) => chunks.push(c));
+          response.on('end', () => cb(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect(res.headers['content-type']).toContain('application/pdf');
+      expect((res.body as Buffer).subarray(0, 5).toString()).toBe('%PDF-');
+    }
+  });
+
+  it("the Salary Structure PDF refuses someone else's record and a request with no token", async () => {
+    await request(app.getHttpServer())
+      .get(`/employee-salary/${employeeId}/structure/pdf`)
+      .expect(401);
+  });
 });

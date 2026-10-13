@@ -185,7 +185,8 @@ export function synthesizeMissingRows(
 // ---------------------------------------------------------------------------
 // The CTC breakdown of a resolved structure - the same split the Salary Details screen shows (frontend
 // EmployeeFullProfile buildBreakdown): recurring monthly earnings roll into the fixed CTC, yearly/performance pay and
-// one-time amounts sit outside it. Used for the Revised CTC letter, so the letter says what the screen says.
+// one-time amounts sit outside it. Used by the Salary Structure document and the Revised CTC letter, so what they say
+// is what the screen says.
 // ---------------------------------------------------------------------------
 export interface SummarizableRow {
   componentCode: string;
@@ -195,19 +196,38 @@ export interface SummarizableRow {
   percentageOf?: string | null;
   amountBasis?: string | null;
   isEnabled?: boolean | null;
+  effectiveFrom?: string | null;
   componentRef?: {
+    name?: string | null;
     type?: string | null;
     payFrequency?: string | null;
     isEmployerContribution?: boolean | null;
+    displayOrder?: number | null;
   } | null;
 }
 
-export interface StructureSummary {
+export interface StructureLine {
+  code: string;
+  name: string;
+  // Present on a percentage line, e.g. "40% of Basic" - lets a reader see where the amount comes from.
+  basis: string | null;
+  monthly: number;
+  annual: number;
+}
+
+export interface StructureBreakdown {
+  // Monthly recurring earnings, in the component display order.
+  earnings: StructureLine[];
+  // Paid less often than monthly or on performance (annual only), and one-time annual amounts.
+  variable: StructureLine[];
+  oneTime: StructureLine[];
   fixedMonthly: number;
   fixedAnnual: number;
   variableAnnual: number;
   oneTimeAnnual: number;
   annualCTC: number;
+  // Latest effective date among the rows - "Salary Effective From" on the document.
+  effectiveFrom: string | null;
 }
 
 const OCCURRENCES_PER_YEAR: Record<string, number> = {
@@ -217,14 +237,27 @@ const OCCURRENCES_PER_YEAR: Record<string, number> = {
   MONTHLY: 12,
 };
 
-export function summarizeStructure(rows: SummarizableRow[]): StructureSummary {
-  const earningRows = rows.filter(
-    (r) =>
-      (r.componentRef?.type || 'EARNING') === 'EARNING' &&
-      !r.componentRef?.isEmployerContribution &&
-      r.isEnabled !== false,
-  );
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+export function breakdownStructure(
+  rows: SummarizableRow[],
+  nameByCode: Record<string, string> = {},
+): StructureBreakdown {
+  const earningRows = rows
+    .filter(
+      (r) =>
+        (r.componentRef?.type || 'EARNING') === 'EARNING' &&
+        !r.componentRef?.isEmployerContribution &&
+        r.isEnabled !== false,
+    )
+    .sort(
+      (a, b) =>
+        (a.componentRef?.displayOrder ?? 0) -
+        (b.componentRef?.displayOrder ?? 0),
+    );
   const num = (v: unknown) => Number(v ?? 0) || 0;
+  const nameOf = (r: SummarizableRow) =>
+    r.componentRef?.name || nameByCode[r.componentCode] || r.componentCode;
   const monthlyByCode: Record<string, number> = {};
   // A few passes resolve short percentage-of-percentage chains (HRA as % of Basic).
   for (let pass = 0; pass < 3; pass++) {
@@ -244,12 +277,18 @@ export function summarizeStructure(rows: SummarizableRow[]): StructureSummary {
     }
   }
 
+  const earnings: StructureLine[] = [];
+  const variable: StructureLine[] = [];
+  const oneTime: StructureLine[] = [];
   let fixedMonthly = 0;
   let variableAnnual = 0;
   let oneTimeAnnual = 0;
   for (const r of earningRows) {
+    const code = r.componentCode;
     if (r.valueType === 'MANUAL' && r.amountBasis === 'ANNUAL') {
-      oneTimeAnnual += num(r.fixedAmount);
+      const annual = num(r.fixedAmount);
+      oneTime.push({ code, name: nameOf(r), basis: null, monthly: 0, annual });
+      oneTimeAnnual += annual;
       continue;
     }
     const frequency = r.componentRef?.payFrequency || 'MONTHLY';
@@ -257,19 +296,62 @@ export function summarizeStructure(rows: SummarizableRow[]): StructureSummary {
       (r.valueType === 'FIXED' || r.valueType === 'MANUAL') &&
       frequency !== 'MONTHLY'
     ) {
-      variableAnnual +=
+      const annual =
         num(r.fixedAmount) * (OCCURRENCES_PER_YEAR[frequency] || 1);
+      variable.push({ code, name: nameOf(r), basis: null, monthly: 0, annual });
+      variableAnnual += annual;
       continue;
     }
-    fixedMonthly += monthlyByCode[r.componentCode] || 0;
+    const monthly = monthlyByCode[code] || 0;
+    // A calculated line (Overtime Pay) is worked out per month at payroll: it has no amount in the structure.
+    if (r.valueType === 'FORMULA' && monthly === 0) continue;
+    fixedMonthly += monthly;
+    earnings.push({
+      code,
+      name: nameOf(r),
+      basis:
+        r.valueType === 'PERCENTAGE'
+          ? `${num(r.percentageValue)}% of ${nameByCode[r.percentageOf ?? ''] ?? r.percentageOf ?? ''}`
+          : null,
+      monthly: round2(monthly),
+      annual: round2(monthly * 12),
+    });
   }
-  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const effectiveFrom =
+    rows
+      .map((r) => r.effectiveFrom)
+      .filter((d): d is string => !!d)
+      .sort()
+      .pop() ?? null;
   const fixedAnnual = fixedMonthly * 12;
   return {
+    earnings,
+    variable,
+    oneTime,
     fixedMonthly: round2(fixedMonthly),
     fixedAnnual: round2(fixedAnnual),
     variableAnnual: round2(variableAnnual),
     oneTimeAnnual: round2(oneTimeAnnual),
     annualCTC: round2(fixedAnnual + variableAnnual + oneTimeAnnual),
+    effectiveFrom,
+  };
+}
+
+export interface StructureSummary {
+  fixedMonthly: number;
+  fixedAnnual: number;
+  variableAnnual: number;
+  oneTimeAnnual: number;
+  annualCTC: number;
+}
+
+export function summarizeStructure(rows: SummarizableRow[]): StructureSummary {
+  const b = breakdownStructure(rows);
+  return {
+    fixedMonthly: b.fixedMonthly,
+    fixedAnnual: b.fixedAnnual,
+    variableAnnual: b.variableAnnual,
+    oneTimeAnnual: b.oneTimeAnnual,
+    annualCTC: b.annualCTC,
   };
 }

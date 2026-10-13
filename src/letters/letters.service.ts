@@ -873,30 +873,6 @@ export class LettersService {
     };
   }
 
-  // Emails the employee their Revised CTC (Increment) letter after a salary revision was saved - the PDF carries the
-  // details, the email itself states no amounts. Called from the salary revision flow; the caller treats any failure
-  // (no active template, no email on file) as "no letter sent", never as a failed revision.
-  async sendRevisedCtcLetter(
-    employeeId: string,
-    actorId: string,
-    organizationId: string,
-    effectiveFrom: string,
-  ): Promise<void> {
-    const actor = await this.scopedPrisma.user.findFirst({
-      where: { id: actorId, organizationId },
-    });
-    if (!actor) return;
-    const { password: _password, ...safeActor } = actor;
-    await this.send(
-      employeeId,
-      'incrementLetter',
-      safeActor,
-      organizationId,
-      undefined,
-      effectiveFrom,
-    );
-  }
-
   // HR/Admin-only follow-up to generate() — everything is pulled from the
   // same real employee/org/computed data, nothing to fill in; HR reviews
   // the PDF (via generate()/the Download button), optionally edits the

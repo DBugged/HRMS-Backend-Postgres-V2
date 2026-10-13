@@ -79,6 +79,7 @@ const SUPPLIED: Record<string, string[]> = {
   LETTER_SENT: ['letterName'],
   PASSWORD_CHANGED: ['changedAt'],
   ROLE_CHANGED: ['previousRole', 'newRole'],
+  SALARY_REVISED: ['effectiveFrom'],
   EXIT_COMPLETED: ['lastWorkingDay'],
   APPROVALS_DIGEST: [
     'totalPending',

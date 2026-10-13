@@ -15,7 +15,10 @@ function build() {
     },
   };
   return {
-    controller: new EmployeeSalaryComponentsController(service as never),
+    controller: new EmployeeSalaryComponentsController(
+      service as never,
+      {} as never,
+    ),
     calls,
   };
 }

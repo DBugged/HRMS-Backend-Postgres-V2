@@ -97,6 +97,8 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
   LETTER_SENT: 'Your {{letterName}} is attached.',
   PASSWORD_CHANGED: 'Your account password was changed on {{changedAt}}.',
   ROLE_CHANGED: 'Your HRMS role changed from {{previousRole}} to {{newRole}}.',
+  SALARY_REVISED:
+    'Your salary structure was revised, effective {{effectiveFrom}}. The updated document is attached.',
   EXIT_COMPLETED:
     'Your exit process is complete and your HRMS access is closed.',
   APPROVALS_DIGEST: '{{totalPending}} request(s) are waiting for your review.',
@@ -401,6 +403,29 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
         row('Status', status('{{status}}')),
       ],
       commentsPlaceholder: '{{comments}}',
+    }),
+    ccAllActive: false,
+    category: 'Payroll & Finance',
+  },
+  {
+    // Fires from EmployeeSalaryComponentsService after a salary revision is saved, with the Salary Structure PDF
+    // attached. The body never states an amount - the attached document carries the details.
+    occasionKey: 'SALARY_REVISED',
+    name: 'Salary Revised',
+    subject: 'Your salary structure was revised',
+    bodyHtml: emailBody({
+      category: 'Payroll & Finance',
+      title: 'Your salary structure was revised',
+      blocks: [
+        hello,
+        paragraph(
+          'Your salary structure was revised, effective {{effectiveFrom}}. Your updated Salary Structure is attached to this email.',
+        ),
+        notice(
+          'You can also see it any time under My Salary Structure in the HRMS. If this is not what you expected, contact HR.',
+          'info',
+        ),
+      ],
     }),
     ccAllActive: false,
     category: 'Payroll & Finance',

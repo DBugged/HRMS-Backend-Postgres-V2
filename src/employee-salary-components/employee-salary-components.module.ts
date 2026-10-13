@@ -4,17 +4,18 @@ import { EmployeeSalaryComponentsService } from './employee-salary-components.se
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { NotificationsModule } from '../notifications/notifications.module';
-import { LettersModule } from '../letters/letters.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
+import { SalaryStructurePdfService } from './salary-structure-pdf.service';
 
 @Module({
   imports: [
     AuditLogModule,
     EmployeeTimelineModule,
     NotificationsModule,
-    LettersModule,
+    EmailTemplatesModule,
   ],
   controllers: [EmployeeSalaryComponentsController],
-  providers: [EmployeeSalaryComponentsService],
+  providers: [EmployeeSalaryComponentsService, SalaryStructurePdfService],
   // Exported so LeaveEncashmentsModule can inject it for
   // getCurrentMonthlyValue (the "current BASIC" rate calculation).
   exports: [EmployeeSalaryComponentsService],

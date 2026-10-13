@@ -34,7 +34,9 @@ import {
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
-import { LettersService } from '../letters/letters.service';
+import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { SalaryStructurePdfService } from './salary-structure-pdf.service';
 
 // A stored effective date as YYYY-MM-DD, whether the column hands back a string or a Date.
 const dateOnly = (v: Date | string): string =>
@@ -47,12 +49,14 @@ export class EmployeeSalaryComponentsService {
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly notificationsService: NotificationsService,
-    private readonly lettersService: LettersService,
+    private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly salaryStructurePdf: SalaryStructurePdfService,
   ) {}
 
-  // Tells the employee their salary structure was revised: an in-app notification (and phone push), and their
-  // Revised CTC letter by email - the letter carries the details, so the email itself states no amounts and none are
-  // put in the notification. Skipped when the person revised their own salary (an Admin can) or when the
+  // Tells the employee their salary structure was revised: an in-app notification (and phone push), and an email with
+  // their Salary Structure document attached - the document carries the details, so the email itself states no
+  // amounts and none are put in the notification. Skipped when the person revised their own salary (an Admin can) or when the
   // organisation switched it off (orgPayrollAttendancePrefs.notifySalaryRevision === false). Best-effort: the revision
   // is already saved, so a problem here (no active letter template, no email on file...) is swallowed and never
   // fails the caller.
@@ -86,7 +90,7 @@ export class EmployeeSalaryComponentsService {
         organizationId,
         userId: employeeId,
         title: 'Salary structure revised',
-        message: `Your salary structure was revised, effective ${effective}. Your Revised CTC letter has been emailed to you; open My Salary Structure to see the details.`,
+        message: `Your salary structure was revised, effective ${effective}. Your updated Salary Structure has been emailed to you; open My Salary Structure to see the details.`,
         category: NotificationCategory.PAYROLL,
       });
     } catch {
@@ -94,22 +98,48 @@ export class EmployeeSalaryComponentsService {
     }
     try {
       if (employeeId === actorId) return;
-      const org = await this.scopedPrisma.organization.findFirst({
-        where: { id: organizationId },
-        select: { orgPayrollAttendancePrefs: true },
-      });
+      const [org, employee] = await Promise.all([
+        this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { orgPayrollAttendancePrefs: true },
+        }),
+        this.scopedPrisma.user.findFirst({
+          where: { id: employeeId, organizationId },
+          select: { name: true, email: true, isActive: true },
+        }),
+      ]);
       const prefs = (org?.orgPayrollAttendancePrefs ?? {}) as {
         notifySalaryRevision?: boolean;
       };
       if (prefs.notifySalaryRevision === false) return;
-      await this.lettersService.sendRevisedCtcLetter(
+      if (!employee?.email || !employee.isActive) return;
+
+      // The Salary Structure document as of the revision's effective date.
+      const { buffer, filename } = await this.salaryStructurePdf.build(
         employeeId,
-        actorId,
         organizationId,
         effectiveFrom,
       );
+      const [y, m, d] = effectiveFrom.slice(0, 10).split('-');
+      const variables = {
+        employeeName: employee.name,
+        effectiveFrom: y && m && d ? `${d}-${m}-${y}` : effectiveFrom,
+      };
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'SALARY_REVISED',
+        variables,
+        this.emailTemplatesService.defaultFor('SALARY_REVISED', variables),
+      );
+      await this.emailService.send({
+        organizationId,
+        to: employee.email,
+        subject: rendered.subject,
+        html: rendered.html,
+        attachments: [{ filename, content: buffer }],
+      });
     } catch {
-      // no active Increment letter template, no email on file, or no structure yet - nothing to send
+      // no structure to show, no email on file - nothing to send
     }
   }
 
