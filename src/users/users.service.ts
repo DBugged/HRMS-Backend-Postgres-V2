@@ -47,11 +47,17 @@ export class UsersService {
     // exactly this one extension-only field, not a general `any` typing.
     const normalized = email.trim().toLowerCase();
     type FindFirstArgs = Parameters<typeof this.prisma.user.findFirst>[0];
-    const args = {
-      where: { OR: [{ email: normalized }, { officialEmail: normalized }] },
-      __tenantScopeBypass: true,
-    } as unknown as FindFirstArgs;
-    return this.prisma.user.findFirst(args);
+    const lookup = (where: Prisma.UserWhereInput) =>
+      this.prisma.user.findFirst({
+        where,
+        __tenantScopeBypass: true,
+      } as unknown as FindFirstArgs);
+    // The login (`email`) column wins over the editable `officialEmail`: an account's own sign-in address can never
+    // be shadowed by someone else setting their official address to it. Only when nobody's login email matches is the
+    // official address tried.
+    return lookup({ email: normalized }).then(
+      (byLogin) => byLogin ?? lookup({ officialEmail: normalized }),
+    );
   }
 
   // A reset-token hash alone identifies the account — same tenant-unknown

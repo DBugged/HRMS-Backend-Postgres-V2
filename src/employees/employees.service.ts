@@ -915,6 +915,16 @@ export class EmployeesService {
       organizationId,
       id,
     );
+    // officialEmail is a second sign-in/reset address: it must not be another account's address, or sign-in and
+    // password reset for that account would become ambiguous (and could be denied to it).
+    if (clean.officialEmail) {
+      const holder = await this.usersService.findByEmail(clean.officialEmail);
+      if (holder && holder.id !== id) {
+        throw new ConflictException(
+          'This email address is already used by another account.',
+        );
+      }
+    }
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
     // decides whether HR/Admin *may* touch `role` at all (vs. a plain
