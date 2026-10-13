@@ -12,13 +12,11 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { registrationAllowed } from './registration-policy';
 import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { escapeHtml } from '../email-templates/email-layout';
 import { JwtService } from '@nestjs/jwt';
@@ -120,13 +118,6 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    // Open by default; with REGISTRATION_ENABLED=false only a request carrying an invitation code may create an
-    // organisation (see registration-policy.ts).
-    if (!registrationAllowed(dto.inviteCode)) {
-      throw new ForbiddenException(
-        'Registration is by invitation only. Ask for an invitation code to create an organization.',
-      );
-    }
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('An account with this email already exists.');

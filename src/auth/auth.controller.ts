@@ -1,5 +1,4 @@
 import { cookieSecure } from '../common/production-config';
-import { registrationOpen } from './registration-policy';
 // Purpose: Exposes registration, login, token refresh/logout, password reset, and the current-user endpoints.
 // Responsibilities: Validates DTOs, manages the refresh-token cookie, and delegates credential logic to AuthService.
 // Important: Brute-force-sensitive routes are throttled tighter than the app default; login/refresh/logout are @Public().
@@ -54,13 +53,6 @@ export class AuthController {
   @Get('password-policy')
   passwordPolicy() {
     return publicPasswordPolicy();
-  }
-
-  // Public: lets the sign-up screen know whether to ask for an invitation code.
-  @Public()
-  @Get('registration-config')
-  registrationConfig() {
-    return { open: registrationOpen() };
   }
 
   // 5/min per IP on every brute-force-able auth route — tighter than the

@@ -92,14 +92,6 @@ export function productionSecretWarnings(
     w.push(
       'WARNING: ENABLE_SWAGGER=true without SWAGGER_USER/SWAGGER_PASSWORD - the API docs stay disabled until both are set.',
     );
-  if (env.REGISTRATION_ENABLED !== 'false')
-    w.push(
-      'WARNING: public registration is open - anyone can create an organization. Set REGISTRATION_ENABLED=false and REGISTRATION_INVITE_CODES to make it invitation-only.',
-    );
-  else if (!(env.REGISTRATION_INVITE_CODES ?? '').trim())
-    w.push(
-      'WARNING: REGISTRATION_ENABLED=false but REGISTRATION_INVITE_CODES is empty - nobody can register.',
-    );
   return w;
 }
 
