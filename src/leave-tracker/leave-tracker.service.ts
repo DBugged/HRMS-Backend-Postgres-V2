@@ -7,7 +7,11 @@
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
-import { leaveYearBounds, leaveYearLabel } from '../leave-balances/leave-year';
+import {
+  leaveYearBounds,
+  leaveYearLabel,
+  leaveYearOf,
+} from '../leave-balances/leave-year';
 import { EMPLOYEE_ORDER_BY, compareEmployees } from '../common/employee-order';
 import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import {
@@ -27,6 +31,7 @@ import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { todayInOrgTz } from '../common/org-date';
+import { clampLeaveDaysToMonth } from '../payroll/payroll-date-math';
 import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
 import { QueryLeaveTrackerBalancesDto } from './dto/query-leave-tracker-balances.dto';
 import { ExportLeaveTrackerGridDto } from './dto/export-leave-tracker-grid.dto';
@@ -295,6 +300,23 @@ export class LeaveTrackerService {
     );
     if (employeeIds.length === 0) return [];
 
+    // A chosen month ('YYYY-MM') picks the leave year that contains it and narrows leave taken / WFH days to it.
+    const periodCfg = await getLeaveYearConfig(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const period = query.period;
+    const periodStart = period ? `${period}-01` : null;
+    const periodEnd = period
+      ? `${period}-${String(
+          new Date(
+            Date.UTC(Number(period.slice(0, 4)), Number(period.slice(5, 7)), 0),
+          ).getUTCDate(),
+        ).padStart(2, '0')}`
+      : null;
+    if (periodStart)
+      query = { ...query, year: leaveYearOf(periodStart, periodCfg) };
+
     const employees = await this.scopedPrisma.user.findMany({
       where: { id: { in: employeeIds }, organizationId },
       select: {
@@ -346,22 +368,63 @@ export class LeaveTrackerService {
     // availableForEmployees() sweeps once and fetches every employee's comp-off
     // rows in a single findMany; the attendance groupBy replaces N separate
     // counts with one grouped query — same final per-employee numbers either way.
-    const [compOffAvailableByEmployee, wfhCounts] = await Promise.all([
-      this.compOffService.availableForEmployees(
-        balanceEmployeeIds,
-        organizationId,
-      ),
-      this.scopedPrisma.attendance.groupBy({
-        by: ['employeeId'],
-        where: {
+    const [compOffAvailableByEmployee, wfhCounts, monthLeaves] =
+      await Promise.all([
+        this.compOffService.availableForEmployees(
+          balanceEmployeeIds,
           organizationId,
-          employeeId: { in: balanceEmployeeIds },
-          date: { gte: yearStart, lte: yearEnd },
-          workArrangement: WorkArrangement.WFH,
-        },
-        _count: { _all: true },
-      }),
-    ]);
+        ),
+        this.scopedPrisma.attendance.groupBy({
+          by: ['employeeId'],
+          where: {
+            organizationId,
+            employeeId: { in: balanceEmployeeIds },
+            date: { gte: periodStart ?? yearStart, lte: periodEnd ?? yearEnd },
+            workArrangement: WorkArrangement.WFH,
+          },
+          _count: { _all: true },
+        }),
+        // Approved leave overlapping the chosen month, to say how much of each type was taken in it.
+        periodStart && periodEnd
+          ? this.scopedPrisma.leave.findMany({
+              where: {
+                organizationId,
+                employeeId: { in: balanceEmployeeIds },
+                status: LeaveStatus.APPROVED,
+                startDate: { lte: periodEnd },
+                endDate: { gte: periodStart },
+              },
+              select: {
+                employeeId: true,
+                startDate: true,
+                endDate: true,
+                isHalfDay: true,
+                leaveType: { select: { code: true, name: true } },
+              },
+            })
+          : Promise.resolve([]),
+      ]);
+    // employeeId -> leaveTypeCode -> { name, days } for the chosen month.
+    const takenInPeriod = new Map<
+      string,
+      Map<string, { name: string; days: number }>
+    >();
+    if (periodStart) {
+      const m = Number(periodStart.slice(5, 7));
+      const y = Number(periodStart.slice(0, 4));
+      for (const l of monthLeaves) {
+        const days = clampLeaveDaysToMonth(l, m, y);
+        if (days <= 0) continue;
+        const byType = takenInPeriod.get(l.employeeId) ?? new Map();
+        const cur = byType.get(l.leaveType.code) ?? {
+          name: l.leaveType.name,
+          days: 0,
+        };
+        cur.days += days;
+        byType.set(l.leaveType.code, cur);
+        takenInPeriod.set(l.employeeId, byType);
+      }
+    }
     const wfhDaysUsedByEmployee = new Map(
       wfhCounts.map((c) => [c.employeeId, c._count._all]),
     );
@@ -383,6 +446,12 @@ export class LeaveTrackerService {
       }[];
       compOffAvailable: number;
       wfhDaysUsed: number;
+      // Only when a month was asked for: leave taken in that month, by type.
+      leaveTakenInPeriod?: {
+        leaveTypeCode: string;
+        leaveTypeName: string;
+        days: number;
+      }[];
     }[] = [];
 
     // Eligibility is evaluated once per employee up front so every missing balance row (write-on-first-
@@ -470,6 +539,15 @@ export class LeaveTrackerService {
         leaveBalances,
         compOffAvailable,
         wfhDaysUsed,
+        ...(periodStart && {
+          leaveTakenInPeriod: [
+            ...(takenInPeriod.get(employee.id) ?? new Map()).entries(),
+          ].map(([leaveTypeCode, v]) => ({
+            leaveTypeCode,
+            leaveTypeName: v.name,
+            days: Math.round(v.days * 100) / 100,
+          })),
+        }),
       });
     }
 
@@ -565,8 +643,21 @@ export class LeaveTrackerService {
         key: `lt_${code}`,
         width: 18,
       })),
+      ...(query.period
+        ? [
+            {
+              header: `Leave taken in ${query.period}`,
+              key: 'leaveTakenInPeriod',
+              width: 24,
+            },
+          ]
+        : []),
       { header: 'Comp-Off Available', key: 'compOffAvailable', width: 16 },
-      { header: 'WFH Days Used', key: 'wfhDaysUsed', width: 14 },
+      {
+        header: query.period ? `WFH Days (${query.period})` : 'WFH Days Used',
+        key: 'wfhDaysUsed',
+        width: 14,
+      },
     ];
 
     const rows = balances.map((entry) => {
@@ -575,6 +666,9 @@ export class LeaveTrackerService {
         name: entry.name,
         compOffAvailable: entry.compOffAvailable,
         wfhDaysUsed: entry.wfhDaysUsed,
+        leaveTakenInPeriod: (entry.leaveTakenInPeriod ?? [])
+          .map((t) => `${t.leaveTypeCode} ${t.days}`)
+          .join(', '),
       };
       for (const code of leaveTypeCodes) {
         const match = entry.leaveBalances.find((b) => b.leaveTypeCode === code);

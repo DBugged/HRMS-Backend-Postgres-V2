@@ -42,6 +42,7 @@ interface BalanceEntry {
   }[];
   compOffAvailable: number;
   wfhDaysUsed: number;
+  leaveTakenInPeriod?: { leaveTypeCode: string; days: number }[];
 }
 interface LeaveBalanceResponse {
   balances: {
@@ -516,6 +517,42 @@ describe('Leave Tracker (e2e)', () => {
         (e) => e.employeeId === empAId,
       );
       expect(entry?.wfhDaysUsed).toBe(1);
+    });
+
+    it('with a month, shows the leave taken and WFH days of that month only', async () => {
+      const month = String(MONTH).padStart(2, '0');
+      const res = await request(app.getHttpServer())
+        .get('/leave-tracker/balances')
+        .query({ year: YEAR, period: `${YEAR}-${month}` })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const entry = (res.body as BalanceEntry[]).find(
+        (e) => e.employeeId === empAId,
+      );
+      // Half day on the 6th + full day on the 10th of the test leave type; the comp-off day is a different type.
+      expect(
+        entry?.leaveTakenInPeriod?.find((t) => t.leaveTypeCode === 'TAL')?.days,
+      ).toBe(1.5);
+      expect(entry?.wfhDaysUsed).toBe(1);
+
+      const other = await request(app.getHttpServer())
+        .get('/leave-tracker/balances')
+        .query({ year: YEAR, period: `${YEAR}-07` })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const empty = (other.body as BalanceEntry[]).find(
+        (e) => e.employeeId === empAId,
+      );
+      expect(empty?.leaveTakenInPeriod).toEqual([]);
+      expect(empty?.wfhDaysUsed).toBe(0);
+    });
+
+    it('rejects a malformed period', async () => {
+      await request(app.getHttpServer())
+        .get('/leave-tracker/balances')
+        .query({ year: YEAR, period: '2026-13' })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
     });
 
     it('MANAGER is scoped to only their own department', async () => {

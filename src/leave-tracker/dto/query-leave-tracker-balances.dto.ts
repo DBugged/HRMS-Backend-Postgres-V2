@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsUUID, Max, Min, Matches } from 'class-validator';
 
 export class QueryLeaveTrackerBalancesDto {
   @ApiPropertyOptional()
@@ -9,6 +9,14 @@ export class QueryLeaveTrackerBalancesDto {
   @Min(2000)
   @Max(2100)
   year: number;
+
+  @ApiPropertyOptional({
+    description:
+      'YYYY-MM. When given, balances are those of the leave year containing that month (the year field is then ignored), leave taken and WFH days are counted for that month only.',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-(0[1-9]|1[0-2])$/, { message: 'period must be YYYY-MM' })
+  period?: string;
 
   @ApiPropertyOptional({
     description:
