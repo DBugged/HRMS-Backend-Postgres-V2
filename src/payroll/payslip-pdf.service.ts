@@ -820,7 +820,7 @@ export class PayslipPdfService {
       if (a.payableDays != null && a.totalDaysInMonth) {
         doc.font(fonts.oblique).fontSize(6.3).fillColor(INK_600);
         text(
-          `Each earning = monthly amount ÷ ${a.totalDaysInMonth} × ${a.payableDays} payable days.`,
+          `Each earning = amount ÷ ${a.totalDaysInMonth} × ${a.payableDays} payable days.`,
           attX,
           y + cardH + 5,
           { width: attW },
