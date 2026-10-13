@@ -551,6 +551,37 @@ export class EmployeeProfileService {
         'newProbationEndDate is required when extending probation.',
       );
     }
+    // An extension has to move the end date forward (and stay within two years of joining); a confirmation may
+    // carry the date it takes effect, which cannot precede joining or be in the future.
+    const joined = employee.joiningDate.toISOString().slice(0, 10);
+    if (dto.decision === 'extended') {
+      const newEnd = dto.newProbationEndDate as string;
+      if (employee.probationEndDate && newEnd <= employee.probationEndDate) {
+        throw new BadRequestException(
+          `The new probation end date must be after the current one (${employee.probationEndDate}).`,
+        );
+      }
+      if (newEnd <= joined) {
+        throw new BadRequestException(
+          'The probation end date must be after the joining date.',
+        );
+      }
+      const limit = new Date(`${joined}T00:00:00.000Z`);
+      limit.setUTCFullYear(limit.getUTCFullYear() + 2);
+      if (newEnd > limit.toISOString().slice(0, 10)) {
+        throw new BadRequestException(
+          'Probation cannot be extended beyond two years from joining.',
+        );
+      }
+    }
+    if (dto.decision === 'confirmed' && dto.effectiveDate) {
+      const today = new Date().toISOString().slice(0, 10);
+      if (dto.effectiveDate < joined || dto.effectiveDate > today) {
+        throw new BadRequestException(
+          'The confirmation date must be between the joining date and today.',
+        );
+      }
+    }
     const newStatus: EmploymentStatus =
       dto.decision === 'confirmed' ? 'CONFIRMED' : 'EXTENDED_PROBATION';
 
@@ -573,7 +604,9 @@ export class EmployeeProfileService {
           employeeId: id,
           previousStatus: employee.employmentStatus,
           newStatus,
-          note: dto.note ?? '',
+          note:
+            (dto.effectiveDate ? `Effective ${dto.effectiveDate}. ` : '') +
+            (dto.note ?? ''),
           changedById: actor.id,
         },
       }),
@@ -588,6 +621,9 @@ export class EmployeeProfileService {
           : 'PROBATION_EXTENDED',
       performedById: actor.id,
       description: dto.note ?? '',
+      ...(dto.effectiveDate
+        ? { metadata: { effectiveDate: dto.effectiveDate } }
+        : {}),
     });
 
     return toSafe(await this.findEmployeeOrThrow(id, organizationId));

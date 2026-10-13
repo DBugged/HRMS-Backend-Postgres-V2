@@ -1007,6 +1007,16 @@ export class EmployeesService {
       );
     }
 
+    // probationStatus mirrors the employment status for the two probation outcomes, so the two never disagree.
+    if (statusChanging && clean.employmentStatus === 'CONFIRMED') {
+      Object.assign(clean, { probationStatus: 'CONFIRMED' });
+    } else if (
+      statusChanging &&
+      clean.employmentStatus === 'EXTENDED_PROBATION'
+    ) {
+      Object.assign(clean, { probationStatus: 'EXTENDED' });
+    }
+
     // An Admin reports to nobody: whenever the resulting role is Admin the reporting manager is cleared.
     if ((clean.role ?? before.role) === Role.ADMIN) {
       Object.assign(clean, { reportingManagerId: null });

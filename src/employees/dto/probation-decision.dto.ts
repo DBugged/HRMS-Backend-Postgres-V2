@@ -13,6 +13,16 @@ export class ProbationDecisionDto {
   })
   newProbationEndDate?: string;
 
+  @ApiPropertyOptional({
+    description:
+      'Date a confirmation takes effect (YYYY-MM-DD) - between joining and today. Recorded in the history.',
+  })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: 'effectiveDate must be in YYYY-MM-DD format',
+  })
+  effectiveDate?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

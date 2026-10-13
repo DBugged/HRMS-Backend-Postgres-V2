@@ -440,6 +440,15 @@ describe('Employee Rich Profile (e2e)', () => {
       );
     });
 
+    it('an extension must move the end date forward', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${otherEmpId}/probation-decision`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'extended', newProbationEndDate: '2026-11-30' })
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/after the current one/);
+    });
+
     it('confirms employment on a second decision', async () => {
       await request(app.getHttpServer())
         .patch(`/employees/${otherEmpId}/probation-decision`)
