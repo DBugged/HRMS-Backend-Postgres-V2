@@ -2572,10 +2572,39 @@ model Settlement {
   reimbursementAmount    Float @default(0)
   netSettlementAmount    Float @default(0)
 
+  // Notice period: pay the employer waived (employee released before the notice ended) and the shortfall the
+  // recovery above was derived from. noticePeriodRecovery is calculated from the notice days unless HR overrode it.
+  noticePayAmount        Float   @default(0)
+  noticeShortfallDays    Float   @default(0)
+  noticeRecoveryAuto     Boolean @default(false)
+  // Why recoveriesAmount was deducted — required whenever it is above zero.
+  recoveriesReason       String?
+  // Leave encashment: the part exempt under s.10(10AA) (not taxed) and the per-leave-type days behind the figure
+  // [{leaveTypeId, year, days}], which process() debits from the balance and a reversal puts back.
+  leaveEncashmentExempt  Float   @default(0)
+  leaveEncashmentDetail  Json?
+  // Active loans closed by process() [{id, outstandingBalance, status}] so a reversal can reopen them, and what could
+  // not be recovered from the payout (loans left open for HR to follow up).
+  closedLoans            Json?
+  loanBalanceUnrecovered Float   @default(0)
+
   status SettlementStatus @default(DRAFT)
 
-  processedById String?
-  processedBy   User?   @relation("SettlementProcessedBy", fields: [processedById], references: [id])
+  // Who calculated the draft (maker); process() needs a different approver unless an Admin does both.
+  calculatedById String?
+  processedById  String?
+  processedBy    User?   @relation("SettlementProcessedBy", fields: [processedById], references: [id])
+
+  // Payment record, stamped by markPaid().
+  paidAt           DateTime?
+  paidById         String?
+  paymentMode      String?
+  paymentReference String?
+
+  // Last reversal of a processed settlement back to DRAFT (history is in the audit log).
+  reversedAt     DateTime?
+  reversedById   String?
+  reversalReason String?
 
   payrollRunId String?     @unique
   payrollRun   PayrollRun? @relation(fields: [payrollRunId], references: [id])
