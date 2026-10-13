@@ -18,7 +18,6 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
-import { ResendVerificationDto, VerifyEmailDto } from './dto/verify-email.dto';
 import { escapeHtml } from '../email-templates/email-layout';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -60,10 +59,6 @@ import { isSelfieRequired } from '../common/selfie-requirement';
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // 30 minutes — matches the old system's window exactly.
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
-const EMAIL_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
-// On unless REQUIRE_EMAIL_VERIFICATION=false (the e2e environment, which registers and signs in within one run).
-const emailVerificationRequired = () =>
-  process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
 // See refresh(): a rotated refresh token replayed within this window is a
 // concurrent-tab race, not reuse, and doesn't trigger family revocation.
 export const REFRESH_REUSE_GRACE_MS = 5_000;
@@ -129,7 +124,6 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
-    const verificationToken = crypto.randomBytes(32).toString('hex');
 
     // Prisma's interactive $transaction, analogous to the old system's
     // Sequelize transaction wrapping org+founder creation. Called on the
@@ -193,15 +187,8 @@ export class AuthService {
             isFounder: true,
             mustChangePassword: false,
             employmentStatus: 'CONFIRMED',
-            // A self-registered founder must confirm the address before signing in: registration is public and
-            // otherwise anyone could register - and send mail from the platform - with an address they do not own.
-            emailVerified: !emailVerificationRequired(),
-            emailVerificationToken: emailVerificationRequired()
-              ? hashToken(verificationToken)
-              : null,
-            emailVerificationExpires: emailVerificationRequired()
-              ? new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS)
-              : null,
+            // Registration is open and the address is taken as given (no confirmation step).
+            emailVerified: true,
           },
         });
         // Every new org starts with the standard leave-type set (Casual,
@@ -269,13 +256,16 @@ export class AuthService {
     // EmailService.send() never throws, so a bad SMTP/Resend config can't
     // fail registration.
     const loginUrl = `${frontendUrl()}/login`;
-    const verifyUrl = `${frontendUrl()}/verify-email?token=${verificationToken}`;
     const fallbackHtml = `
         <p>Hi ${escapeHtml(user.name)},</p>
         <p>Thank you for creating your account with ${escapeHtml(organization.name)} HRMS.</p>
-        <p>Please confirm your email address to activate it - the link is valid for 48 hours:</p>
-        <p><a href="${verifyUrl}">Confirm my email address</a></p>
-        <p>Once confirmed you can <a href="${loginUrl}">log in</a>, complete your Organization Setup (company profile, registration details, contact info, branding) and start adding employees.</p>
+        <p>Your organization, <strong>${escapeHtml(organization.name)}</strong>, is now set up and ready to go. Here's what to do next:</p>
+        <ol>
+          <li><strong>Log in</strong> using the email and password you just created.</li>
+          <li><strong>Complete your Organization Setup</strong> — company profile, registration details, contact info, branding, and a few other one-time steps.</li>
+          <li>Once that's done, you're all set to start using the HRMS — add employees, manage attendance, run payroll, and more.</li>
+        </ol>
+        <p><a href="${loginUrl}">Log in to your account →</a></p>
         <p>If you didn't create this account, you can safely ignore this email.</p>
       `;
     // Platform-level email (D'CoreHR welcoming the org's founder) — never
@@ -286,12 +276,7 @@ export class AuthService {
     const founderRendered = await this.emailTemplatesService.renderOccasion(
       organization.id,
       'FOUNDER_ACCOUNT_WELCOME',
-      {
-        employeeName: user.name,
-        companyName: organization.name,
-        loginUrl,
-        verifyUrl,
-      },
+      { employeeName: user.name, companyName: organization.name, loginUrl },
       {
         subject: `Welcome to ${organization.name} HRMS — your account is ready`,
         html: fallbackHtml,
@@ -307,8 +292,7 @@ export class AuthService {
     return {
       organizationId: organization.id,
       userId: user.id,
-      message:
-        'Account created. Check your email and confirm your address to activate it, then log in.',
+      message: 'Account created. You can now log in.',
     };
   }
 
@@ -378,12 +362,6 @@ export class AuthService {
     // Only someone who proved the password learns the organisation is switched off.
     if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
       throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
-    }
-    // Only someone who proved the password learns that the address is still unconfirmed.
-    if (!user.emailVerified) {
-      throw new UnauthorizedException(
-        'Please confirm your email address first - use the link we emailed you, or request a new one.',
-      );
     }
     await this.usersService.updateLastLogin(user.id, user.organizationId);
     const tokens = await this.issueTokenPair(
@@ -596,70 +574,6 @@ export class AuthService {
   // Never reveals whether the email exists — same response either way.
   // Ported from the old system's forgotPassword exactly (32-byte raw
   // token mailed to the user, SHA-256 hash stored, 30-minute expiry).
-  async verifyEmail(dto: VerifyEmailDto): Promise<{ message: string }> {
-    const tokenHash = hashToken(dto.token);
-    type FindFirstArgs = Parameters<typeof this.scopedPrisma.user.findFirst>[0];
-    // The organisation is unknown at this point (the link carries only the token), the same case as password reset.
-    const user = await this.scopedPrisma.user.findFirst({
-      where: { emailVerificationToken: tokenHash },
-      __tenantScopeBypass: true,
-    } as unknown as FindFirstArgs);
-    if (
-      !user ||
-      !user.emailVerificationExpires ||
-      user.emailVerificationExpires < new Date()
-    ) {
-      throw new BadRequestException(
-        'This confirmation link is invalid or has expired. Request a new one from the login page.',
-      );
-    }
-    await this.scopedPrisma.user.updateMany({
-      where: { id: user.id, organizationId: user.organizationId },
-      data: {
-        emailVerified: true,
-        emailVerificationToken: null,
-        emailVerificationExpires: null,
-      },
-    });
-    await this.auditLogService.log({
-      actorId: user.id,
-      actorRole: user.role,
-      action: 'EMAIL_VERIFIED',
-      module: 'AUTH',
-      organizationId: user.organizationId,
-    });
-    return { message: 'Email confirmed. You can now log in.' };
-  }
-
-  async resendVerification(
-    dto: ResendVerificationDto,
-  ): Promise<{ message: string }> {
-    const generic = {
-      message:
-        'If that address is awaiting confirmation, a new link has been sent.',
-    };
-    const user = await this.usersService.findByEmail(dto.email);
-    if (!user || user.emailVerified || !user.isActive) return generic;
-    const rawToken = crypto.randomBytes(32).toString('hex');
-    await this.scopedPrisma.user.updateMany({
-      where: { id: user.id, organizationId: user.organizationId },
-      data: {
-        emailVerificationToken: hashToken(rawToken),
-        emailVerificationExpires: new Date(
-          Date.now() + EMAIL_VERIFICATION_TTL_MS,
-        ),
-      },
-    });
-    const verifyUrl = `${frontendUrl()}/verify-email?token=${rawToken}`;
-    await this.emailService.send({
-      organizationId: user.organizationId,
-      to: user.email,
-      subject: 'Confirm your email address',
-      html: `<p>Hi ${escapeHtml(user.name)},</p><p>Please confirm your email address - the link is valid for 48 hours:</p><p><a href="${verifyUrl}">Confirm my email address</a></p>`,
-    });
-    return generic;
-  }
-
   async forgotPassword(dto: ForgotPasswordDto): Promise<{ message: string }> {
     const user = await this.usersService.findByEmail(dto.email);
     if (user) {

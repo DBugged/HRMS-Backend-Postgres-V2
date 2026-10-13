@@ -1,5 +1,4 @@
 import { cookieSecure } from '../common/production-config';
-import { ResendVerificationDto, VerifyEmailDto } from './dto/verify-email.dto';
 // Purpose: Exposes registration, login, token refresh/logout, password reset, and the current-user endpoints.
 // Responsibilities: Validates DTOs, manages the refresh-token cookie, and delegates credential logic to AuthService.
 // Important: Brute-force-sensitive routes are throttled tighter than the app default; login/refresh/logout are @Public().
@@ -65,22 +64,6 @@ export class AuthController {
   @ApiOkResponse({ type: RegisterResponseDto })
   register(@Body() dto: RegisterDto) {
     return this.authService.register(dto);
-  }
-
-  // The emailed link lands here: confirms the address a new organisation was registered with.
-  @Public()
-  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
-  @Post('verify-email')
-  verifyEmail(@Body() dto: VerifyEmailDto) {
-    return this.authService.verifyEmail(dto);
-  }
-
-  // Same generic answer whether or not the address is awaiting verification.
-  @Public()
-  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
-  @Post('resend-verification')
-  resendVerification(@Body() dto: ResendVerificationDto) {
-    return this.authService.resendVerification(dto);
   }
 
   @Public()
