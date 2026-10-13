@@ -295,6 +295,9 @@ describe('Employees + Departments (e2e)', () => {
       expect((resendRes.body as { sentTo: string }).sentTo).toBe(
         'employees-e2e-welcome-personal@example.test',
       );
+      // The address is under a reserved test domain, so nothing leaves the building: the response says so instead
+      // of claiming the mail was sent.
+      expect((resendRes.body as { emailSent: boolean }).emailSent).toBe(false);
 
       const employee = await prisma.user.findUniqueOrThrow({
         where: { id: welcomeEmployeeId },

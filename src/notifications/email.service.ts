@@ -28,6 +28,25 @@ export interface SendEmailInput {
   organizationId?: string;
 }
 
+// Addresses under the reserved test domains (RFC 2606: .test, .example, .invalid, .localhost, and example.com / .net /
+// .org) can never be delivered. Seeded and load-test accounts use them, and trying anyway meant a nightly job could
+// hammer the real mail account with thousands of sends until the provider throttled it - which then blocked real mail
+// (a credentials email, a password reset). They are logged and skipped, in every environment.
+const RESERVED_TLDS = new Set(['test', 'example', 'invalid', 'localhost']);
+const RESERVED_DOMAINS = new Set(['example.com', 'example.net', 'example.org']);
+
+export function isUndeliverableAddress(address: string): boolean {
+  const domain = address.trim().toLowerCase().split('@').pop() ?? '';
+  if (!domain) return true;
+  if (RESERVED_DOMAINS.has(domain)) return true;
+  const tld = domain.split('.').pop() ?? '';
+  return RESERVED_TLDS.has(tld);
+}
+
+// How long SMTP sends pause after the provider says it is throttling or rejecting the login. Retrying every message
+// in the meantime only extends the lock.
+const SMTP_PAUSE_MS = 10 * 60 * 1000;
+
 // Which provider actually sends the mail. Same opt-in-driver convention as
 // FILE_STORAGE_DRIVER=s3 — unset/anything-else keeps the existing SMTP (or
 // dry-run-to-console when unconfigured) behavior untouched; only an
@@ -41,6 +60,8 @@ export class EmailService {
   private readonly logger = new Logger(EmailService.name);
   private transporter: nodemailer.Transporter | null = null;
   private resend: Resend | null = null;
+  // Set when the SMTP provider throttles / refuses the login; sends are skipped (and logged) until it passes.
+  private smtpPausedUntil = 0;
 
   constructor(
     @Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient,
@@ -119,6 +140,14 @@ export class EmailService {
     const ccNote = cc?.length ? ` | Cc: ${cc.join(', ')}` : '';
     const from = await this.resolveFrom(organizationId);
 
+    // An address that cannot exist: never handed to a provider.
+    if (isUndeliverableAddress(to)) {
+      this.logger.log(
+        `[Email - SKIPPED, reserved test address] To: ${to} | Subject: ${subject}${attachmentNote}`,
+      );
+      return { dryRun: true };
+    }
+
     if (emailDriver() === 'resend') {
       if (!process.env.RESEND_API_KEY) {
         this.logger.log(
@@ -156,6 +185,13 @@ export class EmailService {
       return { dryRun: true };
     }
 
+    if (Date.now() < this.smtpPausedUntil) {
+      this.logger.warn(
+        `[Email - PAUSED, the mail provider refused the login a moment ago] To: ${to} | Subject: ${subject}${attachmentNote}`,
+      );
+      return { dryRun: true };
+    }
+
     try {
       await this.getTransporter().sendMail({
         from,
@@ -171,6 +207,21 @@ export class EmailService {
       this.logger.error(
         `[Email] Failed to send to ${to} (Subject: ${subject}). Body not logged (may contain credentials). SMTP error: ${message}`,
       );
+      // A login refusal / "too many login attempts" is not about this message: stop sending for a while so a batch
+      // does not keep hitting the provider and deepen the lock.
+      const code = (err as { code?: string; responseCode?: number }).code;
+      const responseCode = (err as { responseCode?: number }).responseCode;
+      if (
+        code === 'EAUTH' ||
+        responseCode === 454 ||
+        responseCode === 535 ||
+        /too many login attempts/i.test(message)
+      ) {
+        this.smtpPausedUntil = Date.now() + SMTP_PAUSE_MS;
+        this.logger.warn(
+          `[Email] SMTP sends paused for ${SMTP_PAUSE_MS / 60000} minutes after a login refusal.`,
+        );
+      }
       return { dryRun: true };
     }
   }

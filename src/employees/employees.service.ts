@@ -473,14 +473,16 @@ export class EmployeesService {
         html: fallbackHtml,
       },
     );
-    await this.emailService.send({
+    const sent = await this.emailService.send({
       organizationId,
       to: personalEmail,
       subject: rendered.subject,
       html: rendered.html,
     });
 
-    return { success: true, sentTo: personalEmail };
+    // The new password and set-password link exist either way; emailSent says whether the mail actually left, so the
+    // caller no longer reports "sent" for a message the mail provider refused.
+    return { success: true, emailSent: !sent.dryRun, sentTo: personalEmail };
   }
 
   // Row-level isolation, same as the old system's bulkCreateEmployees —
