@@ -200,13 +200,8 @@ export class SettlementsService {
     });
     if (!employee) throw new NotFoundException('Employee not found.');
 
-    // Someone who has already left (account closed) or whose final settlement is already processed or paid is not
-    // settled a second time: a second draft here is how an exit could end up paid twice.
-    if (!employee.isActive) {
-      throw new BadRequestException(
-        'This employee has already left (their account is inactive), so a final settlement cannot be calculated for them again.',
-      );
-    }
+    // A closed account is not a reason to refuse: an employee deactivated before their settlement still has final
+    // pay due. Only an already processed or paid settlement stops a second calculation.
     const alreadySettled = await this.scopedPrisma.settlement.findFirst({
       where: {
         organizationId,

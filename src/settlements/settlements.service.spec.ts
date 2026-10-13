@@ -133,16 +133,19 @@ beforeEach(() =>
 afterEach(() => jest.useRealTimers());
 
 describe('final settlement: who can be settled', () => {
-  it('an unknown employee, someone who already left, or a bad date is refused', async () => {
-    await expect(
-      build({ employee: null }).service.calculate(dto(), admin, 'org'),
-    ).rejects.toThrow(/Employee not found/);
+  it('someone whose account was closed before their settlement can still be settled', async () => {
     const left = build({
       employee: { id: 'e1', isActive: false, joiningDate: JOINED },
     });
-    await expect(left.service.calculate(dto(), admin, 'org')).rejects.toThrow(
-      /already left/,
-    );
+    await expect(
+      left.service.calculate(dto(), admin, 'org'),
+    ).resolves.toBeDefined();
+  });
+
+  it('an unknown employee or a bad date is refused', async () => {
+    await expect(
+      build({ employee: null }).service.calculate(dto(), admin, 'org'),
+    ).rejects.toThrow(/Employee not found/);
     await expect(
       build().service.calculate(
         dto({ lastWorkingDay: 'not-a-date' }),

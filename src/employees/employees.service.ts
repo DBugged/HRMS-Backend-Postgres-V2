@@ -995,18 +995,16 @@ export class EmployeesService {
         );
       }
     }
+    // An exit status is only reachable through the offboarding workflow (notice period, clearance, final settlement,
+    // then complete()). Setting it here would close the account with no settlement and, exit statuses being final
+    // and the settlement refusing closed accounts, leave the final pay impossible to calculate.
     const exiting =
       statusChanging &&
       EXIT_STATUSES.includes(clean.employmentStatus as EmploymentStatus);
     if (exiting) {
-      if (clean.isActive === true) {
-        throw new BadRequestException(
-          'An employee moved to an exit status cannot remain active.',
-        );
-      }
-      // Exit statuses revoke login in the same write (sessions are revoked
-      // after the write below).
-      clean.isActive = false;
+      throw new BadRequestException(
+        `Use Offboarding to move an employee to ${clean.employmentStatus} - it runs the notice period, clearance and full & final settlement before the account is closed.`,
+      );
     }
 
     // An Admin reports to nobody: whenever the resulting role is Admin the reporting manager is cleared.
@@ -1429,6 +1427,21 @@ export class EmployeesService {
       );
     }
     const target = await this.findByIdOrThrow(id, organizationId);
+    // An exit in progress is closed through Offboarding (which settles the final pay first); deactivating here would
+    // stop payroll for the employee while their settlement is still outstanding.
+    const openExit = await this.scopedPrisma.offboardingCase.findFirst({
+      where: {
+        organizationId,
+        employeeId: id,
+        status: { in: ['INITIATED', 'IN_PROGRESS'] },
+      },
+      select: { id: true },
+    });
+    if (openExit) {
+      throw new BadRequestException(
+        'This employee has an offboarding in progress - complete it (after the final settlement) instead of deactivating the account.',
+      );
+    }
     if (target.role === Role.ADMIN) {
       await this.assertAnotherActiveAdminRemains(id, organizationId);
     }

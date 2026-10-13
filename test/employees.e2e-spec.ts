@@ -1061,32 +1061,27 @@ describe('Employees + Departments (e2e)', () => {
         .expect(200);
     });
 
-    it('moving to TERMINATED deactivates, revokes sessions and blocks login; the status is then final', async () => {
-      const login = await request(app.getHttpServer())
-        .post('/auth/login')
-        .send({ email: cEmail, password: cPassword })
-        .expect(201);
-      const refreshToken = (login.body as { refreshToken: string })
-        .refreshToken;
-
+    it('an exit status cannot be set by PATCH - it goes through Offboarding; once exited the status is final', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${cId}`)
         .set('Authorization', `Bearer ${hrToken}`)
         .send({ employmentStatus: 'TERMINATED' })
-        .expect(200);
-      expect((res.body as { isActive: boolean }).isActive).toBe(false);
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/Offboarding/);
+      const still = await prisma.user.findUniqueOrThrow({
+        where: { id: cId },
+      });
+      expect(still.isActive).toBe(true);
+      expect(still.employmentStatus).toBe('CONFIRMED');
 
+      // What a completed offboarding leaves behind: exit status, closed account.
+      await prisma.user.update({
+        where: { id: cId },
+        data: { employmentStatus: 'TERMINATED', isActive: false },
+      });
       await request(app.getHttpServer())
         .post('/auth/login')
         .send({ email: cEmail, password: cPassword })
-        .expect(401);
-      const live = await prisma.refreshToken.count({
-        where: { userId: cId, revokedAt: null },
-      });
-      expect(live).toBe(0);
-      await request(app.getHttpServer())
-        .post('/auth/refresh')
-        .send({ refreshToken })
         .expect(401);
 
       // Can't be resurrected by reactivation either.
