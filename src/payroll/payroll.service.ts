@@ -1899,6 +1899,27 @@ export class PayrollService {
         }
         return;
       }
+      // Onboarding not finished: someone still in ONBOARDING with no bank account on file cannot be paid, so a bulk
+      // run leaves them out (and says why) instead of silently producing a payslip nobody can disburse. Running
+      // payroll for that one employee is a deliberate action and still goes through.
+      if (!dto.employeeId && employee.employmentStatus === 'ONBOARDING') {
+        const pd = (employee.personalData ?? {}) as Record<string, unknown>;
+        const has = (key: string) =>
+          typeof pd[key] === 'string' && (pd[key] as string).trim() !== '';
+        const missing = [
+          !has('bankAccountNo') && 'bank account number',
+          !has('bankIFSC') && 'IFSC code',
+        ].filter((m): m is string => !!m);
+        if (missing.length > 0) {
+          skipped.push({
+            employeeId: employee.id,
+            name: employee.name,
+            code: employee.employeeId,
+            reason: `Onboarding is incomplete - ${missing.join(' and ')} missing. Complete the profile (or confirm the employee) to include them.`,
+          });
+          return;
+        }
+      }
       let run = existingRunByEmployeeId.get(employee.id) ?? null;
       if (
         run &&
