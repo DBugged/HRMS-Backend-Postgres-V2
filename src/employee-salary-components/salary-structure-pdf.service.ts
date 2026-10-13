@@ -130,10 +130,10 @@ export function renderSalaryStructurePdf(
       {
         label: 'Employee Name',
         value: `${input.employeeName}, ${input.employeeCode}`,
-        w: 190,
+        w: 165,
       },
       { label: 'Designation', value: input.designation || '-', w: 150 },
-      { label: 'Date of Joining', value: dmy(input.joiningDate), w: 100 },
+      { label: 'Date of Joining', value: dmy(input.joiningDate), w: 85 },
       {
         label: 'Salary Effective From',
         value: monthYear(input.effectiveFrom),
