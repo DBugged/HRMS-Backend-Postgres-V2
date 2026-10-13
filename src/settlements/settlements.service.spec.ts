@@ -285,7 +285,7 @@ describe('final settlement: the amounts', () => {
     expect(s.leaveEncashmentAmount).toBe(2 * 3 * 1000); // two encashable types x 3 days x 1,000
   });
 
-  it('bonus and leave encashment are taxed together with the last month (passed to payroll as taxable extras)', async () => {
+  it('the bonus is taxed with the last month; leave encashment only beyond its s.10(10AA) exemption', async () => {
     const { service, payrollService } = build({
       basic: 30000,
       leaveTypes: encashable,
@@ -296,7 +296,8 @@ describe('final settlement: the amounts', () => {
       payrollService.calculatePayroll.mock.calls[0] as unknown[]
     )[4] as Row;
     expect(options.finalSettlement).toEqual({
-      extraTaxableEarnings: 3000 + 4000,
+      // the 3000 encashment is within the s.10(10AA) exemption; only the bonus is taxed
+      extraTaxableEarnings: 4000,
       monthAlreadyPaid: false,
       // the pending salary stops at the last working day
       lastWorkingDay: '2026-10-06',

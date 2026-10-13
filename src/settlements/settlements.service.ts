@@ -57,6 +57,7 @@ import { EmployeeSalaryComponentsService } from '../employee-salary-components/e
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import { leaveEncashmentExemption } from './leave-encashment-tax';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { ReverseSettlementDto } from './dto/reverse-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -361,6 +362,23 @@ export class SettlementsService {
       }
     });
     const leaveEncashmentAmount = Math.round(leaveDaysEncashed * ratePerDay);
+    // The part of the encashment exempt from tax on leaving (s.10(10AA)); only the rest is taxed in the settlement.
+    const daMonthly =
+      await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
+        dto.employeeId,
+        'DA',
+        dto.lastWorkingDay,
+        organizationId,
+      );
+    const serviceYears = calendarYearsOfService(
+      employee.joiningDate.toISOString().slice(0, 10),
+      lwdDate,
+    );
+    const leaveEncashmentExempt = leaveEncashmentExemption({
+      amount: leaveEncashmentAmount,
+      basicPlusDaMonthly: basicMonthly + daMonthly,
+      yearsOfService: serviceYears,
+    });
 
     const bonusForTax = dto.bonusAmount ?? 0;
     const monthAlreadyPaidForTax = await this.hasSettledRegularRun(
@@ -380,7 +398,8 @@ export class SettlementsService {
           finalSettlement: {
             // Leave encashment and bonus paid in the settlement are taxable salary — TDS is worked out on them
             // together with the last month's pay, on income actually earned (no projection past the exit).
-            extraTaxableEarnings: leaveEncashmentAmount + bonusForTax,
+            extraTaxableEarnings:
+              leaveEncashmentAmount - leaveEncashmentExempt + bonusForTax,
             monthAlreadyPaid: monthAlreadyPaidForTax,
             lastWorkingDay: lwdDate,
           },
@@ -488,18 +507,8 @@ export class SettlementsService {
     if (gratuityEnabled) {
       // Service is counted in calendar terms up to and including the last working day, so exactly five years
       // (joined 2020-10-07, left 2025-10-06 or later) is five years, not 4.9993 of a 365.25-day year.
-      const yearsOfService = calendarYearsOfService(
-        employee.joiningDate.toISOString().slice(0, 10),
-        lwdDate,
-      );
+      const yearsOfService = serviceYears;
       // Gratuity is on Basic + Dearness Allowance (the wages used by monthly accrual), not Basic alone.
-      const daMonthly =
-        await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
-          dto.employeeId,
-          'DA',
-          dto.lastWorkingDay,
-          organizationId,
-        );
       let gratuityWages = basicMonthly + daMonthly;
       // Where the organization has switched the Labour Codes' wages rule on for gratuity, wages are at least 50% of
       // total remuneration - taken from the employee's latest full regular payslip.
@@ -560,6 +569,7 @@ export class SettlementsService {
         ? (pendingSalaryBreakdown as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull,
       leaveEncashmentAmount,
+      leaveEncashmentExempt,
       leaveEncashmentDetail:
         leaveEncashmentDetail.length > 0
           ? (leaveEncashmentDetail as unknown as Prisma.InputJsonValue)
@@ -859,12 +869,25 @@ export class SettlementsService {
               taxable: true,
             },
           ]),
+      // The exempt part (s.10(10AA)) is shown as its own non-taxable line so taxable gross and Form 16 are right.
       {
         code: 'LEAVE_ENCASHMENT',
         name: 'Leave Encashment',
-        amount: settlement.leaveEncashmentAmount,
+        amount:
+          settlement.leaveEncashmentAmount -
+          (settlement.leaveEncashmentExempt ?? 0),
         taxable: true,
       },
+      ...((settlement.leaveEncashmentExempt ?? 0) > 0
+        ? [
+            {
+              code: 'LEAVE_ENCASHMENT_EXEMPT',
+              name: 'Leave Encashment (exempt u/s 10(10AA))',
+              amount: settlement.leaveEncashmentExempt ?? 0,
+              taxable: false,
+            },
+          ]
+        : []),
     ];
     if (settlement.bonusAmount > 0) {
       earnings.push({
