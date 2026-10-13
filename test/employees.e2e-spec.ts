@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { keepRequiredEmployeeFields } from './employee-required-fields.testing';
 import { compareEmployeeId } from '../src/common/employee-order';
 import * as dotenv from 'dotenv';
 
@@ -46,6 +47,8 @@ interface ListDepartmentsBody {
 const PASSWORD = 'TestPass123!';
 
 describe('Employees + Departments (e2e)', () => {
+  // This spec asserts on the department / work location / designation / category fixtures get, so keep them.
+  keepRequiredEmployeeFields();
   let app: INestApplication<App>;
   let prisma: PrismaService;
 
@@ -165,7 +168,13 @@ describe('Employees + Departments (e2e)', () => {
       .get('/departments')
       .set('Authorization', `Bearer ${hrToken}`)
       .expect(200);
-    expect((res.body as ListDepartmentsBody).data).toHaveLength(3);
+    // Containing, not exact: fixtures may add a default department to satisfy the required department field.
+    const names = (res.body as { data: { name: string }[] }).data.map(
+      (d) => d.name,
+    );
+    expect(names).toEqual(
+      expect.arrayContaining(['Engineering', 'Sales', 'Support']),
+    );
   });
 
   let engManagerToken: string;
@@ -460,8 +469,9 @@ describe('Employees + Departments (e2e)', () => {
     expect(body).toMatchObject({
       role: 'EMPLOYEE',
       departmentId: engDepartmentId,
-      designation: '',
     });
+    // The refused designation change ('CEO') was never applied.
+    expect(body.designation).not.toBe('CEO');
   });
 
   it('self-update can set profileImage, which comes back as a signed /files/ URL', async () => {
@@ -527,7 +537,8 @@ describe('Employees + Departments (e2e)', () => {
       .expect(200);
     const body = check.body as EmployeeBody['employee'];
     expect(body.departmentId).toBe(salesDepartmentId);
-    expect(body.designation).toBe('');
+    // The refused change is never applied (the employee keeps the designation they were created with).
+    expect(body.designation).not.toBe('Should Not Apply');
   });
 
   it('ADMIN update can change designation', async () => {
@@ -1251,7 +1262,65 @@ describe('Employees + Departments (e2e)', () => {
     });
   });
 
+  describe('required organisation fields', () => {
+    const raw = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .set('x-e2e-raw', '1')
+        .send(body);
+
+    it('rejects an employee created without department, designation, employee category and work location', async () => {
+      const res = await raw({
+        name: 'No Org Fields',
+        email: 'employees-e2e-no-org-fields@example.test',
+      }).expect(400);
+      const message = JSON.stringify(res.body);
+      expect(message).toMatch(/Department is required/);
+      expect(message).toMatch(/Work location is required/);
+      expect(message).toMatch(/Designation is required/);
+      expect(message).toMatch(/Employee category is required/);
+    });
+
+    it('rejects a create that is missing only the work location', async () => {
+      const res = await raw({
+        name: 'No Location',
+        email: 'employees-e2e-no-location@example.test',
+        departmentId: engDepartmentId,
+        designation: 'Engineer',
+        employeeCategory: 'Full-Time',
+      }).expect(400);
+      expect(JSON.stringify(res.body)).toMatch(/Work location is required/);
+    });
+
+    it('does not let an edit clear a required field that is set', async () => {
+      const res = await request(app.getHttpServer())
+        .patch(`/employees/${engEmployeeId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ workLocationId: null })
+        .expect(400);
+      expect(JSON.stringify(res.body)).toMatch(
+        /Work location cannot be cleared/,
+      );
+    });
+  });
+
   describe('bulk create', () => {
+    // Work location and designation are required columns on every import row (matched by name).
+    const BULK_LOCATION = 'Bulk HQ';
+    beforeAll(async () => {
+      await request(app.getHttpServer())
+        .post('/work-locations')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          name: BULK_LOCATION,
+          latitude: 19.07,
+          longitude: 72.87,
+          radiusMeters: 200,
+        })
+        .expect(201);
+    });
+
     // Matches the manual "Add Employee" form, which requires personalEmail/
     // department/employeeCategory/role/employeeType — bulk rows now require
     // them too instead of silently skipping them (which used to mean
@@ -1262,6 +1331,8 @@ describe('Employees + Departments (e2e)', () => {
       email: 'employees-e2e-bulk-valid@example.test',
       personalEmail: 'employees-e2e-bulk-valid-personal@example.test',
       department: 'Engineering',
+      designation: 'Engineer',
+      workLocation: BULK_LOCATION,
       employeeCategory: 'Full-Time',
       role: 'EMPLOYEE',
       employeeType: 'permanent',

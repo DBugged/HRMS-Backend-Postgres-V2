@@ -68,6 +68,11 @@ class BulkEmployeeRowDto {
   @IsOptional()
   employeeCategory?: unknown;
 
+  // Required, matched by name against the org's work locations (like department).
+  @ApiPropertyOptional()
+  @IsOptional()
+  workLocation?: unknown;
+
   @ApiPropertyOptional()
   @IsOptional()
   role?: unknown;

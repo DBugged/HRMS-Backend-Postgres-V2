@@ -54,18 +54,20 @@ export class CreateEmployeeDto {
   @IsEmail()
   personalEmail?: string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  // Department, designation, employee category and work location are required - the Add Employee form and the
+  // Excel import enforce the same four, so an employee cannot be created without them from any client.
+  @ApiProperty({ description: 'Department the employee belongs to.' })
+  @IsNotEmpty({ message: 'Department is required.' })
   @IsUUID()
-  departmentId?: string;
+  departmentId!: string;
 
-  @ApiPropertyOptional({
+  @ApiProperty({
     description:
-      "Per-employee work location override (geo-fence + state). Falls back to the department's location when unset; null clears the override.",
+      "Work location (geo-fence + state). Required; an employee's own location overrides the department's.",
   })
-  @IsOptional()
+  @IsNotEmpty({ message: 'Work location is required.' })
   @IsUUID()
-  workLocationId?: string | null;
+  workLocationId!: string;
 
   @ApiPropertyOptional({
     description:
@@ -85,21 +87,23 @@ export class CreateEmployeeDto {
   @IsEnum(SelfieRequirement)
   selfieRequirement?: SelfieRequirement;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty()
+  @Trim()
+  @IsNotEmpty({ message: 'Designation is required.' })
   @IsString()
   @MaxLength(100)
-  designation?: string;
+  designation!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   gradeLevel?: string;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty()
+  @Trim()
+  @IsNotEmpty({ message: 'Employee category is required.' })
   @IsString()
-  employeeCategory?: string;
+  employeeCategory!: string;
 
   // Not format-validated here — this endpoint (admin "Add Employee") always
   // gets plain 10-digit input from the frontend, but Profile.tsx's own

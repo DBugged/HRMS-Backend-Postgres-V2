@@ -163,30 +163,26 @@ describe('Per-employee work location + personalData encryption (e2e)', () => {
     expect(events).toBe(1);
   });
 
-  it('clearing the override (null) falls back to the department again', async () => {
-    await admin(http().patch(`/employees/${empId}`))
+  // Work location is a required field on every employee, so the override can be changed but no longer cleared.
+  it('clearing the override (null) is refused: work location cannot be removed', async () => {
+    const res = await admin(http().patch(`/employees/${empId}`))
       .send({ workLocationId: null })
-      .expect(200);
-    expect(await myFence()).toBe(deptLocId);
-    const moves = await prisma.employeeMovement.findMany({
-      where: { employeeId: empId, type: 'TRANSFER' },
-      orderBy: { createdAt: 'desc' },
-    });
-    expect(moves[0].previousWorkLocationId).toBe(ownLocId);
-    expect(moves[0].newWorkLocationId).toBeNull();
+      .expect(400);
+    expect(JSON.stringify(res.body)).toMatch(/Work location cannot be cleared/);
+    expect(await myFence()).toBe(ownLocId);
   });
 
   it('an employee cannot set their own work location', async () => {
     await http()
       .patch(`/employees/${empId}`)
       .set('Authorization', `Bearer ${empToken}`)
-      .send({ workLocationId: ownLocId })
+      .send({ workLocationId: deptLocId })
       .expect((r) => {
-        // Locked field is stripped for self-update: the override must not be applied.
+        // Locked field is stripped for self-update: the location must not change.
         expect([200, 400, 403]).toContain(r.status);
       });
     const u = await prisma.user.findFirstOrThrow({ where: { id: empId } });
-    expect(u.workLocationId).toBeNull();
+    expect(u.workLocationId).toBe(ownLocId);
   });
 
   it('stores sensitive personalData encrypted at rest and returns it decrypted', async () => {

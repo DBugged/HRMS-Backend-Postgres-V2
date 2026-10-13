@@ -506,6 +506,7 @@ export class EmployeesService {
       personalEmail?: unknown;
       department?: unknown;
       employeeCategory?: unknown;
+      workLocation?: unknown;
       role?: unknown;
       employeeType?: unknown;
     }>,
@@ -529,23 +530,28 @@ export class EmployeesService {
     // (not the internal ids/values the manual form's Selects submit) —
     // resolved once up front rather than per row, since every row in a
     // batch is checked against the same org-wide lists.
-    const [departments, employeeCategoryItems, org] = await Promise.all([
-      this.scopedPrisma.department.findMany({
-        where: { organizationId },
-        select: { id: true, name: true },
-      }),
-      this.scopedPrisma.orgListItem.findMany({
-        where: { organizationId, type: OrgListType.EMPLOYEE_CATEGORY },
-        select: { name: true },
-      }),
-      this.scopedPrisma.organization.findFirst({
-        where: { id: organizationId },
-        select: {
-          customEmployeeTypes: true,
-          inactiveBuiltinEmployeeTypes: true,
-        },
-      }),
-    ]);
+    const [departments, workLocationItems, employeeCategoryItems, org] =
+      await Promise.all([
+        this.scopedPrisma.department.findMany({
+          where: { organizationId },
+          select: { id: true, name: true },
+        }),
+        this.scopedPrisma.workLocation.findMany({
+          where: { organizationId },
+          select: { id: true, name: true },
+        }),
+        this.scopedPrisma.orgListItem.findMany({
+          where: { organizationId, type: OrgListType.EMPLOYEE_CATEGORY },
+          select: { name: true },
+        }),
+        this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: {
+            customEmployeeTypes: true,
+            inactiveBuiltinEmployeeTypes: true,
+          },
+        }),
+      ]);
     const customEmployeeTypes =
       (org?.customEmployeeTypes as
         { value: string; label: string; isActive?: boolean }[] | null) ?? [];
@@ -576,6 +582,7 @@ export class EmployeesService {
       const personalEmail = normalizeEmail(asString(row.personalEmail));
       const departmentName = asString(row.department).trim();
       const employeeCategoryName = asString(row.employeeCategory).trim();
+      const workLocationName = asString(row.workLocation).trim();
       const roleInput = asString(row.role).trim();
       const employeeTypeInput = asString(row.employeeType).trim();
 
@@ -643,6 +650,24 @@ export class EmployeesService {
         });
         return;
       }
+      if (!designation) {
+        failed.push({ row, error: 'Designation is required.' });
+        return;
+      }
+      if (!workLocationName) {
+        failed.push({ row, error: 'Work location is required.' });
+        return;
+      }
+      const workLocation = workLocationItems.find(
+        (l) => l.name.toLowerCase() === workLocationName.toLowerCase(),
+      );
+      if (!workLocation) {
+        failed.push({
+          row,
+          error: `Work location "${workLocationName}" not found.`,
+        });
+        return;
+      }
       if (!employeeCategoryName) {
         failed.push({ row, error: 'Employee category is required.' });
         return;
@@ -695,7 +720,8 @@ export class EmployeesService {
             email,
             personalEmail,
             departmentId: department.id,
-            designation: designation || undefined,
+            workLocationId: workLocation.id,
+            designation,
             employeeCategory: employeeCategory.name,
             contactNumber: contactNumber || undefined,
             gender,
@@ -735,11 +761,7 @@ export class EmployeesService {
   ): T {
     if (actor.role === Role.ADMIN || actor.role === Role.HR) return safe;
     if (rowId === actor.id) return safe;
-    const {
-      personalData,
-      contactNumber: _contactNumber,
-      ...rest
-    } = safe;
+    const { personalData, contactNumber: _contactNumber, ...rest } = safe;
     // Only the "profile complete" flag the directory column shows.
     const completed = !!(personalData as Record<string, unknown> | null)
       ?.profileCompleted;
@@ -888,6 +910,27 @@ export class EmployeesService {
       isPromotion,
       ...updateFields
     } = dto;
+    // Department, designation, employee category and work location are required on every employee, so an edit
+    // cannot blank one that is set (a blank sent for one that is already empty is a no-op).
+    const requiredFields: [string, string][] = [
+      ['departmentId', 'Department'],
+      ['designation', 'Designation'],
+      ['employeeCategory', 'Employee category'],
+      ['workLocationId', 'Work location'],
+    ];
+    const cleared = requiredFields.filter(([key]) => {
+      const sent = (updateFields as Record<string, unknown>)[key];
+      const existing = (before as unknown as Record<string, unknown>)[key];
+      return (
+        (sent === null || (typeof sent === 'string' && !sent.trim())) &&
+        !!existing
+      );
+    });
+    if (cleared.length > 0) {
+      throw new BadRequestException(
+        `${cleared.map(([, label]) => label).join(', ')} cannot be cleared.`,
+      );
+    }
     const blocked = lockedFieldAttempts(
       updateFields,
       before as unknown as Record<string, unknown>,

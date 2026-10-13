@@ -206,17 +206,19 @@ describe('State-wise LWF by work location (e2e)', () => {
     expect(await lwfDeduction(emp.noDept)).toBe(25);
   });
 
-  it("an employee's own work location overrides the department's state, and clearing it falls back", async () => {
-    const patch = (workLocationId: string | null) =>
+  // Work location is required on every employee, so the override can be changed but not cleared back to the
+  // department's - clearing it is refused.
+  it("an employee's own work location overrides the department's state; clearing it is refused", async () => {
+    const patch = (workLocationId: string | null, status: number) =>
       request(app.getHttpServer())
         .patch(`/employees/${emp.noLoc}`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ workLocationId })
-        .expect(200);
-    await patch(mhLocationId);
+        .expect(status);
+    await patch(mhLocationId, 200);
     expect(await lwfDeduction(emp.noLoc)).toBe(50); // dept has no location, but overridden to Mumbai
-    await patch(null);
-    expect(await lwfDeduction(emp.noLoc)).toBe(25);
+    await patch(null, 400);
+    expect(await lwfDeduction(emp.noLoc)).toBe(50);
   });
 
   it('rejects an unknown state on a work location and in stateRates', async () => {

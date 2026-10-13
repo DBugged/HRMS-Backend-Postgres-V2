@@ -1,6 +1,7 @@
 import * as dotenv from 'dotenv';
 import * as path from 'path';
 import { disablePasswordRotationGuard } from './password-rotation-guard.testing';
+import { fillRequiredEmployeeFields } from './employee-required-fields.testing';
 
 // Same file each spec loads itself; loaded first here so the check below sees the real target database.
 dotenv.config({ path: path.join(__dirname, '../.env.test'), override: true });
@@ -19,3 +20,6 @@ if (!/_test$/.test(dbName)) {
 // Runs before every e2e spec — see password-rotation-guard.testing.ts for why
 // the guard is off by default and which spec turns it back on.
 disablePasswordRotationGuard();
+
+// POST /employees requires department/designation/category/work location - see employee-required-fields.testing.ts.
+fillRequiredEmployeeFields();
