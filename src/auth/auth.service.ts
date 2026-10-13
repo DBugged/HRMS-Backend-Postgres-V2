@@ -17,6 +17,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { escapeHtml } from '../email-templates/email-layout';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -258,9 +259,9 @@ export class AuthService {
     // fail registration.
     const loginUrl = `${frontendUrl()}/login`;
     const fallbackHtml = `
-        <p>Hi ${user.name},</p>
-        <p>Thank you for creating your account with ${organization.name} HRMS.</p>
-        <p>Your organization, <strong>${organization.name}</strong>, is now set up and ready to go. Here's what to do next:</p>
+        <p>Hi ${escapeHtml(user.name)},</p>
+        <p>Thank you for creating your account with ${escapeHtml(organization.name)} HRMS.</p>
+        <p>Your organization, <strong>${escapeHtml(organization.name)}</strong>, is now set up and ready to go. Here's what to do next:</p>
         <ol>
           <li><strong>Log in</strong> using the email and password you just created.</li>
           <li><strong>Complete your Organization Setup</strong> — company profile, registration details, contact info, branding, and a few other one-time steps.</li>
@@ -585,7 +586,7 @@ export class AuthService {
         select: { companyName: true },
       });
       const companyName = org?.companyName || 'the company';
-      const fallbackHtml = `<p>Hello ${user.name},</p><p>Click the link below to reset your password. This link expires in 30 minutes.</p><p><a href="${resetUrl}">${resetUrl}</a></p>`;
+      const fallbackHtml = `<p>Hello ${escapeHtml(user.name)},</p><p>Click the link below to reset your password. This link expires in 30 minutes.</p><p><a href="${resetUrl}">${resetUrl}</a></p>`;
       const rendered = await this.emailTemplatesService.renderOccasion(
         user.organizationId,
         'PASSWORD_RESET',
@@ -718,7 +719,7 @@ export class AuthService {
       // occasion template is itself async, but the outer call still isn't
       // awaited — same fire-and-forget shape as before.
       (async () => {
-        const fallbackHtml = `<p>Hello ${user.name},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address (${user.email}).</p>`;
+        const fallbackHtml = `<p>Hello ${escapeHtml(user.name)},</p><p>Your account is now active. From here on, all HRMS communication — leave approvals, payslips, announcements, and more — will be sent to this address (${user.email}).</p>`;
         const rendered = await this.emailTemplatesService.renderOccasion(
           user.organizationId,
           'ACCOUNT_ACTIVATED',

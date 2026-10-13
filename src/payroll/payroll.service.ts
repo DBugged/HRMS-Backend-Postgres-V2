@@ -13,6 +13,7 @@ import {
   EMPLOYEE_ORDER_BY,
   EMPLOYEE_RELATION_ORDER_BY,
 } from '../common/employee-order';
+import { escapeHtml } from '../email-templates/email-layout';
 import {
   BadRequestException,
   ConflictException,
@@ -3681,7 +3682,7 @@ export class PayrollService {
         organizationId,
         to: employee.email,
         subject: title,
-        html: `<p>Hi ${employee.name},</p><p>${message}</p>`,
+        html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${escapeHtml(message)}</p>`,
       });
     } catch (err) {
       new Logger(PayrollService.name).warn(

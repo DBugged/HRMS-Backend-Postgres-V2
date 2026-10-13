@@ -14,6 +14,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { escapeHtml } from '../email-templates/email-layout';
 import {
   AuditModule,
   LetterDataProfile,
@@ -866,7 +867,7 @@ export class LettersService {
       },
       {
         subject: `Your ${template.name} from ${companyName}`,
-        html: `<p>Hi ${employee.name},</p><p>Please find your ${template.name} attached.</p><p>${companyName}</p>`,
+        html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Please find your ${escapeHtml(template.name)} attached.</p><p>${escapeHtml(companyName)}</p>`,
       },
     );
 
