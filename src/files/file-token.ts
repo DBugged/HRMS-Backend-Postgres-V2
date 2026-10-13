@@ -24,7 +24,7 @@ const DEFAULT_TTL_SECONDS = 300; // 5 minutes — long enough for a page load/PD
 // context polls or re-signs in the background. A leaked link here is a
 // company logo or profile photo, not a private document, so the longer
 // window is an acceptable trade for "stays valid all session."
-export const SESSION_ASSET_TTL_SECONDS = 60 * 60 * 24; // 24 hours
+export const SESSION_ASSET_TTL_SECONDS = 60 * 60 * 6; // 6 hours - the web refreshes an expired link via POST /files/refresh
 
 export interface FileTokenClaim {
   organizationId: string;
