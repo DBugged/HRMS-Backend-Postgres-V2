@@ -34,6 +34,8 @@ import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
+import { UpdateLastWorkingDayDto } from './dto/update-last-working-day.dto';
+import { todayInOrgTz } from '../common/org-date';
 import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -155,6 +157,24 @@ export class OffboardingService {
     if (existing) {
       throw new BadRequestException(
         'An offboarding case is already in progress for this employee.',
+      );
+    }
+
+    await this.assertLastWorkingDayInRange(
+      dto.lastWorkingDay,
+      employee.joiningDate,
+      organizationId,
+    );
+    // A termination or an abscondment is a company decision that has to say why - it is what the record, the
+    // relieving letter and any later dispute rest on. (A resignation's reason is the employee's own.)
+    const exit = dto.exitStatus ?? EmploymentStatus.RELEASED;
+    if (
+      (exit === EmploymentStatus.TERMINATED ||
+        exit === EmploymentStatus.ABSCONDED) &&
+      !dto.reason?.trim()
+    ) {
+      throw new BadRequestException(
+        `A reason is required to record ${exit === EmploymentStatus.TERMINATED ? 'a termination' : 'an abscondment'}.`,
       );
     }
 
@@ -346,6 +366,109 @@ export class OffboardingService {
     return this.findOne(id, organizationId);
   }
 
+  // The last working day cannot precede the joining date, nor be more than a year away.
+  private async assertLastWorkingDayInRange(
+    lastWorkingDay: string,
+    joiningDate: Date,
+    organizationId: string,
+  ) {
+    const joined = joiningDate.toISOString().slice(0, 10);
+    if (lastWorkingDay < joined) {
+      throw new BadRequestException(
+        `The last working day (${lastWorkingDay}) cannot be before the joining date (${joined}).`,
+      );
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const limit = new Date(
+      `${todayInOrgTz(org?.timezone ?? 'Asia/Kolkata')}T00:00:00.000Z`,
+    );
+    limit.setUTCDate(limit.getUTCDate() + 365);
+    if (lastWorkingDay > limit.toISOString().slice(0, 10)) {
+      throw new BadRequestException(
+        'The last working day cannot be more than a year from today.',
+      );
+    }
+  }
+
+  // Early release or an extended notice: moves the case's last working day. A final settlement is figured for one
+  // date, so a linked draft is unlinked (to be recalculated for the new date); one already processed must be
+  // reversed first.
+  async updateLastWorkingDay(
+    id: string,
+    dto: UpdateLastWorkingDayDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const record = await this.assertOpenCase(id, organizationId);
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: record.employeeId, organizationId },
+      select: { joiningDate: true },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    if (dto.lastWorkingDay === record.lastWorkingDay) {
+      throw new BadRequestException(
+        'The last working day is already that date.',
+      );
+    }
+    await this.assertLastWorkingDayInRange(
+      dto.lastWorkingDay,
+      employee.joiningDate,
+      organizationId,
+    );
+    const settled = record.settlement?.status;
+    if (
+      settled === SettlementStatus.PROCESSED ||
+      settled === SettlementStatus.PAID
+    ) {
+      throw new BadRequestException(
+        'The final settlement is already processed for the current last working day - reverse it before changing the date.',
+      );
+    }
+    await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.offboardingCase.updateMany({
+        where: { id, organizationId },
+        data: {
+          lastWorkingDay: dto.lastWorkingDay,
+          // The draft was figured for the old date: it has to be recalculated and linked again.
+          ...(record.settlementId ? { settlementId: null } : {}),
+        },
+      });
+      await tx.resignation.updateMany({
+        where: {
+          organizationId,
+          offboardingCaseId: id,
+          status: ResignationStatus.APPROVED,
+        },
+        data: { approvedLwd: dto.lastWorkingDay },
+      });
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'OFFBOARDING_LWD_CHANGED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: record.employeeId,
+      details: {
+        offboardingCaseId: id,
+        from: record.lastWorkingDay,
+        to: dto.lastWorkingDay,
+        reason: dto.reason,
+        settlementUnlinked: !!record.settlementId,
+      },
+    });
+    await this.notificationsService.create({
+      organizationId,
+      userId: record.employeeId,
+      title: 'Last Working Day Updated',
+      message: `Your last working day is now ${dto.lastWorkingDay} (was ${record.lastWorkingDay}).`,
+      category: NotificationCategory.GENERAL,
+    });
+    return this.findOne(id, organizationId);
+  }
+
   async linkSettlement(
     id: string,
     dto: LinkSettlementDto,
@@ -359,6 +482,15 @@ export class OffboardingService {
       throw new BadRequestException('Settlement not found for this employee.');
     }
 
+    // The settlement is figured for one last working day; it has to be the exit's.
+    if (
+      settlement.lastWorkingDay.slice(0, 10) !==
+      record.lastWorkingDay.slice(0, 10)
+    ) {
+      throw new BadRequestException(
+        `This settlement is for last working day ${settlement.lastWorkingDay.slice(0, 10)}, but the exit's is ${record.lastWorkingDay.slice(0, 10)} - recalculate the settlement for the exit's date.`,
+      );
+    }
     await this.scopedPrisma.offboardingCase.updateMany({
       where: { id, organizationId },
       data: { settlementId: dto.settlementId },
@@ -394,12 +526,26 @@ export class OffboardingService {
     else if (!record.assetOverrideNote)
       await this.assertNoOpenAssets(record.employeeId, organizationId);
     if (!record.accessRevoked) missing.push('accessRevoked');
-    if (!record.exitInterviewDone) missing.push('exitInterviewDone');
+    // Someone terminated or who absconded cannot be asked to sit an exit interview.
+    const interviewNeeded =
+      record.exitStatus !== EmploymentStatus.TERMINATED &&
+      record.exitStatus !== EmploymentStatus.ABSCONDED;
+    if (interviewNeeded && !record.exitInterviewDone)
+      missing.push('exitInterviewDone');
     if (!record.settlementId) missing.push('settlement');
     else if (record.settlement?.status === SettlementStatus.DRAFT)
       missing.push(
         'settlement processing (still DRAFT — run POST /settlements/:id/process first)',
       );
+    if (
+      record.settlement &&
+      record.settlement.lastWorkingDay.slice(0, 10) !==
+        record.lastWorkingDay.slice(0, 10)
+    ) {
+      missing.push(
+        `settlement last working day (${record.settlement.lastWorkingDay.slice(0, 10)}) differs from the exit's (${record.lastWorkingDay.slice(0, 10)})`,
+      );
+    }
     if (missing.length > 0) {
       throw new BadRequestException(
         `Cannot complete offboarding — outstanding: ${missing.join(', ')}`,

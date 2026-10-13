@@ -14,6 +14,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { OffboardingService } from './offboarding.service';
+import { UpdateLastWorkingDayDto } from './dto/update-last-working-day.dto';
 import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
 import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
@@ -91,6 +92,20 @@ export class OffboardingController {
     return this.offboardingService.linkSettlement(
       id,
       dto,
+      caller.organizationId,
+    );
+  }
+
+  @Patch(':id/last-working-day')
+  updateLastWorkingDay(
+    @Param('id') id: string,
+    @Body() dto: UpdateLastWorkingDayDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.offboardingService.updateLastWorkingDay(
+      id,
+      dto,
+      caller,
       caller.organizationId,
     );
   }

@@ -279,6 +279,32 @@ export class ResignationsService {
         ? addDays(record.submittedOn, noticePeriodDays)
         : record.requestedLwd);
 
+    // The approved date has to be a real working window: not before the resignation was given, not before the
+    // person joined, not more than a year ahead.
+    const joined = (
+      await this.scopedPrisma.user.findFirst({
+        where: { id: record.employeeId, organizationId },
+        select: { joiningDate: true },
+      })
+    )?.joiningDate
+      .toISOString()
+      .slice(0, 10);
+    if (approvedLwd < record.submittedOn) {
+      throw new BadRequestException(
+        `The approved last working day cannot be before the resignation was submitted (${record.submittedOn}).`,
+      );
+    }
+    if (joined && approvedLwd < joined) {
+      throw new BadRequestException(
+        `The approved last working day cannot be before the joining date (${joined}).`,
+      );
+    }
+    if (approvedLwd > addDays(record.submittedOn, 365)) {
+      throw new BadRequestException(
+        'The approved last working day cannot be more than a year after the resignation was submitted.',
+      );
+    }
+
     // Guarded flip first so two concurrent approvals can't both initiate an offboarding case; reverted if
     // initiate() refuses (e.g. an approved leave extends past the LWD).
     const { count } = await this.scopedPrisma.resignation.updateMany({
