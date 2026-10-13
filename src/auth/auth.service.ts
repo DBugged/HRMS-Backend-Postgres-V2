@@ -72,6 +72,17 @@ const LOGIN_BLOCKED_STATUSES: EmploymentStatus[] = [
   EmploymentStatus.ABSCONDED,
 ];
 
+// A bcrypt hash of a random value, made once on first use: compared against when there is no real hash to check, so
+// the unknown-account path costs what the wrong-password path costs.
+let decoyHash: Promise<string> | null = null;
+function decoyPasswordHash(): Promise<string> {
+  decoyHash ??= bcrypt.hash(
+    crypto.randomBytes(16).toString('hex'),
+    SALT_ROUNDS,
+  );
+  return decoyHash;
+}
+
 export interface IssuedTokens {
   accessToken: string;
   refreshToken: string;
@@ -297,6 +308,9 @@ export class AuthService {
       !user.isActive ||
       LOGIN_BLOCKED_STATUSES.includes(user.employmentStatus)
     ) {
+      // Spend the same bcrypt time a real attempt would, so a missing or closed account cannot be told apart from a
+      // wrong password by how long the answer took.
+      await bcrypt.compare(dto.password, await decoyPasswordHash());
       throw new UnauthorizedException('Invalid email or password.');
     }
 
@@ -311,6 +325,7 @@ export class AuthService {
     // still has a self-service way back in — completing a password reset
     // clears the lock (see resetPassword below).
     if (user.lockedUntil && user.lockedUntil > new Date()) {
+      await bcrypt.compare(dto.password, await decoyPasswordHash());
       throw new UnauthorizedException('Invalid email or password.');
     }
 
