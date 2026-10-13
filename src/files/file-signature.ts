@@ -192,3 +192,14 @@ export function contentMatchesExtension(
   const claimed = extensionKind(originalName);
   return claimed === null || sniffKind(head) === claimed;
 }
+
+// What a stored file is, from its key's extension: 'image', 'pdf' or 'other'. A signed /files/<token> link carries no
+// extension, so a client that must pick between <img> and a PDF frame (or a native image view) cannot tell on its
+// own; POST /files/refresh returns this with the fresh link.
+export function fileKindOf(relativeKey: string): 'image' | 'pdf' | 'other' {
+  const dot = relativeKey.lastIndexOf('.');
+  const ext = dot >= 0 ? relativeKey.slice(dot).toLowerCase() : '';
+  if (ext === '.pdf') return 'pdf';
+  if ((IMAGE_EXTENSIONS as readonly string[]).includes(ext)) return 'image';
+  return 'other';
+}

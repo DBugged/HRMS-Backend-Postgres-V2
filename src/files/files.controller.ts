@@ -9,6 +9,7 @@ import {
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import { fileKindOf } from './file-signature';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { User } from '@prisma/client';
@@ -87,7 +88,11 @@ export class FilesController {
       claim.relativeKey,
       SESSION_ASSET_TTL_SECONDS,
     );
-    return { url: `/files/${token}` };
+    return {
+      url: `/files/${token}`,
+      // Lets a client choose between an image view and a PDF viewer for a link that has no extension.
+      kind: fileKindOf(claim.relativeKey),
+    };
   }
 
   @Post('upload/documents')

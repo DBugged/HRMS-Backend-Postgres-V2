@@ -2,6 +2,7 @@ import {
   ALLOWED_MIME_TYPES,
   contentMatchesDeclaredType,
   describeAllowedTypes,
+  fileKindOf,
   hasAllowedExtension,
   INLINE_SAFE_EXTENSIONS,
   inlineContentType,
@@ -150,5 +151,15 @@ describe('contentMatchesExtension', () => {
     expect(contentMatchesExtension(Buffer.from('%PDF-1.7'), 'a.PDF')).toBe(
       true,
     );
+  });
+});
+
+describe('fileKindOf', () => {
+  it('tells images, PDFs and everything else apart from the key', () => {
+    expect(fileKindOf('org/documents/DP-1-cheque.PDF')).toBe('pdf');
+    expect(fileKindOf('org/documents/DP-1-cheque.jpg')).toBe('image');
+    expect(fileKindOf('org/documents/DP-1-cheque.PNG')).toBe('image');
+    expect(fileKindOf('org/documents/notes.docx')).toBe('other');
+    expect(fileKindOf('org/documents/noextension')).toBe('other');
   });
 });
