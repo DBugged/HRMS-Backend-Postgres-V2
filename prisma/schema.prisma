@@ -3562,6 +3562,10 @@ model Resignation {
 
   offboardingCaseId String?
 
+  // Set when HR or an Admin recorded the resignation on the employee's behalf (given by email or in person): the id
+  // of whoever entered it. NULL = the employee submitted it themselves. A plain id, like decidedById.
+  recordedById String?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

@@ -29,6 +29,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { NotificationsService } from '../notifications/notifications.service';
 import { paginate, skip } from '../common/pagination';
 import { SubmitResignationDto } from './dto/submit-resignation.dto';
+import { RecordResignationDto } from './dto/record-resignation.dto';
 import {
   ApproveResignationDto,
   RejectResignationDto,
@@ -191,11 +192,35 @@ export class ResignationsService {
     return created;
   }
 
-  findMine(actor: Actor) {
-    return this.scopedPrisma.resignation.findMany({
+  // Adds `recordedBy: { id, name } | null` - who entered a resignation on the employee's behalf.
+  private async withRecordedBy<T extends { recordedById: string | null }>(
+    rows: T[],
+    organizationId: string,
+  ): Promise<(T & { recordedBy: { id: string; name: string } | null })[]> {
+    const ids = [
+      ...new Set(
+        rows.map((r) => r.recordedById).filter((x): x is string => !!x),
+      ),
+    ];
+    const people = ids.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { id: { in: ids }, organizationId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const byId = new Map(people.map((p) => [p.id, p]));
+    return rows.map((r) => ({
+      ...r,
+      recordedBy: r.recordedById ? (byId.get(r.recordedById) ?? null) : null,
+    }));
+  }
+
+  async findMine(actor: Actor) {
+    const rows = await this.scopedPrisma.resignation.findMany({
       where: { organizationId: actor.organizationId, employeeId: actor.id },
       orderBy: { createdAt: 'desc' },
     });
+    return this.withRecordedBy(rows, actor.organizationId);
   }
 
   findAll(query: ListResignationsQueryDto, organizationId: string) {
@@ -204,16 +229,19 @@ export class ResignationsService {
       ...(query.status && { status: query.status }),
     };
     return paginate(
-      () =>
-        this.scopedPrisma.resignation.findMany({
-          where,
-          include: {
-            employee: { select: { id: true, name: true, employeeId: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-          skip: skip(query.page, query.limit),
-          take: query.limit,
-        }),
+      async () =>
+        this.withRecordedBy(
+          await this.scopedPrisma.resignation.findMany({
+            where,
+            include: {
+              employee: { select: { id: true, name: true, employeeId: true } },
+            },
+            orderBy: { createdAt: 'desc' },
+            skip: skip(query.page, query.limit),
+            take: query.limit,
+          }),
+          organizationId,
+        ),
       () => this.scopedPrisma.resignation.count({ where }),
       query.page,
       query.limit,
@@ -231,7 +259,206 @@ export class ResignationsService {
     if (record.employeeId !== actor.id && !HR_ROLES.includes(actor.role)) {
       throw new NotFoundException('Resignation not found.');
     }
-    return record;
+    const [row] = await this.withRecordedBy([record], actor.organizationId);
+    return row;
+  }
+
+  // HR / Admin records a resignation the employee gave outside the system (by email, in person). It is the same
+  // resignation as a self-submitted one - it appears in the Resignations list, can be approved or rejected, and
+  // approving it opens the offboarding case and moves the employee to Resigned - but it carries who entered it
+  // (recordedById) so it is clear it was entered on their behalf, and the date it was actually received.
+  async recordOnBehalf(dto: RecordResignationDto, actor: Actor) {
+    const organizationId = actor.organizationId;
+    if (dto.employeeId === actor.id) {
+      throw new BadRequestException(
+        'Submit your own resignation from My Resignation; it cannot be recorded on your own behalf.',
+      );
+    }
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: dto.employeeId, organizationId },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    if (!employee.isActive) {
+      throw new BadRequestException(
+        'A resignation can only be recorded for an active employee.',
+      );
+    }
+    // Same tier rule as deciding one: only an Admin handles an HR or Admin employee's resignation.
+    if (HR_ROLES.includes(employee.role) && actor.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Only an Admin can record a resignation for an HR or Admin employee.',
+      );
+    }
+
+    const timezone = await this.getOrgTimezone(organizationId);
+    const today = todayInOrgTz(timezone);
+    const receivedOn = dto.receivedOn ?? today;
+    if (receivedOn > today) {
+      throw new BadRequestException(
+        'The date received cannot be in the future.',
+      );
+    }
+    const joined = employee.joiningDate.toISOString().slice(0, 10);
+    if (receivedOn < joined) {
+      throw new BadRequestException(
+        `The date received cannot be before the joining date (${joined}).`,
+      );
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { policies: true },
+    });
+    const defaultNotice = Number(
+      (org?.policies as { defaultNoticeDays?: number } | null)
+        ?.defaultNoticeDays ?? 0,
+    );
+    const notice =
+      dto.noticePeriodDays ?? (defaultNotice > 0 ? defaultNotice : 0);
+    const earliestLwd = addDaysToDateStr(receivedOn, notice);
+    if (dto.requestedLwd < today) {
+      throw new BadRequestException(
+        'The last working day cannot be in the past.',
+      );
+    }
+    if (dto.requestedLwd < earliestLwd) {
+      throw new BadRequestException(
+        `With a notice period of ${notice} day(s) from ${receivedOn}, the last working day cannot be before ${earliestLwd}.`,
+      );
+    }
+    if (dto.requestedLwd > addDaysToDateStr(receivedOn, 365)) {
+      throw new BadRequestException(
+        'The last working day cannot be more than a year after the date received.',
+      );
+    }
+
+    const open = await this.scopedPrisma.resignation.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        status: { in: [ResignationStatus.PENDING, ResignationStatus.APPROVED] },
+      },
+    });
+    if (open) {
+      throw new BadRequestException(
+        open.status === ResignationStatus.APPROVED
+          ? 'This employee already has an approved resignation.'
+          : 'This employee already has a pending resignation request.',
+      );
+    }
+    const openCase = await this.scopedPrisma.offboardingCase.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        status: {
+          in: [OffboardingStatus.INITIATED, OffboardingStatus.IN_PROGRESS],
+        },
+      },
+    });
+    if (openCase) {
+      throw new BadRequestException(
+        'An offboarding process is already in progress for this employee.',
+      );
+    }
+
+    const created = await this.scopedPrisma.resignation.create({
+      data: {
+        organizationId,
+        employeeId: dto.employeeId,
+        submittedOn: receivedOn,
+        requestedLwd: dto.requestedLwd,
+        noticePeriodDays: dto.noticePeriodDays,
+        reason: dto.reason,
+        recordedById: actor.id,
+      },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'RESIGNATION_RECORDED_ON_BEHALF',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: dto.employeeId,
+      details: {
+        resignationId: created.id,
+        receivedOn,
+        requestedLwd: dto.requestedLwd,
+        approveNow: !!dto.approveNow,
+      },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: dto.employeeId,
+      eventKey: 'RESIGNATION_SUBMITTED',
+      performedById: actor.id,
+      description: `Recorded by ${actor.name} on the employee's behalf (received ${receivedOn}).${dto.reason ? ` ${dto.reason}` : ''}`,
+      metadata: {
+        resignationId: created.id,
+        requestedLwd: dto.requestedLwd,
+        recordedById: actor.id,
+      },
+    });
+    // The employee is told it was entered for them; the reporting manager and every other HR/Admin hear of it as
+    // with a self-submitted one (never the person who entered it).
+    await this.notify(
+      organizationId,
+      dto.employeeId,
+      'Resignation recorded',
+      `${actor.name} recorded your resignation (received ${receivedOn}, requested last working day ${dto.requestedLwd}).`,
+    );
+    const recipients = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        id: { notIn: [actor.id, dto.employeeId] },
+        OR: [
+          { role: { in: HR_ROLES } },
+          ...(employee.reportingManagerId
+            ? [{ id: employee.reportingManagerId }]
+            : []),
+        ],
+      },
+      select: { id: true },
+    });
+    await Promise.all(
+      recipients.map((r) =>
+        this.notify(
+          organizationId,
+          r.id,
+          'Resignation Recorded',
+          `A resignation was recorded for ${employee.name} by ${actor.name} (requested last working day ${dto.requestedLwd}).`,
+        ),
+      ),
+    );
+
+    // Recorded as already approved: the same decision flow as a normal approval - the offboarding case opens and the
+    // employee moves to Resigned. If that is refused (an approved leave runs past the date, say) the resignation
+    // stays Pending and the reason comes back, instead of failing a record that was saved.
+    let approvalError: string | null = null;
+    if (dto.approveNow) {
+      try {
+        await this.approve(
+          created.id,
+          {
+            approvedLwd: dto.requestedLwd,
+            noticePeriodDays: dto.noticePeriodDays,
+            decisionNote:
+              'Recorded and approved by HR on the employee’s behalf.',
+          },
+          actor,
+        );
+      } catch (err) {
+        approvalError =
+          err instanceof Error ? err.message : 'It could not be approved.';
+      }
+    }
+    const [row] = await this.withRecordedBy(
+      [
+        await this.scopedPrisma.resignation.findFirstOrThrow({
+          where: { id: created.id, organizationId },
+        }),
+      ],
+      organizationId,
+    );
+    return { ...row, approvalError };
   }
 
   async withdraw(id: string, actor: Actor) {

@@ -21,6 +21,7 @@ interface EmployeeCreateBody {
 interface ResignationBody {
   id: string;
   status: string;
+  submittedOn: string;
   approvedLwd: string | null;
   noticePeriodDays: number | null;
   offboardingCaseId: string | null;
@@ -436,5 +437,126 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const body = approved.body as ResignationBody;
     expect(body.approvedLwd).toBe(dateOffset(15));
     expect(body.decidedById).not.toBe(hrId);
+  });
+
+  describe('recorded on the employee behalf', () => {
+    let emp3Id: string;
+    let emp3Token: string;
+    let emp4Id: string;
+
+    beforeAll(async () => {
+      const emp3 = await createEmployee('resig-e2e-emp3@example.test');
+      emp3Id = emp3.id;
+      emp3Token = emp3.token;
+      const emp4 = await createEmployee('resig-e2e-emp4@example.test');
+      emp4Id = emp4.id;
+      // joined a while ago, so a resignation can have been received days before it is recorded
+      await prisma.user.updateMany({
+        where: { id: { in: [emp3Id, emp4Id] } },
+        data: { joiningDate: new Date(`${dateOffset(-60)}T00:00:00.000Z`) },
+      });
+    });
+
+    const record = (token: string, body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/resignations/on-behalf')
+        .set('Authorization', `Bearer ${token}`)
+        .send(body);
+
+    it('HR records one as Pending, dated when it was received, marked as entered by HR', async () => {
+      const res = await record(hrToken, {
+        employeeId: emp3Id,
+        receivedOn: dateOffset(-3),
+        requestedLwd: dateOffset(40),
+        reason: 'Sent by email',
+      }).expect(201);
+      const body = res.body as ResignationBody & {
+        recordedBy: { id: string } | null;
+        approvalError: string | null;
+      };
+      expect(body.status).toBe('PENDING');
+      expect(body.submittedOn).toBe(dateOffset(-3));
+      expect(body.recordedBy?.id).toBe(hrId);
+      expect(body.approvalError).toBeNull();
+
+      // the employee sees it, with who entered it
+      const mine = await request(app.getHttpServer())
+        .get('/resignations/mine')
+        .set('Authorization', `Bearer ${emp3Token}`)
+        .expect(200);
+      const first = (mine.body as { recordedBy: { id: string } | null }[])[0];
+      expect(first.recordedBy?.id).toBe(hrId);
+
+      // HR sees it in the list, and it is audited
+      const list = await request(app.getHttpServer())
+        .get('/resignations')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const rows = (
+        list.body as { data: { id: string; recordedBy: unknown }[] }
+      ).data;
+      expect(rows.find((r) => r.id === body.id)?.recordedBy).toBeTruthy();
+      expect(
+        await prisma.auditLog.count({
+          where: {
+            action: 'RESIGNATION_RECORDED_ON_BEHALF',
+            targetId: emp3Id,
+          },
+        }),
+      ).toBe(1);
+    });
+
+    it('a second open one for the same employee is refused', async () => {
+      await record(hrToken, {
+        employeeId: emp3Id,
+        requestedLwd: dateOffset(45),
+      }).expect(400);
+    });
+
+    it('recorded and approved in one go: the case opens and the employee is Resigned', async () => {
+      const res = await record(adminToken, {
+        employeeId: emp4Id,
+        requestedLwd: dateOffset(30),
+        noticePeriodDays: 30,
+        approveNow: true,
+      }).expect(201);
+      const body = res.body as ResignationBody & {
+        approvalError: string | null;
+      };
+      expect(body.approvalError).toBeNull();
+      expect(body.status).toBe('APPROVED');
+      expect(body.offboardingCaseId).not.toBeNull();
+      const employee = await prisma.user.findFirstOrThrow({
+        where: { id: emp4Id },
+      });
+      expect(employee.employmentStatus).toBe('RESIGNED');
+    });
+
+    it('is refused for yourself, for the wrong people, and for a future date', async () => {
+      // not on your own behalf
+      await record(hrToken, {
+        employeeId: hrId,
+        requestedLwd: dateOffset(40),
+      }).expect(400);
+      // an employee cannot record one for anyone
+      await record(emp2Token, {
+        employeeId: emp4Id,
+        requestedLwd: dateOffset(40),
+      }).expect(403);
+      // only an Admin handles an HR employee's resignation: HR cannot record it for another HR/Admin
+      const adminRow = await prisma.user.findFirstOrThrow({
+        where: { email: 'resig-e2e-admin@example.test' },
+      });
+      await record(hrToken, {
+        employeeId: adminRow.id,
+        requestedLwd: dateOffset(40),
+      }).expect(403);
+      // received in the future
+      await record(hrToken, {
+        employeeId: emp2Id,
+        receivedOn: dateOffset(2),
+        requestedLwd: dateOffset(40),
+      }).expect(400);
+    });
   });
 });

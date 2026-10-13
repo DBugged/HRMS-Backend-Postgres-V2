@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { ResignationsService } from './resignations.service';
 import { SubmitResignationDto } from './dto/submit-resignation.dto';
+import { RecordResignationDto } from './dto/record-resignation.dto';
 import {
   ApproveResignationDto,
   RejectResignationDto,
@@ -36,6 +37,17 @@ export class ResignationsController {
   @Post()
   submit(@Body() dto: SubmitResignationDto, @CurrentUser() caller: Caller) {
     return this.resignationsService.submit(dto, caller);
+  }
+
+  // HR / Admin records a resignation the employee gave by email or in person. Declared before ':id' routes.
+  @Post('on-behalf')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  recordOnBehalf(
+    @Body() dto: RecordResignationDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.resignationsService.recordOnBehalf(dto, caller);
   }
 
   @Get('mine')
