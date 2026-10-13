@@ -12,6 +12,7 @@ import {
   EMPLOYEE_RELATION_ORDER_BY,
   compareEmployees,
 } from '../common/employee-order';
+import { assertPunchTimeSane } from './punch-time-bounds';
 import {
   BadRequestException,
   ConflictException,
@@ -1188,6 +1189,7 @@ export class AttendanceService {
     const rawPayload = dto.rawPayload as
       { location?: string; latitude?: number; longitude?: number } | undefined;
     const punchTime = dto.punchTime ? new Date(dto.punchTime) : new Date();
+    assertPunchTimeSane(punchTime);
 
     const shiftConfig = await this.resolveEmployeeShiftConfig(
       user.id,
