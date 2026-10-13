@@ -2,6 +2,8 @@ import {
   calendarYearsOfService,
   GRATUITY_STATUTORY_CAP,
   calculateGratuity,
+  calculateHalfMonthGratuity,
+  gratuityTaxExemption,
   completedYearsOfService,
   finalWagesDueBy,
   finalWagesStatus,
@@ -159,5 +161,65 @@ describe('final wages deadline (Code on Wages s.17(2))', () => {
       finalWagesStatus('2026-10-06', null, new Date('2026-10-10T00:00:00Z'))
         .overdue,
     ).toBe(true);
+  });
+});
+
+describe('gratuity: covered / not covered', () => {
+  it('half a month per COMPLETED year, no round-up, and a minimum service', () => {
+    // 30,000 x 15/30 x 7 (7.8 years -> 7)
+    expect(calculateHalfMonthGratuity(30000, 7.8)).toBe(105000);
+    // below the default 5-year minimum, or a custom one
+    expect(calculateHalfMonthGratuity(30000, 4.9)).toBe(0);
+    expect(calculateHalfMonthGratuity(30000, 3.2, { minYears: 3 })).toBe(45000);
+    expect(
+      calculateHalfMonthGratuity(30000, 1, { exemptFromMinimumService: true }),
+    ).toBe(15000);
+  });
+
+  it('a covered employer is exempt up to the Act figure (part-year rounds up)', () => {
+    // 40,000 x 15/26 x 8 (7.6 -> 8) = 184,615
+    expect(
+      gratuityTaxExemption({
+        coverage: 'COVERED',
+        paid: 184615,
+        lastDrawnWages: 40000,
+        averageWages: 38000,
+        yearsOfService: 7.6,
+      }),
+    ).toBe(184615);
+  });
+
+  it('a non-covered employer is exempt only up to 15/30 on the 10-month average x completed years', () => {
+    // paying the Act figure (184,615) voluntarily: exempt = 38,000 x 0.5 x 7 = 133,000; the rest is taxable
+    const exempt = gratuityTaxExemption({
+      coverage: 'NOT_COVERED',
+      paid: 184615,
+      lastDrawnWages: 40000,
+      averageWages: 38000,
+      yearsOfService: 7.6,
+    });
+    expect(exempt).toBe(133000);
+    expect(184615 - exempt).toBe(51615);
+  });
+
+  it('is never more than the amount paid or 20 lakh', () => {
+    expect(
+      gratuityTaxExemption({
+        coverage: 'NOT_COVERED',
+        paid: 50000,
+        lastDrawnWages: 40000,
+        averageWages: 38000,
+        yearsOfService: 10,
+      }),
+    ).toBe(50000);
+    expect(
+      gratuityTaxExemption({
+        coverage: 'COVERED',
+        paid: 5000000,
+        lastDrawnWages: 900000,
+        averageWages: 900000,
+        yearsOfService: 30,
+      }),
+    ).toBe(GRATUITY_STATUTORY_CAP);
   });
 });

@@ -193,11 +193,46 @@ function validateLwf(config: unknown): void {
   }
 }
 
+// Gratuity: `rate` is the monthly accrual; `coverage` is whether the establishment is under the Payment of Gratuity
+// Act (it decides the tax exemption and, if covered, makes the Act's formula and 5-year minimum the floor);
+// `payoutFormula` is how the amount is worked out - a covered employer must use the Act's formula, a non-covered one
+// may use half a month per year; `minimumServiceYears` is a non-covered employer's own qualifying period.
 function validateGratuity(config: unknown): void {
-  const c = config as { rate?: unknown; applyFiftyPercentRule?: unknown };
+  const c = config as {
+    rate?: unknown;
+    applyFiftyPercentRule?: unknown;
+    coverage?: unknown;
+    payoutFormula?: unknown;
+    minimumServiceYears?: unknown;
+  };
   if (!isNonNegative(c.rate))
     throw new Error('rate must be a non-negative number.');
   validateOptionalBoolean(c.applyFiftyPercentRule, 'applyFiftyPercentRule');
+  if (c.coverage !== undefined && c.coverage !== '') {
+    if (c.coverage !== 'COVERED' && c.coverage !== 'NOT_COVERED')
+      throw new Error('coverage must be COVERED or NOT_COVERED.');
+  }
+  if (c.payoutFormula !== undefined && c.payoutFormula !== '') {
+    if (c.payoutFormula !== 'ACT' && c.payoutFormula !== 'HALF_MONTH')
+      throw new Error('payoutFormula must be ACT or HALF_MONTH.');
+    if ((c.coverage ?? 'COVERED') === 'COVERED' && c.payoutFormula !== 'ACT')
+      throw new Error(
+        'An establishment covered by the Payment of Gratuity Act must use the Act formula - half a month per year is only for a non-covered employer.',
+      );
+  }
+  if (c.minimumServiceYears !== undefined && c.minimumServiceYears !== '') {
+    if (
+      typeof c.minimumServiceYears !== 'number' ||
+      !Number.isFinite(c.minimumServiceYears) ||
+      c.minimumServiceYears < 0 ||
+      c.minimumServiceYears > 10
+    )
+      throw new Error('minimumServiceYears must be between 0 and 10.');
+    if ((c.coverage ?? 'COVERED') === 'COVERED' && c.minimumServiceYears !== 5)
+      throw new Error(
+        'An establishment covered by the Act has a 5-year minimum by law (1 year for fixed-term); a custom minimum is for a non-covered employer.',
+      );
+  }
 }
 
 // Payment of Bonus Act (now Chapter VIII of the Code on Wages): bonus is 8.33%-20% of the wage base, only for
@@ -348,7 +383,12 @@ export const SEED_DEFAULTS: Record<
     isEnabled: false,
   },
   [StatutoryModule.GRATUITY]: {
-    config: { rate: 4.81, applyFiftyPercentRule: true },
+    config: {
+      rate: 4.81,
+      applyFiftyPercentRule: true,
+      coverage: 'COVERED',
+      payoutFormula: 'ACT',
+    },
     isEnabled: false,
   },
   [StatutoryModule.BONUS]: {

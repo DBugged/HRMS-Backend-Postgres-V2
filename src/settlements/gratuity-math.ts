@@ -113,3 +113,58 @@ export function finalWagesStatus(
   const compare = (paidOn ?? today).toISOString().slice(0, 10);
   return { dueBy, overdue: compare > dueBy };
 }
+
+// ── Coverage: who is under the Payment of Gratuity Act ──────────────────────────────────────────────────────────
+// COVERED:     the establishment is under the Act (traditionally 10 or more employees on any day of the previous 12
+//              months). The Act's formula (15/26, a part-year over six months rounds up, 5-year minimum, ₹20 lakh cap)
+//              is the floor and a statutory right.
+// NOT_COVERED: no statutory right: any gratuity is contractual / voluntary, so the company's own formula and
+//              minimum service apply. The tax exemption is lower (s.10(10)(iii)).
+export type GratuityCoverage = 'COVERED' | 'NOT_COVERED';
+// How the amount is worked out: the Act's formula, or half a month's wages per completed year (15/30).
+export type GratuityPayoutFormula = 'ACT' | 'HALF_MONTH';
+
+// Headcount at which an establishment is, as a rule, covered by the Act.
+export const GRATUITY_COVERAGE_HEADCOUNT = 10;
+
+// Half a month's (15/30) average wages for every COMPLETED year - a part-year is not rounded up - for a
+// non-covered employer's own policy. Zero below `minYears`. No ceiling is applied here (a contract may pay more); the
+// tax exemption below is what is capped.
+export function calculateHalfMonthGratuity(
+  averageMonthlyWages: number,
+  yearsOfService: number,
+  opts: { minYears?: number; exemptFromMinimumService?: boolean } = {},
+): number {
+  const minYears = opts.minYears ?? YEARS_FOR_GRATUITY_ELIGIBILITY;
+  if (!opts.exemptFromMinimumService && yearsOfService < minYears) return 0;
+  return Math.round(
+    averageMonthlyWages * (15 / 30) * Math.floor(Math.max(0, yearsOfService)),
+  );
+}
+
+// The part of the gratuity paid that is exempt from tax on leaving (s.10(10)); the rest is taxed with the final pay.
+// This is decided by the law and the employer's coverage - NOT by which formula the company chose to pay:
+//   covered     (s.10(10)(ii)): least of the amount paid, ₹20 lakh, and 15/26 x last drawn wages x completed years
+//                (a part-year over six months counted as a year);
+//   not covered (s.10(10)(iii)): least of the amount paid, ₹20 lakh, and half a month's average salary of the last
+//                ten months x completed years of service only.
+export function gratuityTaxExemption(opts: {
+  coverage: GratuityCoverage;
+  paid: number;
+  lastDrawnWages: number;
+  averageWages: number;
+  yearsOfService: number;
+}): number {
+  const { coverage, paid, lastDrawnWages, averageWages, yearsOfService } = opts;
+  if (paid <= 0) return 0;
+  const statutoryLimit =
+    coverage === 'COVERED'
+      ? lastDrawnWages *
+        (15 / 26) *
+        completedYearsOfService(Math.max(0, yearsOfService))
+      : averageWages * (15 / 30) * Math.floor(Math.max(0, yearsOfService));
+  return Math.max(
+    0,
+    Math.round(Math.min(paid, GRATUITY_STATUTORY_CAP, statutoryLimit)),
+  );
+}

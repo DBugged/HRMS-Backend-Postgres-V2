@@ -323,3 +323,55 @@ describe('PF contributeOnActualWages', () => {
     ).toThrow('contributeOnActualWages must be true or false.');
   });
 });
+
+describe('gratuity coverage settings', () => {
+  const G = StatutoryModule.GRATUITY;
+
+  it('accepts a covered employer on the Act formula, and a non-covered one on half a month per year', () => {
+    expect(() =>
+      validateModuleConfig(G, {
+        rate: 4.81,
+        coverage: 'COVERED',
+        payoutFormula: 'ACT',
+      }),
+    ).not.toThrow();
+    expect(() =>
+      validateModuleConfig(G, {
+        rate: 4.81,
+        coverage: 'NOT_COVERED',
+        payoutFormula: 'HALF_MONTH',
+        minimumServiceYears: 3,
+      }),
+    ).not.toThrow();
+  });
+
+  it('a covered employer cannot pay below the Act (half-month formula or a custom minimum)', () => {
+    expect(() =>
+      validateModuleConfig(G, {
+        rate: 4.81,
+        coverage: 'COVERED',
+        payoutFormula: 'HALF_MONTH',
+      }),
+    ).toThrow(/must use the Act formula/);
+    expect(() =>
+      validateModuleConfig(G, {
+        rate: 4.81,
+        coverage: 'COVERED',
+        minimumServiceYears: 3,
+      }),
+    ).toThrow(/5-year minimum/);
+  });
+
+  it('rejects unknown values', () => {
+    expect(() =>
+      validateModuleConfig(G, { rate: 4.81, coverage: 'SOMETIMES' }),
+    ).toThrow(/coverage/);
+    expect(() =>
+      validateModuleConfig(G, {
+        rate: 4.81,
+        coverage: 'NOT_COVERED',
+        minimumServiceYears: 30,
+      }),
+    ).toThrow(/between 0 and 10/);
+  });
+});
