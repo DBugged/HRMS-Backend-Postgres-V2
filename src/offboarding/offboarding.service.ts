@@ -11,6 +11,10 @@
 // the employee still holds ALLOCATED assets unless HR records an explicit assetOverrideNote.
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
+  PERSONAL_EMAIL_REQUIRED_MESSAGE,
+  personalEmailOf,
+} from '../common/personal-email';
+import {
   BadRequestException,
   Inject,
   Injectable,
@@ -167,6 +171,11 @@ export class OffboardingService {
     );
     // A termination or an abscondment is a company decision that has to say why - it is what the record, the
     // relieving letter and any later dispute rest on. (A resignation's reason is the employee's own.)
+    // Once the exit completes the company mailbox is closed; the personal address is the only way the final payslip,
+    // settlement statement and tax certificate can reach them - so there has to be one before the exit starts.
+    if (!personalEmailOf(employee.personalData)) {
+      throw new BadRequestException(PERSONAL_EMAIL_REQUIRED_MESSAGE);
+    }
     const exit = dto.exitStatus ?? EmploymentStatus.RELEASED;
     if (
       (exit === EmploymentStatus.TERMINATED ||
@@ -520,6 +529,14 @@ export class OffboardingService {
     // `settlement` relation, so its current status is available here
     // without a second query.
     const record = await this.assertOpenCase(id, organizationId);
+
+    const leaver = await this.scopedPrisma.user.findFirst({
+      where: { id: record.employeeId, organizationId },
+      select: { personalData: true },
+    });
+    if (!personalEmailOf(leaver?.personalData)) {
+      throw new BadRequestException(PERSONAL_EMAIL_REQUIRED_MESSAGE);
+    }
 
     const missing: string[] = [];
     if (!record.assetsReturned) missing.push('assetsReturned');

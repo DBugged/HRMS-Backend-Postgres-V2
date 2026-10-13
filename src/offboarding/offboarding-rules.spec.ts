@@ -2,7 +2,13 @@ import { OffboardingService } from './offboarding.service';
 
 type Row = Record<string, any>;
 
-function build(o: { settlementStatus?: string; open?: Row | null } = {}) {
+function build(
+  o: {
+    settlementStatus?: string;
+    open?: Row | null;
+    personalEmail?: string | null;
+  } = {},
+) {
   const kase: Row = {
     id: 'c1',
     organizationId: 'org',
@@ -33,6 +39,10 @@ function build(o: { settlementStatus?: string; open?: Row | null } = {}) {
         email: 'a@x.com',
         employmentStatus: 'CONFIRMED',
         joiningDate: new Date('2025-01-15T00:00:00Z'),
+        personalData:
+          o.personalEmail === null
+            ? {}
+            : { personalEmail: o.personalEmail ?? 'asha@gmail.com' },
       }),
     },
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
@@ -73,6 +83,21 @@ describe('offboarding: exit rules', () => {
         'org',
       ),
     ).rejects.toThrow(/reason is required to record a termination/);
+  });
+
+  it('an exit cannot start without a personal email to send the final documents to', async () => {
+    const { service } = build({ personalEmail: null });
+    await expect(
+      service.initiate(
+        {
+          employeeId: 'e1',
+          lastWorkingDay: '2026-10-30',
+          reason: 'x',
+        } as never,
+        actor,
+        'org',
+      ),
+    ).rejects.toThrow(/no personal email on file/);
   });
 
   it('the last working day cannot precede the joining date', async () => {

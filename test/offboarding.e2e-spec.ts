@@ -87,6 +87,7 @@ describe('Offboarding (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'offb-e2e-hr@example.test',
+        personalEmail: 'offb-e2e-hr.personal@example.test',
         joiningDate: '2025-01-01',
         role: 'HR',
       });
@@ -104,6 +105,7 @@ describe('Offboarding (e2e)', () => {
       .send({
         name: 'Departing Employee',
         email: 'offb-e2e-emp@example.test',
+        personalEmail: 'offb-e2e-emp.personal@example.test',
         joiningDate: '2025-01-01',
       });
     const empBody = empCreate.body as EmployeeCreateBody;
@@ -122,6 +124,7 @@ describe('Offboarding (e2e)', () => {
       .send({
         name: 'Other Employee',
         email: 'offb-e2e-other@example.test',
+        personalEmail: 'offb-e2e-other.personal@example.test',
         joiningDate: '2025-01-01',
       });
     otherEmployeeId = (otherCreate.body as EmployeeCreateBody).employee.id;

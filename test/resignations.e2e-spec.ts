@@ -68,6 +68,8 @@ describe('Resignations & exit lifecycle (e2e)', () => {
             .replace(/[^a-zA-Z]+/g, ' ')
             .trim() || 'Test User',
         email,
+        // Approving a resignation starts an offboarding, which needs a personal email for the final documents.
+        personalEmail: email.replace('@', '.personal@'),
         ...(role && { role }),
       });
     const body = res.body as EmployeeCreateBody;

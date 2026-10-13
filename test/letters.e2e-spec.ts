@@ -68,6 +68,7 @@ describe('Letters (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'letters-e2e-hr@example.test',
+        personalEmail: 'letters-e2e-hr.personal@example.test',
         joiningDate: '2025-01-01',
         role: 'HR',
       });
@@ -85,6 +86,7 @@ describe('Letters (e2e)', () => {
       .send({
         name: 'Manager Person',
         email: 'letters-e2e-mgr@example.test',
+        personalEmail: 'letters-e2e-mgr.personal@example.test',
         joiningDate: '2025-01-01',
         role: 'MANAGER',
       });

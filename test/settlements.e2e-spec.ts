@@ -141,6 +141,7 @@ describe('Settlements (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'settle-e2e-hr@example.test',
+        personalEmail: 'settle-e2e-hr.personal@example.test',
         joiningDate: '2025-01-01',
         role: 'HR',
       });
@@ -159,6 +160,7 @@ describe('Settlements (e2e)', () => {
       .send({
         name: 'Departing Employee',
         email: 'settle-e2e-emp@example.test',
+        personalEmail: 'settle-e2e-emp.personal@example.test',
         joiningDate: '2020-01-01',
       });
     const empBody = empCreate.body as EmployeeCreateBody;

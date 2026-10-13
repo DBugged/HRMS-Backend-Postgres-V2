@@ -83,6 +83,7 @@ describe('Audit Log (e2e)', () => {
       .send({
         name: 'HR Person',
         email: 'audit-e2e-hr@example.test',
+        personalEmail: 'audit-e2e-hr.personal@example.test',
         joiningDate: '2025-01-01',
         role: 'HR',
       });
@@ -100,6 +101,7 @@ describe('Audit Log (e2e)', () => {
       .send({
         name: 'A Manager',
         email: 'audit-e2e-manager@example.test',
+        personalEmail: 'audit-e2e-manager.personal@example.test',
         joiningDate: '2025-01-01',
         role: 'MANAGER',
       });
@@ -117,6 +119,7 @@ describe('Audit Log (e2e)', () => {
       .send({
         name: 'Plain Employee',
         email: 'audit-e2e-emp@example.test',
+        personalEmail: 'audit-e2e-emp.personal@example.test',
         joiningDate: '2025-01-01',
       });
     const empBody = empCreate.body as EmployeeCreateBody;
