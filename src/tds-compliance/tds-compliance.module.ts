@@ -4,8 +4,10 @@ import { PrivacyModule } from '../privacy/privacy.module';
 import { TdsComplianceController } from './tds-compliance.controller';
 import { TdsComplianceService } from './tds-compliance.service';
 
+import { NotificationsModule } from '../notifications/notifications.module';
+
 @Module({
-  imports: [AuditLogModule, PrivacyModule],
+  imports: [AuditLogModule, PrivacyModule, NotificationsModule],
   controllers: [TdsComplianceController],
   providers: [TdsComplianceService],
 })

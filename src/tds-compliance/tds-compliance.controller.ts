@@ -3,11 +3,13 @@
 // Important: Everything is ADMIN/HR except Form 130, which an employee can download for themselves once the year's
 //   last statement is on record. Report exports are audited and throttled like the other payroll reports.
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
   Get,
   Inject,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -32,6 +34,12 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { sendReportBranded } from '../reports/report-branding';
 import { TdsComplianceService } from './tds-compliance.service';
 import { renderForm130 } from './form130-pdf';
+import { EmailService } from '../notifications/email.service';
+import { escapeHtml } from '../email-templates/email-layout';
+import {
+  PERSONAL_EMAIL_REQUIRED_MESSAGE,
+  personalEmailOf,
+} from '../common/personal-email';
 import { loadReportLogo } from '../reports/report-branding';
 import {
   ChallanListQueryDto,
@@ -53,6 +61,7 @@ export class TdsComplianceController {
   constructor(
     private readonly service: TdsComplianceService,
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    private readonly emailService: EmailService,
   ) {}
 
   @Get('monthly')
@@ -206,5 +215,56 @@ export class TdsComplianceController {
       'Content-Length': String(pdf.length),
     });
     res.end(pdf);
+  }
+
+  // Issues the employee's Form 130 / Form 16 by e-mail: the PDF goes to their personal address (the company mailbox
+  // is closed once they leave); an employee still on the payroll without one falls back to their work address.
+  @Post('form130/:id/email')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  async emailForm130(
+    @Param('id') id: string,
+    @Body() q: Form130QueryDto,
+    @CurrentUser() c: Caller,
+  ) {
+    const data = await this.service.form130Data(
+      id,
+      q.financialYear,
+      c,
+      c.organizationId,
+    );
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id, organizationId: c.organizationId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        isActive: true,
+        personalData: true,
+      },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    const personal = personalEmailOf(employee.personalData);
+    if (!personal && !employee.isActive) {
+      throw new BadRequestException(PERSONAL_EMAIL_REQUIRED_MESSAGE);
+    }
+    const to = personal ?? employee.email;
+    const logo = await loadReportLogo(this.scopedPrisma, c.organizationId);
+    const pdf = await renderForm130(data, logo);
+    const filename = `${data.formName.replace(' ', '')}_${data.employee.code}_${q.financialYear}.pdf`;
+    const subject = `Your ${data.formName} for ${q.financialYear}`;
+    await this.emailService.send({
+      organizationId: c.organizationId,
+      to,
+      subject,
+      html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Your ${escapeHtml(data.formName)} (tax certificate) for ${escapeHtml(q.financialYear)} is attached. Please keep it for your income-tax filing.</p>`,
+      attachments: [{ filename, content: pdf }],
+    });
+    return {
+      sentTo: to,
+      toPersonalEmail: !!personal,
+      financialYear: q.financialYear,
+    };
   }
 }
