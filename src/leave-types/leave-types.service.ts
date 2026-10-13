@@ -174,6 +174,8 @@ export class LeaveTypesService {
       await tx.leaveType.create({
         data: {
           ...rest,
+          // One-off, event-based leave stays out of the Leave Tracker and Leave Balances views unless HR ticks it.
+          showInLeaveTracker: def.allocationType !== AllocationType.EVENT_BASED,
           organizationId,
           createdById,
           isSystemDefault: true,
@@ -345,7 +347,10 @@ export class LeaveTypesService {
         maxServiceMonths: dto.maxServiceMonths,
         salaryImpactPercent: dto.salaryImpactPercent ?? 100,
         affectsLopCalculation: dto.affectsLopCalculation ?? true,
-        showInLeaveTracker: dto.showInLeaveTracker ?? true,
+        // Event-based leave starts hidden from the tracker and balances; everything else starts shown.
+        showInLeaveTracker:
+          dto.showInLeaveTracker ??
+          dto.allocationType !== AllocationType.EVENT_BASED,
         requiresApproval: dto.requiresApproval ?? true,
         approvalLevels: dto.approvalLevels ?? 2,
         autoApproveIfNoAction: dto.autoApproveIfNoAction ?? false,

@@ -331,6 +331,8 @@ export class LeavesService {
           encashment: Prisma.JsonValue;
           // Profiles/dashboards sum only types with this on.
           countInTotalBalance: boolean;
+          // Event-based leave is hidden from the balances shown to the employee unless this is ticked.
+          showInLeaveTracker: boolean;
           // Lets My Leave treat an event-based type (built from HR grants) differently from a yearly one.
           allocationType: AllocationType;
         };
@@ -351,6 +353,7 @@ export class LeavesService {
             code: leaveType.code,
             encashment: leaveType.encashment,
             countInTotalBalance: leaveType.countInTotalBalance,
+            showInLeaveTracker: leaveType.showInLeaveTracker,
             allocationType: leaveType.allocationType,
           },
         });

@@ -107,6 +107,43 @@ describe('Leave Types (e2e)', () => {
     annualLeaveId = body.id;
   });
 
+  it('event-based leave starts hidden from the tracker and balances; others start shown; HR can tick it on', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/leave-types')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Test Event Leave',
+        code: 'TEV',
+        allocationType: 'EVENT_BASED',
+        annualQuota: 5,
+        eventGrant: { unit: 'CALENDAR_DAYS', repeatPolicy: 'ONCE_PER_EVENT' },
+      })
+      .expect(201);
+    const event = created.body as LeaveTypeBody & {
+      showInLeaveTracker: boolean;
+    };
+    expect(event.showInLeaveTracker).toBe(false);
+
+    const annual = await request(app.getHttpServer())
+      .get(`/leave-types/${annualLeaveId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(
+      (annual.body as { showInLeaveTracker: boolean }).showInLeaveTracker,
+    ).toBe(true);
+
+    const ticked = await request(app.getHttpServer())
+      .put(`/leave-types/${event.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ showInLeaveTracker: true })
+      .expect(200);
+    expect(
+      (ticked.body as { showInLeaveTracker: boolean }).showInLeaveTracker,
+    ).toBe(true);
+    // Removed again so the leave-type counts asserted by the tests below are unchanged.
+    await prisma.leaveType.delete({ where: { id: event.id } });
+  });
+
   it('rejects a duplicate name/code', async () => {
     await request(app.getHttpServer())
       .post('/leave-types')
