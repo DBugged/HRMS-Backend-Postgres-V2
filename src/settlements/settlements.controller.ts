@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { SettlementsService } from './settlements.service';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -67,7 +68,16 @@ export class SettlementsController {
   @Post(':id/pay')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
-  markPaid(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.settlementsService.markPaid(id, caller, caller.organizationId);
+  markPaid(
+    @Param('id') id: string,
+    @Body() dto: MarkSettlementPaidDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.settlementsService.markPaid(
+      id,
+      caller,
+      caller.organizationId,
+      dto,
+    );
   }
 }

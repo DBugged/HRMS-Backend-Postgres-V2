@@ -88,3 +88,28 @@ export function calendarYearsOfService(
   }
   return years + (months + days / 30) / 12;
 }
+
+// Code on Wages, 2019 s.17(2): wages are paid within two working days of the employee's removal, dismissal,
+// retrenchment or resignation. Which weekdays are working days is the establishment's own, so only Sundays are
+// skipped here - the earliest (most conservative) due date; the establishment's weekly off may only push it later.
+export const FINAL_WAGES_WORKING_DAYS = 2;
+export function finalWagesDueBy(lastWorkingDay: string): string {
+  const d = new Date(`${lastWorkingDay}T00:00:00.000Z`);
+  let left = FINAL_WAGES_WORKING_DAYS;
+  while (left > 0) {
+    d.setUTCDate(d.getUTCDate() + 1);
+    if (d.getUTCDay() !== 0) left -= 1;
+  }
+  return d.toISOString().slice(0, 10);
+}
+
+// Whether the final wages are (or were) paid after that due date; `paidOn` null means still unpaid, judged by today.
+export function finalWagesStatus(
+  lastWorkingDay: string,
+  paidOn: Date | null,
+  today: Date = new Date(),
+): { dueBy: string; overdue: boolean } {
+  const dueBy = finalWagesDueBy(lastWorkingDay);
+  const compare = (paidOn ?? today).toISOString().slice(0, 10);
+  return { dueBy, overdue: compare > dueBy };
+}

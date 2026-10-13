@@ -3,6 +3,8 @@ import {
   GRATUITY_STATUTORY_CAP,
   calculateGratuity,
   completedYearsOfService,
+  finalWagesDueBy,
+  finalWagesStatus,
   gratuityPayoutStatus,
   isFixedTermEmployeeType,
 } from './gratuity-math';
@@ -135,5 +137,27 @@ describe('calculateGratuity - death or disablement', () => {
     expect(
       calculateGratuity(26000, 2.4, { exemptFromMinimumService: true }),
     ).toBe(Math.round(26000 * (15 / 26) * 2));
+  });
+});
+
+describe('final wages deadline (Code on Wages s.17(2))', () => {
+  it('is two working days after the last working day, skipping Sundays', () => {
+    // Tuesday 2026-10-06 -> Thursday 08th.
+    expect(finalWagesDueBy('2026-10-06')).toBe('2026-10-08');
+    // Friday 2026-10-09 -> Saturday 10th, then Sunday is skipped -> Monday 12th.
+    expect(finalWagesDueBy('2026-10-09')).toBe('2026-10-12');
+  });
+
+  it('flags a payment made after it (or still unpaid past it) as overdue', () => {
+    expect(
+      finalWagesStatus('2026-10-06', new Date('2026-10-08T10:00:00Z')),
+    ).toEqual({ dueBy: '2026-10-08', overdue: false });
+    expect(
+      finalWagesStatus('2026-10-06', new Date('2026-10-09T10:00:00Z')).overdue,
+    ).toBe(true);
+    expect(
+      finalWagesStatus('2026-10-06', null, new Date('2026-10-10T00:00:00Z'))
+        .overdue,
+    ).toBe(true);
   });
 });

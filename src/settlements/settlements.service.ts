@@ -23,6 +23,7 @@ import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   Inject,
   Injectable,
@@ -54,6 +55,7 @@ import { EmployeeSalaryComponentsService } from '../employee-salary-components/e
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -63,6 +65,7 @@ import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 import {
   calculateGratuity,
   calendarYearsOfService,
+  finalWagesStatus,
   gratuityPayoutStatus,
   isFixedTermEmployeeType,
 } from './gratuity-math';
@@ -132,19 +135,21 @@ export class SettlementsService {
       lastWorkingDay: string;
       status: SettlementStatus;
       updatedAt: Date;
+      paidAt?: Date | null;
     },
   >(settlement: T) {
+    const paidOn =
+      settlement.status === SettlementStatus.PAID
+        ? (settlement.paidAt ?? settlement.updatedAt)
+        : null;
     return {
       ...settlement,
       gratuityPayout:
         settlement.gratuityAmount > 0
-          ? gratuityPayoutStatus(
-              settlement.lastWorkingDay,
-              settlement.status === SettlementStatus.PAID
-                ? settlement.updatedAt
-                : null,
-            )
+          ? gratuityPayoutStatus(settlement.lastWorkingDay, paidOn)
           : null,
+      // Final wages are due two working days after the last working day (Code on Wages s.17(2)).
+      wagesPayout: finalWagesStatus(settlement.lastWorkingDay, paidOn),
     };
   }
 
@@ -523,6 +528,7 @@ export class SettlementsService {
       gratuityAmount,
       reimbursementAmount,
       netSettlementAmount,
+      calculatedById: actor.id,
       processedById: actor.id,
     };
     const pendingSalaryNote = monthAlreadyPaid
@@ -694,6 +700,17 @@ export class SettlementsService {
     if (settlement.status !== SettlementStatus.DRAFT) {
       throw new BadRequestException(
         'Only a draft settlement can be processed.',
+      );
+    }
+    // Maker-checker: whoever calculated the figures cannot also approve them for payment, unless they are an Admin
+    // (the organization's top approver, who may be its only administrator).
+    if (
+      settlement.calculatedById &&
+      settlement.calculatedById === actor.id &&
+      actor.role !== Role.ADMIN
+    ) {
+      throw new ForbiddenException(
+        'A settlement must be approved by someone other than the person who calculated it - ask another HR user or an Admin to process it.',
       );
     }
     // One final settlement per person: say so plainly rather than letting the database's unique key reject the second
@@ -916,7 +933,8 @@ export class SettlementsService {
           netPayInWords: amountInWords(settlement.netSettlementAmount),
           calculatedById: actor.id,
           calculatedAt: now,
-          verifiedById: actor.id,
+          // The checker is the actor approving; the person who calculated it is recorded as the verifier.
+          verifiedById: settlement.calculatedById ?? actor.id,
           verifiedAt: now,
           approvedById: actor.id,
           approvedAt: now,
@@ -1041,7 +1059,12 @@ export class SettlementsService {
     return result;
   }
 
-  async markPaid(id: string, actor: Actor, organizationId: string) {
+  async markPaid(
+    id: string,
+    actor: Actor,
+    organizationId: string,
+    dto: MarkSettlementPaidDto = {},
+  ) {
     const settlement = await this.scopedPrisma.settlement.findFirst({
       where: { id, organizationId },
     });
@@ -1050,15 +1073,36 @@ export class SettlementsService {
         'Settlement must be processed before it can be marked paid.',
       );
     }
+    // The date money actually moved: given, else today. Never a future date, never before the last working day.
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const paidOnStr = dto.paidOn ?? today;
+    if (paidOnStr > today) {
+      throw new BadRequestException('The payment date cannot be in the future.');
+    }
+    if (paidOnStr < settlement.lastWorkingDay.slice(0, 10)) {
+      throw new BadRequestException(
+        'The payment date cannot be before the last working day.',
+      );
+    }
+    const paidAt = new Date(`${paidOnStr}T12:00:00.000Z`);
 
     const paid = await this.scopedPrisma.$transaction(async (tx) => {
       // Re-asserts PROCESSED in the `where` — a second concurrent
       // markPaid() call (double-click) would otherwise still pass the
-      // pre-transaction check and silently overwrite paidAt/paidById a
-      // second time.
+      // pre-transaction check and silently overwrite the payment record.
       const { count } = await tx.settlement.updateMany({
         where: { id, organizationId, status: SettlementStatus.PROCESSED },
-        data: { status: SettlementStatus.PAID },
+        data: {
+          status: SettlementStatus.PAID,
+          paidAt,
+          paidById: actor.id,
+          paymentMode: dto.paymentMode ?? null,
+          paymentReference: dto.paymentReference?.trim() || null,
+        },
       });
       if (count === 0) {
         throw new ConflictException('This settlement was already paid.');
@@ -1069,7 +1113,7 @@ export class SettlementsService {
           data: {
             status: PayrollRunStatus.PAID,
             paidById: actor.id,
-            paidAt: new Date(),
+            paidAt,
           },
         });
       }
@@ -1087,6 +1131,9 @@ export class SettlementsService {
         employeeId: settlement.employeeId,
         payrollRunId: settlement.payrollRunId,
         netSettlementAmount: settlement.netSettlementAmount,
+        paidOn: paidOnStr,
+        paymentMode: dto.paymentMode ?? null,
+        paymentReference: dto.paymentReference ?? null,
       },
     });
     return paid;

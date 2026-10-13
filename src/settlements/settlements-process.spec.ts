@@ -100,6 +100,7 @@ function build(
   };
   const prisma: Row = {
     ...tx,
+    organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
     user: {
       findFirst: async () => ({
         id: 'e1',
@@ -327,6 +328,34 @@ describe('final settlement: marking it paid', () => {
     ).rejects.toThrow(/must be processed/);
   });
 
+  it('records when, how and under which reference it was paid', async () => {
+    const { service, settlement } = build({ settlement: processed() });
+    await service.markPaid('s1', admin, 'org', {
+      paidOn: '2026-10-08',
+      paymentMode: 'BANK_TRANSFER',
+      paymentReference: 'UTR123',
+    });
+    expect(settlement).toMatchObject({
+      status: 'PAID',
+      paidById: 'admin',
+      paymentMode: 'BANK_TRANSFER',
+      paymentReference: 'UTR123',
+    });
+    expect((settlement?.paidAt as Date).toISOString().slice(0, 10)).toBe(
+      '2026-10-08',
+    );
+  });
+
+  it('a payment date in the future or before the last working day is refused', async () => {
+    const { service } = build({ settlement: processed() });
+    await expect(
+      service.markPaid('s1', admin, 'org', { paidOn: '2099-01-01' }),
+    ).rejects.toThrow(/future/);
+    await expect(
+      service.markPaid('s1', admin, 'org', { paidOn: '2026-10-01' }),
+    ).rejects.toThrow(/before the last working day/);
+  });
+
   it('is audited', async () => {
     const { service, audit } = build({ settlement: processed() });
     await service.markPaid('s1', admin, 'org');
@@ -334,5 +363,55 @@ describe('final settlement: marking it paid', () => {
       action: 'SETTLEMENT_PAID',
       details: { netSettlementAmount: 100 },
     });
+  });
+});
+
+describe('final settlement: maker-checker', () => {
+  const draft = { calculatedById: 'hr1' } as Row;
+  const base = {
+    id: 's1',
+    organizationId: 'org',
+    employeeId: 'e1',
+    status: 'DRAFT',
+    lastWorkingDay: '2026-10-06',
+    pendingSalaryAmount: 0,
+    pendingSalaryBreakdown: null,
+    leaveEncashmentAmount: 0,
+    bonusAmount: 0,
+    recoveriesAmount: 0,
+    loanBalanceRecovered: 0,
+    noticePeriodRecovery: 0,
+    gratuityAmount: 0,
+    reimbursementAmount: 0,
+    netSettlementAmount: 100,
+    payrollRunId: null,
+    ...draft,
+  };
+
+  it('HR cannot process the settlement they calculated, another HR user can', async () => {
+    const hr1 = { id: 'hr1', role: Role.HR } as never;
+    const hr2 = { id: 'hr2', role: Role.HR } as never;
+    await expect(
+      build({ settlement: { ...base }, reimbursed: 0 }).service.process(
+        's1',
+        hr1,
+        'org',
+      ),
+    ).rejects.toThrow(/someone other than the person who calculated/);
+    const ok = build({ settlement: { ...base }, reimbursed: 0 });
+    await ok.service.process('s1', hr2, 'org');
+    expect(ok.created[0]).toMatchObject({
+      verifiedById: 'hr1',
+      approvedById: 'hr2',
+    });
+  });
+
+  it('an Admin may process their own calculation', async () => {
+    const own = build({
+      settlement: { ...base, calculatedById: 'admin' },
+      reimbursed: 0,
+    });
+    await own.service.process('s1', admin, 'org');
+    expect(own.settlement?.status).toBe('PROCESSED');
   });
 });
