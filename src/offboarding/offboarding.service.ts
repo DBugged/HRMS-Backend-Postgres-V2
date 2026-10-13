@@ -1,4 +1,4 @@
-// Purpose: Manages the employee exit workflow — initiate (moves the employee to NOTICE_PERIOD), checklist,
+// Purpose: Manages the employee exit workflow — initiate (moves the employee to RESIGNED, the notice stage), checklist,
 // exit interview, settlement linking, completion (deactivates the account and sets the final exit status),
 // and cancellation (restores the previous status).
 // Responsibilities: Owns the OffboardingCase state machine (INITIATED -> IN_PROGRESS -> COMPLETED/CANCELLED)
@@ -212,7 +212,12 @@ export class OffboardingService {
     if (!personalEmailOf(employee.personalData)) {
       throw new BadRequestException(PERSONAL_EMAIL_REQUIRED_MESSAGE);
     }
-    const exit = dto.exitStatus ?? EmploymentStatus.RELEASED;
+    // A resignation ends as RELEASED: RESIGNED is the notice stage, not a final status (an older client may still send
+    // RESIGNED as the exit type).
+    const exit =
+      !dto.exitStatus || dto.exitStatus === EmploymentStatus.RESIGNED
+        ? EmploymentStatus.RELEASED
+        : dto.exitStatus;
     if (
       (exit === EmploymentStatus.TERMINATED ||
         exit === EmploymentStatus.ABSCONDED) &&
@@ -244,10 +249,12 @@ export class OffboardingService {
       );
     }
 
-    // The employee enters NOTICE_PERIOD (with a status-history row) in the same transaction as the case;
-    // the prior status is remembered on the case so cancel() can restore it.
+    // The employee enters RESIGNED - the notice stage - (with a status-history row) in the same transaction as the
+    // case; the prior status is remembered on the case so cancel() can restore it. A termination or an abscondment has
+    // no notice stage: those keep their working status until complete() applies the final one.
+    const entersNotice = exit === EmploymentStatus.RELEASED;
     const alreadyInNotice =
-      employee.employmentStatus === EmploymentStatus.NOTICE_PERIOD;
+      employee.employmentStatus === EmploymentStatus.RESIGNED;
     const offboardingCase = await this.scopedPrisma.$transaction(async (tx) => {
       const created = await tx.offboardingCase.create({
         data: {
@@ -256,21 +263,21 @@ export class OffboardingService {
           initiatedById: actor.id,
           lastWorkingDay: dto.lastWorkingDay,
           reason: dto.reason,
-          exitStatus: dto.exitStatus ?? EmploymentStatus.RELEASED,
+          exitStatus: exit,
           previousEmploymentStatus: employee.employmentStatus,
         },
       });
-      if (!alreadyInNotice) {
+      if (entersNotice && !alreadyInNotice) {
         await tx.user.updateMany({
           where: { id: dto.employeeId, organizationId },
-          data: { employmentStatus: EmploymentStatus.NOTICE_PERIOD },
+          data: { employmentStatus: EmploymentStatus.RESIGNED },
         });
         await tx.employmentStatusHistory.create({
           data: {
             organizationId,
             employeeId: dto.employeeId,
             previousStatus: employee.employmentStatus,
-            newStatus: EmploymentStatus.NOTICE_PERIOD,
+            newStatus: EmploymentStatus.RESIGNED,
             note: 'Offboarding initiated',
             changedById: actor.id,
           },
@@ -622,6 +629,11 @@ export class OffboardingService {
       actor.id,
     );
 
+    // A case still carrying the old RESIGNED exit type ends as RELEASED (RESIGNED is the notice stage now).
+    const finalStatus =
+      record.exitStatus === EmploymentStatus.RESIGNED
+        ? EmploymentStatus.RELEASED
+        : record.exitStatus;
     await this.scopedPrisma.$transaction(async (tx) => {
       await tx.offboardingCase.updateMany({
         where: { id, organizationId },
@@ -631,7 +643,7 @@ export class OffboardingService {
           completedAt: new Date(),
         },
       });
-      // Final employment status per the case's exit type (RESIGNED/RELEASED/TERMINATED/ABSCONDED), with a
+      // Final employment status per the case's exit type (RELEASED/TERMINATED/ABSCONDED), with a
       // history row, and every session revoked — the account can no longer refresh a token after exit.
       const current = await tx.user.findFirst({
         where: { id: record.employeeId, organizationId },
@@ -639,15 +651,15 @@ export class OffboardingService {
       });
       await tx.user.updateMany({
         where: { id: record.employeeId, organizationId },
-        data: { isActive: false, employmentStatus: record.exitStatus },
+        data: { isActive: false, employmentStatus: finalStatus },
       });
-      if (current && current.employmentStatus !== record.exitStatus) {
+      if (current && current.employmentStatus !== finalStatus) {
         await tx.employmentStatusHistory.create({
           data: {
             organizationId,
             employeeId: record.employeeId,
             previousStatus: current.employmentStatus,
-            newStatus: record.exitStatus,
+            newStatus: finalStatus,
             note: 'Offboarding completed',
             changedById: actor.id,
           },
@@ -765,26 +777,26 @@ export class OffboardingService {
         data: { status: OffboardingStatus.CANCELLED },
       });
       // Restore the pre-notice status only on the first cancel of an open case, and only if the
-      // employee is still in NOTICE_PERIOD (HR may have changed it manually since).
+      // employee is still RESIGNED (HR may have changed it manually since).
       const wasOpen = OPEN_STATUSES.includes(record.status);
       if (count > 0 && wasOpen && record.previousEmploymentStatus) {
         const restored = await tx.user.updateMany({
           where: {
             id: record.employeeId,
             organizationId,
-            employmentStatus: EmploymentStatus.NOTICE_PERIOD,
+            employmentStatus: EmploymentStatus.RESIGNED,
           },
           data: { employmentStatus: record.previousEmploymentStatus },
         });
         if (
           restored.count > 0 &&
-          record.previousEmploymentStatus !== EmploymentStatus.NOTICE_PERIOD
+          record.previousEmploymentStatus !== EmploymentStatus.RESIGNED
         ) {
           await tx.employmentStatusHistory.create({
             data: {
               organizationId,
               employeeId: record.employeeId,
-              previousStatus: EmploymentStatus.NOTICE_PERIOD,
+              previousStatus: EmploymentStatus.RESIGNED,
               newStatus: record.previousEmploymentStatus,
               note: 'Offboarding cancelled',
               changedById: actorId ?? record.initiatedById,

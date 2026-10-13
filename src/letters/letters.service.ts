@@ -55,7 +55,6 @@ const HIRING_LETTER_KEYS = new Set([
   'confirmationLetter',
 ]);
 const LEAVING_STATUSES: EmploymentStatus[] = [
-  EmploymentStatus.NOTICE_PERIOD,
   EmploymentStatus.RESIGNED,
   EmploymentStatus.RELEASED,
   EmploymentStatus.TERMINATED,

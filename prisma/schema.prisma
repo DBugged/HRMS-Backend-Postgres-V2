@@ -26,6 +26,11 @@ enum Role {
 // Mirrors the old MySQL backend's employmentStatus ENUM on User exactly
 // (see employeeController.js ground truth) so the lifecycle vocabulary
 // carries over unchanged even though the storage model doesn't.
+// Nine stages: ON_HOLD (pre-joining only), ONBOARDING, PROBATION, EXTENDED_PROBATION, CONFIRMED, RESIGNED (resignation
+// accepted, serving notice - still active and able to sign in), RELEASED (notice served, cleared, left), TERMINATED,
+// ABSCONDED. RELEASED / TERMINATED / ABSCONDED are final.
+// NOTICE_PERIOD is retired: the notice stage is RESIGNED now. The value stays in the enum only so the type does not
+// have to be rebuilt; migration 20261115100000 moved every row off it and nothing sets it.
 enum EmploymentStatus {
   ONBOARDING
   PROBATION
@@ -2717,9 +2722,9 @@ model OffboardingCase {
 
   notes String?
 
-  // How the exit ends: the employmentStatus complete() applies (RESIGNED | RELEASED | TERMINATED | ABSCONDED).
+  // How the exit ends: the employmentStatus complete() applies (RELEASED | TERMINATED | ABSCONDED).
   exitStatus               EmploymentStatus  @default(RELEASED)
-  // The status held before initiate() moved the employee to NOTICE_PERIOD, restored by cancel().
+  // The status held before initiate() moved the employee to RESIGNED, restored by cancel().
   previousEmploymentStatus EmploymentStatus?
   // HR's explicit note when completing with company assets still unreturned.
   assetOverrideNote        String?

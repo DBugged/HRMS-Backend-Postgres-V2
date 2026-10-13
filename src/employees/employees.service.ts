@@ -105,59 +105,57 @@ const GENDER_LABELS = new Map<string, Gender>([
   ['prefer_not_to_say', Gender.PREFER_NOT_TO_SAY],
 ]);
 
-// Exit statuses: final, and they revoke login (same set offboarding applies).
+// Final exit statuses: the person has left, the account is closed, and the status can no longer change.
 export const EXIT_STATUSES: EmploymentStatus[] = [
-  EmploymentStatus.RESIGNED,
   EmploymentStatus.RELEASED,
   EmploymentStatus.TERMINATED,
   EmploymentStatus.ABSCONDED,
 ];
 const EXITS = EXIT_STATUSES;
+// Statuses that are only reached through Resignation / Offboarding, never by editing the field: RESIGNED (serving
+// notice - it needs a last working day and a checklist behind it) and the final exits.
+export const LEAVING_STATUSES: EmploymentStatus[] = [
+  EmploymentStatus.RESIGNED,
+  ...EXIT_STATUSES,
+];
+const LEAVING = LEAVING_STATUSES;
 
 // Allowed employmentStatus transitions via PATCH /employees/:id.
+//   On Hold -> Onboarding -> Probation (-> Extended Probation) -> Confirmed
+//   Probation / Extended Probation / Confirmed -> Resigned -> Released      (through Resignation / Offboarding)
+//   any working status -> Terminated or Absconded                          (through Offboarding)
+// On Hold is a pre-joining state only, so nothing moves INTO it from a working status.
 const EMPLOYMENT_STATUS_TRANSITIONS: Record<
   EmploymentStatus,
   EmploymentStatus[]
 > = {
+  ON_HOLD: [EmploymentStatus.ONBOARDING],
   ONBOARDING: [
     EmploymentStatus.PROBATION,
     EmploymentStatus.CONFIRMED,
-    EmploymentStatus.ON_HOLD,
-    ...EXITS,
+    ...LEAVING,
   ],
   PROBATION: [
     EmploymentStatus.EXTENDED_PROBATION,
     EmploymentStatus.CONFIRMED,
-    EmploymentStatus.NOTICE_PERIOD,
-    EmploymentStatus.ON_HOLD,
-    ...EXITS,
+    ...LEAVING,
   ],
-  EXTENDED_PROBATION: [
+  EXTENDED_PROBATION: [EmploymentStatus.CONFIRMED, ...LEAVING],
+  CONFIRMED: [...LEAVING],
+  // Back to a working status covers a withdrawn resignation; the end of notice (Released) is Offboarding's.
+  RESIGNED: [
     EmploymentStatus.CONFIRMED,
-    EmploymentStatus.NOTICE_PERIOD,
-    EmploymentStatus.ON_HOLD,
+    EmploymentStatus.PROBATION,
+    EmploymentStatus.EXTENDED_PROBATION,
     ...EXITS,
   ],
-  CONFIRMED: [
-    EmploymentStatus.NOTICE_PERIOD,
-    EmploymentStatus.ON_HOLD,
-    ...EXITS,
-  ],
-  // Back to an active status covers a withdrawn resignation.
+  // Retired (the notice stage is RESIGNED). Nothing sets it; a stray row can still go back to work.
   NOTICE_PERIOD: [
     EmploymentStatus.CONFIRMED,
     EmploymentStatus.PROBATION,
     EmploymentStatus.EXTENDED_PROBATION,
     ...EXITS,
   ],
-  ON_HOLD: [
-    EmploymentStatus.PROBATION,
-    EmploymentStatus.EXTENDED_PROBATION,
-    EmploymentStatus.CONFIRMED,
-    EmploymentStatus.NOTICE_PERIOD,
-    ...EXITS,
-  ],
-  RESIGNED: [],
   RELEASED: [],
   TERMINATED: [],
   ABSCONDED: [],
@@ -1045,15 +1043,15 @@ export class EmployeesService {
         );
       }
     }
-    // An exit status is only reachable through the offboarding workflow (notice period, clearance, final settlement,
-    // then complete()). Setting it here would close the account with no settlement and, exit statuses being final
-    // and the settlement refusing closed accounts, leave the final pay impossible to calculate.
-    const exiting =
+    // Resigned (serving notice) and the final exits are only reachable through Resignation / Offboarding (notice,
+    // clearance, final settlement, then complete()). Setting one here would leave a status with no last working day or
+    // checklist behind it - or close the account with no settlement, which the final pay then cannot be worked out for.
+    const leaving =
       statusChanging &&
-      EXIT_STATUSES.includes(clean.employmentStatus as EmploymentStatus);
-    if (exiting) {
+      LEAVING_STATUSES.includes(clean.employmentStatus as EmploymentStatus);
+    if (leaving) {
       throw new BadRequestException(
-        `Use Offboarding to move an employee to ${clean.employmentStatus} - it runs the notice period, clearance and full & final settlement before the account is closed.`,
+        `Use Resignation or Offboarding to move an employee to ${clean.employmentStatus} - it records the last working day and runs the notice period, clearance and full & final settlement.`,
       );
     }
 

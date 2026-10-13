@@ -35,7 +35,7 @@ describe('my exit status', () => {
       assetsReturned: true,
       accessRevoked: false,
       exitInterviewDone: false,
-      exitStatus: 'RESIGNED',
+      exitStatus: 'RELEASED',
       reason: 'private',
       notes: 'hr note',
       assetOverrideNote: 'x',
@@ -55,7 +55,7 @@ describe('my exit status', () => {
   });
 
   it('maps the settlement states, and no interview is required for a termination', async () => {
-    const stage = async (settlement: Row | null, exitStatus = 'RESIGNED') =>
+    const stage = async (settlement: Row | null, exitStatus = 'RELEASED') =>
       (await build({
         status: 'IN_PROGRESS',
         lastWorkingDay: '2026-10-30',

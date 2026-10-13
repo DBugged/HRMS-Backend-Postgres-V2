@@ -1004,12 +1004,21 @@ describe('Employees + Departments (e2e)', () => {
     });
 
     it('rejects an employment-status transition outside the lifecycle', async () => {
-      // ONBOARDING → NOTICE_PERIOD is not allowed.
+      // On Hold is a pre-joining state only: a working status cannot move into it.
       await request(app.getHttpServer())
         .patch(`/employees/${cId}`)
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'NOTICE_PERIOD' })
+        .send({ employmentStatus: 'ON_HOLD' })
         .expect(400);
+      // Resigned (serving notice) is reached through Resignation / Offboarding, not by editing the status.
+      const resigned = await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'RESIGNED' })
+        .expect(400);
+      expect(JSON.stringify(resigned.body)).toMatch(
+        /Resignation or Offboarding/,
+      );
       // ONBOARDING → CONFIRMED is.
       await request(app.getHttpServer())
         .patch(`/employees/${cId}`)
@@ -1092,7 +1101,7 @@ describe('Employees + Departments (e2e)', () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${hrId}`)
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'ON_HOLD' })
+        .send({ employmentStatus: 'PROBATION' })
         .expect(403);
       expect(JSON.stringify(res.body)).toMatch(
         /cannot change your own employment status/,
@@ -1113,11 +1122,10 @@ describe('Employees + Departments (e2e)', () => {
     });
 
     it("HR can still change another employee's status", async () => {
-      await request(app.getHttpServer())
-        .patch(`/employees/${engEmployeeId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'ON_HOLD' })
-        .expect(200);
+      await prisma.user.update({
+        where: { id: engEmployeeId },
+        data: { employmentStatus: 'PROBATION' },
+      });
       await request(app.getHttpServer())
         .patch(`/employees/${engEmployeeId}`)
         .set('Authorization', `Bearer ${hrToken}`)
@@ -1130,16 +1138,19 @@ describe('Employees + Departments (e2e)', () => {
       const before = await prisma.user.findUniqueOrThrow({
         where: { id: adminId },
       });
+      await prisma.user.update({
+        where: { id: adminId },
+        data: { employmentStatus: 'PROBATION' },
+      });
       await request(app.getHttpServer())
         .patch(`/employees/${adminId}`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ employmentStatus: 'ON_HOLD' })
+        .send({ employmentStatus: 'CONFIRMED' })
         .expect(200);
-      await request(app.getHttpServer())
-        .patch(`/employees/${adminId}`)
-        .set('Authorization', `Bearer ${adminToken}`)
-        .send({ employmentStatus: before.employmentStatus })
-        .expect(200);
+      await prisma.user.update({
+        where: { id: adminId },
+        data: { employmentStatus: before.employmentStatus },
+      });
     });
   });
 

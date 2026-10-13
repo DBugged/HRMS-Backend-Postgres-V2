@@ -1,6 +1,6 @@
 // Purpose: Employee resignation requests — submit/withdraw (own), and HR/Admin approve/reject.
 // Responsibilities: Owns the Resignation state machine (PENDING -> APPROVED/REJECTED/WITHDRAWN); approving
-// delegates the exit itself to OffboardingService.initiate() (which moves the employee to NOTICE_PERIOD) and
+// delegates the exit itself to OffboardingService.initiate() (which moves the employee to RESIGNED, the notice stage) and
 // links the resulting case; timeline/audit/in-app notifications are best-effort side effects.
 // Important: one open (PENDING) request per employee, only for active employees with no open offboarding
 // case. Nobody decides their own resignation, and only an ADMIN decides an HR/ADMIN user's (same rule as the
@@ -328,7 +328,7 @@ export class ResignationsService {
           employeeId: record.employeeId,
           lastWorkingDay: approvedLwd,
           reason: record.reason ?? 'Resignation',
-          exitStatus: 'RESIGNED',
+          exitStatus: 'RELEASED',
         },
         actor,
         organizationId,

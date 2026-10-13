@@ -227,7 +227,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     resignationId = (res.body as ResignationBody).id;
   });
 
-  it('HR approves: LWD defaults to submittedOn + notice, case is created and linked, status is NOTICE_PERIOD', async () => {
+  it('HR approves: LWD defaults to submittedOn + notice, case is created and linked, status is RESIGNED (the notice stage)', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/resignations/${resignationId}/approve`)
       .set('Authorization', `Bearer ${hrToken}`)
@@ -242,9 +242,9 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const employee = await prisma.user.findFirstOrThrow({
       where: { id: empId },
     });
-    expect(employee.employmentStatus).toBe('NOTICE_PERIOD');
+    expect(employee.employmentStatus).toBe('RESIGNED');
     const history = await prisma.employmentStatusHistory.findMany({
-      where: { employeeId: empId, newStatus: 'NOTICE_PERIOD' },
+      where: { employeeId: empId, newStatus: 'RESIGNED' },
     });
     expect(history).toHaveLength(1);
     const events = await prisma.employeeTimeline.findMany({
@@ -310,7 +310,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       .expect(200);
   });
 
-  it('completes the exit: RESIGNED status, history row, sessions revoked, account deactivated', async () => {
+  it('completes the exit: RELEASED status, history row, sessions revoked, account deactivated', async () => {
     await prisma.refreshToken.create({
       data: {
         userId: empId,
@@ -323,6 +323,16 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       .patch(`/offboarding/${caseId}/exit-interview`)
       .set('Authorization', `Bearer ${hrToken}`)
       .send({ reasonForLeaving: 'Career Growth', overallExperience: 4 })
+      .expect(200);
+    // A settlement is calculated for the case's own last working day and only on or after it: release early, so the
+    // last working day is today.
+    await request(app.getHttpServer())
+      .patch(`/offboarding/${caseId}/last-working-day`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({
+        lastWorkingDay: dateOffset(0),
+        reason: 'Released early on agreement',
+      })
       .expect(200);
     const settlement = await request(app.getHttpServer())
       .post('/settlements/calculate')
@@ -355,9 +365,9 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       where: { id: empId },
     });
     expect(employee.isActive).toBe(false);
-    expect(employee.employmentStatus).toBe('RESIGNED');
+    expect(employee.employmentStatus).toBe('RELEASED');
     const history = await prisma.employmentStatusHistory.findMany({
-      where: { employeeId: empId, newStatus: 'RESIGNED' },
+      where: { employeeId: empId, newStatus: 'RELEASED' },
     });
     expect(history).toHaveLength(1);
     expect(
@@ -381,7 +391,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     expect(
       (await prisma.user.findFirstOrThrow({ where: { id: emp2Id } }))
         .employmentStatus,
-    ).toBe('NOTICE_PERIOD');
+    ).toBe('RESIGNED');
     await request(app.getHttpServer())
       .patch(`/offboarding/${id}/cancel`)
       .set('Authorization', `Bearer ${hrToken}`)

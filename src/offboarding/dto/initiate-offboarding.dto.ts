@@ -17,9 +17,10 @@ export class InitiateOffboardingDto {
   @IsString()
   reason?: string;
 
-  // The employmentStatus complete() applies when the exit finishes. Defaults to RELEASED.
+  // The employmentStatus complete() applies when the exit finishes. Defaults to RELEASED. RESIGNED is still accepted
+  // from an older client and treated as RELEASED (a resignation ends as Released; RESIGNED is the notice stage).
   @ApiPropertyOptional({
-    enum: ['RESIGNED', 'RELEASED', 'TERMINATED', 'ABSCONDED'],
+    enum: ['RELEASED', 'TERMINATED', 'ABSCONDED'],
   })
   @IsOptional()
   @IsIn(['RESIGNED', 'RELEASED', 'TERMINATED', 'ABSCONDED'])

@@ -72,9 +72,9 @@ export const REFRESH_REUSE_GRACE_MS = 5_000;
 // reveals account existence, ported from the old system's forgotPassword.
 const FORGOT_PASSWORD_GENERIC_MESSAGE =
   'If that email exists, a reset link has been sent.';
-// Exit statuses — never allowed to log in or refresh, independent of isActive.
+// Final exit statuses — never allowed to log in or refresh, independent of isActive. RESIGNED is not here: it is the
+// notice stage, and someone serving notice still works and signs in.
 const LOGIN_BLOCKED_STATUSES: EmploymentStatus[] = [
-  EmploymentStatus.RESIGNED,
   EmploymentStatus.RELEASED,
   EmploymentStatus.TERMINATED,
   EmploymentStatus.ABSCONDED,
