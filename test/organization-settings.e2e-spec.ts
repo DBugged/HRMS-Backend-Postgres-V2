@@ -418,7 +418,7 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
         orgPayrollAttendancePrefs: {
           defaultLateInThresholdMinutes: 20,
           defaultMinHoursForPresent: 7,
-          defaultBreakMinutes: 0,
+          defaultBreakMinutes: 1,
         },
       })
       .expect(200);
@@ -734,7 +734,11 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     const prefs = org.orgPayrollAttendancePrefs as Record<string, unknown>;
     expect(prefs.defaultWorkingHoursPerDay).toBe(8);
     expect(prefs.defaultBreakMinutes).toBe(60);
+    // The unpaid break cannot be 0: it is taken off the worked time (and off weekend / holiday overtime).
     await send({ defaultBreakMinutes: 0, defaultMinHoursForPresent: 8 }).expect(
+      400,
+    );
+    await send({ defaultBreakMinutes: 1, defaultMinHoursForPresent: 8 }).expect(
       200,
     );
   });

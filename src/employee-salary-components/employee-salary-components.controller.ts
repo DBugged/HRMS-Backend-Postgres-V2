@@ -42,6 +42,16 @@ export class EmployeeSalaryComponentsController {
     private readonly employeeSalaryComponentsService: EmployeeSalaryComponentsService,
   ) {}
 
+  // Employees whose Basic + DA is under 50% of the monthly pay (new Labour Code), for HR to correct.
+  @Get('basic-share/below-half')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  listBelowHalfBasic(@CurrentUser() caller: Caller) {
+    return this.employeeSalaryComponentsService.listBelowHalfBasic(
+      caller.organizationId,
+    );
+  }
+
   @Get(':id/structure')
   @SelfOrRoles('id', Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

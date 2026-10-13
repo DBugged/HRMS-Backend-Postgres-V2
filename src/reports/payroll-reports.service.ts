@@ -65,6 +65,31 @@ const runType = (r: {
       ? `Supplementary${r.runLabel ? ` - ${r.runLabel}` : ''}`
       : 'Regular';
 
+// A part-month run (joiner, exit, unpaid leave) holds only the days that were paid, so multiplying it by 12 understates
+// the package. The annual figure is the full-month rate: scaled back up by days in the month over payable days.
+// A final settlement is a one-off, not a monthly rate, so it is left as it is.
+export function annualisedCtc(
+  ctcMonthly: number,
+  attendanceSummary: unknown,
+  type: string,
+): number {
+  const summary = (attendanceSummary ?? {}) as {
+    payableDays?: number;
+    totalDaysInMonth?: number;
+  };
+  const payable = Number(summary.payableDays);
+  const total = Number(summary.totalDaysInMonth);
+  const scale =
+    type === 'Regular' &&
+    Number.isFinite(payable) &&
+    Number.isFinite(total) &&
+    payable > 0 &&
+    payable < total
+      ? total / payable
+      : 1;
+  return Math.round(ctcMonthly * scale * 12);
+}
+
 @Injectable()
 export class PayrollReportsService {
   constructor(
@@ -784,7 +809,7 @@ export class PayrollReportsService {
       grossSalary: r.grossSalary,
       employerContributions: r.totalEmployerContributions,
       ctcMonthly: r.ctcMonthly,
-      ctcAnnual: Math.round(r.ctcMonthly * 12),
+      ctcAnnual: annualisedCtc(r.ctcMonthly, r.attendanceSummary, runType(r)),
     }));
 
     const columns: ReportColumn[] = [
@@ -799,7 +824,11 @@ export class PayrollReportsService {
         width: 18,
       },
       { header: 'CTC (Monthly)', key: 'ctcMonthly', width: 14 },
-      { header: 'CTC (Annualized)', key: 'ctcAnnual', width: 16 },
+      {
+        header: 'CTC (Annualized, full-month rate)',
+        key: 'ctcAnnual',
+        width: 22,
+      },
     ];
 
     return { title: 'CTC Report', columns, rows, filename: 'ctc_report' };

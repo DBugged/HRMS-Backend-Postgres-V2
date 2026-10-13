@@ -16,6 +16,7 @@ import { SettlementsService } from './settlements.service';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
 import { ReverseSettlementDto } from './dto/reverse-settlement.dto';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
+import { CloseReceivableDto } from './dto/close-receivable.dto';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -78,6 +79,25 @@ export class SettlementsController {
     return this.settlementsService.reverse(
       id,
       dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // What the employee still owes after the settlement (recoveries above the payout): HR records it as received, only an
+  // Admin can waive it.
+  @Post(':id/receivable')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  closeReceivable(
+    @Param('id') id: string,
+    @Body() dto: CloseReceivableDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.settlementsService.closeReceivable(
+      id,
+      dto.outcome,
+      dto.note,
       caller,
       caller.organizationId,
     );

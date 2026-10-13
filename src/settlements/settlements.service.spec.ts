@@ -441,7 +441,7 @@ describe('final settlement: processing', () => {
       ],
     });
     await expect(negative.service.process('s1', admin, 'org')).rejects.toThrow(
-      /negative net amount/,
+      /owes the company/,
     );
     await expect(
       build().service.process('ghost', admin, 'org'),

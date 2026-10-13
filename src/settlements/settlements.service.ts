@@ -40,6 +40,7 @@ import {
   ReimbursementStatus,
   Role,
   SettlementStatus,
+  ReceivableStatus,
   StatutoryModule,
   User,
 } from '@prisma/client';
@@ -575,8 +576,8 @@ export class SettlementsService {
       organizationId,
     );
     const bonusAmount = bonusResolved;
-    const recoveriesAmount = dto.recoveriesAmount ?? 0;
-    const noticePeriodRecovery =
+    let recoveriesAmount = dto.recoveriesAmount ?? 0;
+    let noticePeriodRecovery =
       dto.noticePeriodRecovery !== undefined
         ? dto.noticePeriodRecovery
         : notice.recovery;
@@ -598,9 +599,28 @@ export class SettlementsService {
       loanBalanceRecovered = Math.min(loanOutstanding, Math.floor(room));
       loanBalanceUnrecovered = loanOutstanding - loanBalanceRecovered;
     }
-    const netSettlementAmount = Math.round(
+    let netSettlementAmount = Math.round(
       payable - otherDeductions - loanBalanceRecovered,
     );
+    // The recoveries (notice shortfall, advances) are more than the payout: take what the payout can cover and record the
+    // rest as owed by the employee, so the settlement can still be processed and the amount is not lost. The next
+    // employer is never liable for it: it is collected from the employee directly (or waived by an Admin).
+    let receivableAmount = 0;
+    if (netSettlementAmount < 0) {
+      let remaining = -netSettlementAmount;
+      const fromNotice = Math.min(noticePeriodRecovery, remaining);
+      noticePeriodRecovery -= fromNotice;
+      remaining -= fromNotice;
+      const fromRecoveries = Math.min(recoveriesAmount, remaining);
+      recoveriesAmount -= fromRecoveries;
+      remaining -= fromRecoveries;
+      receivableAmount = fromNotice + fromRecoveries;
+      netSettlementAmount = Math.round(
+        payable -
+          (recoveriesAmount + noticePeriodRecovery + settlementTds) -
+          loanBalanceRecovered,
+      );
+    }
 
     // Heads-up (never blocks): things HR should look at before processing.
     const warnings: string[] = [];
@@ -639,6 +659,10 @@ export class SettlementsService {
         `Gratuity of ${gratuityAmount} is above its tax-exempt limit by ${gratuity.taxable}: that part is taxed with the final pay.`,
       );
     }
+    if (receivableAmount > 0)
+      warnings.push(
+        `The recoveries are Rs ${Math.round(receivableAmount).toLocaleString('en-IN')} more than the payout, so the payout is 0 and that amount is recorded as due from the employee. Collect it from them directly and mark it received afterwards, or have an Admin waive it. It cannot be recovered from a new employer.`,
+      );
     if (loanBalanceUnrecovered > 0)
       warnings.push(
         `Loan balance of ${loanBalanceUnrecovered} could not be recovered from this payout and stays open.`,
@@ -685,6 +709,12 @@ export class SettlementsService {
       gratuityTaxableAmount: gratuity.taxable,
       reimbursementAmount,
       netSettlementAmount,
+      receivableAmount,
+      receivableStatus:
+        receivableAmount > 0 ? ReceivableStatus.DUE : ReceivableStatus.NONE,
+      receivableNote: null,
+      receivableClosedAt: null,
+      receivableClosedById: null,
       calculatedById: actor.id,
       processedById: actor.id,
     };
@@ -1106,6 +1136,68 @@ export class SettlementsService {
     }
   }
 
+  // Closes the amount the employee still owed after the settlement: RECOVERED once it was collected from them (outside
+  // payroll), or WAIVED - which only an Admin can do. Both need a note, and both are recorded in the audit trail.
+  async closeReceivable(
+    id: string,
+    outcome: 'RECOVERED' | 'WAIVED',
+    note: string,
+    actor: { id: string; role: Role },
+    organizationId: string,
+  ) {
+    const settlement = await this.scopedPrisma.settlement.findFirst({
+      where: { id, organizationId },
+    });
+    if (!settlement) throw new NotFoundException('Settlement not found.');
+    if (settlement.receivableStatus !== ReceivableStatus.DUE) {
+      throw new BadRequestException(
+        'Nothing is due from the employee on this settlement.',
+      );
+    }
+    if (outcome === 'WAIVED' && actor.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'Only an Admin can waive an amount the employee owes.',
+      );
+    }
+    if (note.trim().length < 5) {
+      throw new BadRequestException(
+        outcome === 'WAIVED'
+          ? 'Say why the amount is being waived (at least 5 characters).'
+          : 'Say how and when the amount was received (at least 5 characters).',
+      );
+    }
+    const { count } = await this.scopedPrisma.settlement.updateMany({
+      where: { id, organizationId, receivableStatus: ReceivableStatus.DUE },
+      data: {
+        receivableStatus: outcome as ReceivableStatus,
+        receivableNote: note.trim(),
+        receivableClosedAt: new Date(),
+        receivableClosedById: actor.id,
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException('This amount was already closed.');
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action:
+        outcome === 'WAIVED'
+          ? 'SETTLEMENT_RECEIVABLE_WAIVED'
+          : 'SETTLEMENT_RECEIVABLE_RECOVERED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: settlement.employeeId,
+        amount: settlement.receivableAmount,
+        note: note.trim(),
+      },
+    });
+    return this.scopedPrisma.settlement.findFirstOrThrow({
+      where: { id, organizationId },
+    });
+  }
+
   private async logSettlementCalculated(
     actorId: string,
     organizationId: string,
@@ -1227,7 +1319,7 @@ export class SettlementsService {
     // underlying loan) before it can be processed.
     if (settlement.netSettlementAmount < 0) {
       throw new BadRequestException(
-        'This settlement has a negative net amount — recalculate it after adjusting the underlying recoveries/loan balance before it can be processed.',
+        `The employee owes the company Rs ${Math.abs(Math.round(settlement.netSettlementAmount)).toLocaleString('en-IN')}: the recoveries (notice shortfall, loan balance, advances) are more than what is due to them. Nothing can be paid out, so this cannot be processed as it is. Either collect the amount outside payroll and reduce the recovery here (edit the recovery lines and recalculate), or waive part of it, and then process it again.`,
       );
     }
 

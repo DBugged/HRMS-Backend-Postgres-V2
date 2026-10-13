@@ -2130,7 +2130,7 @@ describe('Payroll (e2e)', () => {
         .expect(201);
     });
 
-    it('blocks HR (and an Admin) from changing their own salary structure', async () => {
+    it('blocks HR from changing their own salary structure (an Admin may revise their own)', async () => {
       const server = app.getHttpServer();
       const line = {
         componentCode: 'BASIC',
@@ -2156,7 +2156,7 @@ describe('Payroll (e2e)', () => {
         .post(`/employee-salary/${adminId}/structure`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send(line)
-        .expect(403);
+        .expect(201);
     });
   });
 

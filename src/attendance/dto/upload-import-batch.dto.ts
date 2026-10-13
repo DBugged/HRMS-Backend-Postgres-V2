@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsIn,
   IsOptional,
   IsString,
   ValidateNested,
@@ -54,4 +55,10 @@ export class UploadImportBatchDto {
   @IsOptional()
   @IsString()
   fileName?: string;
+
+  // ORG = the times in the file are in the organisation's timezone; UTC (default) = read as UTC.
+  @ApiPropertyOptional({ enum: ['UTC', 'ORG'] })
+  @IsOptional()
+  @IsIn(['UTC', 'ORG'])
+  timeBasis?: 'UTC' | 'ORG';
 }

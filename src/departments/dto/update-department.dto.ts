@@ -62,7 +62,7 @@ export class UpdateDepartmentDto {
   @ApiPropertyOptional({ description: 'Unpaid break, in minutes' })
   @IsOptional()
   @IsInt()
-  @Min(0)
+  @Min(1)
   breakMinutes?: number;
 
   @ApiPropertyOptional({

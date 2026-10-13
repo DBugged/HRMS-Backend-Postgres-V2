@@ -37,3 +37,52 @@ export function isMetroCity(
 ): boolean {
   return metroCitiesFor(financialYear).includes(city ?? '');
 }
+
+// How a place is classed for pay: METRO (the eight HRA cities, HRA 50% of Basic), NON_METRO (any other city, 40%) or
+// RURAL (a village or rural area - chosen by hand, never guessed from a name).
+export type CityClassName = 'METRO' | 'NON_METRO' | 'RURAL';
+
+// Names a city is also known by. Compared in lower case with spaces and punctuation ignored.
+const CITY_ALIASES: Record<string, (typeof HRA_METRO_CITIES)[number]> = {
+  bombay: 'Mumbai',
+  newdelhi: 'Delhi',
+  nctdelhi: 'Delhi',
+  calcutta: 'Kolkata',
+  madras: 'Chennai',
+  bangalore: 'Bengaluru',
+  bengaluru: 'Bengaluru',
+  poona: 'Pune',
+  hyderabad: 'Hyderabad',
+  ahmedabad: 'Ahmedabad',
+  amdavad: 'Ahmedabad',
+};
+
+const squash = (s: string) => s.toLowerCase().replace(/[^a-z]/g, '');
+
+/** The metro city a name refers to (Bangalore -> Bengaluru), or null when it is not one of the eight. */
+export function canonicalMetroCity(
+  city: string | null | undefined,
+): (typeof HRA_METRO_CITIES)[number] | null {
+  const key = squash(city ?? '');
+  if (!key) return null;
+  const alias = CITY_ALIASES[key];
+  if (alias) return alias;
+  return HRA_METRO_CITIES.find((m) => squash(m) === key) ?? null;
+}
+
+/** The class a city name suggests: METRO for the eight, otherwise NON_METRO. RURAL is only ever set by hand. */
+export function cityClassForCity(
+  city: string | null | undefined,
+): CityClassName {
+  return canonicalMetroCity(city) ? 'METRO' : 'NON_METRO';
+}
+
+/**
+ * The HRA percentage of Basic that goes with a class: 50% in a metro city, 40% elsewhere. A rural place gets no HRA by
+ * default (0): employers there usually pay none, and it can still be switched on by hand.
+ */
+export function defaultHraPercent(cityClass: CityClassName): number {
+  if (cityClass === 'METRO') return 50;
+  if (cityClass === 'NON_METRO') return 40;
+  return 0;
+}

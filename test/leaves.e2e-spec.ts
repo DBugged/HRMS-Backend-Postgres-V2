@@ -1136,6 +1136,54 @@ describe('Leaves (e2e)', () => {
       ]);
     });
 
+    it('LV-5b: HR can approve a two-level leave without the manager only with an override and a reason, and it is audited', async () => {
+      const type = await request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Two Level Override',
+          code: 'TLO',
+          allocationType: 'FIXED_ANNUAL',
+          annualQuota: 10,
+          approvalLevels: 2,
+        })
+        .expect(201);
+      const typeId = (type.body as LeaveTypeBody).id;
+      const mon = offsetToWeekday(310, 1);
+      const created = await apply(employeeToken, {
+        leaveType: typeId,
+        startDate: offsetDate(mon),
+        endDate: offsetDate(mon),
+      }).expect(201);
+      const id = (created.body as LeaveBody).id;
+      const review = (body: Record<string, unknown>) =>
+        request(app.getHttpServer())
+          .patch(`/leaves/${id}/review`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send(body);
+      // Without the override it still waits for the manager, and says the override exists.
+      const waiting = await review({ decision: 'APPROVED' }).expect(400);
+      expect(JSON.stringify(waiting.body)).toContain('override');
+      // The override needs a reason.
+      await review({ decision: 'APPROVED', overrideLevelOne: true }).expect(
+        400,
+      );
+      await review({
+        decision: 'APPROVED',
+        overrideLevelOne: true,
+        comments: 'Manager is on leave',
+      }).expect(200);
+      expect(
+        (await prisma.leave.findUniqueOrThrow({ where: { id } })).status,
+      ).toBe('APPROVED');
+      const audit = await prisma.auditLog.findFirst({
+        where: { targetId: id, action: 'LEAVE_LEVEL1_OVERRIDDEN' },
+      });
+      expect((audit?.details as { reason?: string })?.reason).toBe(
+        'Manager is on leave',
+      );
+    });
+
     it('LV-6: leave cannot start before the joining date', async () => {
       await prisma.user.update({
         where: { id: employeeId },

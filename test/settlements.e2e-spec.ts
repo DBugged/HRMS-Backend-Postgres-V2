@@ -737,6 +737,98 @@ describe('Settlements (e2e)', () => {
       expect(loan.status).toBe('CLOSED');
     });
 
+    // What the payout cannot cover is recorded as owed by the employee, not lost and not a dead end.
+    it('records recoveries above the payout as due from the employee; HR marks it received, only an Admin waives it', async () => {
+      const back = new Date(
+        Date.UTC(NOW.getUTCFullYear(), NOW.getUTCMonth() - 3, 1),
+      );
+      const M = { month: back.getUTCMonth() + 1, year: back.getUTCFullYear() };
+      const lwd = `${M.year}-${String(M.month).padStart(2, '0')}-20`;
+      const shortfall = async (name: string, email: string) => {
+        const empId = await newEmployee(
+          name,
+          email,
+          '2024-01-01',
+          BASIC_MONTHLY,
+        );
+        await markPresent(empId, M.month, 20, M.year);
+        const calc = await request(app.getHttpServer())
+          .post('/settlements/calculate')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({
+            employeeId: empId,
+            lastWorkingDay: lwd,
+            noticePeriodRecovery: 500000,
+          })
+          .expect(201);
+        const body = calc.body as SettlementBody & {
+          receivableAmount: number;
+          receivableStatus: string;
+          noticePeriodRecovery: number;
+        };
+        // Only what the payout covers is deducted; the rest is the employee's, and the payout is 0 rather than negative.
+        expect(body.netSettlementAmount).toBe(0);
+        expect(body.receivableStatus).toBe('DUE');
+        expect(body.receivableAmount + body.noticePeriodRecovery).toBe(500000);
+        expect(body.receivableAmount).toBeGreaterThan(0);
+        await request(app.getHttpServer())
+          .post(`/settlements/${body.id}/process`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(201);
+        return body.id;
+      };
+      const close = (
+        id: string,
+        token: string,
+        outcome: string,
+        note: string,
+      ) =>
+        request(app.getHttpServer())
+          .post(`/settlements/${id}/receivable`)
+          .set('Authorization', `Bearer ${token}`)
+          .send({ outcome, note });
+
+      const first = await shortfall(
+        'Shortfall One',
+        'settle-e2e-short1@example.test',
+      );
+      await close(first, hrToken, 'WAIVED', 'Not recoverable').expect(403);
+      await close(first, hrToken, 'RECOVERED', 'ok').expect(400); // a note says how and when
+      await close(
+        first,
+        hrToken,
+        'RECOVERED',
+        'Paid by bank transfer on 5 Oct',
+      ).expect(201);
+      await close(first, hrToken, 'RECOVERED', 'Paid again by mistake').expect(
+        400,
+      ); // no longer due
+      const closed = await prisma.settlement.findFirstOrThrow({
+        where: { id: first },
+      });
+      expect(closed.receivableStatus).toBe('RECOVERED');
+      expect(closed.receivableNote).toContain('bank transfer');
+
+      const second = await shortfall(
+        'Shortfall Two',
+        'settle-e2e-short2@example.test',
+      );
+      await close(
+        second,
+        adminToken,
+        'WAIVED',
+        'Approved by management',
+      ).expect(201);
+      expect(
+        (await prisma.settlement.findFirstOrThrow({ where: { id: second } }))
+          .receivableStatus,
+      ).toBe('WAIVED');
+      const audit = await prisma.auditLog.findFirst({
+        where: { targetId: second, action: 'SETTLEMENT_RECEIVABLE_WAIVED' },
+      });
+      expect(audit).not.toBeNull();
+    });
+
     // P4 + P5: the final-settlement run carries the LWD month's statutory lines, and gratuity follows the
     // GRATUITY statutory version (it read only the legacy payroll-settings flag, so it was always 0 for an
     // org that enabled gratuity under Statutory Compliance).

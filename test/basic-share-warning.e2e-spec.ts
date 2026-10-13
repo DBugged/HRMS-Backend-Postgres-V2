@@ -96,4 +96,42 @@ describe('Basic share warning on salary structure save (e2e)', () => {
     ]).expect(201);
     expect((res.body as { warnings: string[] }).warnings).toEqual([]);
   });
+
+  it('lists the employees whose Basic + DA is under 50%, and drops them once fixed', async () => {
+    await bulk([
+      { componentCode: 'BASIC', valueType: 'FIXED', fixedAmount: 30000 },
+      {
+        componentCode: 'SPECIAL_ALLOWANCE',
+        valueType: 'FIXED',
+        fixedAmount: 70000,
+      },
+    ]).expect(201);
+    const server = app.getHttpServer();
+    const low = await request(server)
+      .get('/employee-salary/basic-share/below-half')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const rows = (low.body as { employees: { id: string; percent: number }[] })
+      .employees;
+    const mine = rows.find((r) => r.id === employeeId);
+    expect(mine?.percent).toBe(26.8); // 30,000 of 30,000 + 70,000 + the 40% HRA (12,000)
+
+    await bulk([
+      { componentCode: 'BASIC', valueType: 'FIXED', fixedAmount: 70000 },
+      {
+        componentCode: 'SPECIAL_ALLOWANCE',
+        valueType: 'FIXED',
+        fixedAmount: 20000,
+      },
+    ]).expect(201);
+    const ok = await request(server)
+      .get('/employee-salary/basic-share/below-half')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect(
+      (ok.body as { employees: { id: string }[] }).employees.some(
+        (r) => r.id === employeeId,
+      ),
+    ).toBe(false);
+  });
 });

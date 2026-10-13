@@ -4,6 +4,7 @@
 // a saved fence before relying on AttendanceService's own runtime check.
 // Important: for a CIRCLE fence, `boundary` is always stored as JsonNull (not the raw circle math) — the
 // derived summary (latitude/longitude/radiusMeters) is the single source of truth for circle fences.
+import { cityClassForCity } from '../common/hra-cities';
 import {
   BadRequestException,
   ConflictException,
@@ -57,6 +58,9 @@ export class WorkLocationsService {
         address: dto.address ?? '',
         description: dto.description ?? '',
         state: dto.state ?? '',
+        city: dto.city?.trim() ?? '',
+        // The class follows the city unless it was chosen: a metro city is METRO, any other NON_METRO.
+        cityClass: dto.cityClass ?? cityClassForCity(dto.city),
         fenceType,
         boundary:
           fenceType === FenceType.CIRCLE
@@ -190,6 +194,11 @@ export class WorkLocationsService {
           description: dto.description,
         }),
         ...(dto.state !== undefined && { state: dto.state }),
+        ...(dto.city !== undefined && { city: dto.city.trim() }),
+        // A city typed without a class re-suggests the class; a class chosen by hand always wins.
+        ...(dto.cityClass !== undefined
+          ? { cityClass: dto.cityClass }
+          : dto.city !== undefined && { cityClass: cityClassForCity(dto.city) }),
         ...(dto.isActive !== undefined && { isActive: dto.isActive }),
         ...geometryData,
       },

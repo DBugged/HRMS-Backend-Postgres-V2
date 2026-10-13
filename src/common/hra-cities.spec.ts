@@ -1,4 +1,7 @@
 import {
+  canonicalMetroCity,
+  cityClassForCity,
+  defaultHraPercent,
   HRA_CITY_OPTIONS,
   HRA_METRO_CITIES,
   isMetroCity,
@@ -67,5 +70,57 @@ describe('hra-cities', () => {
   it('offers OTHER for every non-metro city', () => {
     expect(HRA_CITY_OPTIONS).toContain('OTHER');
     expect(HRA_CITY_OPTIONS).toHaveLength(HRA_METRO_CITIES.length + 1);
+  });
+});
+
+describe('city class for pay', () => {
+  it('suggests METRO for the eight HRA cities, including their other names', () => {
+    for (const name of [
+      'Mumbai',
+      'Bombay',
+      'Delhi',
+      'New Delhi',
+      'Kolkata',
+      'Calcutta',
+      'Chennai',
+      'Madras',
+      'Bengaluru',
+      'Bangalore',
+      'Hyderabad',
+      'Pune',
+      'Poona',
+      'Ahmedabad',
+      '  pune  ',
+      'BENGALURU',
+    ]) {
+      expect([name, cityClassForCity(name)]).toEqual([name, 'METRO']);
+    }
+  });
+
+  it('suggests NON_METRO for any other city and when there is no city', () => {
+    for (const name of [
+      'Nashik',
+      'Nagpur',
+      'Jaipur',
+      'Gurgaon',
+      'Navi Mumbai ',
+      '',
+      null,
+      undefined,
+    ]) {
+      expect([name, cityClassForCity(name)]).toEqual([name, 'NON_METRO']);
+    }
+  });
+
+  it('reads the canonical city out of an alias', () => {
+    expect(canonicalMetroCity('Bangalore')).toBe('Bengaluru');
+    expect(canonicalMetroCity('Bombay')).toBe('Mumbai');
+    expect(canonicalMetroCity('Satara')).toBeNull();
+  });
+
+  it('HRA is 50% of Basic in a metro, 40% elsewhere and none by default in a village', () => {
+    expect(defaultHraPercent('METRO')).toBe(50);
+    expect(defaultHraPercent('NON_METRO')).toBe(40);
+    expect(defaultHraPercent('RURAL')).toBe(0);
   });
 });

@@ -182,7 +182,7 @@ describe('Payroll Settings (e2e)', () => {
       await request(app.getHttpServer())
         .put('/payroll-settings')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ otRegularRate: 1.75 })
+        .send({ otRegularRate: 2.75 })
         .expect(200);
 
       await setOvertimePay(false);
@@ -197,7 +197,7 @@ describe('Payroll Settings (e2e)', () => {
         compOffExpiryDays: number;
       };
       expect(saved.compOffExpiryDays).toBe(31); // the rest of the save still went through
-      expect(saved.otRegularRate).toBe(1.75); // the edit was dropped
+      expect(saved.otRegularRate).toBe(2.75); // the edit was dropped
       expect(saved.otNightRate).not.toBe(4);
 
       // Turned back on: the rates edited before it was switched off are intact and editable again.
@@ -208,6 +208,23 @@ describe('Payroll Settings (e2e)', () => {
         .send({ otRegularRate: 2.25 })
         .expect(200);
       expect((back.body as { otRegularRate: number }).otRegularRate).toBe(2.25);
+    });
+
+    it('refuses an overtime multiplier below 2 (Code on Wages, section 14)', async () => {
+      await setOvertimePay(true);
+      for (const field of [
+        'otRegularRate',
+        'otHolidayRate',
+        'otWeekendRate',
+        'otNightRate',
+      ]) {
+        const res = await request(app.getHttpServer())
+          .put('/payroll-settings')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ [field]: 1.5 });
+        expect([field, res.status]).toEqual([field, 400]);
+        expect(JSON.stringify(res.body)).toMatch(/at least 2/);
+      }
     });
   });
 });

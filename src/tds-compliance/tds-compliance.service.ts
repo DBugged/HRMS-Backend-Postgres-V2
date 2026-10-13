@@ -68,7 +68,8 @@ interface TaxDetailsShape {
   relief89?: number;
   ytdTDS?: number;
   previousEmployerTDS?: number;
-}
+  employerNps?: number;
+  employerFundPerquisite?: number;}
 
 // A run counts for TDS once payroll has approved it (settlements go straight to APPROVED).
 const PAID_OUT: PayrollRunStatus[] = [
@@ -997,6 +998,11 @@ export class TdsComplianceService {
         grossSalary: person.gross,
         taxableSalary: person.taxableSalary,
         grossTotalIncome: d?.grossAnnualIncome ?? person.taxableSalary,
+        // Employer NPS (and the employer-fund amount above the limit) is added to income for tax; shown so the gross
+        // total income can be tied back to the gross salary.
+        employerContributionsAdded: Math.round(
+          (d?.employerNps ?? 0) + (d?.employerFundPerquisite ?? 0),
+        ),
         exemptionHra: d?.exemptions?.hra ?? 0,
         exemptionLta: d?.exemptions?.lta ?? 0,
         standardDeduction: deductions.standard ?? 0,

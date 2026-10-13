@@ -692,6 +692,7 @@ export class LeavesService {
     // ...and HR/Admin cannot skip level 1: while the reporting manager's sign-off is still outstanding, the final
     // approval has to wait for it (rejecting or returning is always allowed). If there is nobody who could give
     // level-1 (no manager above the employee), the final approver decides alone so the request is never stuck.
+    let levelOneOverridden = false;
     if (
       leaveType.approvalLevels === 2 &&
       actor.role !== Role.MANAGER &&
@@ -699,9 +700,18 @@ export class LeavesService {
       dto.decision === 'APPROVED' &&
       (await this.levelOneApproverExists(leave, organizationId))
     ) {
-      throw new BadRequestException(
-        "This leave type needs level-1 approval from the employee's manager first. It is still waiting for them.",
-      );
+      // HR / Admin may go ahead when the manager cannot act (away, on leave), but only with a stated reason.
+      if (!dto.overrideLevelOne) {
+        throw new BadRequestException(
+          "This leave type needs level-1 approval from the employee's manager first. It is still waiting for them. If the manager is not available, HR or Admin can override with a reason.",
+        );
+      }
+      if ((dto.comments ?? '').trim().length < 5) {
+        throw new BadRequestException(
+          "Say why the manager's level-1 approval is being skipped (at least 5 characters in the comment).",
+        );
+      }
+      levelOneOverridden = true;
     }
 
     const decided = await this.applyDecision(
@@ -712,6 +722,21 @@ export class LeavesService {
       actor.id,
       organizationId,
     );
+    if (levelOneOverridden) {
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'LEAVE_LEVEL1_OVERRIDDEN',
+        module: 'LEAVE',
+        organizationId,
+        targetId: id,
+        details: {
+          employeeId: leave.employeeId,
+          startDate: leave.startDate,
+          endDate: leave.endDate,
+          reason: dto.comments ?? '',
+        },
+      });
+    }
     // The decision itself is on the leave row (reviewer, time, comment); the trail records it too, so "who approved
     // or rejected whose leave, and when" is in one place with every other change.
     await this.auditLogService.log({

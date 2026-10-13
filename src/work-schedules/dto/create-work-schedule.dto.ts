@@ -57,10 +57,10 @@ export class CreateWorkScheduleDto {
   @IsString()
   endTime!: string;
 
-  // Mandatory (0 = no break): the attendance engine takes it off the worked time before judging Present / Half Day.
+  // Mandatory, at least 1: the attendance engine takes it off the worked time before judging Present / Half Day.
   @ApiProperty({ example: 60 })
   @IsInt()
-  @Min(0)
+  @Min(1)
   breakMinutes!: number;
 
   // Only for days NOT in workingDays — a day off every week by default

@@ -213,10 +213,10 @@ describe('Overtime (e2e)', () => {
   });
 
   it.each([
-    ['REGULAR', 1.5, '2026-07-02'],
+    ['REGULAR', 2, '2026-07-02'],
     ['HOLIDAY', 2, '2026-07-03'],
     ['WEEKEND', 2, '2026-07-05'],
-    ['NIGHT', 1.75, '2026-07-06'],
+    ['NIGHT', 2, '2026-07-06'],
   ])(
     // Distinct dates per case — one overtime record per employee/day is now
     // enforced (unique constraint), so these can't all share a date.

@@ -177,7 +177,7 @@ describe('overtime: logging', () => {
       emp,
       'org',
     );
-    expect(r).toMatchObject({ type: 'REGULAR', rateMultiplier: 1.5 });
+    expect(r).toMatchObject({ type: 'REGULAR', rateMultiplier: 2 });
   });
 
   it('is refused while the Overtime Pay component is off', async () => {
@@ -264,10 +264,10 @@ describe('overtime: rates and the pay switch', () => {
   it('rates come from payroll settings, and fall back to the standard ones when there are none', async () => {
     const { prisma } = build();
     expect(await getOvertimeRates(prisma as never, 'org')).toEqual({
-      REGULAR: 1.5,
+      REGULAR: 2, // a stored 1.5 is raised to the legal minimum
       HOLIDAY: 2.5,
       WEEKEND: 2,
-      NIGHT: 1.75,
+      NIGHT: 2, // a stored 1.75 is raised to the legal minimum
     });
     const none = build({ rates: null });
     expect(await getOvertimeRates(none.prisma as never, 'org')).toEqual(

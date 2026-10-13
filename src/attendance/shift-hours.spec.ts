@@ -38,9 +38,15 @@ describe('shift hours', () => {
     );
   });
 
-  it('accepts an explicit zero break', () => {
+  it('rejects a zero break: the unpaid break is mandatory', () => {
     expect(
       shiftConsistencyError({ ...ok, breakMinutes: 0, minHoursForPresent: 9 }),
+    ).toMatch(/cannot be 0/);
+  });
+
+  it('accepts a one-minute break', () => {
+    expect(
+      shiftConsistencyError({ ...ok, breakMinutes: 1, minHoursForPresent: 8 }),
     ).toBeNull();
   });
 

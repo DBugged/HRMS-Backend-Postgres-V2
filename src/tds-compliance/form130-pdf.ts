@@ -153,6 +153,31 @@ export function renderForm130(
       );
     y += 20;
 
+    // Details the certificate needs that are not on record yet: said on the page itself, so a certificate with blanks
+    // is not issued by mistake.
+    const blank = (v: string | null | undefined) =>
+      !v || v === '-' || v.toLowerCase() === 'not set';
+    const missing = [
+      blank(data.employer.tan) ? 'Employer TAN' : '',
+      blank(data.employer.pan) ? 'Employer PAN' : '',
+      blank(data.employee.pan) ? 'Employee PAN' : '',
+    ].filter(Boolean);
+    if (missing.length > 0) {
+      doc.rect(MARGIN, y, CONTENT_W, 22).fillAndStroke('#fdf3d7', '#d9a500');
+      doc
+        .font('Helvetica-Bold')
+        .fontSize(8)
+        .fillColor('#7a5a00')
+        .text(
+          `Incomplete - not on record yet: ${missing.join(', ')}. Add ${missing.length === 1 ? 'it' : 'them'} before issuing this certificate.`,
+          MARGIN + 8,
+          y + 7,
+          { width: CONTENT_W - 16 },
+        );
+      doc.fillColor(INK);
+      y += 30;
+    }
+
     heading('PART A — Employer and employee');
     kvRow(
       ['Name of the deductor (employer)', data.employer.name],
@@ -222,6 +247,14 @@ export function renderForm130(
         'Gross total income (incl. previous employer / other income)',
         rs(a.grossTotalIncome),
       ],
+      ...(a.employerContributionsAdded > 0
+        ? [
+            [
+              '   of which: employer NPS / fund contribution added to income',
+              rs(a.employerContributionsAdded),
+            ],
+          ]
+        : []),
       ['Less: exemption — house rent allowance', rs(a.exemptionHra)],
       ['Less: exemption — leave travel concession', rs(a.exemptionLta)],
       ['Less: standard deduction', rs(a.standardDeduction)],

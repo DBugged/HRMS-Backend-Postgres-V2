@@ -8,9 +8,10 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
-import { FenceType } from '@prisma/client';
+import { CityClass, FenceType } from '@prisma/client';
 import { SUPPORTED_STATES } from '../../common/indian-states';
 
 // boundary's shape depends on fenceType (bounds for RECTANGLE, vertices for
@@ -55,6 +56,24 @@ export class CreateWorkLocationDto {
   @IsOptional()
   @IsIn(['', ...SUPPORTED_STATES])
   state?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The city or town of this location, e.g. Pune. Suggests the city class when that is not given.',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(80)
+  city?: string;
+
+  @ApiPropertyOptional({
+    enum: CityClass,
+    description:
+      'METRO (the eight HRA cities: HRA 50% of Basic), NON_METRO (other cities: 40%) or RURAL (a village: no HRA by default). Suggested from the city when omitted.',
+  })
+  @IsOptional()
+  @IsEnum(CityClass)
+  cityClass?: CityClass;
 
   @ApiPropertyOptional({
     description:

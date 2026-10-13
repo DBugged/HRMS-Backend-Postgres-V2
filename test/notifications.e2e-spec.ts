@@ -706,7 +706,7 @@ describe('Notifications (e2e)', () => {
         orgPayrollAttendancePrefs: {
           defaultShiftStartTime: '00:00',
           defaultShiftEndTime: '23:59',
-          defaultBreakMinutes: 0,
+          defaultBreakMinutes: 1,
           weekendDays: [],
         },
       })

@@ -62,11 +62,15 @@ type Actor = Omit<User, 'password'>;
 
 // Fallback multipliers, used only when the org has no PayrollSettings row yet
 // — same values as that table's column defaults.
+// Overtime is paid at not less than twice the normal rate of wages (Code on Wages, 2019, section 14, in force from
+// 21-Nov-2025), so no multiplier below this is ever used or saved.
+export const MIN_OVERTIME_MULTIPLIER = 2;
+
 export const RATE_MULTIPLIERS: Record<OvertimeType, number> = {
-  [OvertimeType.REGULAR]: 1.5,
+  [OvertimeType.REGULAR]: 2,
   [OvertimeType.HOLIDAY]: 2,
   [OvertimeType.WEEKEND]: 2,
-  [OvertimeType.NIGHT]: 1.75,
+  [OvertimeType.NIGHT]: 2,
 };
 
 // The org's overtime multipliers from Payroll Settings. Derived server-side
@@ -87,11 +91,14 @@ export async function getOvertimeRates(
     },
   });
   if (!s) return RATE_MULTIPLIERS;
+  // A rate saved before the legal minimum applied is still raised to it.
+  const atLeastMinimum = (rate: number) =>
+    Math.max(rate, MIN_OVERTIME_MULTIPLIER);
   return {
-    [OvertimeType.REGULAR]: s.otRegularRate,
-    [OvertimeType.HOLIDAY]: s.otHolidayRate,
-    [OvertimeType.WEEKEND]: s.otWeekendRate,
-    [OvertimeType.NIGHT]: s.otNightRate,
+    [OvertimeType.REGULAR]: atLeastMinimum(s.otRegularRate),
+    [OvertimeType.HOLIDAY]: atLeastMinimum(s.otHolidayRate),
+    [OvertimeType.WEEKEND]: atLeastMinimum(s.otWeekendRate),
+    [OvertimeType.NIGHT]: atLeastMinimum(s.otNightRate),
   };
 }
 

@@ -151,32 +151,32 @@ export class UpdatePayrollSettingsDto {
   @Max(3650)
   compOffExpiryDays?: number;
 
-  // Overtime multipliers (1 = plain hourly rate, up to 10x).
+  // Overtime multipliers: not less than 2x (Code on Wages, 2019, section 14), up to 10x.
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
-  @Min(1)
+  @Min(2, { message: 'otRegularRate must be at least 2 - overtime is paid at not less than twice the normal rate of wages (Code on Wages, section 14).' })
   @Max(10)
   otRegularRate?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
-  @Min(1)
+  @Min(2, { message: 'otHolidayRate must be at least 2 - overtime is paid at not less than twice the normal rate of wages (Code on Wages, section 14).' })
   @Max(10)
   otHolidayRate?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
-  @Min(1)
+  @Min(2, { message: 'otWeekendRate must be at least 2 - overtime is paid at not less than twice the normal rate of wages (Code on Wages, section 14).' })
   @Max(10)
   otWeekendRate?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
-  @Min(1)
+  @Min(2, { message: 'otNightRate must be at least 2 - overtime is paid at not less than twice the normal rate of wages (Code on Wages, section 14).' })
   @Max(10)
   otNightRate?: number;
 

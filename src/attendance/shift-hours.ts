@@ -46,8 +46,8 @@ export function shiftConsistencyError(i: ShiftInputs): string | null {
   if (overnight && i.crossesMidnight === false) {
     return 'Shift end is before shift start - turn on "shift crosses midnight" or correct the times.';
   }
-  if (!Number.isFinite(i.breakMinutes) || i.breakMinutes < 0) {
-    return 'Break time is required (enter 0 if there is no break).';
+  if (!Number.isFinite(i.breakMinutes) || i.breakMinutes < 1) {
+    return 'Break time is required and cannot be 0 (enter the unpaid break in minutes, for example 60).';
   }
   if (i.breakMinutes >= span) {
     return `Break (${i.breakMinutes} min) must be shorter than the shift (${span} min).`;

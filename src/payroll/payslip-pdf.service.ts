@@ -754,8 +754,10 @@ export class PayslipPdfService {
       };
       if (template.showPAN) empFields.push(['PAN', pdStr('panNumber') || '-']);
       if (template.showUAN) empFields.push(['UAN', pdStr('uanNumber') || '-']);
-      if (template.showPFNumber) empFields.push(['PF Number', '-']);
-      if (template.showESIC) empFields.push(['ESIC Number', '-']);
+      if (template.showPFNumber)
+        empFields.push(['PF Number', pdStr('pfNumber') || '-']);
+      if (template.showESIC)
+        empFields.push(['ESIC Number', pdStr('esicNumber') || '-']);
       if (template.showBankDetails) {
         empFields.push(['Bank Name', pdStr('bankName') || '-']);
         empFields.push(['Bank Account', pdStr('bankAccountNo') || '-']);
@@ -814,6 +816,16 @@ export class PayslipPdfService {
         attW - 20,
         fonts,
       );
+      // The Payable Days figure is out of the whole month, because that is what each earning is divided by.
+      if (a.payableDays != null && a.totalDaysInMonth) {
+        doc.font(fonts.oblique).fontSize(6.3).fillColor(INK_600);
+        text(
+          `Each earning = monthly amount ÷ ${a.totalDaysInMonth} × ${a.payableDays} payable days.`,
+          attX,
+          y + cardH + 5,
+          { width: attW },
+        );
+      }
 
       doc
         .roundedRect(netX, y, netW, cardH, 8)

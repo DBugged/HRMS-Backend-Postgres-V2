@@ -56,10 +56,14 @@ describe('Weekend work compensation (e2e)', () => {
   });
   const admin = () => as(adminToken);
 
-  const importRows = async (rows: Array<[string, string, string]>) => {
+  const importRows = async (
+    rows: Array<[string, string, string]>,
+    timeBasis?: 'UTC' | 'ORG',
+  ) => {
     const upload = await admin()
       .post('/attendance/import')
       .send({
+        ...(timeBasis ? { timeBasis } : {}),
         rows: rows.map(([date, inTime, outTime]) => ({
           employeeId: employeeCode,
           date,
@@ -160,7 +164,19 @@ describe('Weekend work compensation (e2e)', () => {
       ['2026-09-14', '03:30', '14:30'], // Monday, 11h: well past the shift end
       ['2026-09-15', '03:30', '12:30'], // Tuesday, an ordinary day inside the shift
     ]);
-    expect(result.executionResult).toMatchObject({ imported: 3, errors: 0 });
+    expect(result.executionResult).toMatchObject({
+      imported: 3,
+      errors: 0,
+      overtimeRequests: 2, // the Sunday and the late Monday; the Tuesday stayed inside the shift
+    });
+    const note = await prisma.notification.findFirst({
+      where: {
+        organizationId,
+        title: 'Overtime requests from an attendance import',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    expect(note?.message).toContain('2 overtime requests');
     const sunday = await otFor('2026-09-13');
     expect(sunday).toMatchObject({
       status: 'PENDING',
@@ -241,7 +257,9 @@ describe('Weekend work compensation (e2e)', () => {
       .post('/comp-offs')
       .send({ employeeId, earnedForDate: '2026-09-13', reason: 'again' });
     expect(res.status).toBe(409);
-    expect(JSON.stringify(res.body)).toMatch(/already (logged as overtime|exists)/);
+    expect(JSON.stringify(res.body)).toMatch(
+      /already (logged as overtime|exists)/,
+    );
   });
 
   it('a rejected overtime day can be claimed as comp-off instead', async () => {
@@ -301,7 +319,7 @@ describe('Weekend work compensation (e2e)', () => {
       }
     ).payrolls[0];
     const hours = after.hours;
-    const hourly = Math.round(hours * 1.5 * (30000 / 208));
+    const hourly = Math.round(hours * 2 * (30000 / 208));
     expect(
       payroll.earnings.find((e) => e.code === 'OVERTIME_PAY')?.amount,
     ).toBe(1000 + hourly);
@@ -363,6 +381,16 @@ describe('Weekend work compensation (e2e)', () => {
         },
       });
     expect(res.status).toBe(400);
+  });
+
+  it('reads the times of an ORG-basis import in the organisation timezone (09:00 IST is 03:30 UTC)', async () => {
+    const result = await importRows([['2026-09-27', '09:00', '18:00']], 'ORG');
+    expect(result.executionResult).toMatchObject({ imported: 1, errors: 0 });
+    const row = await prisma.attendance.findFirstOrThrow({
+      where: { organizationId, employeeId, date: '2026-09-27' },
+    });
+    expect(row.inTime?.toISOString()).toBe('2026-09-27T03:30:00.000Z');
+    expect(row.outTime?.toISOString()).toBe('2026-09-27T12:30:00.000Z');
   });
 });
 

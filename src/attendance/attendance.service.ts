@@ -56,6 +56,7 @@ import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 import { isInsideGeoFence } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
+import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
   assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
@@ -264,14 +265,26 @@ const IMPORT_LOCAL_TS_RE =
 const IMPORT_ZONED_TS_RE =
   /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(?::\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i;
 
-function parseImportTimestampUtc(value: string): Date | null {
+function parseImportTimestampUtc(
+  value: string,
+  // When given, a bare time is read as wall-clock time in this IANA timezone instead of UTC.
+  timeZone?: string,
+): Date | null {
   const v = value.trim();
   if (!v) return null;
   let parsed: Date;
   const local = IMPORT_LOCAL_TS_RE.exec(v);
   if (local) {
     const [, date, hh, mm, ss, frac] = local;
-    parsed = new Date(`${date}T${hh}:${mm}:${ss ?? '00'}${frac ?? ''}Z`);
+    parsed = timeZone
+      ? zonedWallTimeToUtc(
+          date,
+          Number(hh),
+          Number(mm),
+          Number(ss ?? 0),
+          timeZone,
+        )
+      : new Date(`${date}T${hh}:${mm}:${ss ?? '00'}${frac ?? ''}Z`);
   } else if (IMPORT_ZONED_TS_RE.test(v)) {
     parsed = new Date(v.replace(' ', 'T'));
   } else {
@@ -423,6 +436,8 @@ type ImportExecutionResult = {
   imported: number;
   skipped: number;
   errors: number;
+  // Pending overtime requests this import created (weekend / holiday work, or time past the shift end).
+  overtimeRequests?: number;
   rowErrors: { row: number; error: string }[];
 };
 
@@ -3107,6 +3122,7 @@ export class AttendanceService {
         uploadedById: actor.id,
         departmentId: actor.departmentId ?? null,
         fileName: dto.fileName ?? '',
+        timeBasis: dto.timeBasis ?? 'UTC',
         rows: dto.rows as unknown as Prisma.InputJsonValue,
       },
     });
@@ -3179,7 +3195,10 @@ export class AttendanceService {
     const MIN_DATE_MS = now - 2 * 365 * 24 * 60 * 60 * 1000;
     // Attendance can't be imported for a day that hasn't happened: the latest allowed date is today in the
     // organization's timezone (a future date used to be accepted up to a year ahead).
-    const todayInTz = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const orgTimezone = await this.getOrgTimezone(organizationId);
+    const todayInTz = todayInOrgTz(orgTimezone);
+    // ORG batches carry times in the organisation's own timezone; the old UTC reading stays the default.
+    const importZone = batch.timeBasis === 'ORG' ? orgTimezone : undefined;
 
     // Rows sharing employeeId+date collapse into a single Attendance row in
     // executeImportBatch (upsert-by-key), so a duplicate pair here isn't a
@@ -3263,19 +3282,19 @@ export class AttendanceService {
       // batch "executes" with 0 rows imported.
       const badTime = (['inTime', 'outTime'] as const).find((f) => {
         const v = asString(row[f]).trim();
-        return v !== '' && parseImportTimestampUtc(v) === null;
+        return v !== '' && parseImportTimestampUtc(v, importZone) === null;
       });
       if (badTime) {
         failed.push({
           row: rowNum,
-          error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss, interpreted as UTC)`,
+          error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss, read as ${importZone ?? 'UTC'} time)`,
         });
         return;
       }
       if (inRaw && outRaw) {
         const spanMs =
-          (parseImportTimestampUtc(outRaw)?.getTime() ?? 0) -
-          (parseImportTimestampUtc(inRaw)?.getTime() ?? 0);
+          (parseImportTimestampUtc(outRaw, importZone)?.getTime() ?? 0) -
+          (parseImportTimestampUtc(inRaw, importZone)?.getTime() ?? 0);
         if (spanMs <= 0) {
           failed.push({
             row: rowNum,
@@ -3360,6 +3379,7 @@ export class AttendanceService {
     }
 
     let result: ImportExecutionResult;
+    const executionStartedAt = new Date();
     try {
       result = await this.applyImportBatchRows(batch, organizationId);
     } catch (err) {
@@ -3388,6 +3408,36 @@ export class AttendanceService {
         details: { fileName: batch.fileName },
       });
       throw err;
+    }
+
+    // The overtime this import turned into pending requests: say so, so the approvers do not find them by chance.
+    const overtimeRequests = await this.scopedPrisma.overtimeRecord.count({
+      where: {
+        organizationId,
+        source: OvertimeSource.IMPORT,
+        status: OvertimeStatus.PENDING,
+        createdAt: { gte: executionStartedAt },
+      },
+    });
+    result = { ...result, overtimeRequests };
+    if (overtimeRequests > 0) {
+      const approvers = await this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          role: { in: [Role.HR, Role.ADMIN] },
+        },
+        select: { id: true },
+      });
+      await this.notificationsService.createMany(
+        approvers.map((u) => ({
+          organizationId,
+          userId: u.id,
+          title: 'Overtime requests from an attendance import',
+          message: `The attendance import${batch.fileName ? ` (${batch.fileName})` : ''} created ${overtimeRequests} overtime ${overtimeRequests === 1 ? 'request' : 'requests'} waiting for review. Open Attendance Records > Overtime to approve them.`,
+          category: NotificationCategory.ATTENDANCE,
+        })),
+      );
     }
 
     await this.scopedPrisma.attendanceImportBatch.updateMany({
@@ -3428,6 +3478,10 @@ export class AttendanceService {
     organizationId: string,
   ): Promise<ImportExecutionResult> {
     const rows = batch.rows as unknown as ImportRow[];
+    const importZone =
+      batch.timeBasis === 'ORG'
+        ? await this.getOrgTimezone(organizationId)
+        : undefined;
     const employeeCodes = [
       ...new Set(
         rows
@@ -3612,8 +3666,12 @@ export class AttendanceService {
 
         const inRaw = asString(row.inTime).trim();
         const outRaw = asString(row.outTime).trim();
-        const inTime = inRaw ? parseImportTimestampUtc(inRaw) : null;
-        const outTime = outRaw ? parseImportTimestampUtc(outRaw) : null;
+        const inTime = inRaw
+          ? parseImportTimestampUtc(inRaw, importZone)
+          : null;
+        const outTime = outRaw
+          ? parseImportTimestampUtc(outRaw, importZone)
+          : null;
         if ((inRaw && !inTime) || (outRaw && !outTime)) {
           throw new BadRequestException('Invalid inTime/outTime');
         }

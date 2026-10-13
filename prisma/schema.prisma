@@ -910,6 +910,14 @@ enum FenceType {
 // A geo-fenced office/site HR has marked on the map. Multiple locations are
 // supported (branches, WFH-exempt sites, etc.). Attendance/punch validation
 // against these fences is Batch 6 — this is the HR-configuration side only.
+// Where an employee is hired decides how HRA is set up: METRO (the eight HRA cities, 50% of Basic), NON_METRO (40%) or
+// RURAL (a village / rural area - no HRA by default).
+enum CityClass {
+  METRO
+  NON_METRO
+  RURAL
+}
+
 model WorkLocation {
   id             String       @id @default(uuid())
   organizationId String
@@ -922,6 +930,9 @@ model WorkLocation {
   // Labour Welfare Fund rate (an employee's state is their department's work location's state).
   // Canonical spelling from common/indian-states.ts.
   state       String @default("")
+  // The city or town, and its class for HRA (suggested from the city by common/hra-cities.ts, editable).
+  city        String    @default("")
+  cityClass   CityClass @default(NON_METRO)
 
   latitude     Float
   longitude    Float
@@ -1452,10 +1463,10 @@ model PayrollSettings {
   // Overtime pay multipliers by type — applied when an overtime record is
   // logged or auto-suggested (stored on the record, so changing these only
   // affects new records). Defaults are the previously hardcoded rates.
-  otRegularRate Float @default(1.5)
+  otRegularRate Float @default(2)
   otHolidayRate Float @default(2)
   otWeekendRate Float @default(2)
-  otNightRate   Float @default(1.75)
+  otNightRate   Float @default(2)
 
   // How weekend/holiday work is compensated: { defaultKey: string|null, options: [{ key, label, compOffDays, payDays }] }.
   // Empty options = the built-in set (see overtime/work-compensation.ts). A null defaultKey keeps the hourly rate
@@ -1978,6 +1989,9 @@ model AttendanceImportBatch {
   // parsed spreadsheet rows, untyped client input same as
   // BulkImportHolidaysDto's row shape.
   rows Json @default("[]")
+  // How a bare time in the rows (no Z / offset) is read: "UTC" (the original behaviour) or "ORG" (the organisation's own
+  // timezone, which is what a biometric export or an HR sheet contains).
+  timeBasis String @default("UTC")
 
   status           ImportBatchStatus @default(PENDING_VALIDATION)
   // {row, error}[]
@@ -2553,6 +2567,15 @@ enum SettlementStatus {
   PAID
 }
 
+// What the employee still owes the company when the recoveries in the final settlement are more than the payout:
+// the settlement pays 0 and the rest is DUE until HR records that it was collected (RECOVERED) or an Admin waives it.
+enum ReceivableStatus {
+  NONE
+  DUE
+  RECOVERED
+  WAIVED
+}
+
 // Full & Final settlement — old system's FullFinalSettlement, ported under
 // a shorter name since this app has no other "settlement" concept to
 // disambiguate from.
@@ -2594,6 +2617,14 @@ model Settlement {
   // APPROVED-but-unpaid reimbursement claims settled with the final payout (marked PAID by process()).
   reimbursementAmount    Float @default(0)
   netSettlementAmount    Float @default(0)
+
+  // The part of the recoveries (notice shortfall, advances) the payout could not cover, owed by the employee. It is
+  // collected outside payroll (the next employer is never liable for it) and then closed as RECOVERED, or waived by an Admin.
+  receivableAmount       Float            @default(0)
+  receivableStatus       ReceivableStatus @default(NONE)
+  receivableNote         String?
+  receivableClosedAt     DateTime?
+  receivableClosedById   String?
 
   // Notice period: pay the employer waived (employee released before the notice ended) and the shortfall the
   // recovery above was derived from. noticePeriodRecovery is calculated from the notice days unless HR overrode it.

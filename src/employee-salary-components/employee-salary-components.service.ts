@@ -258,6 +258,27 @@ export class EmployeeSalaryComponentsService {
   ): Promise<string | null> {
     const asOf =
       asOfParam ?? localDateStr(await this.getOrgTimezone(organizationId));
+    const share = await this.basicShareFigures(
+      employeeId,
+      asOf,
+      organizationId,
+    );
+    if (!share || share.belowHalf === false) return null;
+    return `Basic + DA is ${share.percent}% of the monthly pay (₹${Math.round(share.wages)} of ₹${Math.round(share.gross)}). Under the new Labour Code it should be at least 50%, otherwise PF and gratuity are worked out on a higher wage than the structure shows.`;
+  }
+
+  // Basic + DA against the recurring monthly pay (yearly variable pay, one-month entries and overtime are not part of it).
+  // null when there is no monthly pay at all.
+  private async basicShareFigures(
+    employeeId: string,
+    asOf: string,
+    organizationId: string,
+  ): Promise<{
+    gross: number;
+    wages: number;
+    percent: number;
+    belowHalf: boolean;
+  } | null> {
     const { structure } = await this.getStructure(
       employeeId,
       asOf,
@@ -296,9 +317,46 @@ export class EmployeeSalaryComponentsService {
         wages += value;
       }
     }
-    if (gross <= 0 || wages * 2 >= gross - 0.005) return null;
-    const pct = Math.round((wages / gross) * 1000) / 10;
-    return `Basic + DA is ${pct}% of the monthly pay (₹${Math.round(wages)} of ₹${Math.round(gross)}). Under the new Labour Code it should be at least 50%, otherwise PF and gratuity are worked out on a higher wage than the structure shows.`;
+    if (gross <= 0) return null;
+    return {
+      gross,
+      wages,
+      percent: Math.round((wages / gross) * 1000) / 10,
+      belowHalf: wages * 2 < gross - 0.005,
+    };
+  }
+
+  // Every active employee on the payroll whose Basic + DA is under half of the monthly pay, for the Payroll screen and
+  // for HR to correct before the Labour Code rule bites on PF and gratuity.
+  async listBelowHalfBasic(organizationId: string) {
+    const asOf = localDateStr(await this.getOrgTimezone(organizationId));
+    const employees = await this.scopedPrisma.user.findMany({
+      where: { organizationId, isActive: true, excludeFromPayroll: false },
+      select: { id: true, name: true, employeeId: true },
+      orderBy: { name: 'asc' },
+    });
+    const rows: {
+      id: string;
+      name: string;
+      employeeId: string | null;
+      gross: number;
+      wages: number;
+      percent: number;
+    }[] = [];
+    for (const e of employees) {
+      const share = await this.basicShareFigures(e.id, asOf, organizationId);
+      if (share?.belowHalf) {
+        rows.push({
+          id: e.id,
+          name: e.name,
+          employeeId: e.employeeId,
+          gross: Math.round(share.gross),
+          wages: Math.round(share.wages),
+          percent: share.percent,
+        });
+      }
+    }
+    return { asOf, total: employees.length, employees: rows };
   }
 
   // Shared revision logic — close out the current open row (effectiveTo

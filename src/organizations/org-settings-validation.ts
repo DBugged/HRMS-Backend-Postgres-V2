@@ -254,10 +254,11 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
   ]) {
     checkNumber(p, k, path(k), { min: 0 });
   }
-  // The break is mandatory (enter 0 for none): the attendance engine takes it off the worked time before comparing
-  // with the Present / Half-Day minimums, so an unset break is an unset rule, not "no break".
+  // The break is mandatory and cannot be 0: the attendance engine takes it off the worked time before comparing with
+  // the Present / Half-Day minimums (and before weekend / holiday work becomes overtime), so an unset or zero break
+  // would count the whole day, lunch included.
   checkNumber(p, 'defaultBreakMinutes', path('defaultBreakMinutes'), {
-    min: 0,
+    min: 1,
   });
   for (const k of [
     'defaultMinHoursForPresent',

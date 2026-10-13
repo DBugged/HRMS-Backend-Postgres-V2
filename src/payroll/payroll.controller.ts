@@ -25,6 +25,7 @@ import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { AttendanceGapsQueryDto } from './dto/attendance-gaps-query.dto';
+import { StructurePreviewDto } from './dto/structure-preview.dto';
 import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto } from './dto/adjust-payroll.dto';
@@ -177,6 +178,18 @@ export class PayrollController {
       'Content-Disposition': `attachment; filename=${filename}`,
     });
     res.send(buffer);
+  }
+
+  // The salary-structure builder: from a package (annual CTC or monthly gross) the breakup that follows the Labour Codes,
+  // with HRA by where the employee is hired and the schemes that apply to their type. Nothing is saved.
+  @Post('structure-preview')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  structurePreview(
+    @Body() dto: StructurePreviewDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.previewStructure(dto, caller.organizationId);
   }
 
   @Post('draft')

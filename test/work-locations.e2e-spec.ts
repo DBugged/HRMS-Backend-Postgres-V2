@@ -149,6 +149,48 @@ describe('Work Locations (e2e)', () => {
       .expect(400);
   });
 
+  it('classes a location from its city: metro city, other city, or a village chosen by hand', async () => {
+    const make = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/work-locations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ latitude: 18.5, longitude: 73.8, ...body });
+    const pune = await make({ name: 'Pune city site', city: 'Pune' }).expect(201);
+    expect(pune.body).toMatchObject({ city: 'Pune', cityClass: 'METRO' });
+    const blr = await make({ name: 'BLR office', city: 'Bangalore' }).expect(
+      201,
+    );
+    expect(blr.body).toMatchObject({ cityClass: 'METRO' });
+    const nashik = await make({ name: 'Nashik plant', city: 'Nashik' }).expect(
+      201,
+    );
+    expect(nashik.body).toMatchObject({ cityClass: 'NON_METRO' });
+    const none = await make({ name: 'No city yet' }).expect(201);
+    expect(none.body).toMatchObject({ city: '', cityClass: 'NON_METRO' });
+    const village = await make({
+      name: 'Village unit',
+      city: 'Wai',
+      cityClass: 'RURAL',
+    }).expect(201);
+    expect(village.body).toMatchObject({ cityClass: 'RURAL' });
+    await make({ name: 'Bad', cityClass: 'GALAXY' }).expect(400);
+
+    const id = (nashik.body as { id: string }).id;
+    // a new city re-suggests the class ...
+    const moved = await request(app.getHttpServer())
+      .put(`/work-locations/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ city: 'Mumbai' });
+    expect(moved.status).toBe(200);
+    expect(moved.body).toMatchObject({ city: 'Mumbai', cityClass: 'METRO' });
+    // ... and a class chosen by hand wins.
+    const manual = await request(app.getHttpServer())
+      .put(`/work-locations/${id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ city: 'Mumbai', cityClass: 'NON_METRO' });
+    expect(manual.body).toMatchObject({ cityClass: 'NON_METRO' });
+  });
+
   it('rejects a CIRCLE with missing latitude/longitude', async () => {
     await request(app.getHttpServer())
       .post('/work-locations')

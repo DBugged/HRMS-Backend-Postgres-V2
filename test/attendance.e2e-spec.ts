@@ -3076,7 +3076,7 @@ describe('Attendance (e2e)', () => {
       expect(record.status).toBe('PENDING');
       expect(record.type).toBe('REGULAR');
       expect(record.hours).toBe(0.75);
-      expect(record.rateMultiplier).toBe(1.5);
+      expect(record.rateMultiplier).toBe(2);
 
       // Still goes through the normal review endpoint like a self-logged one.
       await request(app.getHttpServer())
@@ -3123,7 +3123,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('does not create a record for a punch-out only a few minutes past shift end', async () => {
-      const date = offsetWeekdayAvoidingHolidays(-31);
+      const date = offsetWeekdayAvoidingHolidays(-40);
       await punchAt(employeeId, istIso(date, '09:30'));
       await punchAt(employeeId, istIso(date, '18:40')); // 10 min past.
 
