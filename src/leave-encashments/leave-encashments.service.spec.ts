@@ -310,10 +310,19 @@ describe('leave encashment: review', () => {
     ).rejects.toThrow(/already reviewed/);
   });
 
-  it('nobody, an Admin included, can review their own request', async () => {
-    const { service } = build({ rows: [pending({ employeeId: 'ad' })] });
+  it('an Admin may review their own request; HR may not', async () => {
+    const own = build({ rows: [pending({ employeeId: 'ad' })] });
     await expect(
-      service.review('en1', { status: 'APPROVED' } as never, admin, 'org'),
+      own.service.review('en1', { status: 'APPROVED' } as never, admin, 'org'),
+    ).resolves.toBeDefined();
+    const hrOwn = build({ rows: [pending({ employeeId: 'hr1' })] });
+    await expect(
+      hrOwn.service.review(
+        'en1',
+        { status: 'APPROVED' } as never,
+        { id: 'hr1', role: Role.HR, name: 'HR' } as never,
+        'org',
+      ),
     ).rejects.toThrow(/cannot approve or review your own request/);
   });
 

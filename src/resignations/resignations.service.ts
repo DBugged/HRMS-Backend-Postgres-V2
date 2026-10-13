@@ -387,9 +387,10 @@ export class ResignationsService {
       where: { id, organizationId: actor.organizationId },
     });
     if (!record) throw new NotFoundException('Resignation not found.');
-    if (record.employeeId === actor.id) {
+    // Only an Admin may decide their own (HR and everyone else need someone else); it is audited as SELF_APPROVAL.
+    if (record.employeeId === actor.id && actor.role !== Role.ADMIN) {
       throw new ForbiddenException(
-        'You cannot decide your own resignation; ask another administrator.',
+        'You cannot decide your own resignation; ask an Admin.',
       );
     }
     const requester = await this.scopedPrisma.user.findFirst({
@@ -427,6 +428,12 @@ export class ResignationsService {
       eventKey: `RESIGNATION_${outcome}`,
       performedById: actor.id,
       metadata: { resignationId, ...extra },
+    });
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'EMPLOYEE',
+      targetId: resignationId,
+      employeeId,
+      request: 'Resignation',
     });
     await this.auditLogService.log({
       actorId: actor.id,

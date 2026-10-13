@@ -45,7 +45,7 @@ import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   assertManagerScopeOrDelegate,
-  assertNotOwnRequest,
+  assertNotSelfApproval,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -389,8 +389,8 @@ export class CompOffService {
     organizationId: string,
   ) {
     const compOff = await this.findByIdOrThrow(id, organizationId);
-    // Nobody reviews their own request, an Admin included.
-    assertNotOwnRequest(actor, compOff.employeeId);
+    // HR and managers never review their own request; an Admin may (it is written to the audit trail below).
+    assertNotSelfApproval(actor, compOff.employeeId);
     await assertManagerScopeOrDelegate(
       this.scopedPrisma,
       this.delegationService,

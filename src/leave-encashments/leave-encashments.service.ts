@@ -41,7 +41,7 @@ import { QueryLeaveEncashmentDto } from './dto/query-leave-encashment.dto';
 import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
-  assertNotOwnRequest,
+  assertNotSelfApproval,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -342,8 +342,8 @@ export class LeaveEncashmentsService {
     });
     if (!row)
       throw new NotFoundException('Leave encashment request not found.');
-    // Nobody reviews their own request, an Admin included.
-    assertNotOwnRequest(actor, row.employeeId);
+    // HR and managers never review their own request; an Admin may (it is written to the audit trail below).
+    assertNotSelfApproval(actor, row.employeeId);
     await assertManagerDeptScope(
       this.scopedPrisma,
       actor,

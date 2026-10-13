@@ -11,7 +11,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { AllocationType, Prisma, User } from '@prisma/client';
+import { AllocationType, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -48,8 +48,11 @@ export class LeaveBalanceAdjustmentService {
         'Enter the number of days to add or take off.',
       );
     }
-    if (dto.employeeId === actor.id) {
-      throw new ForbiddenException('You cannot adjust your own leave balance.');
+    // Only an Admin may adjust their own balance (HR and everyone else need someone else); it is audited.
+    if (dto.employeeId === actor.id && actor.role !== Role.ADMIN) {
+      throw new ForbiddenException(
+        'You cannot adjust your own leave balance. An Admin must do it.',
+      );
     }
     const [employee, leaveType, org] = await Promise.all([
       this.scopedPrisma.user.findFirst({
@@ -103,6 +106,12 @@ export class LeaveBalanceAdjustmentService {
       return { before, after: updated.closing };
     });
 
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'LEAVE',
+      targetId: employee.id,
+      employeeId: dto.employeeId,
+      request: 'Leave balance adjustment',
+    });
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'LEAVE_BALANCE_ADJUSTED',
