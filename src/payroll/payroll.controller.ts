@@ -89,6 +89,17 @@ export class PayrollController {
     );
   }
 
+  // The months whose payslip exists but is not final yet (calculated / verified / approved) - month and year only, no
+  // amounts - so the app can say "being finalised" instead of leaving the employee guessing. Own months only; any
+  // authenticated caller. Registered before ':id' so it is not read as a payslip id.
+  @Get('pending-mine')
+  pendingMine(@CurrentUser() caller: Caller) {
+    return this.payrollService.pendingPayslipMonths(
+      caller,
+      caller.organizationId,
+    );
+  }
+
   // No @Roles() — self/dept/org scoping all enforced inline in the
   // service: EMPLOYEE and MANAGER 403 on anyone else's payslip,
   // ADMIN/HR unrestricted.

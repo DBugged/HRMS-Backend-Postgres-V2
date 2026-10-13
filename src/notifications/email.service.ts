@@ -98,6 +98,13 @@ export class EmailService {
     return this.resend;
   }
 
+  // Whether a real delivery channel is set up (Resend key, or SMTP credentials). Without one send() only logs a dry
+  // run - fine for a notification, not for something the recipient must act on (a sign-up confirmation link).
+  isConfigured(): boolean {
+    if (emailDriver() === 'resend') return !!process.env.RESEND_API_KEY;
+    return !!process.env.SMTP_USER && !!process.env.SMTP_PASS;
+  }
+
   async send({
     to,
     subject,

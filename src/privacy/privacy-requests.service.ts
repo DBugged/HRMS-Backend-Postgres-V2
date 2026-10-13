@@ -197,7 +197,12 @@ export class PrivacyRequestsService {
       result,
       ip: ctx.ip,
       userAgent: ctx.userAgent,
-      meta: { requestNo: req.requestNo, type: req.type, ...meta },
+      meta: {
+        requestNo: req.requestNo,
+        type: req.type,
+        ...(actor.id === req.userId && { selfHandled: true }),
+        ...meta,
+      },
     });
   }
 
@@ -478,11 +483,13 @@ export class PrivacyRequestsService {
     return this.present(r);
   }
 
-  // Same tiering as documents: only an ADMIN handles an HR/ADMIN user's request; nobody reviews their own.
+  // Same tiering as documents: only an ADMIN handles an HR/ADMIN user's request, and only an Admin may handle their
+  // own (HR and everyone else need someone else). Every handling is in the privacy audit trail with the actor and the
+  // requester, so a self-handled request is visible there as selfHandled.
   private async assertHrMayHandle(actor: Caller, requesterId: string) {
-    if (actor.id === requesterId) {
+    if (actor.id === requesterId && actor.role !== Role.ADMIN) {
       throw new ForbiddenException(
-        'You cannot handle your own privacy request; ask another administrator.',
+        'You cannot handle your own privacy request; ask an Admin.',
       );
     }
     const requester = await this.scopedPrisma.user.findFirst({

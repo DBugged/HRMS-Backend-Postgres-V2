@@ -157,7 +157,7 @@ describe('Employee Rich Profile (e2e)', () => {
       );
     });
 
-    it("HR/Admin cannot change an employee's bank details, government IDs or address (view-only), but the employee can", async () => {
+    it("HR/Admin cannot change an employee's bank details or government IDs (view-only), but the employee can - and HR/Admin can update the address", async () => {
       const send = (token: string, personalData: object) =>
         request(app.getHttpServer())
           .patch(`/employees/${empId}/personal-data`)
@@ -170,9 +170,16 @@ describe('Employee Rich Profile (e2e)', () => {
       }).expect(200);
       await send(hrToken, { bankName: 'Other Bank' }).expect(403);
       await send(adminToken, { panNumber: 'ZZZZZ9999Z' }).expect(403);
-      await send(hrToken, {
+      // The address is the one thing HR/Admin may correct on an employee's record.
+      const fixed = await send(hrToken, {
         currentAddress: '99 Elsewhere Road, Pune, Maharashtra 411001',
-      }).expect(403);
+      }).expect(200);
+      expect((fixed.body as PersonalDataBody).personalData.currentAddress).toBe(
+        '99 Elsewhere Road, Pune, Maharashtra 411001',
+      );
+      await send(adminToken, {
+        currentAddress: '12 Main Street, Mumbai, Maharashtra 400001',
+      }).expect(200);
       // Resending the stored values (an edit form resends its whole section) is fine, and so are other fields.
       await send(hrToken, {
         bankName: 'Test Bank',

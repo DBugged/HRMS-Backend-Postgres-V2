@@ -21,7 +21,10 @@ function build(
     isFinalSettlement: false,
     ...r,
   }));
-  const loans: Row[] = (w.loans ?? []).map((l) => ({ organizationId: 'org', ...l }));
+  const loans: Row[] = (w.loans ?? []).map((l) => ({
+    organizationId: 'org',
+    ...l,
+  }));
   const repayments: Row[] = (w.repayments ?? []).map((r) => ({
     organizationId: 'org',
     createdAt: new Date(),

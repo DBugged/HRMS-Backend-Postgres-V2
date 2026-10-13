@@ -647,8 +647,8 @@ export class AttendanceService {
   // derived in/out) and executeImportBatch (sheet-supplied in/out), so both
   // apply identical shift-config/holiday/leave/weekly-off logic. A day with
   // only one of inTime/outTime resolves to INCOMPLETE once that day's shift
-  // has ended (see hasDanglingPunchIn below) — before then, it's still
-  // treated like a single punch (zero-length span), same as always.
+  // has ended (see hasDanglingPunchIn below) — before then, the employee is
+  // simply at work: Present (in progress) with no duration yet, never Absent.
   private async deriveDayOutcome(
     db: Db,
     params: {
@@ -700,6 +700,8 @@ export class AttendanceService {
     let workDurationMinutes = 0;
     let isLate = false;
     let isEarlyOut = false;
+    // A real punch-in with the shift still running and no punch-out yet (see below).
+    let inProgress = false;
 
     if (inTime && outTime) {
       // A *real* punch-in with no punch-out (as opposed to no punches at
@@ -739,6 +741,16 @@ export class AttendanceService {
           shiftConfig.lateInThresholdMinutes * 60000;
         // workDurationMinutes/isEarlyOut stay at their safe defaults
         // (0/false) — never derived from a guessed punch-out.
+      } else if (hasDanglingPunchIn) {
+        // Punched in, shift not over, no punch-out yet: the employee is at work. Judging a zero-length span would
+        // call them Absent - and send the "Marked Absent" in-app notice and e-mail the moment they punch in. Shown
+        // as Present (in progress) with no duration until the punch-out arrives (or the shift ends and the day
+        // becomes Incomplete, above).
+        inProgress = true;
+        status = AttendanceStatus.PRESENT;
+        isLate =
+          inTime.getTime() - shiftStart.getTime() >
+          shiftConfig.lateInThresholdMinutes * 60000;
       } else {
         workDurationMinutes = Math.max(
           0,
@@ -789,7 +801,9 @@ export class AttendanceService {
     } else if (
       isWeeklyOff(dateStr, shiftConfig.weeklyOffs) &&
       (status === AttendanceStatus.ABSENT ||
-        status === AttendanceStatus.INCOMPLETE)
+        status === AttendanceStatus.INCOMPLETE ||
+        // A stray single punch on a day off, shift still running: still a day off, as before.
+        (inProgress && status === AttendanceStatus.PRESENT))
     ) {
       status = AttendanceStatus.WEEKLY_OFF;
     }

@@ -79,7 +79,8 @@ function withSignedFileUrl<T extends EmployeeDocument>(doc: T): T {
   };
 }
 
-// personalData fields only the employee may change (HR/Admin: view-only).
+// personalData fields only the employee may change (HR/Admin: view-only): bank details and government IDs. The
+// address is not one of them - HR and Admin may correct it on an employee's record (audited, and the employee is told).
 export const SELF_ONLY_PERSONAL_DATA_KEYS = [
   'bankAccountHolderName',
   'bankName',
@@ -92,7 +93,6 @@ export const SELF_ONLY_PERSONAL_DATA_KEYS = [
   'pfNumber',
   'esicNumber',
   'passportNumber',
-  'currentAddress',
 ] as const;
 
 @Injectable()
@@ -220,8 +220,8 @@ export class EmployeeProfileService {
       // The company, not the employee, decides what an employee's CTC is.
       delete patch.currentCTC;
     }
-    // Bank details, government IDs and the address are the employee's own to enter: HR/Admin see them but cannot
-    // change them on someone else's record. Values equal to what is stored are ignored (the edit forms resend a
+    // Bank details and government IDs are the employee's own to enter: HR/Admin see them but cannot change them on
+    // someone else's record. (The address is not in that list - HR/Admin may update it.) Values equal to what is stored are ignored (the edit forms resend a
     // whole section), so only an actual change is refused. Editing your own record is unaffected.
     if (actor.id !== id) {
       const same = (a: unknown, b: unknown) =>
@@ -231,7 +231,7 @@ export class EmployeeProfileService {
       );
       if (changed.length > 0) {
         throw new ForbiddenException(
-          "An employee's bank details, government IDs and address are view-only for HR and Admin - the employee updates them themselves.",
+          "An employee's bank details and government IDs are view-only for HR and Admin - the employee updates them themselves.",
         );
       }
     }
@@ -281,6 +281,31 @@ export class EmployeeProfileService {
       where: { id, organizationId },
       data: { personalData: merged as Prisma.InputJsonValue },
     });
+
+    // HR/Admin changing an employee's address: leave a trace (who, when - not the address itself) and tell the
+    // employee, so a correction made on their behalf is never silent.
+    const addressBefore = String(before.currentAddress ?? '').trim();
+    const addressAfter = String(merged.currentAddress ?? '').trim();
+    if (actor.id !== id && addressBefore !== addressAfter) {
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'EMPLOYEE_ADDRESS_UPDATED',
+        module: 'EMPLOYEE',
+        organizationId,
+        targetId: id,
+        details: { hadAddress: addressBefore !== '', byRole: actor.role },
+      });
+      await this.notificationsService
+        .create({
+          organizationId,
+          userId: id,
+          title: 'Address Updated',
+          message:
+            'Your address on file was updated by HR. Please review it in your profile and tell HR if anything is wrong.',
+          category: NotificationCategory.GENERAL,
+        })
+        .catch(() => undefined);
+    }
 
     // bankAccountNo/bankIFSC drive where Payroll actually sends this
     // employee's salary (see reports/payroll-reports.service.ts's bank

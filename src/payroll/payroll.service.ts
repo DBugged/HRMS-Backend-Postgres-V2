@@ -2863,6 +2863,30 @@ export class PayrollService {
     return { id };
   }
 
+  // Months whose regular payslip has been worked out but not yet finalised (locked), for the caller's own record -
+  // the employee cannot open these (see EMPLOYEE_VISIBLE_STATUSES), so the list carries only month and year: no
+  // amounts, no status detail. A DRAFT row has no figures yet and is not counted.
+  async pendingPayslipMonths(actor: Actor, organizationId: string) {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId: actor.id,
+        isFinalSettlement: false,
+        runSequence: 0,
+        status: {
+          in: [
+            PayrollRunStatus.CALCULATED,
+            PayrollRunStatus.VERIFIED,
+            PayrollRunStatus.APPROVED,
+          ],
+        },
+      },
+      select: { month: true, year: true },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    });
+    return { data: runs };
+  }
+
   async findAll(query: QueryPayrollDto, actor: Actor, organizationId: string) {
     const where: Prisma.PayrollRunWhereInput = {
       organizationId,
