@@ -2,6 +2,7 @@
 // Responsibilities: Verifies the token, then streams the file from whichever storage driver is configured.
 // Important: @Public() by necessity — <img>/<iframe> tags can't attach a Bearer header, so the HMAC token is the only credential.
 import { Controller, Get, NotFoundException, Param, Res } from '@nestjs/common';
+import { frameAncestorsPolicy } from './frame-ancestors';
 import type { Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -44,6 +45,8 @@ export class FileServeController {
     // frame-embedding protection isn't adding real protection here, only
     // breaking a legitimate same-app cross-origin embed.
     res.removeHeader('X-Frame-Options');
+    // ...and say outright who may frame it (wins over an X-Frame-Options a proxy in front of the API adds).
+    res.setHeader('Content-Security-Policy', frameAncestorsPolicy());
 
     if (fileStorageDriver() === 's3') {
       await this.serveFromS3(claim.relativeKey, res);
