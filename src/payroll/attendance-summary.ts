@@ -45,6 +45,9 @@ export interface OvertimeRowLike {
   // Fixed per record at log time from its type (see OvertimeService). A row
   // without one counts at 1x.
   rateMultiplier?: number;
+  // Set when a weekend/holiday record was compensated in whole days instead of hours (see OvertimeRecord).
+  compensationKey?: string | null;
+  payDays?: number;
 }
 
 export interface AttendanceSummary {
@@ -58,6 +61,9 @@ export interface AttendanceSummary {
   // Σ hours × rateMultiplier over the approved overtime — the OT_WEIGHTED_HOURS formula variable. rateMultiplier
   // was stored on every OvertimeRecord but never read, so holiday/weekend OT was paid at the regular rate.
   overtimeWeightedHours: number;
+  // Σ payDays over approved weekend/holiday records that were compensated in whole days (OT_DAY_PAY_DAYS). Those
+  // records are paid by the day, so they are left out of overtimeWeightedHours.
+  overtimeDayPayDays: number;
   lateMarks: number;
   holidayWorkDays: number;
   weekendWorkDays: number;
@@ -120,7 +126,11 @@ export function computeAttendanceSummary(
 
   const overtimeHours = overtimeRows.reduce((s, o) => s + o.hours, 0);
   const overtimeWeightedHours = overtimeRows.reduce(
-    (s, o) => s + o.hours * (o.rateMultiplier ?? 1),
+    (s, o) => (o.compensationKey ? s : s + o.hours * (o.rateMultiplier ?? 1)),
+    0,
+  );
+  const overtimeDayPayDays = overtimeRows.reduce(
+    (s, o) => s + (o.compensationKey ? (o.payDays ?? 0) : 0),
     0,
   );
   const holidayWorkDays = overtimeRows.filter(
@@ -172,6 +182,7 @@ export function computeAttendanceSummary(
     halfDays,
     overtimeHours,
     overtimeWeightedHours,
+    overtimeDayPayDays,
     lateMarks,
     holidayWorkDays,
     weekendWorkDays,

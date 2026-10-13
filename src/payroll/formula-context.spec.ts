@@ -25,6 +25,7 @@ function attendance(
     halfDays: 0,
     overtimeHours: 5,
     overtimeWeightedHours: 7.5,
+    overtimeDayPayDays: 0,
     lateMarks: 1,
     holidayWorkDays: 0,
     weekendWorkDays: 0,

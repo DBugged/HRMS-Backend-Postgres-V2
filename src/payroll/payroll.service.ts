@@ -4522,6 +4522,7 @@ export class PayrollService {
       LATE_MARKS: 0,
       OT_HOURS: 0,
       OT_WEIGHTED_HOURS: 0,
+      OT_DAY_PAY_DAYS: 0,
       HOLIDAY_WORK_DAYS: 0,
       WEEKEND_WORK_DAYS: 0,
     };

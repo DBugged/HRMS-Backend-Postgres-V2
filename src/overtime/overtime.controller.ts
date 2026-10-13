@@ -41,6 +41,12 @@ export class OvertimeController {
     return this.overtimeService.status(caller.organizationId);
   }
 
+  // No @Roles() — the weekend/holiday compensation options an approver can choose from, and the default.
+  @Get('compensation-options')
+  compensationOptions(@CurrentUser() caller: Caller) {
+    return this.overtimeService.compensationOptions(caller.organizationId);
+  }
+
   // No @Roles() — any authenticated caller can view (self-scoped for
   // EMPLOYEE, service-side).
   @Get()

@@ -233,6 +233,7 @@ export function buildBaseContext(
     HALF_DAYS: attendance.halfDays,
     OT_HOURS: attendance.overtimeHours,
     OT_WEIGHTED_HOURS: attendance.overtimeWeightedHours,
+    OT_DAY_PAY_DAYS: attendance.overtimeDayPayDays,
     LATE_MARKS: attendance.lateMarks,
     HOLIDAY_WORK_DAYS: attendance.holidayWorkDays,
     WEEKEND_WORK_DAYS: attendance.weekendWorkDays,

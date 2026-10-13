@@ -11,6 +11,7 @@ import {
 } from '../attendance/attendance-shift-config';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
+import { assertValidWorkCompensation } from '../overtime/work-compensation';
 
 // Read once per employee inside a payroll batch, rarely written — same
 // caching rationale as StatutoryConfigService.getEffective.
@@ -185,6 +186,11 @@ export class PayrollSettingsService {
     // sends the whole settings object on every save, so rather than reject a save that merely carries the unchanged
     // rates, any rate in the request is dropped and the stored values are kept for when it is turned back on.
     const effective: UpdatePayrollSettingsDto = { ...dto };
+    if (dto.workCompensation !== undefined) {
+      effective.workCompensation = assertValidWorkCompensation(
+        dto.workCompensation,
+      ) as unknown as Record<string, unknown>;
+    }
     if (!(await isOvertimePayEnabled(this.scopedPrisma, organizationId))) {
       delete effective.otRegularRate;
       delete effective.otHolidayRate;

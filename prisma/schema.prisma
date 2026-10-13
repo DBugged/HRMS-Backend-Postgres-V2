@@ -1457,6 +1457,11 @@ model PayrollSettings {
   otWeekendRate Float @default(2)
   otNightRate   Float @default(1.75)
 
+  // How weekend/holiday work is compensated: { defaultKey: string|null, options: [{ key, label, compOffDays, payDays }] }.
+  // Empty options = the built-in set (see overtime/work-compensation.ts). A null defaultKey keeps the hourly rate
+  // unless the reviewer picks an option when approving.
+  workCompensation Json @default("{}")
+
   // When on, variable (non-monthly) pay is also scaled by the company's
   // achievement % for the financial year (CompanyPerformance) and HELD until
   // HR/Admin enters it. Off by default so existing orgs pay as before.
@@ -2016,6 +2021,8 @@ enum OvertimeStatus {
 enum OvertimeSource {
   SELF
   AUTO_PUNCH
+  // Suggested from an Excel attendance import (the day was worked on a weekly off / holiday, or past shift end).
+  IMPORT
 }
 
 // One row per employee/day/overtime-entry — not unique-constrained on date,
@@ -2040,6 +2047,14 @@ model OvertimeRecord {
   approvedById String?
   approvedBy   User?          @relation("OvertimeApprovedBy", fields: [approvedById], references: [id])
   source       OvertimeSource @default(SELF)
+
+  // How a weekend/holiday record was compensated when it was approved (PayrollSettings.workCompensation option). Null =
+  // the hourly rate (hours x multiplier). Otherwise payDays whole days of pay go to payroll (OT_DAY_PAY_DAYS) and
+  // compOffDays days of comp-off were added to the leave balance (compOffId).
+  compensationKey String?
+  payDays         Float   @default(0)
+  compOffDays     Float   @default(0)
+  compOffId       String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

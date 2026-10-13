@@ -20,6 +20,7 @@ import {
 } from '@nestjs/common';
 import {
   AttendanceStatus,
+  CompOffStatus,
   NotificationCategory,
   OvertimeStatus,
   OvertimeType,
@@ -30,6 +31,10 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { LogOvertimeDto } from './dto/log-overtime.dto';
+import {
+  pickWorkCompensation,
+  resolveWorkCompensation,
+} from './work-compensation';
 import { overtimeDayProblem, type DayKind } from './overtime-day-rules';
 import {
   isWeeklyOff,
@@ -145,6 +150,23 @@ export class OvertimeService {
     }
 
     await this.assertDayAllowsOvertime(dto, type, actor, organizationId);
+
+    // One day, one benefit: weekend/holiday work already claimed as comp-off is not also logged as overtime.
+    if (type === OvertimeType.WEEKEND || type === OvertimeType.HOLIDAY) {
+      const claimedCompOff = await this.scopedPrisma.compOff.findFirst({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          earnedForDate: dto.date,
+          status: { not: CompOffStatus.REJECTED },
+        },
+      });
+      if (claimedCompOff) {
+        throw new ConflictException(
+          `A comp-off was already claimed for ${formatDateDisplay(dto.date)}. The same work cannot also be logged as overtime.`,
+        );
+      }
+    }
 
     // One overtime record per employee/day, regardless of source — without
     // this, a manual log here and AttendanceService's own auto-suggestion
@@ -265,6 +287,15 @@ export class OvertimeService {
     if (problem) throw new BadRequestException(problem);
   }
 
+  // The compensation options for weekend/holiday work and which one is the default.
+  async compensationOptions(organizationId: string) {
+    const settings = await this.scopedPrisma.payrollSettings.findFirst({
+      where: { organizationId },
+      select: { workCompensation: true },
+    });
+    return resolveWorkCompensation(settings?.workCompensation);
+  }
+
   // Current multipliers for each overtime type, so the log form can show
   // them (e.g. "Holiday (2x)") instead of hardcoding them client-side.
   getRates(organizationId: string) {
@@ -375,13 +406,100 @@ export class OvertimeService {
       'overtime',
     );
 
+    // Weekend/holiday work can be compensated in comp-off and/or whole days of pay instead of hours x multiplier. The
+    // approver's choice (or the organisation's default) is stored on the record; payroll and the comp-off balance
+    // follow from it. Ordinary-day overtime stays on the hourly rate.
+    const isOffDayWork =
+      record.type === OvertimeType.WEEKEND ||
+      record.type === OvertimeType.HOLIDAY;
+    if (dto.status === OvertimeStatus.REJECTED && dto.compensationKey) {
+      throw new BadRequestException(
+        'A compensation option can only be chosen when approving.',
+      );
+    }
+    if (dto.compensationKey && !isOffDayWork) {
+      throw new BadRequestException(
+        'Compensation options apply only to weekend and holiday work.',
+      );
+    }
+    const option =
+      dto.status === OvertimeStatus.APPROVED && isOffDayWork
+        ? pickWorkCompensation(
+            await this.compensationOptions(organizationId),
+            dto.compensationKey,
+          )
+        : null;
+
+    // One day, one benefit: a comp-off already claimed for the same day (or granted by an approved record) stops a
+    // second reward for the same work.
+    if (dto.status === OvertimeStatus.APPROVED && isOffDayWork) {
+      const claimed = await this.scopedPrisma.compOff.findFirst({
+        where: {
+          organizationId,
+          employeeId: record.employeeId,
+          earnedForDate: record.date,
+          status: { not: CompOffStatus.REJECTED },
+        },
+      });
+      if (claimed) {
+        throw new ConflictException(
+          'A comp-off was already claimed for this day. Reject one of the two, so the same work is not rewarded twice.',
+        );
+      }
+    }
+
     // Guarded compare-and-swap — see LoansService.approve()'s comment for
-    // the general reasoning.
-    const { count } = await this.scopedPrisma.overtimeRecord.updateMany({
-      where: { id, organizationId, status: OvertimeStatus.PENDING },
-      data: { status: dto.status, approvedById: actor.id },
+    // the general reasoning. The comp-off (when the option grants one) is created in the same transaction.
+    const settings =
+      option && option.compOffDays > 0
+        ? await this.scopedPrisma.payrollSettings.findFirst({
+            where: { organizationId },
+            select: { compOffExpiryDays: true },
+          })
+        : null;
+    const reviewed = await this.scopedPrisma.$transaction(async (tx) => {
+      const { count } = await tx.overtimeRecord.updateMany({
+        where: { id, organizationId, status: OvertimeStatus.PENDING },
+        data: {
+          status: dto.status,
+          approvedById: actor.id,
+          ...(option && {
+            compensationKey: option.key,
+            payDays: option.payDays,
+            compOffDays: option.compOffDays,
+          }),
+        },
+      });
+      if (count === 0) return false;
+      if (option && option.compOffDays > 0) {
+        let expiryDate: string | null = null;
+        const expiryDays = settings?.compOffExpiryDays ?? 90;
+        if (expiryDays > 0) {
+          const expiry = new Date(`${record.date}T00:00:00.000Z`);
+          expiry.setUTCDate(expiry.getUTCDate() + expiryDays);
+          expiryDate = expiry.toISOString().slice(0, 10);
+        }
+        const compOff = await tx.compOff.create({
+          data: {
+            organizationId,
+            employeeId: record.employeeId,
+            earnedForDate: record.date,
+            reason: `Weekend/holiday work (overtime approved): ${option.label}`,
+            daysEarned: option.compOffDays,
+            expiryDate,
+            status: CompOffStatus.APPROVED,
+            approvedById: actor.id,
+            approvedAt: new Date(),
+          },
+        });
+        await tx.overtimeRecord.updateMany({
+          where: { id, organizationId },
+          data: { compOffId: compOff.id },
+        });
+      }
+      return true;
     });
-    if (count === 0) {
+    if (!reviewed) {
       throw new ConflictException('This overtime record was already reviewed.');
     }
 
@@ -404,7 +522,15 @@ export class OvertimeService {
       module: 'ATTENDANCE',
       organizationId,
       targetId: id,
-      details: { employeeId: record.employeeId, status: dto.status },
+      details: {
+        employeeId: record.employeeId,
+        status: dto.status,
+        ...(option && {
+          compensation: option.key,
+          compOffDays: option.compOffDays,
+          payDays: option.payDays,
+        }),
+      },
     });
     await this.timelineService.logEvent({
       organizationId,

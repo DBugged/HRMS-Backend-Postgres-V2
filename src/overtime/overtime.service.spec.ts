@@ -21,6 +21,8 @@ function build(
     records?: Row[];
     runs?: Row[];
     rates?: Row | null;
+    compOffClaimed?: boolean;
+    workCompensation?: Row;
   } = {},
 ) {
   const records: Row[] = (opts.records ?? []).map((r) => ({
@@ -29,6 +31,7 @@ function build(
   }));
   const runs: Row[] = (opts.runs ?? []).map((r) => ({ ...r }));
   const audit: Row[] = [];
+  const compOffs: Row[] = [];
   const notes: Row[] = [];
   const match = (r: Row, w: Row = {}) =>
     Object.entries(w).every(([k, v]) => {
@@ -53,6 +56,8 @@ function build(
               otHolidayRate: 2.5,
               otWeekendRate: 2,
               otNightRate: 1.75,
+              compOffExpiryDays: 90,
+              workCompensation: opts.workCompensation ?? {},
               ...opts.rates,
             },
     },
@@ -64,6 +69,14 @@ function build(
       }),
     },
     holiday: { findFirst: async () => null },
+    compOff: {
+      findFirst: async () => (opts.compOffClaimed ? { id: 'co0' } : null),
+      create: async (a: Row) => {
+        const row = { id: `co${compOffs.length + 1}`, ...a.data };
+        compOffs.push(row);
+        return row;
+      },
+    },
     user: {
       findFirst: async () => ({
         id: 'e1',
@@ -106,6 +119,7 @@ function build(
       },
     },
   };
+  prisma.$transaction = async (fn: (tx: Row) => unknown) => fn(prisma);
   const stub = <T>(x: T) => x as never;
   const service = new OvertimeService(
     stub(prisma),
@@ -122,7 +136,7 @@ function build(
     stub({ logEvent: async () => undefined }),
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
   );
-  return { service, records, runs, audit, notes, prisma };
+  return { service, records, runs, audit, notes, prisma, compOffs };
 }
 
 const emp = {
@@ -304,6 +318,124 @@ describe('overtime: review', () => {
     });
     await service.review('ot1', { status: 'APPROVED' } as never, hr, 'org');
     expect(runs.map((r) => r.status)).toEqual(['CALCULATED', 'CALCULATED']);
+  });
+
+  describe('weekend/holiday compensation', () => {
+    const weekend = () => pending({ type: 'WEEKEND', date: '2026-10-11' });
+
+    it('stays on the hourly rate when no option is chosen and no default is set', async () => {
+      const { service, records, compOffs } = build({ records: [weekend()] });
+      await service.review('ot1', { status: 'APPROVED' } as never, hr, 'org');
+      expect(records[0].compensationKey).toBeUndefined();
+      expect(compOffs).toHaveLength(0);
+    });
+
+    it('2 days pay: stores the pay days, no comp-off', async () => {
+      const { service, records, compOffs } = build({ records: [weekend()] });
+      await service.review(
+        'ot1',
+        { status: 'APPROVED', compensationKey: 'PAY_2' } as never,
+        hr,
+        'org',
+      );
+      expect(records[0]).toMatchObject({
+        compensationKey: 'PAY_2',
+        payDays: 2,
+        compOffDays: 0,
+      });
+      expect(compOffs).toHaveLength(0);
+    });
+
+    it('comp-off + 1 day pay: stores both and adds an approved comp-off with an expiry', async () => {
+      const { service, records, compOffs } = build({ records: [weekend()] });
+      await service.review(
+        'ot1',
+        { status: 'APPROVED', compensationKey: 'COMP_OFF_PAY_1' } as never,
+        hr,
+        'org',
+      );
+      expect(records[0]).toMatchObject({
+        payDays: 1,
+        compOffDays: 1,
+        compOffId: 'co1',
+      });
+      expect(compOffs[0]).toMatchObject({
+        employeeId: 'e1',
+        earnedForDate: '2026-10-11',
+        daysEarned: 1,
+        status: 'APPROVED',
+        expiryDate: '2027-01-09',
+      });
+    });
+
+    it('uses the organisation default when the approver picks nothing', async () => {
+      const { service, records } = build({
+        records: [weekend()],
+        workCompensation: { defaultKey: 'PAY_1' },
+      });
+      await service.review('ot1', { status: 'APPROVED' } as never, hr, 'org');
+      expect(records[0]).toMatchObject({
+        compensationKey: 'PAY_1',
+        payDays: 1,
+      });
+    });
+
+    it('refuses an unknown option, an option on ordinary overtime, and an option on a rejection', async () => {
+      const a = build({ records: [weekend()] });
+      await expect(
+        a.service.review(
+          'ot1',
+          { status: 'APPROVED', compensationKey: 'NOPE' } as never,
+          hr,
+          'org',
+        ),
+      ).rejects.toThrow(/not available/);
+      const b = build({ records: [pending({ type: 'REGULAR' })] });
+      await expect(
+        b.service.review(
+          'ot1',
+          { status: 'APPROVED', compensationKey: 'PAY_1' } as never,
+          hr,
+          'org',
+        ),
+      ).rejects.toThrow(/only to weekend and holiday/);
+      const c = build({ records: [weekend()] });
+      await expect(
+        c.service.review(
+          'ot1',
+          { status: 'REJECTED', compensationKey: 'PAY_1' } as never,
+          hr,
+          'org',
+        ),
+      ).rejects.toThrow(/only be chosen when approving/);
+    });
+
+    it('will not approve a day that already has a comp-off claim', async () => {
+      const { service, records } = build({
+        records: [weekend()],
+        compOffClaimed: true,
+      });
+      await expect(
+        service.review(
+          'ot1',
+          { status: 'APPROVED', compensationKey: 'PAY_1' } as never,
+          hr,
+          'org',
+        ),
+      ).rejects.toThrow(/comp-off was already claimed/);
+      expect(records[0].status).toBe('PENDING');
+    });
+
+    it('logging weekend overtime is refused when the day already has a comp-off claim', async () => {
+      const { service } = build({ compOffClaimed: true });
+      await expect(
+        service.log(
+          { date: '2026-10-11', hours: 2, type: 'WEEKEND' } as never,
+          emp,
+          'org',
+        ),
+      ).rejects.toThrow(/comp-off was already claimed/);
+    });
   });
 
   it('rejecting leaves payroll alone', async () => {

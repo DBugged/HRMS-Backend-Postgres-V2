@@ -45,6 +45,8 @@ export const SYSTEM_VARS = [
   // Approved overtime hours weighted by each record's rateMultiplier (1.5x
   // regular, 2x holiday/weekend, ...) — see computeAttendanceSummary.
   'OT_WEIGHTED_HOURS',
+  // Days of pay granted for weekend/holiday work compensated in whole days (1 day, 2 days ...) - overtime approval.
+  'OT_DAY_PAY_DAYS',
   'LATE_MARKS',
   'HOLIDAY_WORK_DAYS',
   'WEEKEND_WORK_DAYS',

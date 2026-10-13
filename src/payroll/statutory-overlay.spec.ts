@@ -39,6 +39,7 @@ function baseSettings(
     otHolidayRate: 2,
     otWeekendRate: 2,
     otNightRate: 1.75,
+    workCompensation: {},
     companyPerformanceEnabled: false,
     taxDeclarationRequiresVerification: false,
     higherTdsWithoutPan: false,

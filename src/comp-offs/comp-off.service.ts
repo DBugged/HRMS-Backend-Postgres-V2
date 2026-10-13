@@ -180,6 +180,22 @@ export class CompOffService {
       );
     }
 
+    // One day, one benefit: work already logged as overtime (waiting, or approved - possibly compensated with its own
+    // comp-off) is not also claimed as comp-off. A rejected overtime record does not block it.
+    const overtimeForDay = await this.scopedPrisma.overtimeRecord.findFirst({
+      where: {
+        organizationId,
+        employeeId: targetEmployeeId,
+        date: dto.earnedForDate,
+        status: { not: 'REJECTED' },
+      },
+    });
+    if (overtimeForDay) {
+      throw new ConflictException(
+        'This day is already logged as overtime. Overtime and comp-off cannot both be claimed for the same day; the approver chooses how to compensate it.',
+      );
+    }
+
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
     // Valid for the org's compOffExpiryDays after the date it was earned for; 0 means it never expires.

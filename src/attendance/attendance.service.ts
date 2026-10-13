@@ -29,6 +29,7 @@ import {
   AttendanceImportBatch,
   AttendanceSource,
   AttendanceStatus,
+  CompOffStatus,
   Holiday,
   ImportBatchStatus,
   Leave,
@@ -936,6 +937,7 @@ export class AttendanceService {
     outTime: Date | null,
     shiftConfig: ShiftConfig,
     workDurationMinutes: number,
+    source: OvertimeSource = OvertimeSource.AUTO_PUNCH,
   ): Promise<void> {
     if (!outTime) return;
     // Overtime Pay is off: overtime could never be paid, so don't suggest any (existing suggestions are left as they
@@ -963,6 +965,19 @@ export class AttendanceService {
       ? Math.max(0, workDurationMinutes - (shiftConfig.breakMinutes ?? 0))
       : Math.round((outTime.getTime() - shiftEnd.getTime()) / 60000);
 
+    // One day, one benefit: work already claimed as comp-off is not also suggested as overtime.
+    if (isOffDay) {
+      const claimedCompOff = await db.compOff.findFirst({
+        where: {
+          organizationId,
+          employeeId,
+          earnedForDate: dateStr,
+          status: { not: CompOffStatus.REJECTED },
+        },
+      });
+      if (claimedCompOff) return;
+    }
+
     // Looked up WITHOUT filtering by source: OvertimeRecord now has a
     // (organizationId, employeeId, date) unique constraint (one overtime
     // record per employee/day, any source — see its schema comment), so a
@@ -972,7 +987,7 @@ export class AttendanceService {
       where: { organizationId, employeeId, date: dateStr },
     });
     const existingAuto =
-      existing?.source === OvertimeSource.AUTO_PUNCH ? existing : null;
+      existing && existing.source !== OvertimeSource.SELF ? existing : null;
 
     if (overshootMinutes < AttendanceService.AUTO_OVERTIME_MIN_MINUTES) {
       // A correction (e.g. a regularization) can shrink a day's punch span
@@ -1017,7 +1032,7 @@ export class AttendanceService {
           hours,
           type,
           rateMultiplier,
-          source: OvertimeSource.AUTO_PUNCH,
+          source,
         },
       });
     }
@@ -3660,6 +3675,24 @@ export class AttendanceService {
           // would have — otherwise it would falsely see "no existing row"
           // from the batched pre-fetch and create a duplicate.
           existingByKey.set(`${empId}:${date}`, createdRow);
+        }
+        // Work on a weekly off / holiday (or past the shift end) in the imported sheet becomes a pending overtime
+        // request, exactly as a live punch would - the approver then decides how it is compensated. Never lets a
+        // failure here fail the row: the attendance itself is already saved.
+        try {
+          await this.suggestOvertimeFromPunchOut(
+            this.scopedPrisma,
+            organizationId,
+            empId,
+            date,
+            outcome.status,
+            outTime,
+            shiftConfig,
+            outcome.workDurationMinutes,
+            OvertimeSource.IMPORT,
+          );
+        } catch {
+          // best effort
         }
         imported += 1;
       } catch (err) {

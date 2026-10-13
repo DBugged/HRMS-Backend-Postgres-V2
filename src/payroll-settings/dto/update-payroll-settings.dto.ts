@@ -5,6 +5,7 @@ import {
   IsIn,
   IsInt,
   IsNumber,
+  IsObject,
   IsOptional,
   Max,
   Min,
@@ -178,6 +179,13 @@ export class UpdatePayrollSettingsDto {
   @Min(1)
   @Max(10)
   otNightRate?: number;
+
+  // How weekend/holiday work is compensated - { defaultKey, options: [{ key, label, compOffDays, payDays }] }.
+  // Validated in PayrollSettingsService.update (overtime/work-compensation.ts).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsObject()
+  workCompensation?: Record<string, unknown>;
 
   // Scale variable pay by the company's achievement % and hold it until that
   // % is entered (Payroll Settings > Company Performance).

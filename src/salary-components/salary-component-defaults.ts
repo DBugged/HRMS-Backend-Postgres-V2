@@ -98,7 +98,9 @@ export const SALARY_COMPONENT_DEFAULTS: SalaryComponentDefault[] = [
     // OT_WEIGHTED_HOURS = Σ approved hours × the record's rateMultiplier (1.5x regular, 2x holiday/weekend,
     // 1.75x night). Hourly rate = full-month Basic (BASIC_RATE, not the part-month figure) / (26 days x 8 hours = 208), the Minimum Wages convention. The old default used the raw OT_HOURS, so every OT hour was paid at 1x. Existing orgs still
     // on the old default text are migrated by 20260924030000_payroll_correctness_fixes.
-    formula: 'ROUND(OT_WEIGHTED_HOURS * (BASIC_RATE / 208), 0)',
+    // + OT_DAY_PAY_DAYS x (full-month Basic / 30): weekend/holiday work compensated in whole days of pay.
+    formula:
+      'ROUND(OT_WEIGHTED_HOURS * (BASIC_RATE / 208) + OT_DAY_PAY_DAYS * (BASIC_RATE / 30), 0)',
     displayOrder: 9,
   },
   {

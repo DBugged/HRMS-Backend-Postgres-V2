@@ -119,6 +119,35 @@ describe('computeAttendanceSummary — weighted overtime', () => {
     );
     expect(result.overtimeWeightedHours).toBe(3);
   });
+
+  it('weekend work compensated in days is paid by the day, not by the hour', () => {
+    const result = computeAttendanceSummary(
+      [],
+      [],
+      [
+        { hours: 2, type: OvertimeType.REGULAR, rateMultiplier: 1.5 },
+        {
+          hours: 8,
+          type: OvertimeType.WEEKEND,
+          rateMultiplier: 2,
+          compensationKey: 'COMP_OFF_PAY_2',
+          payDays: 2,
+        },
+        {
+          hours: 8,
+          type: OvertimeType.HOLIDAY,
+          rateMultiplier: 2,
+          compensationKey: 'PAY_1',
+          payDays: 1,
+        },
+      ],
+      4,
+      2026,
+    );
+    expect(result.overtimeHours).toBe(18);
+    expect(result.overtimeWeightedHours).toBe(3); // only the hourly record
+    expect(result.overtimeDayPayDays).toBe(3);
+  });
 });
 
 describe('payableDaysInRange', () => {
