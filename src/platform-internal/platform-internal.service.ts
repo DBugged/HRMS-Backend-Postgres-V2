@@ -66,7 +66,7 @@ export class PlatformInternalService {
           actorId: founder.id,
           actorRole: 'PLATFORM',
           action: 'PLATFORM_ORG_STATUS_CHANGED',
-          module: 'EMPLOYEE',
+          module: 'ORGANIZATION',
           details: {
             source: 'platform_s2s',
             from: org.platformStatus,
