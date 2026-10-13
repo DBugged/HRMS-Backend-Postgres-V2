@@ -2,6 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from '../../common/interfaces/jwt-payload.interface';
+import { ORG_SUSPENDED_MESSAGE } from '../../common/org-status';
 import { UsersService } from '../../users/users.service';
 
 /**
@@ -35,6 +36,10 @@ export class JwtAccessStrategy extends PassportStrategy(
     );
     if (!user || !user.isActive) {
       throw new UnauthorizedException('Session is no longer valid.');
+    }
+    // A suspended or archived organisation's sessions stop working at once, not at token expiry.
+    if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
+      throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
     }
     // A password change or reset ends every older session at once: an access token signed before it is refused
     // (compared in whole seconds, the resolution of the token's own issue time).

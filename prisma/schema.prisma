@@ -57,6 +57,9 @@ model Organization {
   name      String
   timezone  String   @default("Asia/Kolkata")
   isActive  Boolean  @default(true)
+  // The platform (Control Center) status: ACTIVE | PENDING | SUSPENDED | ARCHIVED. isActive is what the app enforces and
+  // is false for SUSPENDED and ARCHIVED - nobody in the organisation can sign in or use a session while it is.
+  platformStatus String @default("ACTIVE")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

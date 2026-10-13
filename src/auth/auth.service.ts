@@ -17,6 +17,7 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
+import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { ResendVerificationDto, VerifyEmailDto } from './dto/verify-email.dto';
 import { escapeHtml } from '../email-templates/email-layout';
 import { JwtService } from '@nestjs/jwt';
@@ -374,6 +375,10 @@ export class AuthService {
     if (!stillUnlocked) {
       throw new UnauthorizedException('Invalid email or password.');
     }
+    // Only someone who proved the password learns the organisation is switched off.
+    if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
+      throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
+    }
     // Only someone who proved the password learns that the address is still unconfirmed.
     if (!user.emailVerified) {
       throw new UnauthorizedException(
@@ -459,6 +464,10 @@ export class AuthService {
     // around the issuance, so concurrent refreshes with one token each
     // minted their own new pair. Of N concurrent requests exactly one now
     // sees count === 1; the rest 401 without issuing anything.
+    if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
+      throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
+    }
+
     const rawRefreshToken = generateRefreshToken();
     const { count } = await this.scopedPrisma.refreshToken.updateMany({
       where: {

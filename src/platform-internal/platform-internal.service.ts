@@ -1,5 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { forgetOrganizationStatus } from '../common/org-status';
 
 /**
  * Backs the /internal/* S2S surface the HRMS Control Center calls. Uses the
@@ -28,7 +29,7 @@ export class PlatformInternalService {
     return {
       id: org.id,
       name: org.name,
-      status: org.isActive ? 'ACTIVE' : 'SUSPENDED',
+      status: org.platformStatus,
       isActive: org.isActive,
       isInitialized: org.isInitialized,
       employeeCount: org._count.users,
@@ -39,16 +40,44 @@ export class PlatformInternalService {
   async setOrgStatus(id: string, status: string, reason: string) {
     const org = await this.prisma.organization.findUnique({ where: { id } });
     if (!org) throw new NotFoundException({ code: 'ORG_NOT_FOUND' });
-    const isActive = status !== 'SUSPENDED';
+    // SUSPENDED and ARCHIVED switch the organisation off; ACTIVE and PENDING leave it usable. (Before, only
+    // SUSPENDED did - ARCHIVED silently re-activated the organisation - and nothing in the app read the flag.)
+    const isActive = status === 'ACTIVE' || status === 'PENDING';
     await this.prisma.organization.update({
       where: { id },
-      data: { isActive },
+      data: { isActive, platformStatus: status },
     });
-    // No column exists (or should exist here) to persist a Super Admin's
-    // suspend reason — that's the Control Center's own record to keep, on
-    // its own Organization row. Logged here only for local traceability.
+    forgetOrganizationStatus(id);
+    // Recorded in the organisation's own audit log, attributed to its founder account with the actor role
+    // PLATFORM - the audit table needs a user, and the role marks it as a platform action, not theirs.
+    const founder =
+      (await this.prisma.user.findFirst({
+        where: { organizationId: id, isFounder: true },
+        select: { id: true },
+      })) ??
+      (await this.prisma.user.findFirst({
+        where: { organizationId: id, role: 'ADMIN' },
+        select: { id: true },
+      }));
+    if (founder) {
+      await this.prisma.auditLog.create({
+        data: {
+          organizationId: id,
+          actorId: founder.id,
+          actorRole: 'PLATFORM',
+          action: 'PLATFORM_ORG_STATUS_CHANGED',
+          module: 'EMPLOYEE',
+          details: {
+            source: 'platform_s2s',
+            from: org.platformStatus,
+            to: status,
+            reason,
+          },
+        },
+      });
+    }
     this.logger.log(
-      `Platform status change: org=${id} isActive=${isActive} reason="${reason}"`,
+      `Platform status change: org=${id} status=${status} isActive=${isActive} reason="${reason}"`,
     );
   }
 
