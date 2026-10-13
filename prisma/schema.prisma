@@ -2574,6 +2574,8 @@ model Settlement {
   loanBalanceRecovered   Float @default(0)
   noticePeriodRecovery   Float @default(0)
   gratuityAmount         Float @default(0)
+  // The part of gratuityAmount above its s.10(10) tax exemption - taxed with the final pay (0 when fully exempt).
+  gratuityTaxableAmount  Float @default(0)
   // APPROVED-but-unpaid reimbursement claims settled with the final payout (marked PAID by process()).
   reimbursementAmount    Float @default(0)
   netSettlementAmount    Float @default(0)

@@ -77,6 +77,11 @@ import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { dailyRateFromMonthly } from '../payroll/payroll-date-math';
 import {
   calculateGratuity,
+  calculateHalfMonthGratuity,
+  GRATUITY_COVERAGE_HEADCOUNT,
+  gratuityTaxExemption,
+  type GratuityCoverage,
+  type GratuityPayoutFormula,
   calendarYearsOfService,
   finalWagesStatus,
   gratuityPayoutStatus,
@@ -443,8 +448,21 @@ export class SettlementsService {
         );
       }
     };
+    // Gratuity: the amount (by the company's coverage / formula setting) and the part of it that is exempt from tax by
+    // law - only the excess is taxed with the final pay.
+    const gratuity = await this.computeGratuity({
+      dto,
+      employee,
+      organizationId,
+      basicMonthly,
+      daMonthly,
+      serviceYears,
+    });
     const taxableBase =
-      leaveEncashmentAmount - leaveEncashmentExempt + noticePayAmount;
+      leaveEncashmentAmount -
+      leaveEncashmentExempt +
+      noticePayAmount +
+      gratuity.taxable;
     // HR's own bonus figure (0 included) wins; otherwise the statutory bonus due on exit is worked out below.
     let bonusResolved = dto.bonusAmount ?? 0;
     let calc = await calculateExitMonth(taxableBase + bonusResolved);
@@ -549,58 +567,7 @@ export class SettlementsService {
             })),
           };
 
-    // Same source of truth as monthly payroll (applyStatutoryOverrides): the GRATUITY statutory version in
-    // force on the last working day decides, and only an org with no version for that date falls back to the
-    // legacy payroll-settings flag. Reading only the legacy flag made gratuity 0 for every org that switched it
-    // on under Statutory Compliance.
-    const settings =
-      await this.payrollSettingsService.getOrCreate(organizationId);
-    const { version: gratuityVersion } =
-      await this.statutoryConfigService.getEffective(
-        StatutoryModule.GRATUITY,
-        dto.lastWorkingDay.slice(0, 10),
-        organizationId,
-      );
-    const gratuityEnabled = gratuityVersion
-      ? gratuityVersion.isEnabled
-      : settings.gratuityEnabled;
-    let gratuityAmount = 0;
-    if (gratuityEnabled) {
-      // Service is counted in calendar terms up to and including the last working day, so exactly five years
-      // (joined 2020-10-07, left 2025-10-06 or later) is five years, not 4.9993 of a 365.25-day year.
-      const yearsOfService = serviceYears;
-      // Gratuity is on Basic + Dearness Allowance (the wages used by monthly accrual), not Basic alone.
-      let gratuityWages = basicMonthly + daMonthly;
-      // Where the organization has switched the Labour Codes' wages rule on for gratuity, wages are at least 50% of
-      // total remuneration - taken from the employee's latest full regular payslip.
-      const wagesRule =
-        (
-          gratuityVersion?.config as
-            { applyFiftyPercentRule?: boolean } | undefined
-        )?.applyFiftyPercentRule === true;
-      if (wagesRule) {
-        const latest = await this.scopedPrisma.payrollRun.findFirst({
-          where: {
-            organizationId,
-            employeeId: dto.employeeId,
-            isFinalSettlement: false,
-            runSequence: 0,
-          },
-          orderBy: [{ year: 'desc' }, { month: 'desc' }],
-          select: { grossSalary: true },
-        });
-        gratuityWages = Math.max(
-          gratuityWages,
-          (latest?.grossSalary ?? 0) * 0.5,
-        );
-      }
-      // Completed years (part-year over six months rounds up) and the
-      // 20-lakh statutory ceiling — see gratuity-math.ts.
-      gratuityAmount = calculateGratuity(gratuityWages, yearsOfService, {
-        fixedTerm: isFixedTermEmployeeType(employee.employeeType),
-        exemptFromMinimumService: dto.deathOrDisablement === true,
-      });
-    }
+    const gratuityAmount = gratuity.amount;
 
     const reimbursementAmount = await this.sumApprovedReimbursements(
       this.scopedPrisma,
@@ -666,6 +633,12 @@ export class SettlementsService {
         `Statutory bonus of ${bonusAmount} was added (due ${statutoryBonusDue} for the year, ${statutoryBonusPaid} already paid). Confirm the bonus rate with your CA; mark the settlement as disqualified if the employee was dismissed for misconduct.`,
       );
     }
+    if (gratuity.warning) warnings.push(gratuity.warning);
+    if (gratuity.taxable > 0) {
+      warnings.push(
+        `Gratuity of ${gratuityAmount} is above its tax-exempt limit by ${gratuity.taxable}: that part is taxed with the final pay.`,
+      );
+    }
     if (loanBalanceUnrecovered > 0)
       warnings.push(
         `Loan balance of ${loanBalanceUnrecovered} could not be recovered from this payout and stays open.`,
@@ -709,6 +682,7 @@ export class SettlementsService {
         recoveriesAmount > 0 ? dto.recoveriesReason?.trim() : null,
       loanBalanceUnrecovered,
       gratuityAmount,
+      gratuityTaxableAmount: gratuity.taxable,
       reimbursementAmount,
       netSettlementAmount,
       calculatedById: actor.id,
@@ -794,6 +768,131 @@ export class SettlementsService {
       performedById: actor.id,
     });
     return { ...this.withGratuityPayout(created), pendingSalaryNote, warnings };
+  }
+
+  // Gratuity for the exit. The GRATUITY statutory version in force on the last working day decides whether it is
+  // paid at all (an org with no version falls back to the legacy payroll-settings flag - same source of truth as
+  // monthly payroll), by which coverage / formula, and with which minimum service. What is exempt from tax is then
+  // worked out by law from the coverage - not from the formula the company chose to pay by.
+  private async computeGratuity(args: {
+    dto: CalculateSettlementDto;
+    employee: { joiningDate: Date; employeeType: string | null };
+    organizationId: string;
+    basicMonthly: number;
+    daMonthly: number;
+    serviceYears: number;
+  }): Promise<{
+    amount: number;
+    exempt: number;
+    taxable: number;
+    warning: string | null;
+  }> {
+    const none = { amount: 0, exempt: 0, taxable: 0, warning: null };
+    const { dto, employee, organizationId, basicMonthly, daMonthly } = args;
+    const settings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const { version } = await this.statutoryConfigService.getEffective(
+      StatutoryModule.GRATUITY,
+      dto.lastWorkingDay.slice(0, 10),
+      organizationId,
+    );
+    const enabled = version ? version.isEnabled : settings.gratuityEnabled;
+    if (!enabled) return none;
+
+    const cfg = (version?.config ?? {}) as {
+      applyFiftyPercentRule?: boolean;
+      coverage?: GratuityCoverage;
+      payoutFormula?: GratuityPayoutFormula;
+      minimumServiceYears?: number;
+    };
+    const coverage: GratuityCoverage =
+      cfg.coverage === 'NOT_COVERED' ? 'NOT_COVERED' : 'COVERED';
+    // A covered employer is held to the Act's formula and minimum however the config reads.
+    const formula: GratuityPayoutFormula =
+      coverage === 'COVERED' ? 'ACT' : (cfg.payoutFormula ?? 'HALF_MONTH');
+    const minYears =
+      coverage === 'COVERED' ? undefined : (cfg.minimumServiceYears ?? 5);
+
+    // Last drawn Basic + Dearness Allowance (the wages used by monthly accrual), not Basic alone; where the Labour
+    // Codes' 50% wages rule is on, at least half of the latest full regular payslip's gross.
+    let lastDrawn = basicMonthly + daMonthly;
+    if (cfg.applyFiftyPercentRule === true) {
+      const latest = await this.scopedPrisma.payrollRun.findFirst({
+        where: {
+          organizationId,
+          employeeId: dto.employeeId,
+          isFinalSettlement: false,
+          runSequence: 0,
+        },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        select: { grossSalary: true },
+      });
+      lastDrawn = Math.max(lastDrawn, (latest?.grossSalary ?? 0) * 0.5);
+    }
+    // Average Basic + DA of the last ten months - the wages a non-covered employer's exemption is figured on.
+    let averageWages = basicMonthly + daMonthly;
+    if (coverage === 'NOT_COVERED') {
+      const recent = await this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          employeeId: dto.employeeId,
+          isFinalSettlement: false,
+          runSequence: 0,
+          status: { in: SETTLED_REGULAR_RUN_STATUSES },
+        },
+        orderBy: [{ year: 'desc' }, { month: 'desc' }],
+        take: 10,
+        select: { earnings: true },
+      });
+      const figures = recent
+        .map((r) =>
+          bonusMonthFromRun({
+            ...r,
+            month: 0,
+            year: 0,
+            attendanceSummary: null,
+          }),
+        )
+        .map((m) => m.basicDaEarned)
+        .filter((v) => v > 0);
+      if (figures.length > 0)
+        averageWages = figures.reduce((a, b) => a + b, 0) / figures.length;
+    }
+
+    const exemptFromMinimumService = dto.deathOrDisablement === true;
+    const amount =
+      formula === 'HALF_MONTH'
+        ? calculateHalfMonthGratuity(averageWages, args.serviceYears, {
+            minYears,
+            exemptFromMinimumService,
+          })
+        : calculateGratuity(lastDrawn, args.serviceYears, {
+            fixedTerm:
+              coverage === 'COVERED' &&
+              isFixedTermEmployeeType(employee.employeeType),
+            exemptFromMinimumService,
+            minYears,
+          });
+    const exempt = gratuityTaxExemption({
+      coverage,
+      paid: amount,
+      lastDrawnWages: lastDrawn,
+      averageWages,
+      yearsOfService: args.serviceYears,
+    });
+
+    // A non-covered setting on an establishment with ten or more people is probably wrong: the Act's formula and
+    // minimum are then a legal floor, not a choice.
+    let warning: string | null = null;
+    if (coverage === 'NOT_COVERED') {
+      const headcount = await this.scopedPrisma.user.count({
+        where: { organizationId, isActive: true },
+      });
+      if (headcount >= GRATUITY_COVERAGE_HEADCOUNT) {
+        warning = `Gratuity is set as "not covered by the Act" but the organization has ${headcount} active employees - an establishment with ${GRATUITY_COVERAGE_HEADCOUNT} or more is generally covered, and the Act's formula and 5-year minimum are then the legal floor. Confirm with your CA.`;
+      }
+    }
+    return { amount, exempt, taxable: Math.max(0, amount - exempt), warning };
   }
 
   // The statutory bonus owed on exit: the BONUS module's rate on the months worked in the accounting year, less the
@@ -1229,12 +1328,22 @@ export class SettlementsService {
       });
     }
     if (settlement.gratuityAmount > 0) {
+      const taxablePart = settlement.gratuityTaxableAmount ?? 0;
       earnings.push({
         code: 'GRATUITY',
         name: 'Gratuity',
-        amount: settlement.gratuityAmount,
+        amount: settlement.gratuityAmount - taxablePart,
         taxable: false,
       });
+      // Above the s.10(10) exemption the gratuity is salary income, shown as its own taxable line.
+      if (taxablePart > 0) {
+        earnings.push({
+          code: 'GRATUITY_TAXABLE',
+          name: 'Gratuity (above the tax-exempt limit)',
+          amount: taxablePart,
+          taxable: true,
+        });
+      }
     }
 
     const deductions: SettlementPayrollLine[] = [

@@ -15,6 +15,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { GRATUITY_COVERAGE_HEADCOUNT } from '../settlements/gratuity-math';
 import {
   PayrollRunStatus,
   Prisma,
@@ -274,5 +275,17 @@ export class StatutoryConfigService {
       this.effectiveCacheKeyPrefix(organizationId, module),
     );
     return { message: 'Statutory config version deleted' };
+  }
+
+  // Active headcount vs the usual ten-employee coverage line of the Payment of Gratuity Act.
+  async gratuityCoverageHint(organizationId: string) {
+    const activeEmployees = await this.scopedPrisma.user.count({
+      where: { organizationId, isActive: true },
+    });
+    return {
+      activeEmployees,
+      threshold: GRATUITY_COVERAGE_HEADCOUNT,
+      likelyCovered: activeEmployees >= GRATUITY_COVERAGE_HEADCOUNT,
+    };
   }
 }

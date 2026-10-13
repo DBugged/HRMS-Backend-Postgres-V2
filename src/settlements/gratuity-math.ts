@@ -55,11 +55,18 @@ export function completedYearsOfService(yearsOfService: number): number {
 export function calculateGratuity(
   basicMonthly: number,
   yearsOfService: number,
-  opts: { fixedTerm?: boolean; exemptFromMinimumService?: boolean } = {},
+  opts: {
+    fixedTerm?: boolean;
+    exemptFromMinimumService?: boolean;
+    // A non-covered employer's own qualifying period (a covered one cannot go below the Act's).
+    minYears?: number;
+  } = {},
 ): number {
-  const required = opts.fixedTerm
-    ? YEARS_FOR_FIXED_TERM_GRATUITY
-    : YEARS_FOR_GRATUITY_ELIGIBILITY;
+  const required =
+    opts.minYears ??
+    (opts.fixedTerm
+      ? YEARS_FOR_FIXED_TERM_GRATUITY
+      : YEARS_FOR_GRATUITY_ELIGIBILITY);
   // Death or disablement: the minimum-service condition does not apply (Payment of Gratuity Act s.4(1) proviso).
   if (!opts.exemptFromMinimumService && yearsOfService < required) return 0;
   const raw =

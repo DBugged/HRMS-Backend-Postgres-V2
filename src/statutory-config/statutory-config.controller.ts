@@ -45,6 +45,15 @@ export class StatutoryConfigController {
     return this.sourceMonitor.getResults();
   }
 
+  // Headcount against the ten-employee line at which an establishment is generally covered by the Payment of
+  // Gratuity Act - lets the Gratuity settings warn when "not covered" is picked for a larger organisation.
+  @Get('gratuity-coverage-hint')
+  gratuityCoverageHint(@CurrentUser() caller: Caller) {
+    return this.statutoryConfigService.gratuityCoverageHint(
+      caller.organizationId,
+    );
+  }
+
   @Get(':module')
   getHistory(@Param('module') module: string, @CurrentUser() caller: Caller) {
     const parsed = this.assertKnownModule(module);

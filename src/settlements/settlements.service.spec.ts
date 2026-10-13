@@ -19,6 +19,8 @@ interface Opts {
   resignation?: Row | null;
   defaultNotice?: number;
   bonusOn?: boolean;
+  gratuityConfig?: Row;
+  headcount?: number;
   signedRuns?: Row[];
   paidRuns?: Row[];
 }
@@ -49,7 +51,10 @@ function build(o: Opts = {}) {
     });
   const tx: Row = {};
   const prisma: Row = {
-    user: { findFirst: async () => employee },
+    user: {
+      findFirst: async () => employee,
+      count: async () => o.headcount ?? 1,
+    },
     organization: {
       findFirst: async () => ({
         timezone: 'Asia/Kolkata',
@@ -141,18 +146,20 @@ function build(o: Opts = {}) {
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
     stub({
       getEffective: async (module: string) =>
-        module === 'BONUS' && o.bonusOn
-          ? {
-              version: {
-                isEnabled: true,
-                config: {
-                  rate: 8.33,
-                  eligibilityCeiling: 21000,
-                  calculationCeiling: 7000,
+        module === 'GRATUITY' && o.gratuityConfig
+          ? { version: { isEnabled: true, config: o.gratuityConfig } }
+          : module === 'BONUS' && o.bonusOn
+            ? {
+                version: {
+                  isEnabled: true,
+                  config: {
+                    rate: 8.33,
+                    eligibilityCeiling: 21000,
+                    calculationCeiling: 7000,
+                  },
                 },
-              },
-            }
-          : { version: null },
+              }
+            : { version: null },
     }),
     stub({ log: async (e: Row) => audit.push(e) }),
     stub({
@@ -631,5 +638,74 @@ describe('final settlement: statutory bonus', () => {
     const s = await service.calculate(dto(), admin, 'org');
     expect(s.bonusAmount).toBe(0);
     expect(s.statutoryBonusDue).toBe(0);
+  });
+});
+
+describe('final settlement: gratuity coverage', () => {
+  const runs = [4, 5, 6, 7, 8, 9].map((m) => ({
+    earnings: [{ code: 'BASIC', amount: 28000 }],
+    month: m,
+  }));
+
+  it('a covered employer is paid by the Act and is fully exempt', async () => {
+    const { service } = build({
+      basic: 30000,
+      gratuityConfig: { coverage: 'COVERED', payoutFormula: 'ACT' },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    // 30,000 x 15/26 x 6 completed years
+    expect(s.gratuityAmount).toBe(103846);
+    expect(s.gratuityTaxableAmount).toBe(0);
+  });
+
+  it('a non-covered employer paying half a month per year is exempt up to the same figure', async () => {
+    const { service } = build({
+      basic: 30000,
+      signedRuns: runs,
+      gratuityConfig: { coverage: 'NOT_COVERED', payoutFormula: 'HALF_MONTH' },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    // average 28,000 x 15/30 x 6
+    expect(s.gratuityAmount).toBe(84000);
+    expect(s.gratuityTaxableAmount).toBe(0);
+  });
+
+  it('a non-covered employer paying the Act figure voluntarily is taxed on the part above the exemption', async () => {
+    const { service, payrollService } = build({
+      basic: 30000,
+      signedRuns: runs,
+      gratuityConfig: { coverage: 'NOT_COVERED', payoutFormula: 'ACT' },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.gratuityAmount).toBe(103846);
+    // exempt = 28,000 x 15/30 x 6 = 84,000
+    expect(s.gratuityTaxableAmount).toBe(103846 - 84000);
+    expect(s.warnings.join(' ')).toMatch(/above its tax-exempt limit/);
+    const calls = payrollService.calculatePayroll.mock.calls as unknown as [
+      string,
+      number,
+      number,
+      string,
+      { finalSettlement: { extraTaxableEarnings: number } },
+    ][];
+    expect(calls.at(-1)![4].finalSettlement.extraTaxableEarnings).toBe(
+      103846 - 84000,
+    );
+  });
+
+  it("a non-covered employer's own minimum service applies, and a large headcount raises a warning", async () => {
+    const { service } = build({
+      basic: 30000,
+      signedRuns: runs,
+      headcount: 25,
+      gratuityConfig: {
+        coverage: 'NOT_COVERED',
+        payoutFormula: 'HALF_MONTH',
+        minimumServiceYears: 7,
+      },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.gratuityAmount).toBe(0); // 6 years < their own 7
+    expect(s.warnings.join(' ')).toMatch(/25 active employees/);
   });
 });

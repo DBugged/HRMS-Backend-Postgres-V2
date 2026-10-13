@@ -321,3 +321,22 @@ describe('statutory config: a new organisation', () => {
     expect((SEED_DEFAULTS.PF.config as Row).wageCeiling).toBe(25000);
   });
 });
+
+describe('gratuity coverage hint', () => {
+  it('compares the active headcount with the ten-employee line', async () => {
+    const make = (count: number) =>
+      new StatutoryConfigService(
+        { user: { count: async () => count } } as never,
+        {} as never,
+        {} as never,
+      );
+    expect(await make(4).gratuityCoverageHint('org')).toEqual({
+      activeEmployees: 4,
+      threshold: 10,
+      likelyCovered: false,
+    });
+    expect((await make(10).gratuityCoverageHint('org')).likelyCovered).toBe(
+      true,
+    );
+  });
+});
