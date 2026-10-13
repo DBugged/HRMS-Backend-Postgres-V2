@@ -16,18 +16,18 @@ function build(
   w: World,
   opts: { queue?: boolean; recordFails?: boolean } = {},
 ) {
-  const runs = w.runs.map((r) => ({
+  const runs: Row[] = w.runs.map((r) => ({
     organizationId: 'org',
     isFinalSettlement: false,
     ...r,
   }));
-  const loans = (w.loans ?? []).map((l) => ({ organizationId: 'org', ...l }));
-  const repayments = (w.repayments ?? []).map((r) => ({
+  const loans: Row[] = (w.loans ?? []).map((l) => ({ organizationId: 'org', ...l }));
+  const repayments: Row[] = (w.repayments ?? []).map((r) => ({
     organizationId: 'org',
     createdAt: new Date(),
     ...r,
   }));
-  const encashments = (w.encashments ?? []).map((e) => ({
+  const encashments: Row[] = (w.encashments ?? []).map((e) => ({
     organizationId: 'org',
     ...e,
   }));

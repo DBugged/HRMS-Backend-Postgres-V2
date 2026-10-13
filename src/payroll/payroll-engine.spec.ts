@@ -20,7 +20,7 @@ function monthRows(
   upTo?: number,
 ) {
   const days = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const rows = [];
+  const rows: ReturnType<typeof att>[] = [];
   for (let d = 1; d <= (upTo ?? days); d++) {
     const date = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const sunday = new Date(`${date}T00:00:00Z`).getUTCDay() === 0;
