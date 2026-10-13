@@ -14,6 +14,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { SettlementsService } from './settlements.service';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import { ReverseSettlementDto } from './dto/reverse-settlement.dto';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -63,6 +64,23 @@ export class SettlementsController {
   @UseGuards(RolesGuard)
   process(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.settlementsService.process(id, caller, caller.organizationId);
+  }
+
+  // Admin only: reopens a processed (unpaid) settlement for correction.
+  @Post(':id/reverse')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  reverse(
+    @Param('id') id: string,
+    @Body() dto: ReverseSettlementDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.settlementsService.reverse(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+    );
   }
 
   @Post(':id/pay')

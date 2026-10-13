@@ -45,6 +45,8 @@ function build(o: Opts = {}) {
   const prisma: Row = {
     user: { findFirst: async () => employee },
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
+    leave: { count: async () => 0 },
+    leaveEncashment: { count: async () => 0 },
     settlement: {
       findFirst: async (a: Row) => {
         const s = settlements.find((x) => match(x, a?.where));

@@ -30,6 +30,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  LeaveEncashmentStatus,
+  LeaveStatus,
   LoanStatus,
   NotificationCategory,
   Prisma,
@@ -56,6 +58,7 @@ import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
+import { ReverseSettlementDto } from './dto/reverse-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -286,6 +289,11 @@ export class SettlementsService {
       where: { organizationId },
     });
     let leaveDaysEncashed = 0;
+    const leaveEncashmentDetail: {
+      leaveTypeId: string;
+      year: number;
+      days: number;
+    }[] = [];
     // The balance to pay out is the one for the leave year the last working day falls in (not necessarily its calendar
     // year when the organisation's leave year starts in another month).
     const leaveYearCfg = await getLeaveYearConfig(
@@ -318,7 +326,20 @@ export class SettlementsService {
               dto.lastWorkingDay.slice(0, 10),
             )
           ).get(balanceRow.id) ?? 0;
-        leaveDaysEncashed += Math.max(0, balanceRow.closing - lapsed);
+        // Days already held by a pending leave application or encashment request are not payable here as well:
+        // `closing` does not subtract them, so paying it in full would pay the same day twice.
+        const days = Math.max(
+          0,
+          balanceRow.closing - lapsed - (balanceRow.pending ?? 0),
+        );
+        if (days > 0) {
+          leaveDaysEncashed += days;
+          leaveEncashmentDetail.push({
+            leaveTypeId: leaveType.id,
+            year: lwdLeaveYear,
+            days,
+          });
+        }
       }
     });
     const leaveEncashmentAmount = Math.round(leaveDaysEncashed * ratePerDay);
@@ -521,6 +542,10 @@ export class SettlementsService {
         ? (pendingSalaryBreakdown as unknown as Prisma.InputJsonValue)
         : Prisma.JsonNull,
       leaveEncashmentAmount,
+      leaveEncashmentDetail:
+        leaveEncashmentDetail.length > 0
+          ? (leaveEncashmentDetail as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       bonusAmount,
       recoveriesAmount,
       loanBalanceRecovered,
@@ -700,6 +725,31 @@ export class SettlementsService {
     if (settlement.status !== SettlementStatus.DRAFT) {
       throw new BadRequestException(
         'Only a draft settlement can be processed.',
+      );
+    }
+    // Leave still waiting on a decision (an application or an encashment request) holds days this settlement is about
+    // to pay out - settle those first so the same day is not paid, or taken, twice.
+    const [pendingLeaves, openEncashments] = await Promise.all([
+      this.scopedPrisma.leave.count({
+        where: {
+          organizationId,
+          employeeId: settlement.employeeId,
+          status: LeaveStatus.PENDING,
+        },
+      }),
+      this.scopedPrisma.leaveEncashment.count({
+        where: {
+          organizationId,
+          employeeId: settlement.employeeId,
+          status: {
+            in: [LeaveEncashmentStatus.PENDING, LeaveEncashmentStatus.APPROVED],
+          },
+        },
+      }),
+    ]);
+    if (pendingLeaves > 0 || openEncashments > 0) {
+      throw new BadRequestException(
+        `This employee still has ${pendingLeaves} pending leave application(s) and ${openEncashments} leave encashment request(s) not yet paid. Decide or pay them first, then recalculate the settlement.`,
       );
     }
     // Maker-checker: whoever calculated the figures cannot also approve them for payment, unless they are an Admin
@@ -973,6 +1023,15 @@ export class SettlementsService {
           },
         });
       }
+      // What each loan stood at, so a reversal can reopen it exactly.
+      const closing = await tx.loan.findMany({
+        where: {
+          employeeId: settlement.employeeId,
+          organizationId,
+          status: LoanStatus.ACTIVE,
+        },
+        select: { id: true, outstandingBalance: true },
+      });
       await tx.loan.updateMany({
         where: {
           employeeId: settlement.employeeId,
@@ -980,6 +1039,36 @@ export class SettlementsService {
           status: LoanStatus.ACTIVE,
         },
         data: { status: LoanStatus.CLOSED, outstandingBalance: 0 },
+      });
+      // The encashed days leave the balance, so they can neither be paid again nor taken as leave.
+      const encashedDetail = (settlement.leaveEncashmentDetail ?? []) as {
+        leaveTypeId: string;
+        year: number;
+        days: number;
+      }[];
+      for (const d of encashedDetail) {
+        const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
+          tx,
+          settlement.employeeId,
+          d.leaveTypeId,
+          d.year,
+          organizationId,
+        );
+        await tx.leaveBalance.updateMany({
+          where: { id: balanceRow.id, organizationId },
+          data: { encashed: { increment: d.days } },
+        });
+        await this.leaveBalanceService.recalculate(
+          tx,
+          balanceRow.id,
+          organizationId,
+        );
+      }
+      await tx.settlement.updateMany({
+        where: { id, organizationId },
+        data: {
+          closedLoans: closing as unknown as Prisma.InputJsonValue,
+        },
       });
 
       return {
@@ -1059,6 +1148,135 @@ export class SettlementsService {
     return result;
   }
 
+  // Takes a PROCESSED (not yet paid) settlement back to DRAFT so it can be corrected and recalculated: the final
+  // payslip run is removed, reimbursements it paid go back to APPROVED, closed loans are reopened at the balance
+  // they had and the encashed leave days are returned to the balance. A PAID settlement, or one whose offboarding is
+  // already completed (account closed), is not reversed - money has moved and the exit is final.
+  async reverse(
+    id: string,
+    dto: ReverseSettlementDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const settlement = await this.scopedPrisma.settlement.findFirst({
+      where: { id, organizationId },
+    });
+    if (!settlement) throw new NotFoundException('Settlement not found.');
+    if (settlement.status === SettlementStatus.PAID) {
+      throw new BadRequestException(
+        'This settlement has already been paid and cannot be reversed - record a correction through a supplementary payment or recovery.',
+      );
+    }
+    if (settlement.status !== SettlementStatus.PROCESSED) {
+      throw new BadRequestException(
+        'Only a processed settlement can be reversed.',
+      );
+    }
+    const completedExit = await this.scopedPrisma.offboardingCase.findFirst({
+      where: {
+        organizationId,
+        employeeId: settlement.employeeId,
+        status: 'COMPLETED',
+      },
+      select: { id: true },
+    });
+    if (completedExit) {
+      throw new BadRequestException(
+        "The employee's exit has been completed, so the settlement can no longer be reversed.",
+      );
+    }
+    const closedLoans = settlement.closedLoans as
+      { id: string; outstandingBalance: number }[] | null;
+    if (settlement.loanBalanceRecovered > 0 && !closedLoans) {
+      throw new BadRequestException(
+        'This settlement was processed before loan balances were recorded, so its loans cannot be reopened automatically - contact support.',
+      );
+    }
+    const encashedDetail = (settlement.leaveEncashmentDetail ?? []) as {
+      leaveTypeId: string;
+      year: number;
+      days: number;
+    }[];
+    const runId = settlement.payrollRunId;
+
+    await this.scopedPrisma.$transaction(async (tx) => {
+      const { count } = await tx.settlement.updateMany({
+        where: { id, organizationId, status: SettlementStatus.PROCESSED },
+        data: {
+          status: SettlementStatus.DRAFT,
+          payrollRunId: null,
+          closedLoans: Prisma.JsonNull,
+          reversedAt: new Date(),
+          reversedById: actor.id,
+          reversalReason: dto.reason,
+        },
+      });
+      if (count === 0) {
+        throw new ConflictException('This settlement was already changed.');
+      }
+      if (runId) {
+        await tx.reimbursement.updateMany({
+          where: { organizationId, payrollRunId: runId },
+          data: {
+            status: ReimbursementStatus.APPROVED,
+            paidDate: null,
+            paidById: null,
+            paymentMode: null,
+            payrollRunId: null,
+          },
+        });
+        await tx.payrollRun.deleteMany({
+          where: { id: runId, organizationId, isFinalSettlement: true },
+        });
+      }
+      for (const loan of closedLoans ?? []) {
+        await tx.loan.updateMany({
+          where: { id: loan.id, organizationId },
+          data: {
+            status: LoanStatus.ACTIVE,
+            outstandingBalance: loan.outstandingBalance,
+          },
+        });
+      }
+      for (const d of encashedDetail) {
+        const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
+          tx,
+          settlement.employeeId,
+          d.leaveTypeId,
+          d.year,
+          organizationId,
+        );
+        await tx.leaveBalance.updateMany({
+          where: { id: balanceRow.id, organizationId },
+          data: { encashed: { decrement: d.days } },
+        });
+        await this.leaveBalanceService.recalculate(
+          tx,
+          balanceRow.id,
+          organizationId,
+        );
+      }
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'SETTLEMENT_REVERSED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: settlement.employeeId,
+        reason: dto.reason,
+        payrollRunId: runId,
+        netSettlementAmount: settlement.netSettlementAmount,
+      },
+    });
+    return this.withGratuityPayout(
+      await this.scopedPrisma.settlement.findFirstOrThrow({
+        where: { id, organizationId },
+      }),
+    );
+  }
+
   async markPaid(
     id: string,
     actor: Actor,
@@ -1081,7 +1299,9 @@ export class SettlementsService {
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     const paidOnStr = dto.paidOn ?? today;
     if (paidOnStr > today) {
-      throw new BadRequestException('The payment date cannot be in the future.');
+      throw new BadRequestException(
+        'The payment date cannot be in the future.',
+      );
     }
     if (paidOnStr < settlement.lastWorkingDay.slice(0, 10)) {
       throw new BadRequestException(

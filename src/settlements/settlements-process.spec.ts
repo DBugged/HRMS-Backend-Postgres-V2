@@ -10,6 +10,9 @@ function build(
     loans?: Row[];
     reimbursed?: number;
     reimbursementsPending?: Row[];
+    pendingLeaves?: number;
+    openEncashments?: number;
+    completedExit?: boolean;
   } = {},
 ) {
   const settlement: Row | null =
@@ -71,6 +74,11 @@ function build(
       created.push(row);
       return row;
     },
+    deleteMany: async (a: Row) => {
+      const i = created.findIndex((c) => c.id === a.where.id);
+      if (i >= 0) created.splice(i, 1);
+      return { count: i >= 0 ? 1 : 0 };
+    },
     updateMany: async (a: Row) => {
       const hit = created.find((c) => c.id === a.where.id);
       if (hit) Object.assign(hit, a.data);
@@ -101,6 +109,11 @@ function build(
   const prisma: Row = {
     ...tx,
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
+    leave: { count: async () => o.pendingLeaves ?? 0 },
+    leaveEncashment: { count: async () => o.openEncashments ?? 0 },
+    offboardingCase: {
+      findFirst: async () => (o.completedExit ? { id: 'c1' } : null),
+    },
     user: {
       findFirst: async () => ({
         id: 'e1',
@@ -413,5 +426,83 @@ describe('final settlement: maker-checker', () => {
     });
     await own.service.process('s1', admin, 'org');
     expect(own.settlement?.status).toBe('PROCESSED');
+  });
+});
+
+describe('final settlement: pending leave and reversal', () => {
+  it('is not processed while leave applications or encashment requests are undecided', async () => {
+    const a = build({ loans: [activeLoan], pendingLeaves: 1 });
+    await expect(a.service.process('s1', admin, 'org')).rejects.toThrow(
+      /1 pending leave application/,
+    );
+    const b = build({ loans: [activeLoan], openEncashments: 2 });
+    await expect(b.service.process('s1', admin, 'org')).rejects.toThrow(
+      /2 leave encashment request/,
+    );
+  });
+
+  it('reversing reopens the loans, removes the final payslip run and returns to draft', async () => {
+    const r = build({
+      loans: [
+        { id: 'l1', employeeId: 'e1', status: 'CLOSED', outstandingBalance: 0 },
+      ],
+      settlement: {
+        id: 's1',
+        organizationId: 'org',
+        employeeId: 'e1',
+        status: 'PROCESSED',
+        lastWorkingDay: '2026-10-06',
+        payrollRunId: 'final-run',
+        loanBalanceRecovered: 5000,
+        closedLoans: [{ id: 'l1', outstandingBalance: 5000 }],
+        leaveEncashmentDetail: null,
+      },
+    });
+    r.created.push({ id: 'final-run', isFinalSettlement: true });
+    await r.service.reverse('s1', { reason: 'LWD was wrong' }, admin, 'org');
+    expect(r.settlement).toMatchObject({
+      status: 'DRAFT',
+      payrollRunId: null,
+      reversedById: 'admin',
+    });
+    expect(r.loans[0]).toMatchObject({
+      status: 'ACTIVE',
+      outstandingBalance: 5000,
+    });
+    expect(r.created).toHaveLength(0);
+    expect(r.audit.at(-1)).toMatchObject({ action: 'SETTLEMENT_REVERSED' });
+  });
+
+  it('only a processed, unpaid settlement of an exit that is not completed can be reversed', async () => {
+    const draft = build();
+    await expect(
+      draft.service.reverse('s1', { reason: 'wrong LWD' }, admin, 'org'),
+    ).rejects.toThrow(/Only a processed settlement/);
+    const paid = build({
+      settlement: {
+        id: 's1',
+        organizationId: 'org',
+        employeeId: 'e1',
+        status: 'PAID',
+        lastWorkingDay: '2026-10-06',
+      },
+    });
+    await expect(
+      paid.service.reverse('s1', { reason: 'wrong LWD' }, admin, 'org'),
+    ).rejects.toThrow(/already been paid/);
+    const done = build({
+      completedExit: true,
+      settlement: {
+        id: 's1',
+        organizationId: 'org',
+        employeeId: 'e1',
+        status: 'PROCESSED',
+        lastWorkingDay: '2026-10-06',
+        loanBalanceRecovered: 0,
+      },
+    });
+    await expect(
+      done.service.reverse('s1', { reason: 'wrong LWD' }, admin, 'org'),
+    ).rejects.toThrow(/exit has been completed/);
   });
 });
