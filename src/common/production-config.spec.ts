@@ -49,7 +49,23 @@ describe('production config', () => {
   });
   it('swagger needs ENABLE_SWAGGER in production', () => {
     expect(swaggerEnabled(good)).toBe(false);
-    expect(swaggerEnabled({ ...good, ENABLE_SWAGGER: 'true' })).toBe(true);
+    // ...and credentials: enabling it alone does not open the docs to everyone.
+    expect(swaggerEnabled({ ...good, ENABLE_SWAGGER: 'true' })).toBe(false);
+    expect(
+      swaggerEnabled({
+        ...good,
+        ENABLE_SWAGGER: 'true',
+        SWAGGER_USER: 'docs',
+        SWAGGER_PASSWORD: 'a-strong-password',
+      }),
+    ).toBe(true);
+  });
+  it('warns about a missing or shared file-token secret and a weak platform token', () => {
+    const warn = jest.fn();
+    assertProductionConfig({ ...good, PLATFORM_S2S_TOKEN: 'short' }, warn);
+    const text = warn.mock.calls.map((c) => c[0]).join('\n');
+    expect(text).toMatch(/FILE_TOKEN_SECRET is unset/);
+    expect(text).toMatch(/PLATFORM_S2S_TOKEN is weak/);
   });
 });
 

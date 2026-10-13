@@ -66,6 +66,35 @@ export function productionConfigWarnings(
   return w;
 }
 
+/**
+ * Non-fatal warnings about secrets that are unset or shared in production. Kept separate from the fatal problems
+ * because tightening them to errors would stop an existing deployment from booting.
+ */
+export function productionSecretWarnings(
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  if (!isProd(env)) return [];
+  const w: string[] = [];
+  if (!env.FILE_TOKEN_SECRET)
+    w.push(
+      'WARNING: FILE_TOKEN_SECRET is unset - file links are signed with JWT_ACCESS_SECRET. Set a separate secret so one leak does not expose both.',
+    );
+  else if (env.FILE_TOKEN_SECRET === env.JWT_ACCESS_SECRET)
+    w.push('WARNING: FILE_TOKEN_SECRET must differ from JWT_ACCESS_SECRET.');
+  if (env.PLATFORM_S2S_TOKEN && isWeakSecret(env.PLATFORM_S2S_TOKEN))
+    w.push(
+      'WARNING: PLATFORM_S2S_TOKEN is weak (< 32 chars or a placeholder) - it is the only credential protecting the platform control routes.',
+    );
+  if (
+    env.ENABLE_SWAGGER === 'true' &&
+    !(env.SWAGGER_USER && env.SWAGGER_PASSWORD)
+  )
+    w.push(
+      'WARNING: ENABLE_SWAGGER=true without SWAGGER_USER/SWAGGER_PASSWORD - the API docs stay disabled until both are set.',
+    );
+  return w;
+}
+
 export function assertProductionConfig(
   env: NodeJS.ProcessEnv = process.env,
   warn: (m: string) => void = (m) => console.warn(m),
@@ -76,6 +105,7 @@ export function assertProductionConfig(
       `Invalid production configuration:\n - ${problems.join('\n - ')}`,
     );
   productionConfigWarnings(env).forEach((m) => warn(m));
+  productionSecretWarnings(env).forEach((m) => warn(m));
   if (isProd(env) && env.EMAIL_DRIVER !== 'resend' && !env.SMTP_HOST)
     warn(
       'WARNING: SMTP is not configured (SMTP_HOST unset) - emails will not be delivered.',
@@ -91,7 +121,14 @@ export function cookieSecure(env: NodeJS.ProcessEnv = process.env): boolean {
 
 /** Swagger is on outside production; in production only with ENABLE_SWAGGER=true. */
 export function swaggerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return !isProd(env) || env.ENABLE_SWAGGER === 'true';
+  if (!isProd(env)) return true;
+  // In production the docs list the whole API surface: they are only served when explicitly enabled AND behind the
+  // basic-auth credentials - ENABLE_SWAGGER alone no longer opens them to everyone.
+  return (
+    env.ENABLE_SWAGGER === 'true' &&
+    !!env.SWAGGER_USER &&
+    !!env.SWAGGER_PASSWORD
+  );
 }
 
 /** Every URL Swagger serves: the UI, plus the raw OpenAPI documents (which expose the full API surface). */
