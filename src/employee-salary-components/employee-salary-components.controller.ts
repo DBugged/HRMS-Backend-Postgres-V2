@@ -23,13 +23,13 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
-// Nobody - HR or Admin - sets or revises their OWN salary structure; it has to be done by someone else. An Admin can
-// still calculate and approve payroll for everyone, including themself: the structure is the part that must be
-// changed by a second person, otherwise one account could raise its own pay and then pay it.
-function assertNotOwnSalary(caller: Caller, employeeId: string): void {
-  if (caller.id === employeeId) {
+// Only an Admin may set or revise their OWN salary structure; HR (and everyone else) needs another person to do it.
+// An Admin is the organisation's top authority and has no one above them to ask, so the rule that a second person
+// changes the structure stops at Admin. The change is still audited with selfRevision = true (see the service).
+function assertMayChangeSalaryOf(caller: Caller, employeeId: string): void {
+  if (caller.id === employeeId && caller.role !== Role.ADMIN) {
     throw new ForbiddenException(
-      'You cannot change your own salary structure. Another HR user or Admin must do it.',
+      'You cannot change your own salary structure. An Admin must do it.',
     );
   }
 }
@@ -80,7 +80,7 @@ export class EmployeeSalaryComponentsController {
     @Body() dto: SetComponentValueDto,
     @CurrentUser() caller: Caller,
   ) {
-    assertNotOwnSalary(caller, id);
+    assertMayChangeSalaryOf(caller, id);
     return this.employeeSalaryComponentsService.setComponentValue(
       id,
       dto,
@@ -97,7 +97,7 @@ export class EmployeeSalaryComponentsController {
     @Body() dto: BulkSetStructureDto,
     @CurrentUser() caller: Caller,
   ) {
-    assertNotOwnSalary(caller, id);
+    assertMayChangeSalaryOf(caller, id);
     return this.employeeSalaryComponentsService.bulkSetStructure(
       id,
       dto,

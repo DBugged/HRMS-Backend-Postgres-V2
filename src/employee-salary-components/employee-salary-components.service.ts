@@ -512,6 +512,8 @@ export class EmployeeSalaryComponentsService {
       details: {
         componentCode: component.code,
         effectiveFrom: from,
+        // An Admin revising their own pay - flagged so it stands out in the audit trail.
+        selfRevision: actorId === employeeId,
         before: current
           ? {
               fixedAmount: current.fixedAmount,
