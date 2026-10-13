@@ -541,6 +541,20 @@ export class OffboardingService {
         'A completed offboarding case cannot be cancelled.',
       );
     }
+    // A processed settlement has already closed the employee's loans, paid their claims and taken their leave
+    // balance, and regular payroll skips them from the last working day. Cancelling the exit now would return
+    // them to service unpaid - the settlement has to be reversed first (or, once paid, the exit stands).
+    const settled = record.settlement?.status;
+    if (settled === SettlementStatus.PAID) {
+      throw new BadRequestException(
+        'The final settlement has already been paid, so this exit cannot be cancelled.',
+      );
+    }
+    if (settled === SettlementStatus.PROCESSED) {
+      throw new BadRequestException(
+        'The final settlement has been processed - reverse it first (Settlements -> Reverse), then cancel the offboarding.',
+      );
+    }
 
     await this.scopedPrisma.$transaction(async (tx) => {
       const { count } = await tx.offboardingCase.updateMany({
