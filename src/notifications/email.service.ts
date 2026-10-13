@@ -107,6 +107,12 @@ export class EmailService {
         maxMessages: 100,
         rateDelta: 1000,
         rateLimit: 5,
+        // nodemailer's defaults are 2 min to connect and 10 min of silence, so an unreachable mail server could hold
+        // any request that awaits a send for minutes. Bound each stage instead; callers treat a failed send as
+        // best-effort.
+        connectionTimeout: 10_000,
+        greetingTimeout: 10_000,
+        socketTimeout: 20_000,
       });
     }
     return this.transporter;

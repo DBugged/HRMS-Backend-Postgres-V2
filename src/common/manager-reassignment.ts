@@ -9,6 +9,7 @@
 import { BadRequestException } from '@nestjs/common';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import type { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { mapWithConcurrency } from './concurrency';
 import type { AuditLogService } from '../audit-log/audit-log.service';
 
 export async function reassignDirectReportsBeforeDeactivation(
@@ -70,15 +71,17 @@ export async function reassignDirectReportsBeforeDeactivation(
     data: { reportingManagerId: reassignManagerId },
   });
 
-  for (const report of directReports) {
-    await timelineService.logEvent({
+  // Bounded parallelism: a manager with many reports no longer costs one sequential round-trip per report inside
+  // the deactivation request.
+  await mapWithConcurrency(directReports, 5, (report) =>
+    timelineService.logEvent({
       organizationId,
       employeeId: report.id,
       eventKey: 'REPORTING_MANAGER_CHANGED',
       performedById: actorId,
       description: `Reporting manager reassigned to ${newManager.name}.`,
-    });
-  }
+    }),
+  );
   await auditLogService.log({
     actorId,
     action: 'DIRECT_REPORTS_REASSIGNED',
