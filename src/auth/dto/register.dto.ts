@@ -1,8 +1,9 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsNotEmpty,
+  IsOptional,
   IsString,
   Matches,
   MaxLength,
@@ -40,4 +41,11 @@ export class RegisterDto {
   @ApiProperty({ example: 'StrongPass123!', minLength: 10 })
   @IsStrongPassword()
   password!: string;
+
+  // Required only while registration is invitation-only (REGISTRATION_ENABLED=false).
+  @ApiPropertyOptional({ example: 'ACME-2026-INVITE' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  inviteCode?: string;
 }
