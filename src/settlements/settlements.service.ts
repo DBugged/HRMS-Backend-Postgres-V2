@@ -224,6 +224,24 @@ export class SettlementsService {
       );
     }
 
+    // An exit in progress has one last working day; a settlement for another date would not match it.
+    const openCase = await this.scopedPrisma.offboardingCase.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        status: { in: ['INITIATED', 'IN_PROGRESS'] },
+      },
+      select: { lastWorkingDay: true },
+    });
+    if (
+      openCase &&
+      openCase.lastWorkingDay.slice(0, 10) !== dto.lastWorkingDay.slice(0, 10)
+    ) {
+      throw new BadRequestException(
+        `The offboarding case has last working day ${openCase.lastWorkingDay.slice(0, 10)} - change it there first (early release / extension), then calculate the settlement.`,
+      );
+    }
+
     const lwd = new Date(dto.lastWorkingDay);
     if (Number.isNaN(lwd.getTime())) {
       throw new BadRequestException('lastWorkingDay is not a valid date.');

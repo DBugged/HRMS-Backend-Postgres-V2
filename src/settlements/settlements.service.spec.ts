@@ -15,6 +15,7 @@ interface Opts {
   basic?: number;
   da?: number;
   gratuityOn?: boolean;
+  openCase?: Row | null;
 }
 
 const JOINED = new Date('2020-10-07T00:00:00Z');
@@ -46,6 +47,7 @@ function build(o: Opts = {}) {
     user: { findFirst: async () => employee },
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
     leave: { count: async () => 0 },
+    offboardingCase: { findFirst: async () => o.openCase ?? null },
     leaveEncashment: { count: async () => 0 },
     settlement: {
       findFirst: async (a: Row) => {
@@ -133,6 +135,15 @@ beforeEach(() =>
   jest.useFakeTimers().setSystemTime(new Date('2026-10-10T08:00:00Z')),
 );
 afterEach(() => jest.useRealTimers());
+
+describe('final settlement: the exit it belongs to', () => {
+  it('is refused for a last working day other than the open offboarding case', async () => {
+    const { service } = build({ openCase: { lastWorkingDay: '2026-10-08' } });
+    await expect(service.calculate(dto(), admin, 'org')).rejects.toThrow(
+      /offboarding case has last working day 2026-10-08/,
+    );
+  });
+});
 
 describe('final settlement: who can be settled', () => {
   it('someone whose account was closed before their settlement can still be settled', async () => {
