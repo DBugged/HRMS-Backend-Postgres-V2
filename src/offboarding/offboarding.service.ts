@@ -96,6 +96,42 @@ export class OffboardingService {
     );
   }
 
+  // The employee's own exit progress, for the mobile/web "Exit status" card. Deliberately narrow: the last working
+  // day, the checklist ticks, a coarse settlement stage and where their documents will go - never the settlement
+  // figures, the reason, HR's notes or the exit interview answers. null when they have no exit under way.
+  async findMine(actor: Actor) {
+    const record = await this.scopedPrisma.offboardingCase.findFirst({
+      where: {
+        organizationId: actor.organizationId,
+        employeeId: actor.id,
+        status: { in: [...OPEN_STATUSES, OffboardingStatus.COMPLETED] },
+      },
+      orderBy: { createdAt: 'desc' },
+      include: { settlement: { select: { status: true } } },
+    });
+    if (!record) return null;
+    const settlementStage = !record.settlement
+      ? 'NOT_STARTED'
+      : record.settlement.status === SettlementStatus.PAID
+        ? 'PAID'
+        : record.settlement.status === SettlementStatus.PROCESSED
+          ? 'PROCESSED'
+          : 'BEING_PREPARED';
+    const interviewRequired =
+      record.exitStatus !== EmploymentStatus.TERMINATED &&
+      record.exitStatus !== EmploymentStatus.ABSCONDED;
+    return {
+      status: record.status,
+      lastWorkingDay: record.lastWorkingDay,
+      assetsReturned: record.assetsReturned,
+      accessRevoked: record.accessRevoked,
+      interviewRequired,
+      exitInterviewDone: record.exitInterviewDone,
+      settlementStage,
+      documentsGoToPersonalEmail: personalEmailOf(actor.personalData) !== null,
+    };
+  }
+
   async findOne(id: string, organizationId: string) {
     const record = await this.findCase(id, organizationId);
     return {

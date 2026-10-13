@@ -46,6 +46,15 @@ export class OffboardingController {
     return this.offboardingService.findAll(query, caller.organizationId);
   }
 
+  // The one self-service route: the caller's own exit progress, with nothing HR-internal in it. Declared before
+  // ':id' so 'mine' is not read as a case id; its own @Roles overrides the class's ADMIN/HR gate.
+  @Get('mine')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER, Role.EMPLOYEE)
+  @UseGuards(RolesGuard)
+  findMine(@CurrentUser() caller: Caller) {
+    return this.offboardingService.findMine(caller);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.offboardingService.findOne(id, caller.organizationId);
