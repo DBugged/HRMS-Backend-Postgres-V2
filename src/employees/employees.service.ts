@@ -111,55 +111,12 @@ export const EXIT_STATUSES: EmploymentStatus[] = [
   EmploymentStatus.TERMINATED,
   EmploymentStatus.ABSCONDED,
 ];
-const EXITS = EXIT_STATUSES;
 // Statuses that are only reached through Resignation / Offboarding, never by editing the field: RESIGNED (serving
 // notice - it needs a last working day and a checklist behind it) and the final exits.
 export const LEAVING_STATUSES: EmploymentStatus[] = [
   EmploymentStatus.RESIGNED,
   ...EXIT_STATUSES,
 ];
-const LEAVING = LEAVING_STATUSES;
-
-// Allowed employmentStatus transitions via PATCH /employees/:id.
-//   On Hold -> Onboarding -> Probation (-> Extended Probation) -> Confirmed
-//   Probation / Extended Probation / Confirmed -> Resigned -> Released      (through Resignation / Offboarding)
-//   any working status -> Terminated or Absconded                          (through Offboarding)
-// On Hold is a pre-joining state only, so nothing moves INTO it from a working status.
-const EMPLOYMENT_STATUS_TRANSITIONS: Record<
-  EmploymentStatus,
-  EmploymentStatus[]
-> = {
-  ON_HOLD: [EmploymentStatus.ONBOARDING],
-  ONBOARDING: [
-    EmploymentStatus.PROBATION,
-    EmploymentStatus.CONFIRMED,
-    ...LEAVING,
-  ],
-  PROBATION: [
-    EmploymentStatus.EXTENDED_PROBATION,
-    EmploymentStatus.CONFIRMED,
-    ...LEAVING,
-  ],
-  EXTENDED_PROBATION: [EmploymentStatus.CONFIRMED, ...LEAVING],
-  CONFIRMED: [...LEAVING],
-  // Back to a working status covers a withdrawn resignation; the end of notice (Released) is Offboarding's.
-  RESIGNED: [
-    EmploymentStatus.CONFIRMED,
-    EmploymentStatus.PROBATION,
-    EmploymentStatus.EXTENDED_PROBATION,
-    ...EXITS,
-  ],
-  // Retired (the notice stage is RESIGNED). Nothing sets it; a stray row can still go back to work.
-  NOTICE_PERIOD: [
-    EmploymentStatus.CONFIRMED,
-    EmploymentStatus.PROBATION,
-    EmploymentStatus.EXTENDED_PROBATION,
-    ...EXITS,
-  ],
-  RELEASED: [],
-  TERMINATED: [],
-  ABSCONDED: [],
-};
 
 @Injectable()
 export class EmployeesService {
@@ -993,35 +950,58 @@ export class EmployeesService {
       await this.assertAnotherActiveAdminRemains(id, organizationId);
     }
 
-    // A deactivated employee's record is frozen except for reactivating
-    // them — no promotion, department move, designation change, etc.
-    // should slip through while the account is inactive; reactivate first,
-    // then make the other change as its own separate call.
+    // A person who has left (Released / Terminated / Absconded) can be brought back by Admin / HR changing their
+    // status to a working one: that reinstates them - the account is reopened in the same save. Their status can also
+    // be corrected between the exit statuses. Nothing else on a closed record changes (and flipping only isActive on
+    // an exited person is refused: say which status they return to).
+    const exitedBefore = EXIT_STATUSES.includes(before.employmentStatus);
+    const targetStatus = clean.employmentStatus as EmploymentStatus | undefined;
+    const reinstating =
+      exitedBefore &&
+      targetStatus !== undefined &&
+      targetStatus !== before.employmentStatus &&
+      !LEAVING_STATUSES.includes(targetStatus);
+    const correctingExit =
+      exitedBefore &&
+      targetStatus !== undefined &&
+      targetStatus !== before.employmentStatus &&
+      EXIT_STATUSES.includes(targetStatus);
     if (!before.isActive) {
       const touchedFields = Object.keys(clean).filter(
         (key) => clean[key as keyof UpdateEmployeeDto] !== undefined,
       );
+      const statusOnly =
+        touchedFields.length > 0 &&
+        touchedFields.every(
+          (k) => k === 'employmentStatus' || k === 'isActive',
+        );
       const isReactivationOnly =
         touchedFields.length === 1 &&
         touchedFields[0] === 'isActive' &&
         clean.isActive === true;
-      if (!isReactivationOnly) {
+      if (exitedBefore && isReactivationOnly) {
+        throw new BadRequestException(
+          `This employee has left (${before.employmentStatus}). Change their employment status to a working one (for example Confirmed) to reinstate them.`,
+        );
+      }
+      if (
+        !isReactivationOnly &&
+        !((reinstating || correctingExit) && statusOnly)
+      ) {
         throw new BadRequestException(
           'This employee is deactivated — reactivate them first before making any other changes.',
         );
       }
-      // An exited employee (terminated/resigned/released/absconded) can't be
-      // brought back by flipping isActive — that would resurrect a closed
-      // record; rehire as a new employee instead.
-      if (EXIT_STATUSES.includes(before.employmentStatus)) {
-        throw new BadRequestException(
-          `This employee has exited (${before.employmentStatus}) and cannot be reactivated.`,
-        );
-      }
+    }
+    if (reinstating) {
+      // Reopening the account is part of the same save, so the status and the account never disagree.
+      Object.assign(clean, { isActive: true });
     }
 
-    // Employment-status lifecycle: only transitions in the allowed map are
-    // accepted, and exit statuses are final.
+    // Admin and HR can change an employee's status to any other at any time. The only thing that is not a plain
+    // edit is leaving: Resigned (serving notice) and the final exits, for someone who is still working, go through
+    // Resignation / Offboarding - they need a last working day and the clearance and settlement behind them, and
+    // closing the account first would leave the final pay impossible to calculate.
     const statusChanging =
       clean.employmentStatus !== undefined &&
       clean.employmentStatus !== before.employmentStatus;
@@ -1033,25 +1013,23 @@ export class EmployeesService {
         'You cannot change your own employment status. An Admin or another HR user must do it.',
       );
     }
-    if (statusChanging) {
-      const allowed = EMPLOYMENT_STATUS_TRANSITIONS[before.employmentStatus];
-      if (!allowed.includes(clean.employmentStatus as EmploymentStatus)) {
-        throw new BadRequestException(
-          allowed.length === 0
-            ? `Employment status ${before.employmentStatus} is final and cannot be changed.`
-            : `Invalid employment status transition: ${before.employmentStatus} → ${clean.employmentStatus}. Allowed: ${allowed.join(', ')}.`,
-        );
-      }
-    }
-    // Resigned (serving notice) and the final exits are only reachable through Resignation / Offboarding (notice,
-    // clearance, final settlement, then complete()). Setting one here would leave a status with no last working day or
-    // checklist behind it - or close the account with no settlement, which the final pay then cannot be worked out for.
     const leaving =
       statusChanging &&
-      LEAVING_STATUSES.includes(clean.employmentStatus as EmploymentStatus);
+      LEAVING_STATUSES.includes(clean.employmentStatus as EmploymentStatus) &&
+      !exitedBefore;
     if (leaving) {
       throw new BadRequestException(
         `Use Resignation or Offboarding to move an employee to ${clean.employmentStatus} - it records the last working day and runs the notice period, clearance and full & final settlement.`,
+      );
+    }
+    // A closed account is not put into the notice stage (Resigned is for someone still working).
+    if (
+      exitedBefore &&
+      statusChanging &&
+      clean.employmentStatus === EmploymentStatus.RESIGNED
+    ) {
+      throw new BadRequestException(
+        'Someone who has left cannot be set to Resigned (serving notice). Reinstate them to a working status first.',
       );
     }
 
@@ -1207,7 +1185,7 @@ export class EmployeesService {
 
     await this.auditLogService.log({
       actorId: actor.id,
-      action: 'EMPLOYEE_UPDATED',
+      action: reinstating ? 'EMPLOYEE_REINSTATED' : 'EMPLOYEE_UPDATED',
       module: 'EMPLOYEE',
       organizationId,
       targetId: id,

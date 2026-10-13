@@ -1003,43 +1003,43 @@ describe('Employees + Departments (e2e)', () => {
       expect(a.reportingManagerId).toBeNull();
     });
 
-    it('rejects an employment-status transition outside the lifecycle', async () => {
-      // On Hold is a pre-joining state only: a working status cannot move into it.
-      await request(app.getHttpServer())
-        .patch(`/employees/${cId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'ON_HOLD' })
-        .expect(400);
-      // Resigned (serving notice) is reached through Resignation / Offboarding, not by editing the status.
-      const resigned = await request(app.getHttpServer())
-        .patch(`/employees/${cId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'RESIGNED' })
-        .expect(400);
-      expect(JSON.stringify(resigned.body)).toMatch(
-        /Resignation or Offboarding/,
-      );
-      // ONBOARDING → CONFIRMED is.
-      await request(app.getHttpServer())
-        .patch(`/employees/${cId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'CONFIRMED' })
-        .expect(200);
+    it('Admin / HR can move a working employee between any working statuses, in any direction', async () => {
+      // No fixed order: forward, back to On Hold, and forward again.
+      for (const status of [
+        'CONFIRMED',
+        'ON_HOLD',
+        'PROBATION',
+        'EXTENDED_PROBATION',
+        'CONFIRMED',
+      ]) {
+        await request(app.getHttpServer())
+          .patch(`/employees/${cId}`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ employmentStatus: status })
+          .expect(200);
+      }
     });
 
-    it('an exit status cannot be set by PATCH - it goes through Offboarding; once exited the status is final', async () => {
-      const res = await request(app.getHttpServer())
-        .patch(`/employees/${cId}`)
-        .set('Authorization', `Bearer ${hrToken}`)
-        .send({ employmentStatus: 'TERMINATED' })
-        .expect(400);
-      expect(JSON.stringify(res.body)).toMatch(/Offboarding/);
-      const still = await prisma.user.findUniqueOrThrow({
-        where: { id: cId },
-      });
+    it('a working employee cannot be set to Resigned / Released / Terminated / Absconded by editing - that is Resignation / Offboarding', async () => {
+      for (const status of [
+        'RESIGNED',
+        'RELEASED',
+        'TERMINATED',
+        'ABSCONDED',
+      ]) {
+        const res = await request(app.getHttpServer())
+          .patch(`/employees/${cId}`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ employmentStatus: status })
+          .expect(400);
+        expect(JSON.stringify(res.body)).toMatch(/Resignation or Offboarding/);
+      }
+      const still = await prisma.user.findUniqueOrThrow({ where: { id: cId } });
       expect(still.isActive).toBe(true);
       expect(still.employmentStatus).toBe('CONFIRMED');
+    });
 
+    it('someone who has left can be corrected between exits or reinstated to a working status', async () => {
       // What a completed offboarding leaves behind: exit status, closed account.
       await prisma.user.update({
         where: { id: cId },
@@ -1050,18 +1050,57 @@ describe('Employees + Departments (e2e)', () => {
         .send({ email: cEmail, password: cPassword })
         .expect(401);
 
-      // Can't be resurrected by reactivation either.
-      await request(app.getHttpServer())
+      // Flipping only isActive is refused - it says which status they return to.
+      const flip = await request(app.getHttpServer())
         .patch(`/employees/${cId}`)
         .set('Authorization', `Bearer ${hrToken}`)
         .send({ isActive: true })
         .expect(400);
+      expect(JSON.stringify(flip.body)).toMatch(
+        /Change their employment status/,
+      );
+
+      // Not into the notice stage: Resigned is for someone still working.
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'RESIGNED' })
+        .expect(400);
+
+      // Correcting the exit status keeps the account closed.
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'ABSCONDED' })
+        .expect(200);
+      expect(
+        (await prisma.user.findUniqueOrThrow({ where: { id: cId } })).isActive,
+      ).toBe(false);
+
+      // Back to a working status reinstates them: the account reopens in the same save, and it is audited.
+      await request(app.getHttpServer())
+        .patch(`/employees/${cId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ employmentStatus: 'CONFIRMED' })
+        .expect(200);
+      const back = await prisma.user.findUniqueOrThrow({ where: { id: cId } });
+      expect(back.isActive).toBe(true);
+      expect(back.employmentStatus).toBe('CONFIRMED');
+      expect(
+        await prisma.auditLog.count({
+          where: { action: 'EMPLOYEE_REINSTATED', targetId: cId },
+        }),
+      ).toBe(1);
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: cEmail, password: cPassword })
+        .expect(201);
     });
 
     it('login is refused for an exit status even if isActive was left true', async () => {
       await prisma.user.update({
         where: { id: cId },
-        data: { isActive: true },
+        data: { employmentStatus: 'TERMINATED', isActive: true },
       });
       await request(app.getHttpServer())
         .post('/auth/login')
