@@ -1607,21 +1607,49 @@ export class EmployeesService {
           ? addDaysStr(oldDate, -1)
           : yesterday;
       const dates = enumerateDateStrings(newDate, last).slice(0, 366);
-      for (const date of dates) {
-        const exists = await this.scopedPrisma.attendance.findFirst({
-          where: { organizationId, employeeId: before.id, date },
-          select: { id: true },
-        });
-        if (!exists) {
-          await this.attendanceService.recalculateAttendanceForDay(
+      // One query for the days that already have a row, then the missing ones a few at a time. This used to look each
+      // day up on its own, write it one after another and - the real cost - send the employee a "marked absent"
+      // notification and e-mail for every one of those past days, so a joining date moved back by months kept the
+      // request busy for minutes (and the screen on its loader) and filled the employee's inbox. The rows are written
+      // quietly now: these are not absences anyone needs to be told about.
+      const have = new Set(
+        (
+          await this.scopedPrisma.attendance.findMany({
+            where: {
+              organizationId,
+              employeeId: before.id,
+              date: { gte: newDate, lte: last },
+            },
+            select: { date: true },
+          })
+        ).map((r) => r.date),
+      );
+      await mapWithConcurrency(
+        dates.filter((d) => !have.has(d)),
+        4,
+        (date) =>
+          this.attendanceService.recalculateAttendanceForDay(
             this.scopedPrisma,
             before.id,
             date,
             organizationId,
-          );
-        }
-      }
+            { quiet: true },
+          ),
+      );
     }
+
+    // The salary structure starts when the person joins: a component whose first row begins on the old joining date now
+    // begins on the new one. Without this a revision effective from the new date was refused ("cannot start before the
+    // current one"), because the structure still began on the date that had just been corrected. Only rows that start
+    // exactly on the old date and are still in force on the new one are moved, so a later revision is never disturbed;
+    // the date change is refused once any payroll is verified, so no signed-off month can be affected.
+    await this.alignSalaryStructureStart(
+      before.id,
+      oldDate,
+      newDate,
+      actor.id,
+      organizationId,
+    );
 
     // Recalculate only the months that have an open (draft/calculated) payroll run in the affected range.
     const from = (newDate < oldDate ? newDate : oldDate).slice(0, 7);
@@ -1646,6 +1674,42 @@ export class EmployeesService {
         organizationId,
       );
     }
+  }
+
+  private async alignSalaryStructureStart(
+    employeeId: string,
+    oldDate: string,
+    newDate: string,
+    actorId: string,
+    organizationId: string,
+  ) {
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        effectiveFrom: oldDate,
+        OR: [{ effectiveTo: null }, { effectiveTo: { gte: newDate } }],
+      },
+      select: { id: true, componentCode: true },
+    });
+    if (rows.length === 0) return;
+    await this.scopedPrisma.employeeSalaryComponent.updateMany({
+      where: { organizationId, id: { in: rows.map((r) => r.id) } },
+      data: { effectiveFrom: newDate },
+    });
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMPLOYEE_SALARY_START_ALIGNED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: employeeId,
+      details: {
+        reason: 'Joining date corrected',
+        from: oldDate,
+        to: newDate,
+        components: rows.map((r) => r.componentCode),
+      },
+    });
   }
 
   // Rejects a reporting manager that is the employee themself, or whose own

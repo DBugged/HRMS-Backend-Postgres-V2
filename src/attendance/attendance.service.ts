@@ -475,6 +475,10 @@ export class AttendanceService {
     employeeId: string,
     dateStr: string,
     organizationId: string,
+    // quiet: the day is being filled in after the fact (a joining date moved earlier, an HR backfill). The row is written
+    // exactly the same, but nobody is told about it: no overtime suggestion and no "marked absent" notification or e-mail
+    // for a day that is long past.
+    opts?: { quiet?: boolean },
   ) {
     const employee = await db.user.findFirst({
       where: { id: employeeId, organizationId },
@@ -617,26 +621,28 @@ export class AttendanceService {
       });
     }
 
-    await this.suggestOvertimeFromPunchOut(
-      db,
-      organizationId,
-      employeeId,
-      dateStr,
-      status,
-      outTime,
-      shiftConfig,
-      workDurationMinutes,
-    );
+    if (!opts?.quiet) {
+      await this.suggestOvertimeFromPunchOut(
+        db,
+        organizationId,
+        employeeId,
+        dateStr,
+        status,
+        outTime,
+        shiftConfig,
+        workDurationMinutes,
+      );
 
-    await this.notifyLateOrAbsent(
-      employeeId,
-      dateStr,
-      status,
-      isLate,
-      organizationId,
-      // A punch-in with no punch-out yet: the person is at work, so the day must not be reported as an absence.
-      inTime !== null && outTime === null,
-    );
+      await this.notifyLateOrAbsent(
+        employeeId,
+        dateStr,
+        status,
+        isLate,
+        organizationId,
+        // A punch-in with no punch-out yet: the person is at work, so the day must not be reported as an absence.
+        inTime !== null && outTime === null,
+      );
+    }
 
     return db.attendance.findFirstOrThrow({
       where: { organizationId, employeeId, date: dateStr },
@@ -4029,11 +4035,13 @@ export class AttendanceService {
       const created: Record<string, number> = {};
       if (!dryRun) {
         await mapWithConcurrency(missing, 4, async (d) => {
+          // Past days written after the fact: no absence notice or e-mail for each of them.
           const row = await this.recalculateAttendanceForDay(
             this.scopedPrisma,
             user.id,
             d,
             organizationId,
+            { quiet: true },
           );
           created[row.status] = (created[row.status] ?? 0) + 1;
         });
