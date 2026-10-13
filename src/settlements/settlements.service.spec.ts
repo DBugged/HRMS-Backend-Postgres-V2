@@ -155,6 +155,12 @@ function build(o: Opts = {}) {
           : { version: null },
     }),
     stub({ log: async (e: Row) => audit.push(e) }),
+    stub({
+      buildPayslipPdfBuffer: async () => ({
+        buffer: Buffer.from('pdf'),
+        filename: 'final.pdf',
+      }),
+    }),
   );
   return { service, settlements, audit, payrollService };
 }

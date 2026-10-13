@@ -137,6 +137,12 @@ function build(
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
     stub({}),
     stub({ log: async (e: Row) => audit.push(e) }),
+    stub({
+      buildPayslipPdfBuffer: async () => ({
+        buffer: Buffer.from('pdf'),
+        filename: 'final.pdf',
+      }),
+    }),
   );
   return {
     service,
@@ -367,6 +373,17 @@ describe('final settlement: marking it paid', () => {
     await expect(
       service.markPaid('s1', admin, 'org', { paidOn: '2026-10-01' }),
     ).rejects.toThrow(/before the last working day/);
+  });
+
+  it('emails the final payslip / settlement statement to the personal address once paid', async () => {
+    const { service, mails } = build({ settlement: processed() });
+    await service.markPaid('s1', admin, 'org');
+    // The send is fire-and-forget; let its promise chain settle (fake timers are on in this file).
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(mails).toHaveLength(1);
+    expect(mails[0]).toMatchObject({ to: 'home@x.com' });
+    expect(mails[0].attachments).toHaveLength(1);
+    expect(mails[0].attachments[0].filename).toBe('final.pdf');
   });
 
   it('is audited', async () => {

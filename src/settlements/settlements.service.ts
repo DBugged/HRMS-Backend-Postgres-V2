@@ -64,6 +64,9 @@ import {
 } from './final-bonus';
 import { leaveEncashmentExemption } from './leave-encashment-tax';
 import { noticeRecoveryAmount, noticeShortfallDays } from './notice-shortfall';
+import { PayslipPdfService } from '../payroll/payslip-pdf.service';
+import { escapeHtml } from '../email-templates/email-layout';
+import { personalEmailOf } from '../common/personal-email';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { ReverseSettlementDto } from './dto/reverse-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -135,6 +138,7 @@ export class SettlementsService {
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly statutoryConfigService: StatutoryConfigService,
     private readonly auditLogService: AuditLogService,
+    private readonly payslipPdfService: PayslipPdfService,
   ) {}
 
   // Adds the Code on Social Security's 30-day gratuity deadline (from the last working day) to a settlement, and
@@ -1727,6 +1731,75 @@ export class SettlementsService {
         paymentReference: dto.paymentReference ?? null,
       },
     });
+    // The payout has gone out: send the final payslip / settlement statement (PDF) to the employee. Their company
+    // mailbox is closed at exit, so it goes to the personal address; best-effort - a mail problem never undoes a
+    // payment record.
+    void this.sendFinalDocuments(
+      settlement,
+      organizationId,
+      paidOnStr,
+      actor.id,
+    );
     return paid;
+  }
+
+  private async sendFinalDocuments(
+    settlement: {
+      id: string;
+      employeeId: string;
+      payrollRunId: string | null;
+      netSettlementAmount: number;
+      lastWorkingDay: string;
+    },
+    organizationId: string,
+    paidOn: string,
+    actorId: string,
+  ): Promise<void> {
+    try {
+      if (!settlement.payrollRunId) return;
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: settlement.employeeId, organizationId },
+        select: { id: true, name: true, email: true, personalData: true },
+      });
+      if (!employee) return;
+      const to = personalEmailOf(employee.personalData) ?? employee.email;
+      const { buffer, filename } =
+        await this.payslipPdfService.buildPayslipPdfBuffer(
+          settlement.payrollRunId,
+          organizationId,
+        );
+      const title = 'Your Full & Final Settlement statement';
+      const message = `Hi ${escapeHtml(employee.name)},<br/><br/>Your full &amp; final settlement of ${settlement.netSettlementAmount} (${escapeHtml(amountInWords(settlement.netSettlementAmount))}) was paid on ${escapeHtml(paidOn)}. Your settlement statement and final payslip are attached to this email - please keep them for your records.`;
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'SETTLEMENT_PAID',
+        {
+          employeeName: employee.name,
+          netSettlementAmount: String(settlement.netSettlementAmount),
+          paidOn,
+        },
+        { subject: title, html: message },
+      );
+      await this.emailService.send({
+        organizationId,
+        to,
+        subject: rendered.subject,
+        html: rendered.html,
+        attachments: [{ filename, content: buffer }],
+      });
+      await this.auditLogService.log({
+        actorId,
+        action: 'SETTLEMENT_DOCUMENTS_EMAILED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: settlement.id,
+        details: {
+          employeeId: employee.id,
+          toPersonalEmail: to !== employee.email,
+        },
+      });
+    } catch {
+      // best-effort: the settlement is already marked paid.
+    }
   }
 }
