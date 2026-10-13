@@ -266,6 +266,17 @@ describe('Auth + RBAC (e2e)', () => {
     expect(newTokens.refreshToken).not.toBe(
       (loginRes.body as AuthBody).refreshToken,
     );
+    // The confirmation dialog's facts: where the notice went (masked, never the full address) and how many
+    // other sessions were signed out - this login's own token is not "another" session.
+    const facts = changed.body as {
+      otherSessionsSignedOut: number;
+      confirmationEmail: string;
+    };
+    // Earlier tests left other live sessions for this user, so the count is a number >= 0 rather than a fixed one.
+    expect(Number.isInteger(facts.otherSessionsSignedOut)).toBe(true);
+    expect(facts.otherSessionsSignedOut).toBeGreaterThanOrEqual(0);
+    expect(facts.confirmationEmail).toMatch(/^.\*\*\*.*@/);
+    expect(facts.confirmationEmail).not.toBe(testEmails.employee);
     await request(app.getHttpServer())
       .post('/auth/refresh')
       .send({ refreshToken: (loginRes.body as AuthBody).refreshToken })

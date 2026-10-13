@@ -97,6 +97,15 @@ export interface IssuedTokens {
   expiresIn: number;
 }
 
+// "rohit.mane@acme.com" -> "r***e@acme.com": enough to recognise the address, not enough to reveal it.
+function maskEmail(email: string): string {
+  const [local, domain] = email.split('@');
+  if (!domain) return email;
+  const head = local.slice(0, 1);
+  const tail = local.length > 2 ? local.slice(-1) : '';
+  return `${head}***${tail}@${domain}`;
+}
+
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -797,7 +806,15 @@ export class AuthService {
     organizationId: string,
     dto: ChangePasswordDto,
     meta: { ip?: string; userAgent?: string } = {},
-  ): Promise<{ message: string } & IssuedTokens> {
+  ): Promise<
+    {
+      message: string;
+      // How many other sessions were signed out by this change, and where the confirmation notice was sent
+      // (masked) - shown on the confirmation dialog so the user knows what just happened.
+      otherSessionsSignedOut: number;
+      confirmationEmail: string | null;
+    } & IssuedTokens
+  > {
     const user = await this.usersService.findByIdInOrg(userId, organizationId);
     if (!user) throw new UnauthorizedException();
 
@@ -818,7 +835,7 @@ export class AuthService {
     // refresh token would survive the very password change meant to shut
     // it out, since that token never expires on its own for
     // REFRESH_TOKEN_TTL_DAYS.
-    await this.scopedPrisma.$transaction([
+    const [, revokedTokens] = await this.scopedPrisma.$transaction([
       this.scopedPrisma.user.updateMany({
         where: { id: user.id, organizationId: user.organizationId },
         data: {
@@ -880,7 +897,13 @@ export class AuthService {
     // sends the (friendlier) account-activated email, so it doesn't get both.
     if (!wasFirstTimeChange) this.sendPasswordChangedEmail(user);
 
-    return { message: 'Password changed successfully.', ...tokens };
+    return {
+      message: 'Password changed successfully.',
+      // The revoked set includes this session's own token (re-issued above), so it is not "another" session.
+      otherSessionsSignedOut: Math.max(0, revokedTokens.count - 1),
+      confirmationEmail: maskEmail(user.email),
+      ...tokens,
+    };
   }
 
   // Best-effort, fire-and-forget security notice — a send failure must never fail the password
