@@ -18,6 +18,9 @@ interface Opts {
   openCase?: Row | null;
   resignation?: Row | null;
   defaultNotice?: number;
+  bonusOn?: boolean;
+  signedRuns?: Row[];
+  paidRuns?: Row[];
 }
 
 const JOINED = new Date('2020-10-07T00:00:00Z');
@@ -91,6 +94,8 @@ function build(o: Opts = {}) {
             (!a.where.status?.in || a.where.status.in.includes(r.status))
           );
         }) ?? null,
+      findMany: async (a: Row) =>
+        a.where.runSequence === 0 ? (o.signedRuns ?? []) : (o.paidRuns ?? []),
     },
     loan: { findMany: async () => o.loans ?? [] },
     leaveType: { findMany: async () => o.leaveTypes ?? [] },
@@ -113,7 +118,12 @@ function build(o: Opts = {}) {
   const service = new SettlementsService(
     stub(prisma),
     stub(payrollService),
-    stub({ getOrCreate: async () => ({ gratuityEnabled: !!o.gratuityOn }) }),
+    stub({
+      getOrCreate: async () => ({
+        gratuityEnabled: !!o.gratuityOn,
+        financialYearStartMonth: 4,
+      }),
+    }),
     stub({
       getCurrentMonthlyValue: async (_e: string, code: string) =>
         code === 'BASIC' ? (o.basic ?? 30000) : code === 'DA' ? (o.da ?? 0) : 0,
@@ -129,7 +139,21 @@ function build(o: Opts = {}) {
     stub({ send: async () => undefined }),
     stub({ logEvent: async () => undefined }),
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
-    stub({ getEffective: async () => ({ version: null }) }),
+    stub({
+      getEffective: async (module: string) =>
+        module === 'BONUS' && o.bonusOn
+          ? {
+              version: {
+                isEnabled: true,
+                config: {
+                  rate: 8.33,
+                  eligibilityCeiling: 21000,
+                  calculationCeiling: 7000,
+                },
+              },
+            }
+          : { version: null },
+    }),
     stub({ log: async (e: Row) => audit.push(e) }),
   );
   return { service, settlements, audit, payrollService };
@@ -523,5 +547,83 @@ describe('final settlement: notice period and recoveries', () => {
     expect(partial.loanBalanceRecovered).toBe(40000);
     expect(partial.loanBalanceUnrecovered).toBe(60000);
     expect(partial.netSettlementAmount).toBe(0);
+  });
+});
+
+describe('final settlement: statutory bonus', () => {
+  const run = (month: number) => ({
+    month,
+    year: month >= 4 ? 2026 : 2027,
+    earnings: [{ code: 'BASIC', amount: 15000 }],
+    attendanceSummary: { payableDays: 30, totalDaysInMonth: 30 },
+  });
+  const apr2sep = [4, 5, 6, 7, 8, 9].map(run);
+  // October to the 6th: 6 of 31 days, basic earned in proportion
+  const calc = {
+    earnings: [{ code: 'BASIC', name: 'Basic', amount: 2903 }],
+    attendanceSummary: { payableDays: 6, totalDaysInMonth: 31 },
+  };
+
+  it('is worked out for the year up to the exit and added when none was entered', async () => {
+    const { service } = build({ bonusOn: true, signedRuns: apr2sep, calc });
+    const s = await service.calculate(dto(), admin, 'org');
+    // (6 x 7,000 + 7,000 x 6/31) x 8.33%
+    expect(s.statutoryBonusDue).toBe(3611);
+    expect(s.bonusAmount).toBe(3611);
+    expect(s.bonusAuto).toBe(true);
+    expect(s.warnings.join(' ')).toMatch(/Statutory bonus of 3611/);
+  });
+
+  it('is taxed with the last month', async () => {
+    const { service, payrollService } = build({
+      bonusOn: true,
+      signedRuns: apr2sep,
+      calc,
+    });
+    await service.calculate(dto(), admin, 'org');
+    const calls = payrollService.calculatePayroll.mock.calls as unknown as [
+      string,
+      number,
+      number,
+      string,
+      { finalSettlement: { extraTaxableEarnings: number } },
+    ][];
+    expect(calls.at(-1)![4].finalSettlement.extraTaxableEarnings).toBe(3611);
+  });
+
+  it('less the bonus the year already paid', async () => {
+    const { service } = build({
+      bonusOn: true,
+      signedRuns: apr2sep,
+      paidRuns: [{ earnings: [{ code: 'BONUS', amount: 1000 }] }],
+      calc,
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.statutoryBonusPaid).toBe(1000);
+    expect(s.bonusAmount).toBe(2611);
+  });
+
+  it("HR's own figure overrides it (0 pays none), and a disqualification calculates none", async () => {
+    const own = await build({
+      bonusOn: true,
+      signedRuns: apr2sep,
+      calc,
+    }).service.calculate(dto({ bonusAmount: 0 }), admin, 'org');
+    expect(own.bonusAmount).toBe(0);
+    expect(own.bonusAuto).toBe(false);
+    const dq = await build({
+      bonusOn: true,
+      signedRuns: apr2sep,
+      calc,
+    }).service.calculate(dto({ bonusDisqualified: true }), admin, 'org');
+    expect(dq.bonusAmount).toBe(0);
+    expect(dq.bonusDisqualified).toBe(true);
+  });
+
+  it('is nothing when the bonus module is off', async () => {
+    const { service } = build({ signedRuns: apr2sep, calc });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.bonusAmount).toBe(0);
+    expect(s.statutoryBonusDue).toBe(0);
   });
 });

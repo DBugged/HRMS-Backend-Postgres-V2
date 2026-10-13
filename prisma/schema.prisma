@@ -2577,6 +2577,13 @@ model Settlement {
   noticePayAmount        Float   @default(0)
   noticeShortfallDays    Float   @default(0)
   noticeRecoveryAuto     Boolean @default(false)
+  // Statutory bonus on exit: the bonus due for the accounting year up to the last working day, what was already paid
+  // in the year (regular or supplementary runs), and whether bonusAmount is that difference (auto) or HR's own figure.
+  // bonusDisqualified: HR recorded a disqualification (dismissal for misconduct) so none is calculated.
+  statutoryBonusDue      Float   @default(0)
+  statutoryBonusPaid     Float   @default(0)
+  bonusAuto              Boolean @default(false)
+  bonusDisqualified      Boolean @default(false)
   // Why recoveriesAmount was deducted — required whenever it is above zero.
   recoveriesReason       String?
   // Leave encashment: the part exempt under s.10(10AA) (not taxed) and the per-leave-type days behind the figure

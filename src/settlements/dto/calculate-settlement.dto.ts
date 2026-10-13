@@ -19,11 +19,22 @@ export class CalculateSettlementDto {
   @IsValidCalendarDateString()
   lastWorkingDay!: string;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    description:
+      'Bonus to pay. Leave it out to have the statutory bonus due for the accounting year (less what was already paid) calculated; an amount - 0 to pay none - overrides it.',
+  })
   @IsOptional()
   @IsNumber()
   @Min(0)
   bonusAmount?: number;
+
+  @ApiPropertyOptional({
+    description:
+      'The employee is disqualified from statutory bonus (dismissal for fraud, violence or misconduct causing financial loss): none is calculated.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  bonusDisqualified?: boolean;
 
   @ApiPropertyOptional()
   @IsOptional()

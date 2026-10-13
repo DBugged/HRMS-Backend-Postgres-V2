@@ -57,6 +57,11 @@ import { EmployeeSalaryComponentsService } from '../employee-salary-components/e
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
+import {
+  bonusMonthFromRun,
+  bonusPaidIn,
+  finalStatutoryBonus,
+} from './final-bonus';
 import { leaveEncashmentExemption } from './leave-encashment-tax';
 import { noticeRecoveryAmount, noticeShortfallDays } from './notice-shortfall';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
@@ -402,38 +407,68 @@ export class SettlementsService {
     });
     const noticePayAmount = notice.payAmount;
 
-    const bonusForTax = (dto.bonusAmount ?? 0) + noticePayAmount;
     const monthAlreadyPaidForTax = await this.hasSettledRegularRun(
       dto.employeeId,
       month,
       year,
       organizationId,
     );
-    let calc: Awaited<ReturnType<PayrollService['calculatePayroll']>>;
-    try {
-      calc = await this.payrollService.calculatePayroll(
-        dto.employeeId,
+    // The last month's pay, with `extraTaxable` (leave encashment beyond its exemption, bonus, notice pay) taxed
+    // together with it, on income actually earned (no projection past the exit).
+    const calculateExitMonth = async (extraTaxable: number) => {
+      try {
+        return await this.payrollService.calculatePayroll(
+          dto.employeeId,
+          month,
+          year,
+          organizationId,
+          {
+            finalSettlement: {
+              extraTaxableEarnings: extraTaxable,
+              monthAlreadyPaid: monthAlreadyPaidForTax,
+              lastWorkingDay: lwdDate,
+            },
+          },
+        );
+      } catch (err) {
+        // A payroll misconfiguration (missing tax slabs, a broken formula) is
+        // the caller's to fix, not a server error.
+        if (err instanceof HttpException) throw err;
+        throw new BadRequestException(
+          `Could not calculate the ${month}/${year} pending salary: ${(err as Error).message}`,
+        );
+      }
+    };
+    const taxableBase =
+      leaveEncashmentAmount - leaveEncashmentExempt + noticePayAmount;
+    // HR's own bonus figure (0 included) wins; otherwise the statutory bonus due on exit is worked out below.
+    let bonusResolved = dto.bonusAmount ?? 0;
+    let calc = await calculateExitMonth(taxableBase + bonusResolved);
+
+    // Statutory bonus: for the accounting year up to the last working day, less what the year already paid. It needs
+    // the LWD month's own figures (from the calculation above), so it is worked out after it and the month is
+    // re-taxed with the bonus included.
+    const bonusDisqualified = dto.bonusDisqualified === true;
+    let statutoryBonusDue = 0;
+    let statutoryBonusPaid = 0;
+    let bonusAuto = false;
+    if (!bonusDisqualified) {
+      const info = await this.statutoryBonusOnExit({
+        employeeId: dto.employeeId,
+        organizationId,
+        lwdDate,
         month,
         year,
-        organizationId,
-        {
-          finalSettlement: {
-            // Leave encashment and bonus paid in the settlement are taxable salary — TDS is worked out on them
-            // together with the last month's pay, on income actually earned (no projection past the exit).
-            extraTaxableEarnings:
-              leaveEncashmentAmount - leaveEncashmentExempt + bonusForTax,
-            monthAlreadyPaid: monthAlreadyPaidForTax,
-            lastWorkingDay: lwdDate,
-          },
-        },
-      );
-    } catch (err) {
-      // A payroll misconfiguration (missing tax slabs, a broken formula) is
-      // the caller's to fix, not a server error.
-      if (err instanceof HttpException) throw err;
-      throw new BadRequestException(
-        `Could not calculate the ${month}/${year} pending salary: ${(err as Error).message}`,
-      );
+        calc,
+        monthAlreadyPaid: monthAlreadyPaidForTax,
+      });
+      statutoryBonusDue = info.due;
+      statutoryBonusPaid = info.alreadyPaid;
+      if (dto.bonusAmount === undefined && info.payable > 0) {
+        bonusResolved = info.payable;
+        bonusAuto = true;
+        calc = await calculateExitMonth(taxableBase + bonusResolved);
+      }
     }
     // calculatePayroll() (a plain preview — it never calls
     // LoansService.recordRepayment, that only happens when a normal
@@ -568,7 +603,7 @@ export class SettlementsService {
       dto.employeeId,
       organizationId,
     );
-    const bonusAmount = dto.bonusAmount ?? 0;
+    const bonusAmount = bonusResolved;
     const recoveriesAmount = dto.recoveriesAmount ?? 0;
     const noticePeriodRecovery =
       dto.noticePeriodRecovery !== undefined
@@ -622,6 +657,11 @@ export class SettlementsService {
       warnings.push(
         `${pendingClaimCount} reimbursement claim(s) are still pending - they are not part of this settlement.`,
       );
+    if (bonusAuto) {
+      warnings.push(
+        `Statutory bonus of ${bonusAmount} was added (due ${statutoryBonusDue} for the year, ${statutoryBonusPaid} already paid). Confirm the bonus rate with your CA; mark the settlement as disqualified if the employee was dismissed for misconduct.`,
+      );
+    }
     if (loanBalanceUnrecovered > 0)
       warnings.push(
         `Loan balance of ${loanBalanceUnrecovered} could not be recovered from this payout and stays open.`,
@@ -654,6 +694,10 @@ export class SettlementsService {
       loanBalanceRecovered,
       noticePeriodRecovery,
       noticePayAmount,
+      statutoryBonusDue,
+      statutoryBonusPaid,
+      bonusAuto,
+      bonusDisqualified,
       noticeShortfallDays: notice.shortfallDays,
       noticeRecoveryAuto:
         dto.noticePeriodRecovery === undefined && notice.recovery > 0,
@@ -746,6 +790,99 @@ export class SettlementsService {
       performedById: actor.id,
     });
     return { ...this.withGratuityPayout(created), pendingSalaryNote, warnings };
+  }
+
+  // The statutory bonus owed on exit: the BONUS module's rate on the months worked in the accounting year, less the
+  // bonus the year's payroll already paid. Zero when the module is off. See final-bonus.ts.
+  private async statutoryBonusOnExit(args: {
+    employeeId: string;
+    organizationId: string;
+    lwdDate: string;
+    month: number;
+    year: number;
+    calc: Awaited<ReturnType<PayrollService['calculatePayroll']>>;
+    monthAlreadyPaid: boolean;
+  }): Promise<{ due: number; alreadyPaid: number; payable: number }> {
+    const { employeeId, organizationId, lwdDate, month, year, calc } = args;
+    const settings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const { version } = await this.statutoryConfigService.getEffective(
+      StatutoryModule.BONUS,
+      lwdDate,
+      organizationId,
+    );
+    const enabled = version ? version.isEnabled : settings.bonusEnabled;
+    if (!enabled) return { due: 0, alreadyPaid: 0, payable: 0 };
+    const c = (version?.config ?? {}) as {
+      rate?: number;
+      eligibilityCeiling?: number;
+      calculationCeiling?: number;
+      minimumWage?: number;
+    };
+    const config = {
+      rate: c.rate ?? 8.33,
+      eligibilityCeiling: c.eligibilityCeiling ?? 21000,
+      calculationCeiling: c.calculationCeiling ?? 7000,
+      minimumWage: c.minimumWage,
+    };
+    const financialYear = getFinancialYear(
+      month,
+      year,
+      settings.financialYearStartMonth,
+    );
+    const signedOff = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        financialYear,
+        isFinalSettlement: false,
+        runSequence: 0,
+        status: { in: SETTLED_REGULAR_RUN_STATUSES },
+      },
+      select: {
+        month: true,
+        year: true,
+        earnings: true,
+        attendanceSummary: true,
+      },
+    });
+    const months = signedOff.map((r) => bonusMonthFromRun(r));
+    // The LWD month, when no signed-off regular run covers it, comes from this settlement's own calculation.
+    const hasLwdMonth = months.some(
+      (m) => m.month === month && m.year === year,
+    );
+    if (!hasLwdMonth && !args.monthAlreadyPaid && calc.attendanceSummary) {
+      months.push(
+        bonusMonthFromRun({
+          month,
+          year,
+          earnings: calc.earnings,
+          attendanceSummary: calc.attendanceSummary,
+        }),
+      );
+    }
+    // Any bonus already put through the year's payroll counts - regular lines and supplementary runs, whether or not
+    // locked yet (a draft is not counted) - so the same bonus is not paid twice.
+    const bonusRuns = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        financialYear,
+        isFinalSettlement: false,
+        status: { not: PayrollRunStatus.DRAFT },
+      },
+      select: { earnings: true },
+    });
+    const result = finalStatutoryBonus({
+      months,
+      config,
+      alreadyPaid: bonusPaidIn(bonusRuns),
+    });
+    return {
+      due: result.due,
+      alreadyPaid: result.alreadyPaid,
+      payable: result.payable,
+    };
   }
 
   // Notice period figures for the exit. A resignation's notice is the employee's (their days, else the company
