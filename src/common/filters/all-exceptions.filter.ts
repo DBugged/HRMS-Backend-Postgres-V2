@@ -125,9 +125,9 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     const isHttp = exception instanceof HttpException;
     // A unique-constraint violation is a client-caused 409, not a server
-    // fault — e.g. two employees both clearing/setting the same
-    // officialEmail. Without this, it fell through to the generic 500
-    // branch below and leaked nothing useful to the caller.
+    // fault — e.g. two employees both setting the same unique value.
+    // Without this, it fell through to the generic 500 branch below and
+    // leaked nothing useful to the caller.
     const isDuplicateKey =
       exception instanceof Prisma.PrismaClientKnownRequestError &&
       exception.code === 'P2002';

@@ -7,8 +7,7 @@
 // Important: update() also writes EmployeeMovement history rows for department/designation/grade/manager changes
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
-// pre-check. officialEmail is normalized to null (not '') on clear since it's a unique column and empty
-// strings would collide across employees.
+// pre-check.
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PayrollService } from '../payroll/payroll.service';
@@ -308,9 +307,8 @@ export class EmployeesService {
     }
 
     // Welcome email — login URL, login email, employee ID (reference only), set-password link — sent to
-    // the personal email HR just entered, since the official/company email
-    // is normally still unset at this point (see officialEmail's comment on
-    // the User model and resendCredentials() below for that path). Sent
+    // the personal email HR just entered, since the login mailbox may not
+    // exist yet (see resendCredentials() below for that path). Sent
     // after the transaction commits, and EmailService never throws (it
     // falls back to a console dry-run log on any delivery failure), so a
     // bad SMTP/Resend config can't roll back or fail employee creation —
@@ -422,7 +420,7 @@ export class EmployeesService {
 
   // ADMIN/HR only (enforced in the controller) — sends to personalEmail,
   // the same address the original welcome email went to (see create()),
-  // not officialEmail: personalEmail is the one address that's guaranteed
+  // not the login email: personalEmail is the one address that's guaranteed
   // to exist and stays reachable even after the employee has resigned. The
   // original password can't literally be "resent" since it's hashed
   // immediately and never stored in plaintext, so this issues a fresh one
@@ -740,7 +738,6 @@ export class EmployeesService {
     const {
       personalData,
       contactNumber: _contactNumber,
-      officialEmail: _officialEmail,
       ...rest
     } = safe;
     // Only the "profile complete" flag the directory column shows.
@@ -915,16 +912,6 @@ export class EmployeesService {
       organizationId,
       id,
     );
-    // officialEmail is a second sign-in/reset address: it must not be another account's address, or sign-in and
-    // password reset for that account would become ambiguous (and could be denied to it).
-    if (clean.officialEmail) {
-      const holder = await this.usersService.findByEmail(clean.officialEmail);
-      if (holder && holder.id !== id) {
-        throw new ConflictException(
-          'This email address is already used by another account.',
-        );
-      }
-    }
 
     // Same ROLES_HR_CAN_ASSIGN gate as create() — stripLockedFields() only
     // decides whether HR/Admin *may* touch `role` at all (vs. a plain
@@ -1077,14 +1064,6 @@ export class EmployeesService {
         where: { id, organizationId },
         data: {
           ...clean,
-          // officialEmail is @unique — writing '' literally (rather than
-          // null) means the second employee to clear it collides with the
-          // first and gets an unhandled unique-constraint 500. '' and
-          // "not yet provisioned" are the same thing to callers (see the
-          // DTO's ValidateIf comment), so normalize to null on write; NULLs
-          // are exempt from the unique index, unlike duplicate ''s.
-          officialEmail:
-            clean.officialEmail === '' ? null : clean.officialEmail,
           joiningDate: clean.joiningDate
             ? new Date(clean.joiningDate)
             : undefined,

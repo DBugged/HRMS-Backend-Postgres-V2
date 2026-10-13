@@ -163,8 +163,7 @@ export function defaultCategories(): DataCategory[] {
       label: 'Identity and contact',
       fields: [
         f('name', 'Name', 'users.name'),
-        f('email', 'Login email', 'users.email'),
-        f('officialEmail', 'Company email', 'users.officialEmail'),
+        f('email', 'Company / login email', 'users.email'),
         f('contactNumber', 'Contact number', 'users.contactNumber'),
         f('gender', 'Gender', 'users.gender'),
         f('profileImage', 'Profile photo', 'users.profileImage'),

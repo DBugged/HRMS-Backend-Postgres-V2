@@ -399,13 +399,6 @@ model User {
   name     String
   role     Role   @default(EMPLOYEE)
 
-  // Corporate/company inbox, set up separately from the login email above
-  // (often after IT provisions it post-joining) — nullable since it's
-  // normally unknown at creation time; unique when set so two employees
-  // can't share one. Credentials can be re-sent here once it exists via
-  // POST /employees/:id/resend-credentials.
-  officialEmail String? @unique
-
   // Forgot/reset-password — a SHA-256 hash of the raw token mailed to the
   // user (never store the raw token), unique so a hash lookup can find the
   // owning row directly. Both null once unset/consumed. 30-minute expiry
@@ -3203,7 +3196,7 @@ model EmployeeAsset {
   // Scoped per-org, not global — assetTag (e.g. a serial/inventory tag) is
   // only meaningful within one org's inventory, and two different orgs may
   // legitimately reuse the same tag. NULLs are exempt from Postgres unique
-  // indexes (same as officialEmail elsewhere in this schema), so this only
+  // indexes (same as other optional unique columns in this schema), so this only
   // enforces uniqueness when assetTag is actually provided.
   @@unique([organizationId, assetTag])
   @@index([organizationId, employeeId])
@@ -3721,7 +3714,7 @@ model Asset {
   updatedAt DateTime @updatedAt
 
   // Per-org, not global — NULLs are exempt from Postgres unique indexes
-  // (same as EmployeeAsset.assetTag / User.officialEmail), so these only
+  // (same as EmployeeAsset.assetTag), so these only
   // bite when the field is actually provided.
   @@unique([organizationId, assetCode])
   @@unique([organizationId, assetTag])

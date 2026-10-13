@@ -936,7 +936,7 @@ export class EmployeeProfileService {
   ) {
     await this.findEmployeeOrThrow(id, organizationId);
     // assetTag is @@unique([organizationId, assetTag]) at the DB level (NULLs
-    // exempt, same as officialEmail elsewhere), so a duplicate tag within
+    // exempt), so a duplicate tag within
     // this org throws Prisma P2002 here — the global AllExceptionsFilter
     // turns that into a clean 409 automatically, same mechanism used for
     // every other unique-constraint conflict in this app, so no manual

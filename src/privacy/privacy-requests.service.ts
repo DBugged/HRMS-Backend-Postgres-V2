@@ -70,7 +70,6 @@ export const CONTROLLED_FIELDS = [
   'bankName',
   'bankAccountHolderName',
   'email',
-  'officialEmail',
 ] as const;
 
 const OPTIONAL_PERSONAL_DATA_KEYS = [
@@ -1017,7 +1016,6 @@ export class PrivacyRequestsService {
       profile: {
         name: user.name,
         email: user.email,
-        officialEmail: user.officialEmail,
         contactNumber: user.contactNumber,
         gender: user.gender,
         employeeId: user.employeeId,

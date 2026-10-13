@@ -1,8 +1,6 @@
 import { UsersService } from './users.service';
 
-function build(
-  rows: { id: string; email: string; officialEmail: string | null }[],
-) {
+function build(rows: { id: string; email: string }[]) {
   const prisma = {
     user: {
       findFirst: async (a: { where: Record<string, string> }) =>
@@ -17,23 +15,14 @@ function build(
 }
 
 describe('UsersService.findByEmail', () => {
-  it("an account's own login email wins over someone else's official email", async () => {
-    const service = build([
-      {
-        id: 'attacker',
-        email: 'attacker@x.com',
-        officialEmail: 'victim@x.com',
-      },
-      { id: 'victim', email: 'victim@x.com', officialEmail: null },
-    ]);
-    expect((await service.findByEmail('victim@x.com'))?.id).toBe('victim');
+  it('finds an account by its login email, ignoring case and spaces', async () => {
+    const service = build([{ id: 'u1', email: 'u1@x.com' }]);
+    expect((await service.findByEmail(' U1@X.com '))?.id).toBe('u1');
+    expect(await service.findByEmail('nobody@x.com')).toBeNull();
   });
 
-  it('falls back to the official email when no login email matches', async () => {
-    const service = build([
-      { id: 'u1', email: 'u1@x.com', officialEmail: 'work@x.com' },
-    ]);
-    expect((await service.findByEmail(' Work@X.com '))?.id).toBe('u1');
-    expect(await service.findByEmail('nobody@x.com')).toBeNull();
+  it('does not look an account up by any other address', async () => {
+    const service = build([{ id: 'u1', email: 'u1@x.com' }]);
+    expect(await service.findByEmail('work@x.com')).toBeNull();
   });
 });

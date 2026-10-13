@@ -46,7 +46,7 @@ export class CreateEmployeeDto {
   // '' and absent are both "don't send a welcome email" to
   // EmployeesService.create()'s truthy checks, so '' has to stay valid —
   // @IsOptional alone only skips validation for undefined, same class of
-  // bug as UpdateEmployeeDto.officialEmail / SendNotificationDto.department.
+  // bug as SendNotificationDto.department.
   @ApiPropertyOptional({ example: 'jane.personal@gmail.com' })
   @NormalizeEmail()
   @IsOptional()
