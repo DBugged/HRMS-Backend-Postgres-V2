@@ -763,3 +763,36 @@ describe('loans: repayments', () => {
     ).rejects.toThrow(/Loan not found/);
   });
 });
+
+describe('loans: who can read the repayments', () => {
+  const loan = (departmentId: string | null) => ({
+    id: 'l1',
+    organizationId: 'org',
+    employeeId: 'e1',
+    employee: { departmentId },
+  });
+
+  it('a manager with no department cannot read the loans of department-less employees', async () => {
+    const { service } = build({ loans: [loan(null)] });
+    const manager = {
+      id: 'm1',
+      role: Role.MANAGER,
+      departmentId: null,
+    } as never;
+    await expect(service.getRepayments('l1', manager, 'org')).rejects.toThrow(
+      /Not authorized/,
+    );
+  });
+
+  it('a manager reads repayments only within their own department', async () => {
+    const { service } = build({ loans: [loan('d1')] });
+    const same = { id: 'm1', role: Role.MANAGER, departmentId: 'd1' } as never;
+    const other = { id: 'm2', role: Role.MANAGER, departmentId: 'd2' } as never;
+    await expect(
+      service.getRepayments('l1', same, 'org'),
+    ).resolves.toBeDefined();
+    await expect(service.getRepayments('l1', other, 'org')).rejects.toThrow(
+      /Not authorized/,
+    );
+  });
+});

@@ -889,9 +889,11 @@ export class LoansService {
     if (actor.role === Role.EMPLOYEE && loan.employeeId !== actor.id) {
       throw new ForbiddenException('Not authorized to view this loan.');
     }
+    // A manager with no department has no team: two null departments are not "the same department".
     if (
       actor.role === Role.MANAGER &&
-      loan.employee.departmentId !== actor.departmentId
+      (actor.departmentId === null ||
+        loan.employee.departmentId !== actor.departmentId)
     ) {
       throw new ForbiddenException('Not authorized to view this loan.');
     }
