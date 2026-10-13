@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import {
   EmployeeSalaryComponent,
+  NotificationCategory,
   PayrollRunStatus,
   Prisma,
   SalaryComponent,
@@ -32,6 +33,12 @@ import {
 } from './component-value-resolution';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { LettersService } from '../letters/letters.service';
+
+// A stored effective date as YYYY-MM-DD, whether the column hands back a string or a Date.
+const dateOnly = (v: Date | string): string =>
+  typeof v === 'string' ? v.slice(0, 10) : v.toISOString().slice(0, 10);
 
 @Injectable()
 export class EmployeeSalaryComponentsService {
@@ -39,7 +46,72 @@ export class EmployeeSalaryComponentsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly notificationsService: NotificationsService,
+    private readonly lettersService: LettersService,
   ) {}
+
+  // Tells the employee their salary structure was revised: an in-app notification (and phone push), and their
+  // Revised CTC letter by email - the letter carries the details, so the email itself states no amounts and none are
+  // put in the notification. Skipped when the person revised their own salary (an Admin can) or when the
+  // organisation switched it off (orgPayrollAttendancePrefs.notifySalaryRevision === false). Best-effort: the revision
+  // is already saved, so a problem here (no active letter template, no email on file...) is swallowed and never
+  // fails the caller.
+  private async notifyRevision(
+    employeeId: string,
+    actorId: string,
+    organizationId: string,
+    effectiveFrom: string,
+  ): Promise<void> {
+    try {
+      if (employeeId === actorId) return;
+      const [org, employee] = await Promise.all([
+        this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { orgPayrollAttendancePrefs: true },
+        }),
+        this.scopedPrisma.user.findFirst({
+          where: { id: employeeId, organizationId },
+          select: { isActive: true },
+        }),
+      ]);
+      const prefs = (org?.orgPayrollAttendancePrefs ?? {}) as {
+        notifySalaryRevision?: boolean;
+      };
+      if (prefs.notifySalaryRevision === false) return;
+      if (!employee || !employee.isActive) return;
+
+      const [y, m, d] = effectiveFrom.slice(0, 10).split('-');
+      const effective = y && m && d ? `${d}-${m}-${y}` : effectiveFrom;
+      await this.notificationsService.create({
+        organizationId,
+        userId: employeeId,
+        title: 'Salary structure revised',
+        message: `Your salary structure was revised, effective ${effective}. Your Revised CTC letter has been emailed to you; open My Salary Structure to see the details.`,
+        category: NotificationCategory.PAYROLL,
+      });
+    } catch {
+      // best-effort notice - the revision itself has already been saved
+    }
+    try {
+      if (employeeId === actorId) return;
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { orgPayrollAttendancePrefs: true },
+      });
+      const prefs = (org?.orgPayrollAttendancePrefs ?? {}) as {
+        notifySalaryRevision?: boolean;
+      };
+      if (prefs.notifySalaryRevision === false) return;
+      await this.lettersService.sendRevisedCtcLetter(
+        employeeId,
+        actorId,
+        organizationId,
+        effectiveFrom,
+      );
+    } catch {
+      // no active Increment letter template, no email on file, or no structure yet - nothing to send
+    }
+  }
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
     const org = await this.scopedPrisma.organization.findFirst({
@@ -154,13 +226,20 @@ export class EmployeeSalaryComponentsService {
   ): Promise<EmployeeSalaryComponent> {
     await this.assertEmployeeExists(employeeId, organizationId);
     const component = await this.resolveComponentOrThrow(dto, organizationId);
-    return this.applyRevision(
+    const row = await this.applyRevision(
       employeeId,
       component,
       dto,
       actorId,
       organizationId,
     );
+    void this.notifyRevision(
+      employeeId,
+      actorId,
+      organizationId,
+      dateOnly(row.effectiveFrom),
+    );
+    return row;
   }
 
   async bulkSetStructure(
@@ -233,6 +312,16 @@ export class EmployeeSalaryComponentsService {
         failed
           .map((f) => `${f.componentCode ?? 'row ' + f.row}: ${f.error}`)
           .join(' | '),
+      );
+    }
+
+    // One notice for the whole revision, not one per line.
+    if (created.length > 0) {
+      void this.notifyRevision(
+        employeeId,
+        actorId,
+        organizationId,
+        dto.effectiveFrom ?? dateOnly(created[0].effectiveFrom),
       );
     }
 

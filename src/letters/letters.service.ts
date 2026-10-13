@@ -30,6 +30,12 @@ import { readStoredFile } from '../files/file-storage.config';
 import { issueDocumentNumber } from '../organizations/document-numbering';
 import { formatDateDisplay } from '../payroll/format-date';
 import { amountInWords } from '../payroll/number-to-words';
+import { todayInOrgTz } from '../common/org-date';
+import {
+  resolveCurrentRows,
+  summarizeStructure,
+  synthesizeMissingRows,
+} from '../employee-salary-components/salary-structure-math';
 import { LetterPdfService } from './letter-pdf.service';
 import {
   editedTextToParagraphs,
@@ -271,6 +277,9 @@ export class LettersService {
     key: string,
     actor: Actor,
     organizationId: string,
+    // The date whose salary structure the Revised CTC letter describes (the revision's effective date); today when
+    // omitted. Only the increment letter reads it.
+    structureAsOf?: string,
   ) {
     const template = await this.letterTemplatesService.findActiveByKey(
       key,
@@ -355,6 +364,7 @@ export class LettersService {
         companyLogoUrl: true,
         signatories: true,
         policies: true,
+        timezone: true,
         watermarkLogo: true,
       },
     });
@@ -439,6 +449,60 @@ export class LettersService {
         break;
       }
       case LetterDataProfile.PAYROLL: {
+        // Placeholders only the Increment / Revised CTC letter fills in; any other payroll letter that happens to use
+        // one gets a dash rather than the raw {{...}}.
+        variables.effectiveFrom = '—';
+        variables.fixedCTC = '—';
+        variables.variablePay = '—';
+        // The Increment / Revised CTC letter describes the salary structure as revised - not the last paid run,
+        // which still shows the old figures until the next payroll.
+        if (key === 'incrementLetter') {
+          const asOf =
+            structureAsOf ??
+            todayInOrgTz(organization.timezone ?? 'Asia/Kolkata');
+          const [rows, components] = await Promise.all([
+            this.scopedPrisma.employeeSalaryComponent.findMany({
+              where: { organizationId, employeeId },
+              include: {
+                component: {
+                  select: {
+                    type: true,
+                    payFrequency: true,
+                    isEmployerContribution: true,
+                  },
+                },
+              },
+            }),
+            this.scopedPrisma.salaryComponent.findMany({
+              where: { organizationId, isActive: true },
+            }),
+          ]);
+          const withRef = rows.map((r) => ({
+            ...r,
+            componentRef: r.component,
+          }));
+          const current = resolveCurrentRows(withRef, asOf);
+          const synthesized = synthesizeMissingRows(withRef, components, asOf);
+          const summary = summarizeStructure([...current, ...synthesized]);
+          if (summary.annualCTC <= 0) {
+            throw new BadRequestException(
+              'This employee has no salary structure on file yet.',
+            );
+          }
+          const effective = new Date(`${asOf}T00:00:00.000Z`);
+          variables.effectiveFrom = formatDateDisplay(effective);
+          variables.month = MONTHS[effective.getUTCMonth()];
+          variables.year = String(effective.getUTCFullYear());
+          variables.annualCTC = money(summary.annualCTC);
+          variables.fixedCTC = money(summary.fixedAnnual);
+          variables.variablePay = money(
+            summary.variableAnnual + summary.oneTimeAnnual,
+          );
+          variables.grossSalary = money(summary.fixedMonthly);
+          // Take-home depends on deductions worked out at payroll; the letter does not state it.
+          variables.netPay = '—';
+          break;
+        }
         const run = await this.scopedPrisma.payrollRun.findFirst({
           where: {
             organizationId,
@@ -716,6 +780,7 @@ export class LettersService {
     // before this existed. Only ever passed from send(); the plain
     // download route never overrides anything.
     overrides?: { title?: string; body?: string },
+    structureAsOf?: string,
   ): Promise<{ buffer: Buffer; filename: string }> {
     const {
       template,
@@ -725,7 +790,13 @@ export class LettersService {
       title: computedTitle,
       paragraphs: computedParagraphs,
       variables,
-    } = await this.computeLetterContent(employeeId, key, actor, organizationId);
+    } = await this.computeLetterContent(
+      employeeId,
+      key,
+      actor,
+      organizationId,
+      structureAsOf,
+    );
 
     // The one-off edit made in the Send box: placeholders HR typed are filled in and stray HTML never reaches the PDF.
     const title =
@@ -802,6 +873,30 @@ export class LettersService {
     };
   }
 
+  // Emails the employee their Revised CTC (Increment) letter after a salary revision was saved - the PDF carries the
+  // details, the email itself states no amounts. Called from the salary revision flow; the caller treats any failure
+  // (no active template, no email on file) as "no letter sent", never as a failed revision.
+  async sendRevisedCtcLetter(
+    employeeId: string,
+    actorId: string,
+    organizationId: string,
+    effectiveFrom: string,
+  ): Promise<void> {
+    const actor = await this.scopedPrisma.user.findFirst({
+      where: { id: actorId, organizationId },
+    });
+    if (!actor) return;
+    const { password: _password, ...safeActor } = actor;
+    await this.send(
+      employeeId,
+      'incrementLetter',
+      safeActor,
+      organizationId,
+      undefined,
+      effectiveFrom,
+    );
+  }
+
   // HR/Admin-only follow-up to generate() — everything is pulled from the
   // same real employee/org/computed data, nothing to fill in; HR reviews
   // the PDF (via generate()/the Download button), optionally edits the
@@ -821,6 +916,7 @@ export class LettersService {
     // HR's edited title/body for this one send, if they changed anything in
     // the Send modal — see SendLetterDto and generate()'s own comment.
     overrides?: { title?: string; body?: string },
+    structureAsOf?: string,
   ): Promise<{ message: string }> {
     const template = await this.letterTemplatesService.findActiveByKey(
       key,
@@ -849,6 +945,7 @@ export class LettersService {
       actor,
       organizationId,
       overrides,
+      structureAsOf,
     );
 
     const organization = await this.scopedPrisma.organization.findFirst({

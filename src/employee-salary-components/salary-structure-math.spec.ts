@@ -5,6 +5,7 @@ import {
   localDateStr,
   resolveCurrentRows,
   splitPeriodAtRevisions,
+  summarizeStructure,
   synthesizeMissingRows,
   SynthesizableComponent,
 } from './salary-structure-math';
@@ -284,5 +285,74 @@ describe('splitPeriodAtRevisions', () => {
       { start: '2026-06-20', end: '2026-06-24' },
       { start: '2026-06-25', end: '2026-06-30' },
     ]);
+  });
+});
+
+describe('summarizeStructure', () => {
+  const comp = (over: Record<string, unknown> = {}) => ({
+    type: 'EARNING',
+    payFrequency: 'MONTHLY',
+    isEmployerContribution: false,
+    ...over,
+  });
+  it('splits fixed monthly pay from yearly variable pay, like the Salary Details screen', () => {
+    const s = summarizeStructure([
+      {
+        componentCode: 'BASIC',
+        valueType: 'FIXED',
+        fixedAmount: 13500,
+        componentRef: comp(),
+      },
+      {
+        componentCode: 'HRA',
+        valueType: 'PERCENTAGE',
+        percentageValue: 40,
+        percentageOf: 'BASIC',
+        componentRef: comp(),
+      },
+      {
+        componentCode: 'FA',
+        valueType: 'FIXED',
+        fixedAmount: 8100,
+        componentRef: comp(),
+      },
+      {
+        componentCode: 'VARIABLE_PAY',
+        valueType: 'MANUAL',
+        fixedAmount: 36000,
+        amountBasis: 'MONTHLY',
+        componentRef: comp({ payFrequency: 'YEARLY' }),
+      },
+      { componentCode: 'OT', valueType: 'FORMULA', componentRef: comp() },
+    ]);
+    expect(s.fixedMonthly).toBe(27000);
+    expect(s.fixedAnnual).toBe(324000);
+    expect(s.variableAnnual).toBe(36000);
+    expect(s.annualCTC).toBe(360000);
+  });
+
+  it('leaves out employer contributions and components switched off', () => {
+    const s = summarizeStructure([
+      {
+        componentCode: 'BASIC',
+        valueType: 'FIXED',
+        fixedAmount: 10000,
+        componentRef: comp(),
+      },
+      {
+        componentCode: 'PF_ER',
+        valueType: 'FIXED',
+        fixedAmount: 1800,
+        componentRef: comp({ isEmployerContribution: true }),
+      },
+      {
+        componentCode: 'ALLOW',
+        valueType: 'FIXED',
+        fixedAmount: 999,
+        isEnabled: false,
+        componentRef: comp(),
+      },
+    ]);
+    expect(s.fixedMonthly).toBe(10000);
   });
 });

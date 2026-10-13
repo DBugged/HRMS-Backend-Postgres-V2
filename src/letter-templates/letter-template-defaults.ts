@@ -165,8 +165,8 @@ export const LETTER_TEMPLATE_DEFAULTS: LetterTemplateDefault[] = [
     dataProfile: LetterDataProfile.PAYROLL,
     bodyText: [
       'Dear {{employeeName}},',
-      'We are pleased to inform you that your compensation has been revised in recognition of your performance and contribution to {{companyName}}.',
-      'Your revised annual cost-to-company (CTC) is approximately {{annualCTC}}, based on a monthly gross salary of {{grossSalary}} and net (take-home) salary of {{netPay}} as of {{month}} {{year}}.',
+      'We are pleased to inform you that your compensation has been revised in recognition of your performance and contribution to {{companyName}}, effective {{effectiveFrom}}.',
+      'Your revised annual cost-to-company (CTC) is {{annualCTC}}. Of this, {{fixedCTC}} a year is fixed pay ({{grossSalary}} a month), and {{variablePay}} a year is variable pay, paid on performance and not guaranteed.',
       'This revision reflects our continued confidence in your abilities, and we look forward to your ongoing contribution to the team.',
     ].join('\n'),
   },

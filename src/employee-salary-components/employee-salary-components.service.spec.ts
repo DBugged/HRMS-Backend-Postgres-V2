@@ -35,7 +35,12 @@ const COMPONENTS: Row[] = [
 ];
 
 function build(
-  opts: { rows?: Row[]; finalizedRun?: Row | null; employee?: boolean } = {},
+  opts: {
+    rows?: Row[];
+    finalizedRun?: Row | null;
+    employee?: boolean;
+    prefs?: Row;
+  } = {},
 ) {
   const rows: Row[] = (opts.rows ?? []).map((r) => ({
     organizationId: 'org',
@@ -44,6 +49,8 @@ function build(
   }));
   const audit: Row[] = [];
   const timeline: Row[] = [];
+  const notifications: Row[] = [];
+  const letters: Row[] = [];
   let seq = 0;
   const match = (r: Row, w: Row = {}) =>
     Object.entries(w).every(
@@ -77,9 +84,17 @@ function build(
   };
   const prisma: Row = {
     user: {
-      findFirst: async () => (opts.employee === false ? null : { id: 'e1' }),
+      findFirst: async () =>
+        opts.employee === false
+          ? null
+          : { id: 'e1', name: 'Emp One', email: 'e1@x.test', isActive: true },
     },
-    organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
+    organization: {
+      findFirst: async () => ({
+        timezone: 'Asia/Kolkata',
+        orgPayrollAttendancePrefs: opts.prefs ?? {},
+      }),
+    },
     salaryComponent: {
       findFirst: async (a: Row) =>
         COMPONENTS.find((c) =>
@@ -96,8 +111,12 @@ function build(
     prisma as never,
     { log: async (e: Row) => audit.push(e) } as never,
     { logEvent: async (e: Row) => timeline.push(e) } as never,
+    { create: async (n: Row) => notifications.push(n) } as never,
+    {
+      sendRevisedCtcLetter: async (...a: unknown[]) => letters.push({ a }),
+    } as never,
   );
-  return { service, rows, audit, timeline };
+  return { service, rows, audit, timeline, notifications, letters };
 }
 
 const open = (code: string, amount: number, from: string, over: Row = {}) => ({
@@ -420,5 +439,82 @@ describe('salary structure: reading', () => {
     expect(
       await service.getCurrentMonthlyValue('e1', 'NOPE', '2026-10-10', 'org'),
     ).toBe(0);
+  });
+});
+
+describe('salary structure: telling the employee', () => {
+  // The notice is fire-and-forget; let its awaited steps settle (microtasks only - timers may be faked).
+  const flush = async () => {
+    for (let i = 0; i < 50; i++) await Promise.resolve();
+  };
+  const revise = (service: EmployeeSalaryComponentsService, actor = 'admin') =>
+    service.setComponentValue(
+      'e1',
+      {
+        componentCode: 'BASIC',
+        fixedAmount: 30000,
+        effectiveFrom: '2026-10-01',
+        revisionNote: 'Annual review',
+      } as never,
+      actor,
+      'org',
+    );
+
+  it('sends an in-app notification and the Revised CTC letter, with no amount in the notice', async () => {
+    const { service, notifications, letters } = build();
+    await revise(service);
+    await flush();
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]).toMatchObject({
+      userId: 'e1',
+      category: 'PAYROLL',
+    });
+    expect(notifications[0].message).toContain('01-10-2026');
+    expect(JSON.stringify(notifications)).not.toContain('30000');
+    // letter sent to the employee, for the revision's effective date
+    expect(letters).toHaveLength(1);
+    expect(letters[0].a).toEqual(['e1', 'admin', 'org', '2026-10-01']);
+  });
+
+  it('a bulk revision sends one notice and one letter, not one per line', async () => {
+    const { service, notifications, letters } = build();
+    await service.bulkSetStructure(
+      'e1',
+      {
+        effectiveFrom: '2026-10-01',
+        lines: [
+          { componentCode: 'BASIC', fixedAmount: 30000 },
+          {
+            componentCode: 'HRA',
+            valueType: 'PERCENTAGE',
+            percentageValue: 40,
+            percentageOf: 'BASIC',
+          },
+        ],
+      } as never,
+      'admin',
+      'org',
+    );
+    await flush();
+    expect(notifications).toHaveLength(1);
+    expect(letters).toHaveLength(1);
+  });
+
+  it('says nothing when a person revises their own salary', async () => {
+    const { service, notifications, letters } = build();
+    await revise(service, 'e1');
+    await flush();
+    expect(notifications).toHaveLength(0);
+    expect(letters).toHaveLength(0);
+  });
+
+  it('says nothing when the organisation turned the notice off', async () => {
+    const { service, notifications, letters } = build({
+      prefs: { notifySalaryRevision: false },
+    });
+    await revise(service);
+    await flush();
+    expect(notifications).toHaveLength(0);
+    expect(letters).toHaveLength(0);
   });
 });

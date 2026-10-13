@@ -369,6 +369,36 @@ describe('Letters (e2e)', () => {
       .expect(200);
   });
 
+  it('the Increment (Revised CTC) letter is written from the revised salary structure, with no payroll run needed', async () => {
+    // The employee has no processed payroll run in this spec; the old behaviour 400'd here.
+    await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/incrementLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400); // no structure yet
+
+    await request(app.getHttpServer())
+      .post(`/employee-salary/${employeeId}/structure`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        componentCode: 'BASIC',
+        valueType: 'FIXED',
+        fixedAmount: 20000,
+        effectiveFrom: '2026-10-01',
+      })
+      .expect(201);
+
+    const res = await request(app.getHttpServer())
+      .get(`/employees/${employeeId}/letters/incrementLetter/content`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const body = (res.body as { body: string }).body;
+    // Basic 20,000 + the default HRA (40% of Basic = 8,000) = 28,000 a month fixed = 3,36,000 a year; no variable
+    // pay. The payslip-based figures the letter used before would not exist here at all.
+    expect(body).toContain('3,36,000');
+    expect(body).toContain('28,000 a month');
+    expect(body).toMatch(/effective \d{2}-\d{2}-\d{4}/);
+  });
+
   it('second-batch BASIC letter types generate with no prerequisite', async () => {
     for (const key of [
       'nonSolicitationAgreement',

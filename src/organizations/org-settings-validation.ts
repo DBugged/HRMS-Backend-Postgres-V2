@@ -314,6 +314,12 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
   ) {
     bad(`${path('requireSelfieForPunch')} must be true or false.`);
   }
+  if (
+    p.notifySalaryRevision !== undefined &&
+    typeof p.notifySalaryRevision !== 'boolean'
+  ) {
+    bad(`${path('notifySalaryRevision')} must be true or false.`);
+  }
 }
 
 const NUMBERING_TOKENS =

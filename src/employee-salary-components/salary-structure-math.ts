@@ -181,3 +181,95 @@ export function synthesizeMissingRows(
       componentRef: c,
     }));
 }
+
+// ---------------------------------------------------------------------------
+// The CTC breakdown of a resolved structure - the same split the Salary Details screen shows (frontend
+// EmployeeFullProfile buildBreakdown): recurring monthly earnings roll into the fixed CTC, yearly/performance pay and
+// one-time amounts sit outside it. Used for the Revised CTC letter, so the letter says what the screen says.
+// ---------------------------------------------------------------------------
+export interface SummarizableRow {
+  componentCode: string;
+  valueType: string;
+  fixedAmount?: unknown;
+  percentageValue?: unknown;
+  percentageOf?: string | null;
+  amountBasis?: string | null;
+  isEnabled?: boolean | null;
+  componentRef?: {
+    type?: string | null;
+    payFrequency?: string | null;
+    isEmployerContribution?: boolean | null;
+  } | null;
+}
+
+export interface StructureSummary {
+  fixedMonthly: number;
+  fixedAnnual: number;
+  variableAnnual: number;
+  oneTimeAnnual: number;
+  annualCTC: number;
+}
+
+const OCCURRENCES_PER_YEAR: Record<string, number> = {
+  YEARLY: 1,
+  HALF_YEARLY: 2,
+  QUARTERLY: 4,
+  MONTHLY: 12,
+};
+
+export function summarizeStructure(rows: SummarizableRow[]): StructureSummary {
+  const earningRows = rows.filter(
+    (r) =>
+      (r.componentRef?.type || 'EARNING') === 'EARNING' &&
+      !r.componentRef?.isEmployerContribution &&
+      r.isEnabled !== false,
+  );
+  const num = (v: unknown) => Number(v ?? 0) || 0;
+  const monthlyByCode: Record<string, number> = {};
+  // A few passes resolve short percentage-of-percentage chains (HRA as % of Basic).
+  for (let pass = 0; pass < 3; pass++) {
+    for (const r of earningRows) {
+      const code = r.componentCode;
+      if (
+        r.valueType === 'FIXED' ||
+        (r.valueType === 'MANUAL' && r.amountBasis !== 'ANNUAL')
+      ) {
+        monthlyByCode[code] = num(r.fixedAmount);
+      } else if (r.valueType === 'PERCENTAGE') {
+        const base = monthlyByCode[r.percentageOf ?? ''] ?? 0;
+        monthlyByCode[code] = (base * num(r.percentageValue)) / 100;
+      } else if (monthlyByCode[code] === undefined) {
+        monthlyByCode[code] = 0;
+      }
+    }
+  }
+
+  let fixedMonthly = 0;
+  let variableAnnual = 0;
+  let oneTimeAnnual = 0;
+  for (const r of earningRows) {
+    if (r.valueType === 'MANUAL' && r.amountBasis === 'ANNUAL') {
+      oneTimeAnnual += num(r.fixedAmount);
+      continue;
+    }
+    const frequency = r.componentRef?.payFrequency || 'MONTHLY';
+    if (
+      (r.valueType === 'FIXED' || r.valueType === 'MANUAL') &&
+      frequency !== 'MONTHLY'
+    ) {
+      variableAnnual +=
+        num(r.fixedAmount) * (OCCURRENCES_PER_YEAR[frequency] || 1);
+      continue;
+    }
+    fixedMonthly += monthlyByCode[r.componentCode] || 0;
+  }
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const fixedAnnual = fixedMonthly * 12;
+  return {
+    fixedMonthly: round2(fixedMonthly),
+    fixedAnnual: round2(fixedAnnual),
+    variableAnnual: round2(variableAnnual),
+    oneTimeAnnual: round2(oneTimeAnnual),
+    annualCTC: round2(fixedAnnual + variableAnnual + oneTimeAnnual),
+  };
+}
