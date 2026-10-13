@@ -619,6 +619,8 @@ export class AttendanceService {
       status,
       isLate,
       organizationId,
+      // A punch-in with no punch-out yet: the person is at work, so the day must not be reported as an absence.
+      inTime !== null && outTime === null,
     );
 
     return db.attendance.findFirstOrThrow({
@@ -1049,6 +1051,9 @@ export class AttendanceService {
     status: AttendanceStatus,
     isLate: boolean,
     organizationId: string,
+    // A punch-in with no punch-out yet: still working, not absent. Until the punch-out arrives (or the day closes as
+    // Incomplete) the "Marked Absent" notice and email are not sent - they used to go out the moment someone punched in.
+    punchInProgress = false,
   ) {
     const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
@@ -1077,7 +1082,7 @@ export class AttendanceService {
       return;
     }
 
-    if (status === AttendanceStatus.ABSENT) {
+    if (status === AttendanceStatus.ABSENT && !punchInProgress) {
       const title = `Marked Absent — ${displayDate}`;
       const alreadyNotified = await this.scopedPrisma.notification.findFirst({
         where: { organizationId, userId: employeeId, title },

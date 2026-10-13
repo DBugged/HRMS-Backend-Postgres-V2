@@ -81,7 +81,7 @@ describe('document numbering {EMPID}', () => {
   it("refuses {EMPID} and {EMPNAME} in the employee ID's own format", () => {
     expect(() =>
       validateSectionData(numbering('employeeId', '{EMPID}-{00001}')),
-    ).toThrow(/cannot contain \{EMPID\} or \{EMPNAME\}/);
+    ).toThrow(/cannot contain \{EMPID\}, \{EMPNAME\} or \{FIRSTNAME\}/);
     expect(() =>
       validateSectionData(numbering('employeeId', 'E-{EMPNAME}-{00001}')),
     ).toThrow(/cannot contain/);
@@ -95,6 +95,24 @@ describe('document numbering {EMPID}', () => {
     ).not.toThrow();
   });
 
+  it('accepts month names and a first name, with no running number: Payslip_{FIRSTNAME}_{MON}', () => {
+    for (const format of [
+      'Payslip_{FIRSTNAME}_{MON}',
+      'Payslip_{EMPNAME}_{MONTH_YYYY}',
+      'PS-{MON_YYYY}-{00001}',
+    ]) {
+      expect(() =>
+        validateSectionData(numbering('payslip', format)),
+      ).not.toThrow();
+    }
+  });
+
+  it('still needs a running number when nothing names the employee', () => {
+    expect(() =>
+      validateSectionData(numbering('payslip', 'Payslip_{MON}')),
+    ).toThrow(/needs a counter/);
+  });
+
   it('allows no running number when the format carries the Employee ID', () => {
     expect(() =>
       validateSectionData(numbering('payslip', 'PS-{YYYYMM}-{EMPID}')),
@@ -105,9 +123,9 @@ describe('document numbering {EMPID}', () => {
     expect(() =>
       validateSectionData(numbering('payslip', 'PS-{YYYYMM}')),
     ).toThrow(/needs a counter/);
-    expect(() =>
-      validateSectionData(numbering('employeeId', 'DEMO')),
-    ).toThrow(/must contain a counter/);
+    expect(() => validateSectionData(numbering('employeeId', 'DEMO'))).toThrow(
+      /must contain a counter/,
+    );
   });
 
   it('refuses two counters', () => {

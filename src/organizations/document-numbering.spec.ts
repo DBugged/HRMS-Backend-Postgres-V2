@@ -1,4 +1,5 @@
 import {
+  documentFirstNameToken,
   documentNameToken,
   previewDocumentNumber,
   formatDocumentNumber,
@@ -30,7 +31,7 @@ describe('formatDocumentNumber', () => {
     ).toBe('PS-DP-00002-202603-0002');
   });
 
-  it("carries a cleaned employee name with {EMPNAME}, after the ID", () => {
+  it('carries a cleaned employee name with {EMPNAME}, after the ID', () => {
     expect(
       formatDocumentNumber(
         'PS-{DD_MM_YYYY}-{00001}-{EMPID}-{EMPNAME}',
@@ -47,6 +48,36 @@ describe('formatDocumentNumber', () => {
       'NANDURAMIREZVENKATAS',
     );
     expect(documentNameToken('')).toBe('');
+  });
+
+  it('writes the month as a name: {MON} Jan, {MONTH} March, {MON_YYYY}, {MONTH_YYYY}', () => {
+    // `date` is 5 March 2026
+    expect(formatDocumentNumber('Payslip_{MON}', 1, date)).toBe('Payslip_Mar');
+    expect(formatDocumentNumber('Payslip_{MONTH}', 1, date)).toBe(
+      'Payslip_March',
+    );
+    expect(formatDocumentNumber('PS-{MON_YYYY}-{001}', 1, date)).toBe(
+      'PS-Mar_2026-001',
+    );
+    expect(formatDocumentNumber('PS-{MONTH_YYYY}-{001}', 1, date)).toBe(
+      'PS-March_2026-001',
+    );
+    expect(formatDocumentNumber('PS-{MM}-{MON}', 1, date)).toBe('PS-03-Mar');
+  });
+
+  it('{FIRSTNAME} is the first name as written: Payslip_Kunal_Jan', () => {
+    const jan = new Date(2026, 0, 15);
+    expect(
+      formatDocumentNumber(
+        'Payslip_{FIRSTNAME}_{MON}',
+        1,
+        jan,
+        'DP-00002',
+        'KUNAL SHARMA',
+      ),
+    ).toBe('Payslip_Kunal_Jan');
+    expect(documentFirstNameToken("  éLodie   d'Arc ")).toBe('Elodie');
+    expect(documentFirstNameToken('')).toBe('');
   });
 
   it('drops {EMPID} when no employee is given', () => {

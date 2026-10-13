@@ -316,7 +316,11 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
 }
 
 const NUMBERING_TOKENS =
-  /^(YYYYMM|DD_MM_YYYY|MM_YYYY|YYYY|MM|DD|EMPID|EMPNAME|\d+)$/;
+  /^(YYYYMM|DD_MM_YYYY|MM_YYYY|MONTH_YYYY|MON_YYYY|YYYY|MONTH|MON|MM|DD|EMPID|EMPNAME|FIRSTNAME|\d+)$/;
+
+// The tokens that name the employee. A number without a running counter must carry one of them, since that is then what
+// tells two documents apart.
+const EMPLOYEE_TOKENS = ['EMPID', 'EMPNAME', 'FIRSTNAME'];
 
 function validateDocumentNumbering(n: Record<string, unknown>) {
   for (const [type, entry] of Object.entries(n)) {
@@ -336,15 +340,17 @@ function validateDocumentNumbering(n: Record<string, unknown>) {
       const tokens = [...format.matchAll(/\{([^}]*)\}/g)].map((m) => m[1]);
       if (tokens.some((t) => !NUMBERING_TOKENS.test(t))) {
         bad(
-          `${where}.format has an unknown {token}. Use {YYYY}, {MM}, {DD}, {YYYYMM}, {MM_YYYY}, {DD_MM_YYYY}, {EMPID}, {EMPNAME} and one counter like {00001}.`,
+          `${where}.format has an unknown {token}. Use {YYYY}, {MM}, {DD}, {MON} (Jan), {MONTH} (January), {YYYYMM}, {MM_YYYY}, {MON_YYYY}, {MONTH_YYYY}, {DD_MM_YYYY}, {EMPID}, {EMPNAME}, {FIRSTNAME} and one counter like {00001}.`,
         );
       }
       // {EMPID} carries an employee's ID into a document number; the employee ID's own format cannot contain it.
       if (
         type === 'employeeId' &&
-        (tokens.includes('EMPID') || tokens.includes('EMPNAME'))
+        tokens.some((t) => EMPLOYEE_TOKENS.includes(t))
       ) {
-        bad(`${where}.format cannot contain {EMPID} or {EMPNAME}.`);
+        bad(
+          `${where}.format cannot contain {EMPID}, {EMPNAME} or {FIRSTNAME}.`,
+        );
       }
       // At most one running number. A format may leave it out ("None") only when it carries the Employee ID, which is
       // then what tells two documents apart; the Employee ID's own format always needs it (it is the sequence itself).
@@ -356,9 +362,9 @@ function validateDocumentNumbering(n: Record<string, unknown>) {
         if (type === 'employeeId') {
           bad(`${where}.format must contain a counter such as {00001}.`);
         }
-        if (!tokens.includes('EMPID')) {
+        if (!tokens.some((t) => EMPLOYEE_TOKENS.includes(t))) {
           bad(
-            `${where}.format needs a counter such as {00001} or {EMPID}, otherwise two documents would get the same number.`,
+            `${where}.format needs a counter such as {00001} or the employee ({EMPID}, {EMPNAME} or {FIRSTNAME}), otherwise two documents would get the same number.`,
           );
         }
       }

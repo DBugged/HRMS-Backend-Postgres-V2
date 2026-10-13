@@ -31,6 +31,33 @@ export function documentNameToken(name?: string | null): string {
     .slice(0, EMPLOYEE_NAME_MAX);
 }
 
+// {FIRSTNAME} is the employee's first name as a person writes it (Kunal): the first word of the name, letters and digits
+// only, first letter capital and the rest small, at most 20 characters.
+export function documentFirstNameToken(name?: string | null): string {
+  const first = (name ?? '').trim().split(/\s+/)[0] ?? '';
+  const clean = first
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]/g, '')
+    .slice(0, EMPLOYEE_NAME_MAX);
+  return clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase();
+}
+
+const MONTH_NAMES = [
+  'January',
+  'February',
+  'March',
+  'April',
+  'May',
+  'June',
+  'July',
+  'August',
+  'September',
+  'October',
+  'November',
+  'December',
+];
+
 export function formatDocumentNumber(
   format: string,
   counterValue: number,
@@ -41,8 +68,13 @@ export function formatDocumentNumber(
   const yyyy = String(date.getFullYear());
   const mm = String(date.getMonth() + 1).padStart(2, '0');
   const dd = String(date.getDate()).padStart(2, '0');
+  const monthName = MONTH_NAMES[date.getMonth()];
   return (format || '')
     .replace(/\{YYYYMM\}/g, `${yyyy}${mm}`)
+    .replace(/\{MONTH_YYYY\}/g, `${monthName}_${yyyy}`)
+    .replace(/\{MON_YYYY\}/g, `${monthName.slice(0, 3)}_${yyyy}`)
+    .replace(/\{MONTH\}/g, monthName)
+    .replace(/\{MON\}/g, monthName.slice(0, 3))
     .replace(/\{DD_MM_YYYY\}/g, `${dd}_${mm}_${yyyy}`)
     .replace(/\{MM_YYYY\}/g, `${mm}_${yyyy}`)
     .replace(/\{YYYY\}/g, yyyy)
@@ -50,6 +82,7 @@ export function formatDocumentNumber(
     .replace(/\{DD\}/g, dd)
     .replace(/\{EMPID\}/g, employeeCode ?? '')
     .replace(/\{EMPNAME\}/g, documentNameToken(employeeName))
+    .replace(/\{FIRSTNAME\}/g, documentFirstNameToken(employeeName))
     .replace(/\{(\d+)\}/g, (_match, digits: string) =>
       String(counterValue).padStart(digits.length, '0'),
     );

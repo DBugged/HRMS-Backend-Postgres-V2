@@ -696,4 +696,50 @@ describe('Notifications (e2e)', () => {
     ).data.filter((n) => n.title === 'Marked Absent — 03-08-2026');
     expect(absentNotifsAgain.length).toBe(1);
   });
+
+  it('punching in does not notify the employee that they were marked absent', async () => {
+    // A shift that is still running all day, so the single punch-in is "at work", not an absence.
+    await request(app.getHttpServer())
+      .patch('/organizations/settings/policies')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        orgPayrollAttendancePrefs: {
+          defaultShiftStartTime: '00:00',
+          defaultShiftEndTime: '23:59',
+          defaultBreakMinutes: 0,
+          weekendDays: [],
+        },
+      })
+      .expect(200);
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    })
+      .formatToParts(new Date())
+      .reduce<Record<string, string>>(
+        (acc, p) => ({ ...acc, [p.type]: p.value }),
+        {},
+      );
+    const today = `${parts.day}-${parts.month}-${parts.year}`;
+
+    await request(app.getHttpServer())
+      .post('/attendance/punch/manual')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        employeeId,
+        punchTime: new Date(Date.now() - 60_000).toISOString(),
+      })
+      .expect(201);
+
+    const notifications = await request(app.getHttpServer())
+      .get('/notifications')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const titles = (notifications.body as NotificationsListBody).data.map(
+      (n) => n.title,
+    );
+    expect(titles).not.toContain(`Marked Absent — ${today}`);
+  });
 });
