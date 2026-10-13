@@ -16,6 +16,8 @@ interface Opts {
   da?: number;
   gratuityOn?: boolean;
   openCase?: Row | null;
+  resignation?: Row | null;
+  defaultNotice?: number;
 }
 
 const JOINED = new Date('2020-10-07T00:00:00Z');
@@ -45,8 +47,14 @@ function build(o: Opts = {}) {
   const tx: Row = {};
   const prisma: Row = {
     user: { findFirst: async () => employee },
-    organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
+    organization: {
+      findFirst: async () => ({
+        timezone: 'Asia/Kolkata',
+        policies: { defaultNoticeDays: o.defaultNotice ?? 0 },
+      }),
+    },
     leave: { count: async () => 0 },
+    resignation: { findFirst: async () => o.resignation ?? null },
     offboardingCase: { findFirst: async () => o.openCase ?? null },
     leaveEncashment: { count: async () => 0 },
     settlement: {
@@ -88,6 +96,7 @@ function build(o: Opts = {}) {
     leaveType: { findMany: async () => o.leaveTypes ?? [] },
     reimbursement: {
       aggregate: async () => ({ _sum: { amount: o.reimbursed ?? 0 } }),
+      count: async () => 0,
     },
     $transaction: async (cb: (t: Row) => unknown) => cb(tx),
   };
@@ -220,6 +229,7 @@ describe('final settlement: the amounts', () => {
     const s = await service.calculate(
       dto({
         recoveriesAmount: 2000,
+        recoveriesReason: 'Unreturned training bond',
         noticePeriodRecovery: 5000,
         bonusAmount: 3000,
       }),
@@ -417,5 +427,101 @@ describe('final settlement: processing', () => {
     await expect(service.process('s1', admin, 'org')).rejects.toThrow(
       /final settlement has already been processed for this employee \(10\/2026\)/,
     );
+  });
+});
+
+describe('final settlement: notice period and recoveries', () => {
+  const resignation = {
+    status: 'APPROVED',
+    submittedOn: '2026-09-21',
+    noticePeriodDays: 30,
+  };
+
+  it('a resignation short of its notice is recovered automatically at the daily rate', async () => {
+    // 30 days' notice given 21 Sep, leaving 6 Oct = 15 days served, 15 short; no run yet -> basic 30,000 / 30.
+    const { service } = build({ basic: 30000, resignation });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.noticeShortfallDays).toBe(15);
+    expect(s.noticePeriodRecovery).toBe(15000);
+    expect(s.noticeRecoveryAuto).toBe(true);
+    expect(s.netSettlementAmount).toBe(40000 - 15000);
+  });
+
+  it('an entered amount overrides it, and 0 waives it', async () => {
+    const waived = await build({ basic: 30000, resignation }).service.calculate(
+      dto({ noticePeriodRecovery: 0 }),
+      admin,
+      'org',
+    );
+    expect(waived.noticePeriodRecovery).toBe(0);
+    expect(waived.noticeRecoveryAuto).toBe(false);
+    const manual = await build({ basic: 30000, resignation }).service.calculate(
+      dto({ noticePeriodRecovery: 2500 }),
+      admin,
+      'org',
+    );
+    expect(manual.noticePeriodRecovery).toBe(2500);
+  });
+
+  it('nothing is recovered when the full notice was served', async () => {
+    const { service } = build({
+      basic: 30000,
+      resignation: { ...resignation, submittedOn: '2026-08-01' },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.noticePeriodRecovery).toBe(0);
+    expect(s.noticeShortfallDays).toBe(0);
+  });
+
+  it('a company-ended exit pays the shortfall as notice pay only when asked', async () => {
+    const open = {
+      id: 'c1',
+      lastWorkingDay: '2026-10-06',
+      exitStatus: 'TERMINATED',
+      createdAt: new Date('2026-09-26T00:00:00Z'),
+    };
+    const { service } = build({
+      basic: 30000,
+      openCase: open,
+      defaultNotice: 30,
+    });
+    // 30 days' company notice, 10 served (26 Sep to 6 Oct) -> 20 days x 30,000/30.
+    const asked = await service.calculate(
+      dto({ payNoticeInLieu: true }),
+      admin,
+      'org',
+    );
+    expect(asked.noticePayAmount).toBe(20000);
+    expect(asked.noticePeriodRecovery).toBe(0);
+    expect(asked.netSettlementAmount).toBe(40000 + 20000);
+    const notAsked = await build({
+      basic: 30000,
+      openCase: open,
+      defaultNotice: 30,
+    }).service.calculate(dto(), admin, 'org');
+    expect(notAsked.noticePayAmount).toBe(0);
+  });
+
+  it('recoveries need a stated reason', async () => {
+    const { service } = build();
+    await expect(
+      service.calculate(dto({ recoveriesAmount: 500 }), admin, 'org'),
+    ).rejects.toThrow(/recoveriesReason/);
+  });
+
+  it('with partial recovery the loan is limited to what is payable and the rest stays open', async () => {
+    const { service } = build({
+      loans: [{ outstandingBalance: 100000 }],
+      calc: { netPay: 40000 },
+    });
+    const refused = await service.calculate(dto(), admin, 'org');
+    expect(refused.netSettlementAmount).toBe(40000 - 100000);
+    const partial = await build({
+      loans: [{ outstandingBalance: 100000 }],
+      calc: { netPay: 40000 },
+    }).service.calculate(dto({ allowPartialLoanRecovery: true }), admin, 'org');
+    expect(partial.loanBalanceRecovered).toBe(40000);
+    expect(partial.loanBalanceUnrecovered).toBe(60000);
+    expect(partial.netSettlementAmount).toBe(0);
   });
 });

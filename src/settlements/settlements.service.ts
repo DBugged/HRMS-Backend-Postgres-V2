@@ -58,6 +58,7 @@ import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { amountInWords } from '../payroll/number-to-words';
 import { CalculateSettlementDto } from './dto/calculate-settlement.dto';
 import { leaveEncashmentExemption } from './leave-encashment-tax';
+import { noticeRecoveryAmount, noticeShortfallDays } from './notice-shortfall';
 import { MarkSettlementPaidDto } from './dto/mark-settlement-paid.dto';
 import { ReverseSettlementDto } from './dto/reverse-settlement.dto';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -232,7 +233,12 @@ export class SettlementsService {
         employeeId: dto.employeeId,
         status: { in: ['INITIATED', 'IN_PROGRESS'] },
       },
-      select: { lastWorkingDay: true },
+      select: {
+        lastWorkingDay: true,
+        createdAt: true,
+        exitStatus: true,
+        id: true,
+      },
     });
     if (
       openCase &&
@@ -285,10 +291,16 @@ export class SettlementsService {
         status: LoanStatus.ACTIVE,
       },
     });
-    const loanBalanceRecovered = activeLoans.reduce(
+    const loanOutstanding = activeLoans.reduce(
       (sum, loan) => sum + loan.outstandingBalance,
       0,
     );
+    // A deduction taken from the final pay has to say what it is for.
+    if ((dto.recoveriesAmount ?? 0) > 0 && !dto.recoveriesReason?.trim()) {
+      throw new BadRequestException(
+        'Say what the recoveries are for (recoveriesReason) - a deduction from final pay needs a stated reason.',
+      );
+    }
 
     const basicMonthly =
       await this.employeeSalaryComponentsService.getCurrentMonthlyValue(
@@ -380,7 +392,17 @@ export class SettlementsService {
       yearsOfService: serviceYears,
     });
 
-    const bonusForTax = dto.bonusAmount ?? 0;
+    // Notice period, worked out from the notice days unless HR entered an amount (0 waives it).
+    const notice = await this.computeNotice({
+      dto,
+      organizationId,
+      lwdDate,
+      openCase,
+      basicPlusDaMonthly: basicMonthly + daMonthly,
+    });
+    const noticePayAmount = notice.payAmount;
+
+    const bonusForTax = (dto.bonusAmount ?? 0) + noticePayAmount;
     const monthAlreadyPaidForTax = await this.hasSettledRegularRun(
       dto.employeeId,
       month,
@@ -548,19 +570,72 @@ export class SettlementsService {
     );
     const bonusAmount = dto.bonusAmount ?? 0;
     const recoveriesAmount = dto.recoveriesAmount ?? 0;
-    const noticePeriodRecovery = dto.noticePeriodRecovery ?? 0;
-
-    const netSettlementAmount = Math.round(
+    const noticePeriodRecovery =
+      dto.noticePeriodRecovery !== undefined
+        ? dto.noticePeriodRecovery
+        : notice.recovery;
+    const payable =
       pendingSalaryAmount +
-        leaveEncashmentAmount +
-        bonusAmount +
-        gratuityAmount +
-        reimbursementAmount -
-        recoveriesAmount -
-        loanBalanceRecovered -
-        noticePeriodRecovery -
-        settlementTds,
+      leaveEncashmentAmount +
+      bonusAmount +
+      noticePayAmount +
+      gratuityAmount +
+      reimbursementAmount;
+    const otherDeductions =
+      recoveriesAmount + noticePeriodRecovery + settlementTds;
+    // The loan balance is recovered in full unless HR allowed a partial recovery: then it is limited to what is left
+    // after everything else, and the rest stays an open loan to follow up.
+    let loanBalanceRecovered = loanOutstanding;
+    let loanBalanceUnrecovered = 0;
+    if (dto.allowPartialLoanRecovery) {
+      const room = Math.max(0, payable - otherDeductions);
+      loanBalanceRecovered = Math.min(loanOutstanding, Math.floor(room));
+      loanBalanceUnrecovered = loanOutstanding - loanBalanceRecovered;
+    }
+    const netSettlementAmount = Math.round(
+      payable - otherDeductions - loanBalanceRecovered,
     );
+
+    // Heads-up (never blocks): things HR should look at before processing.
+    const warnings: string[] = [];
+    const [pendingLeaveCount, pendingClaimCount] = await Promise.all([
+      this.scopedPrisma.leave.count({
+        where: {
+          organizationId,
+          employeeId: dto.employeeId,
+          status: LeaveStatus.PENDING,
+        },
+      }),
+      this.scopedPrisma.reimbursement.count({
+        where: {
+          organizationId,
+          employeeId: dto.employeeId,
+          status: ReimbursementStatus.PENDING,
+        },
+      }),
+    ]);
+    if (pendingLeaveCount > 0)
+      warnings.push(
+        `${pendingLeaveCount} leave application(s) are still pending - decide them before processing.`,
+      );
+    if (pendingClaimCount > 0)
+      warnings.push(
+        `${pendingClaimCount} reimbursement claim(s) are still pending - they are not part of this settlement.`,
+      );
+    if (loanBalanceUnrecovered > 0)
+      warnings.push(
+        `Loan balance of ${loanBalanceUnrecovered} could not be recovered from this payout and stays open.`,
+      );
+    const grossForCap = payable - bonusAmount;
+    if (
+      grossForCap > 0 &&
+      recoveriesAmount + noticePeriodRecovery + loanBalanceRecovered >
+        grossForCap * 0.5
+    ) {
+      warnings.push(
+        'Deductions are more than half of the amount payable. Check they are authorised (Code on Wages limits deductions from wages).',
+      );
+    }
 
     const data = {
       lastWorkingDay: dto.lastWorkingDay,
@@ -578,6 +653,13 @@ export class SettlementsService {
       recoveriesAmount,
       loanBalanceRecovered,
       noticePeriodRecovery,
+      noticePayAmount,
+      noticeShortfallDays: notice.shortfallDays,
+      noticeRecoveryAuto:
+        dto.noticePeriodRecovery === undefined && notice.recovery > 0,
+      recoveriesReason:
+        recoveriesAmount > 0 ? dto.recoveriesReason?.trim() : null,
+      loanBalanceUnrecovered,
       gratuityAmount,
       reimbursementAmount,
       netSettlementAmount,
@@ -614,6 +696,7 @@ export class SettlementsService {
           }),
         ),
         pendingSalaryNote,
+        warnings,
       };
     }
     const created = await this.scopedPrisma.settlement.create({
@@ -635,7 +718,71 @@ export class SettlementsService {
       eventKey: 'FNF_INITIATED',
       performedById: actor.id,
     });
-    return { ...this.withGratuityPayout(created), pendingSalaryNote };
+    return { ...this.withGratuityPayout(created), pendingSalaryNote, warnings };
+  }
+
+  // Notice period figures for the exit. A resignation's notice is the employee's (their days, else the company
+  // default) running from the day they gave it: days short of it are recovered at the daily rate. When the company
+  // ends the employment it is the company that owes the notice: the shortfall is paid in lieu only if HR asks
+  // (payNoticeInLieu). The daily rate is the last full month's gross over 30, falling back to basic + DA.
+  private async computeNotice(args: {
+    dto: CalculateSettlementDto;
+    organizationId: string;
+    lwdDate: string;
+    openCase: { createdAt: Date; exitStatus: string; id: string } | null;
+    basicPlusDaMonthly: number;
+  }): Promise<{ recovery: number; payAmount: number; shortfallDays: number }> {
+    const none = { recovery: 0, payAmount: 0, shortfallDays: 0 };
+    const { dto, organizationId, lwdDate, openCase } = args;
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { policies: true },
+    });
+    const defaultNotice = Number(
+      (org?.policies as { defaultNoticeDays?: number } | null)
+        ?.defaultNoticeDays ?? 0,
+    );
+    const resignation = await this.scopedPrisma.resignation.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        status: 'APPROVED',
+      },
+      orderBy: { decidedAt: 'desc' },
+    });
+    const noticeDays = resignation?.noticePeriodDays ?? defaultNotice;
+    const startedOn = resignation
+      ? resignation.submittedOn
+      : openCase
+        ? openCase.createdAt.toISOString().slice(0, 10)
+        : null;
+    const shortfallDays = noticeShortfallDays(noticeDays, startedOn, lwdDate);
+    if (shortfallDays <= 0) return none;
+
+    const lastRun = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId: dto.employeeId,
+        isFinalSettlement: false,
+        runSequence: 0,
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      select: { grossSalary: true },
+    });
+    const monthly =
+      lastRun && lastRun.grossSalary > 0
+        ? lastRun.grossSalary
+        : args.basicPlusDaMonthly;
+    const amount = noticeRecoveryAmount(
+      shortfallDays,
+      dailyRateFromMonthly(monthly),
+    );
+    if (resignation) return { recovery: amount, payAmount: 0, shortfallDays };
+    return {
+      recovery: 0,
+      payAmount: dto.payNoticeInLieu ? amount : 0,
+      shortfallDays,
+    };
   }
 
   // Whether a LOCKED/PAID regular payroll run already paid the LWD month.
@@ -889,6 +1036,14 @@ export class SettlementsService {
           ]
         : []),
     ];
+    if ((settlement.noticePayAmount ?? 0) > 0) {
+      earnings.push({
+        code: 'NOTICE_PAY',
+        name: 'Notice Pay (in lieu of notice)',
+        amount: settlement.noticePayAmount,
+        taxable: true,
+      });
+    }
     if (settlement.bonusAmount > 0) {
       earnings.push({
         code: 'BONUS',
@@ -984,9 +1139,12 @@ export class SettlementsService {
         (sum, loan) => sum + loan.outstandingBalance,
         0,
       );
-      if (Math.abs(loanBalanceNow - settlement.loanBalanceRecovered) > 0.005) {
+      const loanExpected =
+        settlement.loanBalanceRecovered +
+        (settlement.loanBalanceUnrecovered ?? 0);
+      if (Math.abs(loanBalanceNow - loanExpected) > 0.005) {
         throw new ConflictException(
-          `Outstanding loan balance changed since this settlement was calculated (${settlement.loanBalanceRecovered} then, ${loanBalanceNow} now) — recalculate it first.`,
+          `Outstanding loan balance changed since this settlement was calculated (${loanExpected} then, ${loanBalanceNow} now) — recalculate it first.`,
         );
       }
 
@@ -1073,14 +1231,22 @@ export class SettlementsService {
         },
         select: { id: true, outstandingBalance: true },
       });
-      await tx.loan.updateMany({
-        where: {
-          employeeId: settlement.employeeId,
-          organizationId,
-          status: LoanStatus.ACTIVE,
-        },
-        data: { status: LoanStatus.CLOSED, outstandingBalance: 0 },
-      });
+      // The recovered amount is applied to the loans oldest first; a loan not fully recovered (partial recovery)
+      // stays active at what remains, the rest are closed.
+      let toApply = settlement.loanBalanceRecovered;
+      for (const loan of closing) {
+        const applied = Math.min(loan.outstandingBalance, toApply);
+        toApply -= applied;
+        const remaining =
+          Math.round((loan.outstandingBalance - applied) * 100) / 100;
+        await tx.loan.updateMany({
+          where: { id: loan.id, organizationId },
+          data:
+            remaining > 0
+              ? { outstandingBalance: remaining }
+              : { status: LoanStatus.CLOSED, outstandingBalance: 0 },
+        });
+      }
       // The encashed days leave the balance, so they can neither be paid again nor taken as leave.
       const encashedDetail = (settlement.leaveEncashmentDetail ?? []) as {
         leaveTypeId: string;

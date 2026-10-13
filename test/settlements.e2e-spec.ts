@@ -311,6 +311,7 @@ describe('Settlements (e2e)', () => {
         lastWorkingDay: LAST_WORKING_DAY,
         bonusAmount: 2000,
         recoveriesAmount: 500,
+        recoveriesReason: 'Damaged laptop',
         noticePeriodRecovery: 1000,
       })
       .expect(201);
@@ -358,6 +359,7 @@ describe('Settlements (e2e)', () => {
         lastWorkingDay: LAST_WORKING_DAY,
         bonusAmount: 2000,
         recoveriesAmount: 500,
+        recoveriesReason: 'Damaged laptop',
         noticePeriodRecovery: 1000,
       })
       .expect(201);
