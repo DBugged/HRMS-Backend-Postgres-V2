@@ -6,7 +6,7 @@ type Row = Record<string, any>;
 
 const hash = (t: string) => crypto.createHash('sha256').update(t).digest('hex');
 
-function build(user: Row | null) {
+function build(user: Row | null, emailConfigured = true) {
   const sent: Row[] = [];
   const updates: Row[] = [];
   const prisma: Row = {
@@ -37,7 +37,13 @@ function build(user: Row | null) {
     nothing,
     nothing,
     stub({ log: async () => undefined }),
-    stub({ send: async (m: Row) => sent.push(m) }),
+    stub({
+      send: async (m: Row) => {
+        sent.push(m);
+        return { dryRun: false };
+      },
+      isConfigured: () => emailConfigured,
+    }),
     nothing,
     nothing,
   );
@@ -94,5 +100,21 @@ describe('founder email verification', () => {
     expect(none.sent).toHaveLength(0);
     expect(a).toEqual(b);
     expect(b).toEqual(c);
+  });
+});
+
+describe('registration needs a working mail channel', () => {
+  const dto = {
+    organizationName: 'Acme',
+    name: 'Asha',
+    email: 'asha@acme.test',
+    password: 'StrongPass#1234',
+  } as never;
+
+  it('is refused up front when this server cannot send the confirmation email', async () => {
+    const { service } = build(null, false);
+    await expect(service.register(dto)).rejects.toThrow(
+      /email delivery is not set up/,
+    );
   });
 });

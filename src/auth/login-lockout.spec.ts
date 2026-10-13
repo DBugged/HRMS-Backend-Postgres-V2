@@ -13,6 +13,7 @@ async function build(opts: { locked: boolean; knownIps: string[] }) {
     name: 'Asha',
     role: 'EMPLOYEE',
     isActive: true,
+    emailVerified: true,
     employmentStatus: 'CONFIRMED',
     mustChangePassword: false,
     password,

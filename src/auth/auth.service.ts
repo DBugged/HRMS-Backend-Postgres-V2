@@ -12,6 +12,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ServiceUnavailableException,
   Inject,
   Injectable,
   Logger,
@@ -123,6 +124,13 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
+    // A founder cannot sign in until they confirm by email, so refuse up front - before an organisation exists -
+    // when this server could not deliver that email, instead of creating an account nobody can open.
+    if (emailVerificationRequired() && !this.emailService.isConfigured()) {
+      throw new ServiceUnavailableException(
+        'Sign-up is temporarily unavailable: email delivery is not set up on this server, so the confirmation email could not be sent. Please contact support.',
+      );
+    }
     const existing = await this.usersService.findByEmail(dto.email);
     if (existing) {
       throw new ConflictException('An account with this email already exists.');
@@ -297,18 +305,25 @@ export class AuthService {
         html: fallbackHtml,
       },
     );
-    await this.emailService.send({
+    const sent = await this.emailService.send({
       organizationId: organization.id,
       to: user.email,
       subject: founderRendered.subject,
       html: founderRendered.html,
     });
+    // A delivery that failed after the account exists is not left silent: say so, and the confirmation page can
+    // send a new link (POST /auth/resend-verification).
+    const confirmationEmailSent = !emailVerificationRequired() || !sent.dryRun;
 
     return {
       organizationId: organization.id,
       userId: user.id,
-      message:
-        'Account created. Check your email and confirm your address to activate it, then log in.',
+      confirmationEmailSent,
+      message: !emailVerificationRequired()
+        ? 'Account created. You can now log in.'
+        : confirmationEmailSent
+          ? 'Account created. Check your email and confirm your address to activate it, then log in.'
+          : 'Account created, but the confirmation email could not be sent. Request a new link from the confirmation page.',
     };
   }
 
@@ -391,7 +406,7 @@ export class AuthService {
     // Only someone who proved the password learns that the address is still unconfirmed.
     if (!user.emailVerified) {
       throw new UnauthorizedException(
-        'Please confirm your email address first - use the link we emailed you, or request a new one.',
+        'Please confirm your email address first - open the link we emailed you (check spam), or request a new one from the confirmation page.',
       );
     }
     await this.usersService.updateLastLogin(user.id, user.organizationId);
