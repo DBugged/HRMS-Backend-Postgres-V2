@@ -414,6 +414,9 @@ model User {
   isActive           Boolean   @default(true)
   mustChangePassword Boolean   @default(true)
   emailVerified      Boolean   @default(true)
+  // Hash of the e-mail verification token sent when an organisation self-registers (null once verified).
+  emailVerificationToken   String?   @unique
+  emailVerificationExpires DateTime?
   lastLoginAt        DateTime?
   // When the password was last changed or reset. An access token issued before it stops working immediately (see
   // JwtAccessStrategy), instead of staying valid until its own expiry.
