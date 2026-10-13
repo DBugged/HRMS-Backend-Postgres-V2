@@ -699,9 +699,36 @@ export class SettlementsService {
         warnings,
       };
     }
-    const created = await this.scopedPrisma.settlement.create({
-      data: { organizationId, employeeId: dto.employeeId, ...data },
-    });
+    let created;
+    try {
+      created = await this.scopedPrisma.settlement.create({
+        data: { organizationId, employeeId: dto.employeeId, ...data },
+      });
+    } catch (err) {
+      // A concurrent calculation created the employee's one draft between the check above and this write (the
+      // database allows one DRAFT per employee): update that one instead of failing.
+      if ((err as { code?: string }).code !== 'P2002') throw err;
+      const winner = await this.scopedPrisma.settlement.findFirstOrThrow({
+        where: {
+          employeeId: dto.employeeId,
+          organizationId,
+          status: SettlementStatus.DRAFT,
+        },
+      });
+      await this.scopedPrisma.settlement.updateMany({
+        where: { id: winner.id, organizationId },
+        data,
+      });
+      return {
+        ...this.withGratuityPayout(
+          await this.scopedPrisma.settlement.findFirstOrThrow({
+            where: { id: winner.id, organizationId },
+          }),
+        ),
+        pendingSalaryNote,
+        warnings,
+      };
+    }
     await this.logSettlementCalculated(
       actor.id,
       organizationId,
