@@ -13,7 +13,7 @@ export class ApproveResignationDto {
   @ApiPropertyOptional({
     example: '2026-11-30',
     description:
-      'Approved last working day. Defaults to submittedOn + noticePeriodDays, or the requested LWD when no notice period is known.',
+      'Approved last working day. Defaults to the last working day the employee requested. A date before the notice period ends needs a decisionNote.',
   })
   @IsOptional()
   @IsValidCalendarDateString()

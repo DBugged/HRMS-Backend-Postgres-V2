@@ -4,8 +4,8 @@
 // links the resulting case; timeline/audit/in-app notifications are best-effort side effects.
 // Important: one open (PENDING) request per employee, only for active employees with no open offboarding
 // case. Nobody decides their own resignation, and only an ADMIN decides an HR/ADMIN user's (same rule as the
-// privacy module's requests). approvedLwd defaults to submittedOn + noticePeriodDays (no org-level notice
-// setting exists, so the days come from the request or the approving HR), else the requested LWD.
+// privacy module's requests). approvedLwd defaults to the last working day the employee asked for; an approver may
+// move it, and a date before the notice period ends (an early release) needs a note explaining why.
 import {
   BadRequestException,
   ConflictException,
@@ -27,6 +27,9 @@ import { OffboardingService } from '../offboarding/offboarding.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../notifications/email.service';
+import { escapeHtml } from '../email-templates/email-layout';
+import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
 import { paginate, skip } from '../common/pagination';
 import { SubmitResignationDto } from './dto/submit-resignation.dto';
 import { RecordResignationDto } from './dto/record-resignation.dto';
@@ -61,6 +64,7 @@ export class ResignationsService {
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly notificationsService: NotificationsService,
+    private readonly emailService: EmailService,
   ) {}
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
@@ -171,11 +175,28 @@ export class ResignationsService {
       metadata: { resignationId: created.id, requestedLwd: dto.requestedLwd },
     });
     // In-app notice to the reporting manager and every HR/Admin (never the requester). Best-effort.
+    await this.notifyApprovers(
+      organizationId,
+      employee,
+      'Resignation Submitted',
+      `${employee.name} has submitted a resignation (requested last working day ${dto.requestedLwd}).`,
+    );
+    return created;
+  }
+
+  // The people who handle a resignation: every active HR/Admin and the employee's reporting manager, never the
+  // employee themself. Best-effort in-app notices.
+  private async notifyApprovers(
+    organizationId: string,
+    employee: { id: string; reportingManagerId: string | null },
+    title: string,
+    message: string,
+  ) {
     const recipients = await this.scopedPrisma.user.findMany({
       where: {
         organizationId,
         isActive: true,
-        id: { not: actor.id },
+        id: { not: employee.id },
         OR: [
           { role: { in: HR_ROLES } },
           ...(employee.reportingManagerId
@@ -186,16 +207,8 @@ export class ResignationsService {
       select: { id: true },
     });
     await Promise.all(
-      recipients.map((r) =>
-        this.notify(
-          organizationId,
-          r.id,
-          'Resignation Submitted',
-          `${employee.name} has submitted a resignation (requested last working day ${dto.requestedLwd}).`,
-        ),
-      ),
+      recipients.map((r) => this.notify(organizationId, r.id, title, message)),
     );
-    return created;
   }
 
   // Adds `recordedBy: { id, name } | null` - who entered a resignation on the employee's behalf.
@@ -229,6 +242,23 @@ export class ResignationsService {
     return this.withRecordedBy(rows, actor.organizationId);
   }
 
+  // Resignations of the people who report to the caller (read-only): the manager is told when one is submitted,
+  // and this is where they can see it and what became of it.
+  async findTeam(actor: Actor) {
+    const rows = await this.scopedPrisma.resignation.findMany({
+      where: {
+        organizationId: actor.organizationId,
+        employee: { reportingManagerId: actor.id },
+      },
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return this.withRecordedBy(rows, actor.organizationId);
+  }
+
   findAll(query: ListResignationsQueryDto, organizationId: string) {
     const where = {
       organizationId,
@@ -240,7 +270,10 @@ export class ResignationsService {
           await this.scopedPrisma.resignation.findMany({
             where,
             include: {
-              employee: { select: { id: true, name: true, employeeId: true } },
+              // role: lets the screen show that an HR/Admin person's resignation is for an Admin to decide.
+              employee: {
+                select: { id: true, name: true, employeeId: true, role: true },
+              },
             },
             orderBy: { createdAt: 'desc' },
             skip: skip(query.page, query.limit),
@@ -263,7 +296,16 @@ export class ResignationsService {
     });
     if (!record) throw new NotFoundException('Resignation not found.');
     if (record.employeeId !== actor.id && !HR_ROLES.includes(actor.role)) {
-      throw new NotFoundException('Resignation not found.');
+      // A reporting manager may read (not decide) their direct report's resignation.
+      const reportsToActor = await this.scopedPrisma.user.findFirst({
+        where: {
+          id: record.employeeId,
+          organizationId: actor.organizationId,
+          reportingManagerId: actor.id,
+        },
+        select: { id: true },
+      });
+      if (!reportsToActor) throw new NotFoundException('Resignation not found.');
     }
     const [row] = await this.withRecordedBy([record], actor.organizationId);
     return row;
@@ -488,6 +530,13 @@ export class ResignationsService {
       eventKey: 'RESIGNATION_WITHDRAWN',
       performedById: actor.id,
     });
+    // HR/Admin and the manager would otherwise keep an approval open for a request that no longer exists.
+    await this.notifyApprovers(
+      organizationId,
+      actor,
+      'Resignation Withdrawn',
+      `${actor.name} has withdrawn their resignation.`,
+    );
     await this.auditLogService.log({
       actorId: actor.id,
       action: 'RESIGNATION_WITHDRAWN',
@@ -501,16 +550,66 @@ export class ResignationsService {
     });
   }
 
+  // Once approved, the employee cannot withdraw it themselves (the offboarding case is HR's to cancel). They can ask:
+  // this tells HR/Admin and the manager, with the reason, and leaves a trace on the audit trail and the timeline.
+  async requestWithdrawal(id: string, dto: RequestWithdrawalDto, actor: Actor) {
+    const organizationId = actor.organizationId;
+    const record = await this.scopedPrisma.resignation.findFirst({
+      where: { id, organizationId, employeeId: actor.id },
+    });
+    if (!record) throw new NotFoundException('Resignation not found.');
+    if (record.status !== ResignationStatus.APPROVED) {
+      throw new BadRequestException(
+        record.status === ResignationStatus.PENDING
+          ? 'This resignation is still pending - you can withdraw it yourself.'
+          : 'Only an approved resignation needs a withdrawal request.',
+      );
+    }
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { id: true, name: true, reportingManagerId: true },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'RESIGNATION_WITHDRAWAL_REQUESTED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: actor.id,
+      details: { resignationId: id, reason: dto.reason },
+    });
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: actor.id,
+      eventKey: 'RESIGNATION_WITHDRAWAL_REQUESTED',
+      performedById: actor.id,
+      description: dto.reason,
+      metadata: { resignationId: id },
+    });
+    await this.notifyApprovers(
+      organizationId,
+      employee ?? { id: actor.id, reportingManagerId: null },
+      'Resignation Withdrawal Requested',
+      `${actor.name} has asked to withdraw their approved resignation: ${dto.reason}`,
+    );
+    return { message: 'Your request was sent to HR.' };
+  }
+
   async approve(id: string, dto: ApproveResignationDto, actor: Actor) {
     const organizationId = actor.organizationId;
     const record = await this.loadForDecision(id, actor);
 
     const noticePeriodDays = dto.noticePeriodDays ?? record.noticePeriodDays;
-    const approvedLwd =
-      dto.approvedLwd ??
-      (noticePeriodDays != null
-        ? addDays(record.submittedOn, noticePeriodDays)
-        : record.requestedLwd);
+    // The date the employee asked for, unless the approver moves it.
+    const approvedLwd = dto.approvedLwd ?? record.requestedLwd;
+    // Releasing someone before their notice period ends is allowed, but it is a deliberate exception: it needs a
+    // note, and it is recorded on the audit trail.
+    const noticeEndsOn = addDays(record.submittedOn, noticePeriodDays ?? 0);
+    const earlyRelease = approvedLwd < noticeEndsOn;
+    if (earlyRelease && !dto.decisionNote?.trim()) {
+      throw new BadRequestException(
+        `This is before the notice period ends (${noticeEndsOn}); add a note explaining the early release.`,
+      );
+    }
 
     // The approved date has to be a real working window: not before the resignation was given, not before the
     // person joined, not more than a year ahead.
@@ -573,6 +672,8 @@ export class ResignationsService {
         data: {
           status: ResignationStatus.PENDING,
           approvedLwd: null,
+          // Put back what the request carried before this attempt (the approver's override is not kept).
+          noticePeriodDays: record.noticePeriodDays,
           decidedById: null,
           decidedAt: null,
           decisionNote: null,
@@ -586,6 +687,7 @@ export class ResignationsService {
     });
     await this.afterDecision(record.employeeId, id, 'APPROVED', actor, {
       approvedLwd,
+      ...(earlyRelease ? { earlyRelease: true, noticeEndsOn } : {}),
     });
     return this.scopedPrisma.resignation.findFirstOrThrow({
       where: { id, organizationId },
@@ -684,6 +786,34 @@ export class ResignationsService {
         ? `Your resignation has been approved. Your last working day is ${String(extra.approvedLwd)}.`
         : 'Your resignation request was not approved. Please speak to HR for details.',
     );
+    // Also by email: an in-app notice alone is easy to miss for a decision this important. Best-effort.
+    try {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        select: { name: true, email: true },
+      });
+      if (employee?.email) {
+        const approved = outcome === 'APPROVED';
+        const company = (
+          await this.scopedPrisma.organization.findFirst({
+            where: { id: organizationId },
+            select: { companyName: true },
+          })
+        )?.companyName;
+        await this.emailService.send({
+          organizationId,
+          to: employee.email,
+          subject: `Your resignation has been ${approved ? 'approved' : 'declined'}`,
+          html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${
+            approved
+              ? `Your resignation has been approved. Your last working day is <strong>${escapeHtml(String(extra.approvedLwd))}</strong>.`
+              : 'Your resignation request was not approved. Please speak to HR for details.'
+          }</p><p>${escapeHtml(company ?? '')}</p>`,
+        });
+      }
+    } catch {
+      // best-effort — the decision itself has already been saved
+    }
   }
 
   private async notify(

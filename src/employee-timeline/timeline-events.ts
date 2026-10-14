@@ -159,6 +159,10 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   RESIGNATION_APPROVED: { category: 'EXIT', title: 'Resignation Approved' },
   RESIGNATION_REJECTED: { category: 'EXIT', title: 'Resignation Rejected' },
   RESIGNATION_WITHDRAWN: { category: 'EXIT', title: 'Resignation Withdrawn' },
+  RESIGNATION_WITHDRAWAL_REQUESTED: {
+    category: 'EXIT',
+    title: 'Resignation Withdrawal Requested',
+  },
   NOTICE_PERIOD_STARTED: { category: 'EXIT', title: 'Notice Period Started' },
   NOTICE_PERIOD_EXTENDED: { category: 'EXIT', title: 'Notice Period Extended' },
   EXIT_INTERVIEW_COMPLETED: {

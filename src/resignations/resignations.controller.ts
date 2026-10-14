@@ -15,6 +15,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { ResignationsService } from './resignations.service';
+import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
 import { SubmitResignationDto } from './dto/submit-resignation.dto';
 import { RecordResignationDto } from './dto/record-resignation.dto';
 import {
@@ -50,6 +51,12 @@ export class ResignationsController {
     return this.resignationsService.recordOnBehalf(dto, caller);
   }
 
+  // Read-only: resignations of the caller's direct reports (the manager is notified when one is submitted).
+  @Get('team')
+  findTeam(@CurrentUser() caller: Caller) {
+    return this.resignationsService.findTeam(caller);
+  }
+
   @Get('mine')
   findMine(@CurrentUser() caller: Caller) {
     return this.resignationsService.findMine(caller);
@@ -68,6 +75,15 @@ export class ResignationsController {
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.resignationsService.findOne(id, caller);
+  }
+
+  @Post(':id/withdrawal-request')
+  requestWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: RequestWithdrawalDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.resignationsService.requestWithdrawal(id, dto, caller);
   }
 
   @Patch(':id/withdraw')

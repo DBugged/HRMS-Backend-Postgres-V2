@@ -257,7 +257,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     resignationId = (res.body as ResignationBody).id;
   });
 
-  it('HR approves: LWD defaults to submittedOn + notice, case is created and linked, status is RESIGNED (the notice stage)', async () => {
+  it('HR approves: LWD defaults to the date the employee asked for, case is created and linked, status is RESIGNED (the notice stage)', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/resignations/${resignationId}/approve`)
       .set('Authorization', `Bearer ${hrToken}`)
@@ -265,7 +265,8 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       .expect(200);
     const body = res.body as ResignationBody;
     expect(body.status).toBe('APPROVED');
-    expect(body.approvedLwd).toBe(dateOffset(30));
+    // The employee asked for dateOffset(45); the approver did not move it.
+    expect(body.approvedLwd).toBe(dateOffset(45));
     expect(body.offboardingCaseId).not.toBeNull();
     caseId = body.offboardingCaseId!;
 
@@ -458,10 +459,16 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       .set('Authorization', `Bearer ${hrToken}`)
       .send({})
       .expect(403);
-    const approved = await request(app.getHttpServer())
+    // 15 days is before the 30-day notice ends: an early release needs a note.
+    await request(app.getHttpServer())
       .patch(`/resignations/${hrResId}/approve`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ approvedLwd: dateOffset(15) })
+      .expect(400);
+    const approved = await request(app.getHttpServer())
+      .patch(`/resignations/${hrResId}/approve`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ approvedLwd: dateOffset(15), decisionNote: 'Released early at their request' })
       .expect(200);
     const body = approved.body as ResignationBody;
     expect(body.approvedLwd).toBe(dateOffset(15));
@@ -586,6 +593,74 @@ describe('Resignations & exit lifecycle (e2e)', () => {
         receivedOn: dateOffset(2),
         requestedLwd: dateOffset(40),
       }).expect(400);
+    });
+  });
+
+  describe('manager view, withdrawal request and early release', () => {
+    it('a manager sees a direct report\'s resignation read-only; an unrelated employee does not', async () => {
+      const manager = await createEmployee('resig-e2e-mgr@example.test', 'MANAGER');
+      const report = await createEmployee('resig-e2e-report@example.test');
+      await prisma.user.update({
+        where: { id: report.id },
+        data: { reportingManagerId: manager.id },
+      });
+      await request(app.getHttpServer())
+        .post(`/employee-salary/${report.id}/structure`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ componentCode: 'BASIC', fixedAmount: 30000, effectiveFrom: '2026-01-01' })
+        .expect(201);
+
+      const submitted = await request(app.getHttpServer())
+        .post('/resignations')
+        .set('Authorization', `Bearer ${report.token}`)
+        .send({ requestedLwd: dateOffset(40), noticePeriodDays: 30 })
+        .expect(201);
+      const id = (submitted.body as ResignationBody).id;
+
+      const team = await request(app.getHttpServer())
+        .get('/resignations/team')
+        .set('Authorization', `Bearer ${manager.token}`)
+        .expect(200);
+      expect((team.body as ResignationBody[]).map((r) => r.id)).toContain(id);
+      await request(app.getHttpServer())
+        .get(`/resignations/${id}`)
+        .set('Authorization', `Bearer ${manager.token}`)
+        .expect(200);
+      // Read-only: a manager cannot decide it.
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/approve`)
+        .set('Authorization', `Bearer ${manager.token}`)
+        .send({})
+        .expect(403);
+      // Someone who does not manage this person gets nothing.
+      await request(app.getHttpServer())
+        .get(`/resignations/${id}`)
+        .set('Authorization', `Bearer ${emp2Token}`)
+        .expect(404);
+
+      // A withdrawal request is only for an approved resignation.
+      await request(app.getHttpServer())
+        .post(`/resignations/${id}/withdrawal-request`)
+        .set('Authorization', `Bearer ${report.token}`)
+        .send({ reason: 'Plans changed' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/approve`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({})
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/resignations/${id}/withdrawal-request`)
+        .set('Authorization', `Bearer ${report.token}`)
+        .send({ reason: 'Plans changed' })
+        .expect(201);
+      // The request leaves a trace, and nothing changed in the resignation itself.
+      const audit = await prisma.auditLog.count({
+        where: { action: 'RESIGNATION_WITHDRAWAL_REQUESTED', targetId: report.id },
+      });
+      expect(audit).toBe(1);
+      const after = await prisma.resignation.findFirstOrThrow({ where: { id } });
+      expect(after.status).toBe('APPROVED');
     });
   });
 });
