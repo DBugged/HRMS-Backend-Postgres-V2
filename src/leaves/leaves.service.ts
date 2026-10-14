@@ -38,6 +38,7 @@ import { isEligible } from '../leave-balances/leave-eligibility';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { AttendanceService } from '../attendance/attendance.service';
+import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
@@ -1267,6 +1268,111 @@ export class LeavesService {
     }
   }
 
+  // The holidays this employee actually gets: company-wide and their own department's, optional ones excluded (an
+  // optional holiday is a day the employee may choose to take, not a day off for everyone) - the same set attendance
+  // and payroll use. One lookup shared by applying for leave and by the day-count preview, so they cannot disagree.
+  private holidaysFor(
+    actor: { departmentId: string | null },
+    organizationId: string,
+  ) {
+    return this.scopedPrisma.holiday.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        isOptional: false,
+        OR: actor.departmentId
+          ? [{ departmentId: null }, { departmentId: actor.departmentId }]
+          : [{ departmentId: null }],
+      },
+      select: { date: true },
+    });
+  }
+
+  // How many days a leave of this type, between these dates, would cost the caller - computed by the same rules as
+  // applying (weekly offs and holidays left out unless the type counts calendar days, half day = 0.5, the sandwich
+  // adjustment), so the Apply form can show it before submitting. Nothing is written. `messages` carries the
+  // date-related rule problems the application would hit (for example "falls entirely on weekly offs").
+  async previewDays(
+    query: PreviewLeaveDaysQueryDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const leaveType = await this.scopedPrisma.leaveType.findFirst({
+      where: { id: query.leaveType, organizationId, isActive: true },
+    });
+    if (!leaveType) throw new NotFoundException('Leave type not found.');
+    const [holidays, prior, employeeDept, org] = await Promise.all([
+      this.holidaysFor(actor, organizationId),
+      this.scopedPrisma.leave.findFirst({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          leaveTypeId: leaveType.id,
+          status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+          endDate: { lt: query.startDate },
+        },
+        orderBy: { endDate: 'desc' },
+      }),
+      actor.departmentId
+        ? this.scopedPrisma.department.findFirst({
+            where: { id: actor.departmentId, organizationId },
+          })
+        : Promise.resolve(null),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+      }),
+    ]);
+    const { weeklyOffs } = resolveShiftConfig(
+      employeeDept,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
+    const rules = effectiveLeaveRules(
+      leaveType.rules as unknown as LeaveRules,
+      leaveType,
+    );
+    const isHalfDay = query.isHalfDay ?? false;
+    const result = checkLeaveRules(
+      rules,
+      {
+        startDate: query.startDate,
+        endDate: query.endDate,
+        isHalfDay,
+        halfDaySession: null,
+        hasAttachment: true, // the document rule is not about the day count
+      },
+      {
+        today: todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
+        holidayDates: new Set(holidays.map((h) => h.date)),
+        weeklyOffs,
+        priorLeaveEndDate: prior?.endDate ?? null,
+        existingRanges: [],
+        ...applicationDocumentRule(leaveType, { grantHasDocument: true }),
+      },
+    );
+    const calendarDays =
+      query.endDate >= query.startDate
+        ? Math.round(
+            (new Date(`${query.endDate}T00:00:00Z`).getTime() -
+              new Date(`${query.startDate}T00:00:00Z`).getTime()) /
+              86_400_000,
+          ) + 1
+        : 0;
+    // The rule messages worth showing while typing dates (not "document required" or overlap, which the real
+    // application reports).
+    const messages = result.errors.filter(
+      (m) => !/document|attachment|overlap|already/i.test(m),
+    );
+    return {
+      totalDays: result.totalDays,
+      calendarDays,
+      // Days in the range that are not charged (weekly offs / holidays); 0 for a half day or a calendar-day type.
+      excludedDays: isHalfDay
+        ? 0
+        : Math.max(0, Math.round((calendarDays - result.totalDays) * 100) / 100),
+      messages,
+    };
+  }
+
   private async createLeaveInternal(
     dto: ApplyLeaveDto,
     actor: Actor,
@@ -1325,17 +1431,7 @@ export class LeavesService {
         // (an optional holiday is a day the employee may choose to take, not a day off for everyone) - the same set
         // attendance and payroll use. Counting every holiday of the organisation undercharged leave around other
         // departments' holidays.
-        this.scopedPrisma.holiday.findMany({
-          where: {
-            organizationId,
-            isActive: true,
-            isOptional: false,
-            OR: actor.departmentId
-              ? [{ departmentId: null }, { departmentId: actor.departmentId }]
-              : [{ departmentId: null }],
-          },
-          select: { date: true },
-        }),
+        this.holidaysFor(actor, organizationId),
         this.scopedPrisma.leave.findFirst({
           where: {
             organizationId,

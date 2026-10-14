@@ -16,6 +16,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { LeavesService } from './leaves.service';
+import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
@@ -36,6 +37,16 @@ export class LeavesController {
   @Post()
   apply(@Body() dto: ApplyLeaveDto, @CurrentUser() caller: Caller) {
     return this.leavesService.apply(dto, caller, caller.organizationId);
+  }
+
+  // How many days these dates would cost (nothing is written) - shown in the Apply for Leave form as dates are
+  // picked. Declared before the parameterised routes.
+  @Get('preview-days')
+  previewDays(
+    @Query() query: PreviewLeaveDaysQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.leavesService.previewDays(query, caller, caller.organizationId);
   }
 
   @Get()

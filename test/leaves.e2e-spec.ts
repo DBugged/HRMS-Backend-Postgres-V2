@@ -223,6 +223,35 @@ describe('Leaves (e2e)', () => {
     expect(row?.pending).toBe(3);
   });
 
+  it('previews the number of days for the dates picked, by the same rules as applying', async () => {
+    const preview = (q: Record<string, string>) =>
+      request(app.getHttpServer())
+        .get('/leaves/preview-days')
+        .query({ leaveType: elLeaveTypeId, ...q })
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(200);
+    // Same range the application above used: it costs 3 days, and the preview says so (nothing is written).
+    const three = await preview({ startDate: offsetDate(MON), endDate: offsetDate(MON + 2) });
+    const body = three.body as { totalDays: number; calendarDays: number; excludedDays: number };
+    expect(body.totalDays).toBe(3);
+    expect(body.calendarDays).toBe(3);
+    expect(body.excludedDays).toBe(0);
+    // A half day is 0.5 and never leaves anything "excluded".
+    const half = await preview({ startDate: offsetDate(MON), endDate: offsetDate(MON), isHalfDay: 'true' });
+    expect((half.body as { totalDays: number }).totalDays).toBe(0.5);
+    // A whole week is more calendar days than charged days when it contains the weekly off.
+    const week = await preview({ startDate: offsetDate(MON), endDate: offsetDate(MON + 6) });
+    const w = week.body as { totalDays: number; calendarDays: number; excludedDays: number };
+    expect(w.calendarDays).toBe(7);
+    expect(w.totalDays + w.excludedDays).toBe(7);
+    // Missing or invalid input is refused.
+    await request(app.getHttpServer())
+      .get('/leaves/preview-days')
+      .query({ leaveType: elLeaveTypeId, startDate: 'nope', endDate: offsetDate(MON) })
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(400);
+  });
+
   it('rejects an overlapping request', async () => {
     await request(app.getHttpServer())
       .post('/leaves')
