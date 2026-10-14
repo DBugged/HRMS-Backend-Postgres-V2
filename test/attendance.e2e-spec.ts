@@ -1025,6 +1025,66 @@ describe('Attendance (e2e)', () => {
         .expect(403);
     });
 
+    it('location rule: RECORD_ONLY stores a far-away point without blocking; NOT_NEEDED takes none; ENFORCED needs one', async () => {
+      const setMode = (mode: string) =>
+        request(app.getHttpServer())
+          .patch(`/employees/${employeeId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ locationRequirement: mode })
+          .expect(200);
+      const clear = () => prisma.punch.deleteMany({ where: { employeeId } });
+      try {
+        // RECORD_ONLY: the same far-away point that is refused above is accepted and stored (field staff).
+        await setMode('RECORD_ONLY');
+        await clear();
+        await request(app.getHttpServer())
+          .post('/attendance/punch/self')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({ latitude: FAR_LAT, longitude: FAR_LNG, selfieUrl: 'e2e-selfie.jpg', batteryPercent: 64 })
+          .expect(201);
+        const stored = await prisma.punch.findFirstOrThrow({ where: { employeeId } });
+        expect(stored.latitude).toBeCloseTo(FAR_LAT, 5);
+        expect(stored.batteryPercent).toBe(64);
+
+        // RECORD_ONLY still needs the location to be sent.
+        await clear();
+        await request(app.getHttpServer())
+          .post('/attendance/punch/self')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({ selfieUrl: 'e2e-selfie.jpg' })
+          .expect(400);
+
+        // NOT_NEEDED: a selfie alone is enough, and no location is stored even if one is sent.
+        await setMode('NOT_NEEDED');
+        await clear();
+        await request(app.getHttpServer())
+          .post('/attendance/punch/self')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({ selfieUrl: 'e2e-selfie.jpg', latitude: FAR_LAT, longitude: FAR_LNG })
+          .expect(201);
+        const none = await prisma.punch.findFirstOrThrow({ where: { employeeId } });
+        expect(none.latitude).toBeNull();
+        expect(none.longitude).toBeNull();
+
+        // Back to the default (ENFORCED): far away is refused again, and no location at all is a 400.
+        await setMode('DEFAULT');
+        await clear();
+        await request(app.getHttpServer())
+          .post('/attendance/punch/self')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({ latitude: FAR_LAT, longitude: FAR_LNG, selfieUrl: 'e2e-selfie.jpg' })
+          .expect(403);
+        await request(app.getHttpServer())
+          .post('/attendance/punch/self')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .send({ selfieUrl: 'e2e-selfie.jpg' })
+          .expect(400);
+      } finally {
+        await setMode('DEFAULT');
+        await clear();
+      }
+    });
+
     it('a punch just outside the fence is accepted only when the device reports a matching accuracy (capped at 50 m)', async () => {
       const metresNorth = (m: number) => OFFICE_LAT + m / 111195;
       // The fence radius is 100 m: 130 m away is 30 m outside it.

@@ -58,15 +58,15 @@ enum ProbationStatus {
 }
 
 model Organization {
-  id        String   @id @default(uuid())
-  name      String
-  timezone  String   @default("Asia/Kolkata")
-  isActive  Boolean  @default(true)
+  id             String   @id @default(uuid())
+  name           String
+  timezone       String   @default("Asia/Kolkata")
+  isActive       Boolean  @default(true)
   // The platform (Control Center) status: ACTIVE | PENDING | SUSPENDED | ARCHIVED. isActive is what the app enforces and
   // is false for SUSPENDED and ARCHIVED - nobody in the organisation can sign in or use a session while it is.
-  platformStatus String @default("ACTIVE")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  platformStatus String   @default("ACTIVE")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // DEPRECATED — no longer read or written by anything. EmployeeIdService
   // now issues employee IDs through documentNumbering.employeeId (see
@@ -307,9 +307,9 @@ model Organization {
   dataSharingRecords               DataSharingRecord[]
   breachIncidents                  BreachIncident[]
   privacyAuditLogs                 PrivacyAuditLog[]
+  payrollRunRevisions              PayrollRunRevision[]
 
   @@map("organizations")
-  payrollRunRevisions PayrollRunRevision[]
 }
 
 model Department {
@@ -411,17 +411,17 @@ model User {
   resetPasswordToken   String?   @unique
   resetPasswordExpires DateTime?
 
-  isFounder          Boolean   @default(false)
-  isActive           Boolean   @default(true)
-  mustChangePassword Boolean   @default(true)
-  emailVerified      Boolean   @default(true)
+  isFounder                Boolean   @default(false)
+  isActive                 Boolean   @default(true)
+  mustChangePassword       Boolean   @default(true)
+  emailVerified            Boolean   @default(true)
   // Hash of the e-mail verification token sent when an organisation self-registers (null once verified).
   emailVerificationToken   String?   @unique
   emailVerificationExpires DateTime?
-  lastLoginAt        DateTime?
+  lastLoginAt              DateTime?
   // When the password was last changed or reset. An access token issued before it stops working immediately (see
   // JwtAccessStrategy), instead of staying valid until its own expiry.
-  passwordChangedAt  DateTime?
+  passwordChangedAt        DateTime?
 
   // Standing opt-out from bulk payroll runs (PayrollService.targetEmployees)
   // — for someone tracked in the HRMS (attendance/leave) but never actually
@@ -510,12 +510,15 @@ model User {
   // default — only flips an employee into "must have a location to punch"
   // once HR explicitly marks them as office-based. See selfPunch in
   // attendance.service.ts.
-  requireWorkLocationForPunch Boolean           @default(false)
+  requireWorkLocationForPunch Boolean             @default(false)
   // Whether this employee must take a selfie to check in/out: DEFAULT
   // follows the org's orgPayrollAttendancePrefs.requireSelfieForPunch;
   // REQUIRED / NOT_REQUIRED override it either way (e.g. field staff).
   // See common/selfie-requirement.ts.
-  selfieRequirement           SelfieRequirement @default(DEFAULT)
+  selfieRequirement           SelfieRequirement   @default(DEFAULT)
+  // What location the punch needs: DEFAULT follows the org's attendance prefs (locationMode); ENFORCED / RECORD_ONLY /
+  // NOT_NEEDED override it. See common/location-requirement.ts.
+  locationRequirement         LocationRequirement @default(DEFAULT)
 
   reportingManagerId String?
   reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
@@ -922,12 +925,12 @@ model WorkLocation {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   name        String
-  address     String @default("")
-  description String @default("")
+  address     String    @default("")
+  description String    @default("")
   // Indian state/UT this location is in ('' = not set). Drives state-wise statutory rules — today the
   // Labour Welfare Fund rate (an employee's state is their department's work location's state).
   // Canonical spelling from common/indian-states.ts.
-  state       String @default("")
+  state       String    @default("")
   // The city or town, and its class for HRA (suggested from the city by common/hra-cities.ts, editable).
   city        String    @default("")
   cityClass   CityClass @default(NON_METRO)
@@ -1862,16 +1865,20 @@ model Punch {
   employeeId String
   employee   User   @relation(fields: [employeeId], references: [id])
 
-  punchTime  DateTime
-  source     PunchSource @default(FACE_API)
-  location   String?
-  latitude   Float?
-  longitude  Float?
+  punchTime         DateTime
+  source            PunchSource @default(FACE_API)
+  location          String?
+  latitude          Float?
+  longitude         Float?
   // Client-supplied URL — no upload endpoint exists in backend-v2 yet, same
   // deferral as PayrollTemplate.companyLogoUrl/Leave.attachmentUrl.
-  selfieUrl  String?
+  selfieUrl         String?
+  // The photo as taken, kept when selfieUrl is the server-stamped copy (time, place, battery written on it).
+  selfieOriginalUrl String?
+  // The phone's battery level at punch time, 0-100, as the device reported it. Context only: the device supplies it.
+  batteryPercent    Int?
   // Raw Face API webhook payload, kept for audit.
-  rawPayload Json?
+  rawPayload        Json?
 
   createdAt DateTime @default(now())
 
@@ -1990,7 +1997,7 @@ model AttendanceImportBatch {
   // {employeeId, date, inTime, outTime, inLocation?, outLocation?}[] — raw
   // parsed spreadsheet rows, untyped client input same as
   // BulkImportHolidaysDto's row shape.
-  rows Json @default("[]")
+  rows      Json   @default("[]")
   // How a bare time in the rows (no Z / offset) is read: "UTC" (the original behaviour) or "ORG" (the organisation's own
   // timezone, which is what a biometric export or an HR sheet contains).
   timeBasis String @default("UTC")
@@ -2271,13 +2278,13 @@ model PayrollRunRevision {
   employeeId     String
   month          Int
   year           Int
-  runSequence    Int          @default(0)
+  runSequence    Int              @default(0)
   // 0 = the first finalised version; the run's own revisionNumber moves up by one when this row is written.
   revision       Int
   previousStatus PayrollRunStatus
   reason         String
   createdById    String
-  createdAt      DateTime     @default(now())
+  createdAt      DateTime         @default(now())
   snapshot       Json
 
   @@unique([payrollRunId, revision])
@@ -2302,16 +2309,16 @@ model PayrollRun {
   employeeId String
   employee   User   @relation("PayrollRunEmployee", fields: [employeeId], references: [id])
 
-  month         Int
-  year          Int
-  financialYear String?
-  status        PayrollRunStatus @default(DRAFT)
+  month           Int
+  year            Int
+  financialYear   String?
+  status          PayrollRunStatus @default(DRAFT)
   // Set when attendance, leave or overtime changes after this run was calculated, so its figures no longer match the
   // records; cleared by the next calculation. A run with this set cannot be verified, approved or locked.
   inputsChangedAt DateTime?
   // How many times this run has been unlocked and corrected; the figures as finalised before each correction are kept in
   // PayrollRunRevision. 0 = the original, never reopened.
-  revisionNumber  Int       @default(0)
+  revisionNumber  Int              @default(0)
 
   // {workingDays, presentDays, paidLeaveDays, unpaidLeaveDays, halfDays,
   // overtimeHours, lateMarks, holidayWorkDays, weekendWorkDays, lopDays,
@@ -2622,11 +2629,11 @@ model Settlement {
 
   // The part of the recoveries (notice shortfall, advances) the payout could not cover, owed by the employee. It is
   // collected outside payroll (the next employer is never liable for it) and then closed as RECOVERED, or waived by an Admin.
-  receivableAmount       Float            @default(0)
-  receivableStatus       ReceivableStatus @default(NONE)
-  receivableNote         String?
-  receivableClosedAt     DateTime?
-  receivableClosedById   String?
+  receivableAmount     Float            @default(0)
+  receivableStatus     ReceivableStatus @default(NONE)
+  receivableNote       String?
+  receivableClosedAt   DateTime?
+  receivableClosedById String?
 
   // Notice period: pay the employer waived (employee released before the notice ended) and the shortfall the
   // recovery above was derived from. noticePeriodRecovery is calculated from the notice days unless HR overrode it.
@@ -3797,6 +3804,14 @@ model AssetDocument {
 
   @@index([organizationId, assetId])
   @@map("asset_documents")
+}
+
+// Per-employee location rule for check-in/out (User.locationRequirement); DEFAULT follows the organization.
+enum LocationRequirement {
+  DEFAULT
+  ENFORCED
+  RECORD_ONLY
+  NOT_NEEDED
 }
 
 // Per-employee override of the org-wide "Require selfie at check-in /

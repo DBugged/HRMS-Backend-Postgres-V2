@@ -12,7 +12,7 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-import { Gender, Role, SelfieRequirement } from '@prisma/client';
+import { Gender, LocationRequirement, Role, SelfieRequirement } from '@prisma/client';
 import { NormalizeEmail, Trim } from '../../common/normalize-input';
 import { IsReasonableJoiningDate } from '../../common/is-reasonable-joining-date.validator';
 import {
@@ -86,6 +86,16 @@ export class CreateEmployeeDto {
   @IsOptional()
   @IsEnum(SelfieRequirement)
   selfieRequirement?: SelfieRequirement;
+
+  @ApiPropertyOptional({
+    enum: LocationRequirement,
+    default: LocationRequirement.DEFAULT,
+    description:
+      'Location at check-in/out: DEFAULT follows the org setting; ENFORCED (inside the work location), RECORD_ONLY (stored, never blocks) or NOT_NEEDED (selfie only) override it for this employee.',
+  })
+  @IsOptional()
+  @IsEnum(LocationRequirement)
+  locationRequirement?: LocationRequirement;
 
   @ApiProperty()
   @Trim()

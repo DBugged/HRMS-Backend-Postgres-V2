@@ -116,6 +116,35 @@ export function relativeKeyFor(
   return `${organizationId}/${category}/${file.filename}`;
 }
 
+// Writes bytes to a new stored file under `relativeKey`, on whichever driver is configured - for server-side
+// producers (a stamped selfie) as opposed to the multer engines, which only handle uploads. Throws on failure; the
+// caller decides whether that is fatal.
+export async function writeStoredFile(
+  relativeKey: string,
+  data: Buffer,
+  contentType: string,
+): Promise<void> {
+  if (fileStorageDriver() === 's3') {
+    const { PutObjectCommand } = await import('@aws-sdk/client-s3');
+    const { getS3Client, getS3Bucket } = await import('./s3-client.js');
+    await getS3Client().send(
+      new PutObjectCommand({
+        Bucket: getS3Bucket(),
+        Key: relativeKey,
+        Body: data,
+        ContentType: contentType,
+      }),
+    );
+    return;
+  }
+  const filePath = path.join(UPLOAD_ROOT, relativeKey);
+  if (!filePath.startsWith(UPLOAD_ROOT + path.sep)) {
+    throw new Error('Refusing to write outside the upload root.');
+  }
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.promises.writeFile(filePath, data);
+}
+
 // Reads a stored file's bytes as a Buffer, from whichever driver is
 // configured — for server-side consumers that need the actual bytes (e.g.
 // payslip-pdf.service.ts embedding a company logo), as opposed to

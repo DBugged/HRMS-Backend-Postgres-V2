@@ -57,6 +57,7 @@ import {
   LOGIN_LOCKOUT_MINUTES,
 } from './auth.constants';
 import { isSelfieRequired } from '../common/selfie-requirement';
+import { resolveLocationMode } from '../common/location-requirement';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // 30 minutes — matches the original release's window exactly.
@@ -629,6 +630,12 @@ export class AuthService {
       user.selfieRequirement,
       org?.orgPayrollAttendancePrefs,
     );
+    // What location the app must take for a punch (their own setting, else the org's): ENFORCED / RECORD_ONLY /
+    // NOT_NEEDED. The mobile app reads the GPS only when it is not NOT_NEEDED.
+    const locationMode = resolveLocationMode(
+      user.locationRequirement,
+      org?.orgPayrollAttendancePrefs,
+    );
     // profileImage is a durable relativeKey (never a signed URL — see
     // file-token.ts), so it's signed fresh on every read. This is what
     // AuthContext's `user` (and so the header avatar) holds for the whole
@@ -643,7 +650,7 @@ export class AuthService {
         safe.organizationId,
       ) as unknown as typeof safe.personalData;
     }
-    return { ...safe, selfieRequired };
+    return { ...safe, selfieRequired, locationMode };
   }
 
   // Never reveals whether the email exists — same response either way.

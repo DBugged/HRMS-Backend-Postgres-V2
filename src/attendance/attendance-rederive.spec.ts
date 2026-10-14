@@ -70,6 +70,7 @@ function build(rows: Record<string, unknown>[], locked: string[] = []) {
     null as never,
     null as never,
     audit as never,
+    null as never, // SelfieStampService (not used by re-derivation)
   );
   return { service, updates };
 }

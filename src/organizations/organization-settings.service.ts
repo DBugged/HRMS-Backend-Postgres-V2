@@ -389,6 +389,7 @@ export class OrganizationSettingsService {
     const attendancePayrollPrefs = (org.orgPayrollAttendancePrefs ?? {}) as {
       enableTaxDeclaration?: boolean;
       requireSelfieForPunch?: boolean;
+      locationMode?: string;
     };
     return {
       isInitialized: org.isInitialized,
@@ -434,6 +435,13 @@ export class OrganizationSettingsService {
       // common/selfie-requirement.ts; the employee form shows the result.
       requireSelfieForPunch:
         attendancePayrollPrefs.requireSelfieForPunch !== false,
+      // Org default for what location a check-in/out needs (unset = ENFORCED). An employee's own setting can
+      // override it - see common/location-requirement.ts.
+      locationMode: ['ENFORCED', 'RECORD_ONLY', 'NOT_NEEDED'].includes(
+        attendancePayrollPrefs.locationMode as string,
+      )
+        ? attendancePayrollPrefs.locationMode
+        : 'ENFORCED',
       // Lets Leave Types disable its manual "Run Year-End Carry Forward"
       // button when the automatic Jan 1st cron already covers it, without
       // needing ADMIN-only access to the full /organizations/settings

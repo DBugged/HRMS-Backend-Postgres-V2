@@ -77,6 +77,8 @@ import { IngestPunchDto } from './dto/ingest-punch.dto';
 import { ManualPunchDto } from './dto/manual-punch.dto';
 import { SelfPunchDto } from './dto/self-punch.dto';
 import { SetWorkArrangementDto } from './dto/set-work-arrangement.dto';
+import { SelfieStampService } from './selfie-stamp.service';
+import { resolveLocationMode } from '../common/location-requirement';
 import { PreviewWfhDaysQueryDto } from './dto/preview-wfh-days-query.dto';
 import {
   calendarSpan,
@@ -104,6 +106,7 @@ import { getOvertimeRates } from '../overtime/overtime.service';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
 import {
   formatDateDisplay,
+  formatDateTimeDisplay,
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
 import {
@@ -474,6 +477,8 @@ export class AttendanceService {
     private readonly delegationService: ApprovalDelegationService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly auditLogService: AuditLogService,
+    // Last, so tests that build the service by position keep working; stamps the selfie of a self punch.
+    private readonly selfieStampService: SelfieStampService,
   ) {}
 
   // The core engine — derives an Attendance row for one employee/day from
@@ -1486,10 +1491,26 @@ export class AttendanceService {
         department: { include: { workLocation: true } },
       },
     });
+    // What location this punch needs (their own setting, else the organization's): ENFORCED, RECORD_ONLY or NOT_NEEDED.
+    const orgForPunch = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { orgPayrollAttendancePrefs: true, name: true, companyName: true },
+    });
+    const locationMode = resolveLocationMode(
+      employee?.locationRequirement,
+      orgForPunch?.orgPayrollAttendancePrefs,
+    );
+    const hasLocation =
+      typeof dto.latitude === 'number' && typeof dto.longitude === 'number';
+    if (locationMode !== 'NOT_NEEDED' && !hasLocation) {
+      throw new BadRequestException(
+        'Your location is needed to check in or out. Allow location access and try again.',
+      );
+    }
     // A location from a fake-location app proves nothing about where the person is, so the punch is refused - and the
     // attempt is recorded, since it is the only trace HR will have. The device is the only source of this signal (Android
     // reports it; iOS and browsers do not), so it is a deterrent for honest clients rather than a guarantee.
-    if (dto.mockedLocation === true) {
+    if (locationMode !== 'NOT_NEEDED' && dto.mockedLocation === true) {
       await this.auditLogService.log({
         actorId: actor.id,
         action: 'ATTENDANCE_MOCK_LOCATION_BLOCKED',
@@ -1538,7 +1559,8 @@ export class AttendanceService {
     }
 
     const fence = employee ? effectiveWorkLocation(employee) : null;
-    if (!fence && employee?.requireWorkLocationForPunch) {
+    // Only ENFORCED looks at the work location at all: RECORD_ONLY stores the point and NOT_NEEDED takes none.
+    if (locationMode === 'ENFORCED' && !fence && employee?.requireWorkLocationForPunch) {
       // Per-employee, not org-wide: an office-based employee is marked
       // this way so a missing location is a real data gap that blocks
       // them, not an implicit "exempt from geo-fencing" — a remote/field
@@ -1548,7 +1570,7 @@ export class AttendanceService {
         'No work location is assigned to you yet — contact HR before you can punch in/out.',
       );
     }
-    if (fence && fence.isActive) {
+    if (locationMode === 'ENFORCED' && fence && fence.isActive) {
       // WFH-only, and only once approved (see WfhApprovalStatus's comment
       // on the schema) — a self-declared-but-unreviewed WFH day, or any
       // other arrangement (HYBRID/CLIENT_SITE included), still enforces
@@ -1577,8 +1599,8 @@ export class AttendanceService {
         // The device's own accuracy widens the fence slightly (capped), so a good-faith punch from the edge of the
         // area is not refused because of GPS drift.
         const inside = isInsideGeoFenceWithAccuracy(
-          dto.latitude,
-          dto.longitude,
+          dto.latitude as number,
+          dto.longitude as number,
           fence,
           dto.accuracyMeters,
         );
@@ -1614,15 +1636,36 @@ export class AttendanceService {
         organizationId,
       );
     } else {
+      // The selfie is stamped with the facts of the punch (time, place, battery, who) before the row is written, so
+      // every place that shows it shows the stamped copy; the photo as taken is kept alongside. Best-effort.
+      let selfieUrl: string | null = dto.selfieUrl ?? null;
+      let selfieOriginalUrl: string | null = null;
+      if (dto.selfieUrl) {
+        const stamped = await this.stampSelfie(
+          dto,
+          actor,
+          organizationId,
+          punchTime,
+          orgForPunch?.companyName ?? orgForPunch?.name ?? '',
+          locationMode,
+        );
+        if (stamped) {
+          selfieOriginalUrl = dto.selfieUrl;
+          selfieUrl = stamped;
+        }
+      }
       punch = await this.scopedPrisma.punch.create({
         data: {
           organizationId,
           employeeId: actor.id,
           punchTime,
           source: PunchSource.MANUAL,
-          latitude: dto.latitude,
-          longitude: dto.longitude,
-          selfieUrl: dto.selfieUrl ?? null,
+          // No location is stored when the rule says none is needed.
+          latitude: locationMode === 'NOT_NEEDED' ? null : (dto.latitude ?? null),
+          longitude: locationMode === 'NOT_NEEDED' ? null : (dto.longitude ?? null),
+          selfieUrl,
+          selfieOriginalUrl,
+          batteryPercent: dto.batteryPercent ?? null,
         },
       });
       attendance = await this.recalculateAttendanceForDay(
@@ -1649,6 +1692,53 @@ export class AttendanceService {
     });
 
     return { punch, attendance, punchCount };
+  }
+
+  // Stamps the punch's selfie (see SelfieStampService); returns the stamped copy's key, or null to keep the original.
+  private async stampSelfie(
+    dto: SelfPunchDto,
+    actor: Actor,
+    organizationId: string,
+    punchTime: Date,
+    companyName: string,
+    locationMode: 'ENFORCED' | 'RECORD_ONLY' | 'NOT_NEEDED',
+  ): Promise<string | null> {
+    if (!dto.selfieUrl) return null;
+    const { timeFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const orgTimezone = await this.getOrgTimezone(organizationId);
+    // The first punch of the day is the check-in, the next the check-out, and so on - the same reading the app uses.
+    const before = await this.scopedPrisma.punch.count({
+      where: {
+        organizationId,
+        employeeId: actor.id,
+        punchTime: dayRangeInOrgTz(
+          todayInOrgTz(orgTimezone, punchTime),
+          orgTimezone,
+        ),
+      },
+    });
+    const kind = before % 2 === 0 ? 'Check-in' : 'Check-out';
+    const code = (actor as { employeeId?: string | null }).employeeId;
+    const place =
+      locationMode !== 'NOT_NEEDED' &&
+      typeof dto.latitude === 'number' &&
+      typeof dto.longitude === 'number'
+        ? `Lat ${dto.latitude.toFixed(6)}, Lng ${dto.longitude.toFixed(6)}${
+            typeof dto.accuracyMeters === 'number'
+              ? ` (+/-${Math.round(dto.accuracyMeters)} m)`
+              : ''
+          }`
+        : null;
+    return this.selfieStampService.stamp(dto.selfieUrl, {
+      title: `${kind} - ${formatDateTimeDisplay(punchTime, '', 'DD-MM-YYYY', timeFormat, timeZone)}`,
+      who: `${actor.name}${code ? ` (${code})` : ''}${companyName ? ` - ${companyName}` : ''}`,
+      place,
+      batteryPercent:
+        typeof dto.batteryPercent === 'number' ? dto.batteryPercent : null,
+    });
   }
 
   async getTodayPunchCount(actor: Actor, organizationId: string) {

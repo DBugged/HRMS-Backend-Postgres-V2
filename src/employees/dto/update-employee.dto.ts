@@ -16,6 +16,7 @@ import {
   EmploymentStatus,
   Gender,
   Role,
+  LocationRequirement,
   SelfieRequirement,
 } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
@@ -77,6 +78,12 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsEnum(SelfieRequirement)
   selfieRequirement?: SelfieRequirement;
+
+  // HR/Admin only (see employee-field-lock.ts). DEFAULT follows the organization's attendance setting.
+  @ApiPropertyOptional({ enum: LocationRequirement })
+  @IsOptional()
+  @IsEnum(LocationRequirement)
+  locationRequirement?: LocationRequirement;
 
   // Locked for self-update, AND locked for HR (Admin only) — mirrors the
   // original release exactly: even hr_admin couldn't change designation.
