@@ -353,9 +353,97 @@ describe('Dashboard (e2e)', () => {
     expect(Array.isArray(body.teamLeaveBalances)).toBe(true);
   });
 
+  it("the manager's team size counts active department members only", async () => {
+    const teamSize = async () =>
+      (
+        (
+          await request(app.getHttpServer())
+            .get('/dashboard/department-head')
+            .set('Authorization', `Bearer ${managerToken}`)
+            .expect(200)
+        ).body as { teamSize: number }
+      ).teamSize;
+    const manager = await prisma.user.findFirstOrThrow({
+      where: { organizationId, role: 'MANAGER' },
+    });
+    const before = await teamSize();
+    const created = await request(app.getHttpServer())
+      .post('/employees')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        name: 'Team Member',
+        email: 'dash-team-member@example.test',
+        joiningDate: '2026-01-01',
+        departmentId: manager.departmentId,
+      })
+      .expect(201);
+    const memberId = (created.body as { employee: { id: string } }).employee.id;
+    expect(await teamSize()).toBe(before + 1);
+    await prisma.user.update({
+      where: { id: memberId },
+      data: { isActive: false },
+    });
+    expect(await teamSize()).toBe(before);
+  });
+
+  it('Low Leave Balance lists active employees only and ignores one-off event-based leave', async () => {
+    const year = (
+      await prisma.leaveBalance.findFirstOrThrow({ where: { organizationId } })
+    ).year;
+    const yearly = await prisma.leaveType.findFirstOrThrow({
+      where: {
+        organizationId,
+        countInTotalBalance: true,
+        allocationType: { not: 'EVENT_BASED' },
+      },
+    });
+    const event = await prisma.leaveType.findFirstOrThrow({
+      where: { organizationId, allocationType: 'EVENT_BASED' },
+    });
+    const mk = async (email: string) =>
+      (
+        (
+          await request(app.getHttpServer())
+            .post('/employees')
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({
+              name: email.split('@')[0],
+              email,
+              joiningDate: '2026-01-01',
+            })
+            .expect(201)
+        ).body as { employee: { id: string } }
+      ).employee.id;
+    const low = await mk('dash-low-active@example.test');
+    const gone = await mk('dash-low-gone@example.test');
+    const eventOnly = await mk('dash-low-event@example.test');
+    const row = (employeeId: string, leaveTypeId: string, closing: number) =>
+      prisma.leaveBalance.create({
+        data: { organizationId, employeeId, leaveTypeId, year, closing },
+      });
+    await row(low, yearly.id, 1);
+    await row(gone, yearly.id, 1);
+    await row(eventOnly, event.id, 1);
+    await prisma.user.update({
+      where: { id: gone },
+      data: { isActive: false },
+    });
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/hr')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const ids = (
+      res.body as { lowBalanceEmployees: { id: string }[] }
+    ).lowBalanceEmployees.map((e) => e.id);
+    expect(ids).toContain(low);
+    expect(ids).not.toContain(gone);
+    expect(ids).not.toContain(eventOnly);
+  });
+
   it("ADMIN (no department) is scoped to other no-department users, same as the old system's where:{department:null} behavior", async () => {
+    // Active people only (a deactivated colleague is not part of the team any more).
     const noDeptCount = await prisma.user.count({
-      where: { organizationId, departmentId: null },
+      where: { organizationId, departmentId: null, isActive: true },
     });
     const res = await request(app.getHttpServer())
       .get('/dashboard/department-head')

@@ -239,9 +239,12 @@ export class ReportsService {
     const targetYear =
       query.year ?? currentLeaveYear(dateStrInOrgTz(reportTz), yearCfg);
 
+    // Leave types HR has unticked ('Show in Leave Tracker or Leave Balances', e.g. one-off event-based leave) are left
+    // out, the same as in the tracker's balances table and export.
     const where: Prisma.LeaveBalanceWhereInput = {
       organizationId,
       year: targetYear,
+      leaveType: { showInLeaveTracker: true },
     };
     if (actor.role === Role.MANAGER) {
       where.employeeId = {

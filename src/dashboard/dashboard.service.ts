@@ -11,6 +11,7 @@ import { currentLeaveYear } from '../leave-balances/leave-year';
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  AllocationType,
   AttendanceStatus,
   CompOffStatus,
   LeaveStatus,
@@ -168,8 +169,6 @@ export class DashboardService {
       onLeaveToday,
       pendingLeaves,
       pendingRegularizationCount,
-      leaveStatsGrouped,
-      leaveTypesForStats,
       payrollThisMonth,
       currentMonthRuns,
       draftRuns,
@@ -219,15 +218,6 @@ export class DashboardService {
           organizationId,
           regularization: { path: ['status'], equals: 'pending' },
         },
-      }),
-      this.scopedPrisma.leave.groupBy({
-        by: ['leaveTypeId'],
-        where: { organizationId },
-        _count: { _all: true },
-      }),
-      this.scopedPrisma.leaveType.findMany({
-        where: { organizationId },
-        select: { id: true, name: true, code: true },
       }),
       this.scopedPrisma.payrollRun.count({
         where: {
@@ -294,6 +284,13 @@ export class DashboardService {
         where: {
           organizationId,
           year: await this.currentLeaveYearKey(organizationId),
+          // Same rule as the total shown on the employee's own dashboard and profile: only types that count toward the
+          // total (so not one-off event-based leave), and only people who still work here.
+          leaveType: {
+            countInTotalBalance: true,
+            allocationType: { not: AllocationType.EVENT_BASED },
+          },
+          employee: { isActive: true },
         },
         include: {
           employee: { select: { id: true, name: true, employeeId: true } },
@@ -309,23 +306,6 @@ export class DashboardService {
         include: { employee: { select: { departmentId: true } } },
       }),
     ]);
-
-    const leaveTypeById = new Map(leaveTypesForStats.map((lt) => [lt.id, lt]));
-    const leaveStatsByType = new Map<
-      string,
-      { name: string; code?: string; count: number }
-    >();
-    for (const g of leaveStatsGrouped) {
-      const leaveType = leaveTypeById.get(g.leaveTypeId);
-      const key = leaveType?.name ?? g.leaveTypeId;
-      const entry = leaveStatsByType.get(key) ?? {
-        name: key,
-        code: leaveType?.code,
-        count: 0,
-      };
-      entry.count += g._count._all;
-      leaveStatsByType.set(key, entry);
-    }
 
     // Total remaining leave per employee across every leave type they have a
     // balance row for this year, not any single type's own closing figure —
@@ -454,7 +434,6 @@ export class DashboardService {
         regularizations: pendingRegularizationCount,
       },
       payrollStatus: { processedThisMonth: payrollThisMonth, totalEmployees },
-      leaveStatistics: [...leaveStatsByType.values()],
       taxCompliance,
       reimbursementsSummary: {
         pendingClaims: reimbPending,
@@ -486,7 +465,12 @@ export class DashboardService {
       actor.departmentId === null && actor.role === Role.MANAGER
         ? []
         : await this.scopedPrisma.user.findMany({
-            where: { organizationId, departmentId: actor.departmentId },
+            // Active people only: a deactivated colleague is not part of the team any more (the manager still counts).
+            where: {
+              organizationId,
+              departmentId: actor.departmentId,
+              isActive: true,
+            },
             select: { id: true },
           });
     const ids = deptEmployees.map((e) => e.id);
@@ -1169,19 +1153,24 @@ export class DashboardService {
     const WINDOW_DAYS = 30;
     const today = new Date();
 
+    // Birthdays only need the date of birth, which is stored as plain text inside personalData. Reading the whole
+    // personalData would decrypt every employee's PAN / Aadhaar / bank fields just to throw them away, so the one key is
+    // read in SQL (organizationId is a bound parameter).
     const [headcount, activeEmployees] = await Promise.all([
       this.computeHeadcountTrend(12, organizationId),
-      this.scopedPrisma.user.findMany({
-        where: { organizationId, isActive: true },
-        select: {
-          id: true,
-          name: true,
-          employeeId: true,
-          joiningDate: true,
-          personalData: true,
-        },
-        orderBy: EMPLOYEE_ORDER_BY,
-      }),
+      this.scopedPrisma.$queryRaw<
+        {
+          id: string;
+          name: string;
+          employeeId: string;
+          joiningDate: Date;
+          dateOfBirth: string | null;
+        }[]
+      >`SELECT "id", "name", "employeeId", "joiningDate",
+               "personalData"->>'dateOfBirth' AS "dateOfBirth"
+          FROM "users"
+         WHERE "organizationId" = ${organizationId} AND "isActive" = true
+         ORDER BY "employeeId" ASC`,
     ]);
 
     const upcomingAnniversaries: {
@@ -1219,8 +1208,7 @@ export class DashboardService {
         }
       }
 
-      const dob = (e.personalData as Record<string, unknown> | null)
-        ?.dateOfBirth;
+      const dob = e.dateOfBirth;
       if (typeof dob === 'string' && dob) {
         const parsed = new Date(dob);
         if (!Number.isNaN(parsed.getTime())) {
