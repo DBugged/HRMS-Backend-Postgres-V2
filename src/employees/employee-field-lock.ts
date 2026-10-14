@@ -2,7 +2,7 @@ import { Role } from '@prisma/client';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 
 /**
- * Ports the old backend's LOCKED_FIELDS_FOR_EMPLOYEE (defined locally in
+ * Ports the original release's LOCKED_FIELDS_FOR_EMPLOYEE (defined locally in
  * employeeController.js, not centralized in roles.js there either — kept
  * here for the same reason: it's specific to this one endpoint's
  * self-vs-HR field split, not a generic role concept).
@@ -53,7 +53,7 @@ export function stripLockedFields(
   }
 
   // Even HR (not just plain employees) cannot change designation through
-  // this endpoint — only ADMIN can. Mirrors the old system exactly.
+  // this endpoint — only ADMIN can. Mirrors the original release exactly.
   if (actorRole !== Role.ADMIN) {
     delete clean.designation;
   }

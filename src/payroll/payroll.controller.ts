@@ -109,7 +109,7 @@ export class PayrollController {
   }
 
   // Self-scoped for EMPLOYEE (findOne already 403s otherwise); blocked
-  // unless the run has passed approval, matching the old system's
+  // unless the run has passed approval, matching the original release's
   // downloadPayslipPdf exactly.
   @Get(':id/pdf')
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
@@ -369,7 +369,7 @@ export class PayrollController {
     return this.payrollService.pay(id, caller, caller.organizationId);
   }
 
-  // Old system's PAYROLL_UNLOCK_ROLES (hr_admin, payroll_manager,
+  // The original release's PAYROLL_UNLOCK_ROLES (hr_admin, payroll_manager,
   // administrator) collapses to the same [ADMIN, HR] set as every other
   // payroll-workflow action here.
   @Post(':id/unlock')

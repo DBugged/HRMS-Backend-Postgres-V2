@@ -54,7 +54,7 @@ export class ReimbursementsController {
     );
   }
 
-  // Old system's PAYROLL_CONFIG_ROLES (hr_admin, payroll_manager,
+  // The original release's PAYROLL_CONFIG_ROLES (hr_admin, payroll_manager,
   // administrator) collapses to [ADMIN, HR], same convention used
   // throughout Payroll.
   @Patch(':id/review')

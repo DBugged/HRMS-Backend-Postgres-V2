@@ -1078,7 +1078,7 @@ export class AttendanceService {
   // Notifies the employee when this recalculation marks them late (no
   // email) or absent (with email) — deduped per employee/date/reason via a
   // title-match lookup so a re-run of the same day's calc doesn't spam
-  // repeat notifications, matching the old system's `alreadyNotified`
+  // repeat notifications, matching the original release's `alreadyNotified`
   // guard exactly.
   private async notifyLateOrAbsent(
     employeeId: string,
@@ -2967,7 +2967,7 @@ export class AttendanceService {
   // Single-level review (HR or Manager, either decides) — `id` is the
   // Attendance row's id, not a separate request id. Unlike the request
   // write above, this SPREADS the existing regularization object (whole-
-  // object reassignment, same as the old Sequelize JSON-column comment).
+  // object reassignment, same as the original JSON-column comment).
   // A MANAGER is restricted to their own department's employees, same as
   // overtime/comp-off review — see assertManagerScopeOrDelegate. Also lets
   // an active ApprovalDelegation stand-in reviewer act, same pattern as

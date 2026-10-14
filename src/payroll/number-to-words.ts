@@ -1,5 +1,5 @@
 /**
- * Pure port of the old backend's numberToWords.js — Indian numbering
+ * Pure port of the original release's numberToWords module — Indian numbering
  * system (crore/lakh/thousand/hundred groups, not western thousand-groups).
  */
 

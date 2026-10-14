@@ -380,7 +380,7 @@ export class DepartmentsService {
   }
 
   // Promotes a plain employee to MANAGER and stamps them as this
-  // department's head in one step — mirrors the old system's
+  // department's head in one step — mirrors the original release's
   // assignDepartmentHead, which folds the role change into the same call
   // rather than requiring a separate PATCH /employees/:id afterwards.
   async assignHead(id: string, userId: string, organizationId: string) {

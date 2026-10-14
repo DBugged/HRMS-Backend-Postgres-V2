@@ -3,7 +3,7 @@ import PDFDocument from 'pdfkit';
 import type { Response } from 'express';
 import { attachWatermark } from '../common/pdf-watermark';
 
-// Pure port of the old backend's reportController.js export helpers —
+// Pure port of the original release's reportController module export helpers —
 // every report in this module funnels through sendReport so Excel/CSV/PDF
 // handling stays consistent and in one place.
 
@@ -101,7 +101,7 @@ export function buildWorkbook(
   sheet.getRow(1).font = { bold: true };
   if (subtitle) {
     // Inserted above the (already-written) header row — insertRow shifts
-    // the header and every data row down by one, same as the old system's
+    // the header and every data row down by one, same as the original release's
     // report exports carrying a "which establishment this belongs to" line.
     // Deliberately NOT merged across columns — mergeCells is an Excel-only
     // concept, and this same worksheet also backs the CSV export, whose

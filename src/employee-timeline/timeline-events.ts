@@ -1,7 +1,7 @@
 import { TimelineCategory } from '@prisma/client';
 
 // Canonical Employee Timeline event registry — ported verbatim from the
-// old backend's utils/timeline.js EVENT_META. Every service that changes
+// original release's utils/timeline.js EVENT_META. Every service that changes
 // something worth showing on the 360° Employee Timeline calls
 // EmployeeTimelineService.logEvent() with an eventKey from here, right
 // next to the existing AuditLogService.log() call for that same action —

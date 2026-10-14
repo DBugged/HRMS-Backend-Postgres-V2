@@ -2,7 +2,7 @@
 // requirement checklist.
 // Responsibilities: Owns policy CRUD/versioning (a linked list via previousVersionId) and requirement CRUD;
 // signs stored file URLs on every read via signFileToken rather than persisting signed URLs.
-// Important: canView() implements role/department/employee visibility scoping ported from the old system's
+// Important: canView() implements role/department/employee visibility scoping ported from the original release's
 // canViewPolicy; HR/Admin bypass visibility entirely since they manage the library, not just consume it.
 // deletePolicy() only deletes the underlying file when fileUrl is an internal storage key, never an
 // external URL a user pasted in.
@@ -89,7 +89,7 @@ export class DocumentsService {
   }
 
   // HR/Admin bypass visibility entirely (they manage the library, not just
-  // consume it) — see findPolicies. Ported from the old system's
+  // consume it) — see findPolicies. Ported from the original release's
   // canViewPolicy exactly, with department_head collapsed to MANAGER.
   private canView(policy: PolicyDocument, actor: Actor): boolean {
     switch (policy.visibility) {
@@ -355,7 +355,7 @@ export class DocumentsService {
   }
 
   // Walks the previousVersionId chain in both directions to return every
-  // version, newest first — mirrors the old system's getPolicyVersions.
+  // version, newest first — mirrors the original release's getPolicyVersions.
   async findPolicyVersions(id: string, organizationId: string) {
     const start = await this.scopedPrisma.policyDocument.findFirst({
       where: { id, organizationId },

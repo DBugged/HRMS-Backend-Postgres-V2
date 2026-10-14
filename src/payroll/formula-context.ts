@@ -11,7 +11,7 @@ export interface EmployeeStatutoryProfile {
 }
 
 /**
- * Pure port of the old backend's payrollEngine.js buildBaseContext +
+ * Pure port of the original release's payrollEngine module buildBaseContext +
  * buildPtSlabContext — the flat formula-engine context every salary
  * component formula is evaluated against, before earnings/deductions/
  * employer-contribution lines add their own running values on top.

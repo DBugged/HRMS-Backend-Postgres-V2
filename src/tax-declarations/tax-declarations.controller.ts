@@ -11,7 +11,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 type Caller = Omit<User, 'password'>;
 
 // No @Roles() — any authenticated caller. Access control is identity-based
-// (see TaxDeclarationsService), not role-based, matching the old system's
+// (see TaxDeclarationsService), not role-based, matching the original release's
 // deliberate design (self-vs-other, not employee-role-vs-other).
 @ApiTags('tax-declarations')
 @ApiBearerAuth('access-token')

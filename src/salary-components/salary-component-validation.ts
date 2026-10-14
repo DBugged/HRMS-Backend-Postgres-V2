@@ -21,7 +21,7 @@ export interface ComponentForCircularCheck {
  * filtered to known component codes) and runs it through
  * `topoSortComponents`, which throws on a cycle. Callers pass the
  * candidate (new-or-edited) row already overlaid into `components`, and
- * only `isActive` components — matching the old system's "an edit that
+ * only `isActive` components — matching the original release's "an edit that
  * disables a component removes it from the graph" behavior.
  */
 export function detectCircularReferences(

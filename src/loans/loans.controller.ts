@@ -43,7 +43,7 @@ export class LoansController {
     return this.loansService.findAll(query, caller, caller.organizationId);
   }
 
-  // Old system's PAYROLL_CONFIG_ROLES collapses to [ADMIN, HR], same
+  // The original release's PAYROLL_CONFIG_ROLES collapses to [ADMIN, HR], same
   // convention used throughout Payroll/Reimbursements — loans are always
   // initiated by HR/admin on an employee's behalf, not self-service.
   @Post()

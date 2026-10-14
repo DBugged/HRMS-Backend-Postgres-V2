@@ -2,11 +2,11 @@ import { Prisma } from '@prisma/client';
 import { evaluateTenantScope } from './tenant-scope.guard-logic';
 
 /**
- * Replicates the old MySQL/Sequelize backend's `enforceTenantScope` hooks:
+ * Replicates the original release's `enforceTenantScope` hooks:
  * throw at runtime if a query against a tenant-owned model is missing an
  * `organizationId` filter, rather than relying purely on every service
  * remembering to add one. This was the single biggest quiet strength found
- * in the architecture audit of the old system — losing it during migration
+ * in the architecture audit of the original release — losing it during migration
  * would be a real regression, not a wash.
  *
  * This is a thin Prisma Client Extension adapter — the actual decision

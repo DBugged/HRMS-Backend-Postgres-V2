@@ -6,12 +6,12 @@ import {
 import { clampLeaveDaysToMonth, daysInMonth } from './payroll-date-math';
 
 /**
- * Pure port of the old backend's payrollEngine.js computeAttendanceSummary
+ * Pure port of the original release's payrollEngine module computeAttendanceSummary
  * — derives the attendance summary an employee is paid against for one
  * month. Takes pre-fetched plain rows; all DB access stays in the caller
  * (PayrollService).
  *
- * Deliberate simplification vs. the old system: the old controller had a
+ * Deliberate simplification vs. the original release: the old controller had a
  * legacy fallback for pre-migration Leave rows with no LeaveType link
  * (`leave.leaveType === 'LWP'` string check). backend-v2's Leave.leaveTypeId
  * is a required FK — every row always has a LeaveType — so that branch is

@@ -7,7 +7,7 @@ import {
  * Resolves PayrollSettings.processingDay/paymentDay (0 = last working day
  * of the month, 1-31 = a fixed calendar day clamped to month length) into
  * an actual YYYY-MM-DD date for a given year/month. Self-contained pure
- * function — does not depend on the old system's payrollEngine.js
+ * function — does not depend on the original release's payrollEngine module
  * (getLastWorkingDayOfMonth/resolvePayrollDate), which isn't ported yet
  * (Payroll core, a later batch).
  */

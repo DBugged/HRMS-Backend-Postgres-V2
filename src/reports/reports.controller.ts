@@ -35,7 +35,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
-// Old system's base router gate collapses to [ADMIN, HR, MANAGER]
+// The original release's base router gate collapses to [ADMIN, HR, MANAGER]
 // (hr_admin, department_head, ...PAYROLL_VIEW_ROLES); the payroll/employee/
 // department/headcount/attrition reports were further restricted to
 // [ADMIN, HR] only in the old router (hr_admin, administrator) — each

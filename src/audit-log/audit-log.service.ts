@@ -3,7 +3,7 @@
 // callers throughout the app invoke log() but never read AuditLog directly.
 // Important: log() swallows and logs its own errors — a broken audit write must never fail the action it's
 // documenting. findAll() hides ADMIN/MANAGER activity from HR viewers (HR_HIDDEN_ACTOR_ROLES), mirroring
-// the old system's HR_HIDDEN_ACTOR_ROLES exactly. Deliberately no delete/clear method or route — a trail
+// the original release's HR_HIDDEN_ACTOR_ROLES exactly. Deliberately no delete/clear method or route — a trail
 // its own subjects (even an Admin) can erase isn't an audit trail; there is no compliance-safe reason for
 // this app to ever bulk-delete audit history itself (a platform-level data-retention job, if one is ever
 // needed, belongs outside this service, not behind an ADMIN-reachable API).
@@ -33,7 +33,7 @@ export interface LogAuditInput {
 
 // Roles whose activity an HR viewer must not see — ADMIN and MANAGER
 // activity is hidden from HR's audit view; ADMIN itself sees everything.
-// Mirrors the old system's HR_HIDDEN_ACTOR_ROLES exactly (administrator ->
+// Mirrors the original release's HR_HIDDEN_ACTOR_ROLES exactly (administrator ->
 // ADMIN, department_head -> MANAGER).
 const HR_HIDDEN_ACTOR_ROLES: Role[] = [Role.ADMIN, Role.MANAGER];
 
@@ -73,7 +73,7 @@ export class AuditLogService {
   }
 
   // Fire-and-forget — a broken audit write must never fail the action it's
-  // documenting, same as the old system's logAudit util.
+  // documenting, same as the original release's logAudit util.
   async log(input: LogAuditInput): Promise<void> {
     try {
       // Where it came from: the request's id and client address, and the actor's role at this moment. A scheduled job

@@ -59,7 +59,7 @@ import {
 import { isSelfieRequired } from '../common/selfie-requirement';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
-// 30 minutes — matches the old system's window exactly.
+// 30 minutes — matches the original release's window exactly.
 const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 const EMAIL_VERIFICATION_TTL_MS = 48 * 60 * 60 * 1000;
 // On unless REQUIRE_EMAIL_VERIFICATION=false (the e2e environment, which registers and signs in within one run).
@@ -69,7 +69,7 @@ const emailVerificationRequired = () =>
 // concurrent-tab race, not reuse, and doesn't trigger family revocation.
 export const REFRESH_REUSE_GRACE_MS = 5_000;
 // Same generic message regardless of whether the email exists — never
-// reveals account existence, ported from the old system's forgotPassword.
+// reveals account existence, ported from the original release's forgotPassword.
 const FORGOT_PASSWORD_GENERIC_MESSAGE =
   'If that email exists, a reset link has been sent.';
 // Final exit statuses — never allowed to log in or refresh, independent of isActive. RESIGNED is not here: it is the
@@ -148,8 +148,8 @@ export class AuthService {
     const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
     const verificationToken = crypto.randomBytes(32).toString('hex');
 
-    // Prisma's interactive $transaction, analogous to the old system's
-    // Sequelize transaction wrapping org+founder creation. Called on the
+    // Prisma's interactive $transaction, analogous to the original release's
+    // database transaction wrapping org+founder creation. Called on the
     // tenant-scope-extended client (see constructor comment) so the
     // tx.user.create() below is actually covered by the guard, not just
     // the tx.organization.create() call (Organization isn't tenant-scoped
@@ -188,12 +188,12 @@ export class AuthService {
         // disabled, payroll_calendar/rounding always enabled) so the
         // future payroll engine's period-aware resolution has a row to
         // resolve from day one — same registration-time integration point
-        // as the old system's registerOrganization.
+        // as the original release's registerOrganization.
         await this.statutoryConfigService.seedDefaults(tx, organization.id);
         // The founder is Employee #1 of their own org — employeeId
         // generation is an Employees-module concern (row-locked counter on
         // Organization, see EmployeeIdService), reused here rather than
-        // duplicated, same as the old system's registerOrganization calling
+        // duplicated, same as the original release's registerOrganization calling
         // the same generateEmployeeId() every other employee creation path uses.
         const employeeId = await this.employeeIdService.generate(
           tx,
@@ -507,7 +507,7 @@ export class AuthService {
     }
 
     // Rotation: revoke the presented token and mint a brand-new one, rather
-    // than reusing it — the old system had no refresh tokens at all, so
+    // than reusing it — the original release had no refresh tokens at all, so
     // this is new ground, and rotation-on-use is the standard mitigation
     // against a leaked refresh token being replayed indefinitely.
     //
@@ -591,7 +591,7 @@ export class AuthService {
   async logout(rawToken: string): Promise<void> {
     const tokenHash = hashToken(rawToken);
     const existing = await this.findRefreshTokenByHash(tokenHash);
-    if (!existing || existing.revokedAt) return; // idempotent — old system's forgot-password has the same "don't reveal state" spirit
+    if (!existing || existing.revokedAt) return; // idempotent — original release's forgot-password has the same "don't reveal state" spirit
     await this.scopedPrisma.refreshToken.updateMany({
       where: { id: existing.id, organizationId: existing.organizationId },
       data: { revokedAt: new Date() },
@@ -647,7 +647,7 @@ export class AuthService {
   }
 
   // Never reveals whether the email exists — same response either way.
-  // Ported from the old system's forgotPassword exactly (32-byte raw
+  // Ported from the original release's forgotPassword exactly (32-byte raw
   // token mailed to the user, SHA-256 hash stored, 30-minute expiry).
   async verifyEmail(dto: VerifyEmailDto): Promise<{ message: string }> {
     const tokenHash = hashToken(dto.token);
@@ -749,7 +749,7 @@ export class AuthService {
   }
 
   // One vague error for both "invalid" and "expired" — deliberately
-  // doesn't distinguish, same as the old system. Also revokes every
+  // doesn't distinguish, same as the original release. Also revokes every
   // active refresh token for the account (an enhancement beyond the old
   // system, which had no session concept to revoke) so a compromised
   // session doesn't survive a password reset.
@@ -798,7 +798,7 @@ export class AuthService {
 
   // Shared by the mandatory first-login flow (mustChangePassword=true) and
   // a routine voluntary password change from the Profile page — same
-  // endpoint the old system used for both. Reads mustChangePassword before
+  // endpoint the original release used for both. Reads mustChangePassword before
   // clearing it so the welcome email below only fires on the actual
   // first-time change, not every subsequent password update.
   async changePassword(
@@ -867,7 +867,7 @@ export class AuthService {
 
     if (wasFirstTimeChange) {
       // Best-effort, fire-and-forget — a send failure must never fail the
-      // password change itself, same as the old system. Wrapped in an
+      // password change itself, same as the original release. Wrapped in an
       // async IIFE (rather than a plain .then chain) since rendering the
       // occasion template is itself async, but the outer call still isn't
       // awaited — same fire-and-forget shape as before.

@@ -27,7 +27,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
-// Old system's whole router is authorize('hr_admin', 'administrator') —
+// The original release's whole router is authorize('hr_admin', 'administrator') —
 // unlike every other module here, there's no self-service employee access
 // at all, so the [ADMIN, HR] gate applies to every endpoint, not per-route.
 @ApiTags('offboarding')

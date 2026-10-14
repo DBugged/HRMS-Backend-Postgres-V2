@@ -24,7 +24,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 type Caller = Omit<User, 'password'>;
 
 // Deliberately ADMIN-only, not the usual [ADMIN, HR] payroll-config
-// collapse — the old system's comment is explicit: enabling a statutory
+// collapse — the original release's comment is explicit: enabling a statutory
 // module is an org-level compliance decision, not a routine payroll-admin
 // task.
 @ApiTags('statutory-config')

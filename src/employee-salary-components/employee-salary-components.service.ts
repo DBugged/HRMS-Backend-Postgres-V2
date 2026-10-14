@@ -282,7 +282,7 @@ export class EmployeeSalaryComponentsService {
     const created: EmployeeSalaryComponent[] = [];
     // Matches the fail-but-continue + per-row `failed` report convention
     // used by HolidaysService.bulkImport: an unrecognized componentId/code
-    // used to be silently dropped (old system's "fault tolerance"), which
+    // used to be silently dropped (original release's "fault tolerance"), which
     // left the caller seeing a lower `count` than `lines.length` with no
     // indication why. Now every unresolved line is reported by name/index
     // instead of vanishing silently, while still not aborting the whole
@@ -481,7 +481,7 @@ export class EmployeeSalaryComponentsService {
   // Shared revision logic — close out the current open row (effectiveTo
   // only, never mutating value fields), then insert a brand-new row. Used
   // by both setComponentValue and bulkSetStructure so the two entry
-  // points can't drift apart (the old system duplicated this inline in
+  // points can't drift apart (the original release duplicated this inline in
   // both controllers).
   private async applyRevision(
     employeeId: string,
@@ -762,7 +762,7 @@ export class EmployeeSalaryComponentsService {
 
   // Resolves an employee's current monthly value for a single component
   // code (e.g. 'BASIC'), reading from their live structure rather than a
-  // full payroll run — ported from the old backend's
+  // full payroll run — ported from the original release's
   // getCurrentComponentMonthlyValue, used by Leave Encashment's rate
   // calculation and reused verbatim by Payroll core later.
   async getCurrentMonthlyValue(

@@ -8,7 +8,7 @@ import {
 // Default SalaryComponent rows every organization starts with — covers
 // Earnings, Deductions, Statutory Deductions, and Employer Contributions, so
 // the Salary Components page and every payslip are never blank on day one.
-// Ported verbatim from the old system's seedSalaryComponents.js
+// Ported verbatim from the original release's seedSalaryComponents module
 // DEFAULT_COMPONENTS.
 export interface SalaryComponentDefault {
   name: string;

@@ -418,7 +418,7 @@ export function areMandatoryDocumentsUploaded(
 // only the fields being changed; anything omitted keeps its prior value.
 // previousEmployment/references arrays are replaced wholesale when present
 // in the patch (the client always sends the full array back), same as the
-// old system's plain object-spread merge.
+// original release's plain object-spread merge.
 // mandatoryDocumentsUploaded is the caller's pre-computed
 // areMandatoryDocumentsUploaded() result — kept as a plain boolean argument
 // (rather than fetched in here) since this function stays DB-free/pure,

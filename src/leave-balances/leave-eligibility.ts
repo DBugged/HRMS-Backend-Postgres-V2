@@ -1,5 +1,5 @@
 /**
- * Pure port of the old backend's `getEligibleLeaveTypes` filter logic
+ * Pure port of the original release's `getEligibleLeaveTypes` filter logic
  * (`leavePolicyEngine.js`) — generic, data-driven off `LeaveType`'s
  * applicability fields, no per-leave-type branching. Extracted from the
  * DB-touching orchestration in leave-balance.service.ts so it's directly
@@ -26,7 +26,7 @@ export interface EligibilityEmployee {
   gender: string | null;
 }
 
-// Inclusive of the joining month itself, matching the old system's
+// Inclusive of the joining month itself, matching the original release's
 // `monthsBetween` (whole calendar months elapsed, not calendar-day-precise).
 export function monthsOfService(joiningDate: Date, asOf: Date): number {
   const years = asOf.getUTCFullYear() - joiningDate.getUTCFullYear();

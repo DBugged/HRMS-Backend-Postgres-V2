@@ -69,7 +69,7 @@ import { DEFAULT_EMPLOYEE_TYPES } from '../organizations/employee-types';
 import { normalizeEmail } from '../common/normalize-input';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
-// Old system's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
+// The original release's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
 // department_head/hr_admin accounts but never an administrator; only an
 // ADMIN can create another ADMIN.
 const ROLES_HR_CAN_ASSIGN: Role[] = [Role.EMPLOYEE, Role.MANAGER, Role.HR];
@@ -445,7 +445,7 @@ export class EmployeesService {
     return { success: true, emailSent: !sent.dryRun, sentTo: personalEmail };
   }
 
-  // Row-level isolation, same as the old system's bulkCreateEmployees —
+  // Row-level isolation, same as the original release's bulkCreateEmployees —
   // one bad row (duplicate email, missing name) doesn't abort the rest of
   // the sheet. Reuses create() so seat limits, employeeId generation, and
   // role defaults all stay in exactly one place.
@@ -1234,7 +1234,7 @@ export class EmployeesService {
 
   // Append-only audit trail of role/designation/department/employmentStatus
   // transitions, written whenever update() actually changes one of them —
-  // mirrors the old system's logAudit-adjacent behavior. Silent no-op for
+  // mirrors the original release's logAudit-adjacent behavior. Silent no-op for
   // any field the caller didn't touch.
   // Writes EmployeeMovement history rows (transfer / promotion / designation / manager change). The new values
   // were already applied to the user by update(); effectiveDate is recorded for history only — there is no
@@ -1454,7 +1454,7 @@ export class EmployeesService {
   // Kept so the route answers clearly: an employee is never deactivated directly any more (see
   // DEACTIVATION_BLOCKED_MESSAGE). Closing the account is the last step of Offboarding, which settles the final pay
   // first and records the exit.
-  // eslint-disable-next-line @typescript-eslint/require-await
+  // eslint-disable-next-line @typescript-eslint/require-await -- only ever throws, but stays async so callers get a rejected promise
   async deactivate(
     id: string,
     dto: DeactivateEmployeeDto,

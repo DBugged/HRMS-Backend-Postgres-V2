@@ -214,7 +214,7 @@ export class SettlementsService {
   // DRAFT — separate from process() so HR can preview numbers before
   // committing to a run. Re-calling this while a DRAFT already exists for
   // the employee updates that row in place (idempotent preview), matching
-  // the old system.
+  // the original release.
   async calculate(
     dto: CalculateSettlementDto,
     actor: Actor,
@@ -330,7 +330,7 @@ export class SettlementsService {
     // allows encashment — no minBalanceToRetain cap, since the employee is
     // leaving and there's no future balance to protect. See the schema
     // comment on Settlement.leaveEncashmentAmount for why this differs
-    // from the old system's dead employee.leaveBalance.el field.
+    // from the original release's dead employee.leaveBalance.el field.
     const encashableTypes = await this.scopedPrisma.leaveType.findMany({
       where: { organizationId },
     });
@@ -1533,7 +1533,7 @@ export class SettlementsService {
               .financialYearStartMonth,
           ),
           // Settlements go straight to APPROVED so they can be paid
-          // promptly, same as the old system.
+          // promptly, same as the original release.
           status: PayrollRunStatus.APPROVED,
           earnings: earnings as unknown as Prisma.InputJsonValue,
           deductions: deductions as unknown as Prisma.InputJsonValue,

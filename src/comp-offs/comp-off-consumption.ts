@@ -1,7 +1,7 @@
 import { CompOffStatus } from '@prisma/client';
 
 /**
- * Pure port of the old backend's comp-off ledger math
+ * Pure port of the original release's comp-off ledger math
  * (`consumeCompOff`/`releaseCompOff`/`getCompOffAvailable` in
  * `leavePolicyEngine.js`). No DB access — callers pre-filter to
  * approved/partially_availed, non-expired rows and persist the returned

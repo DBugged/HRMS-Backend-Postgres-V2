@@ -155,7 +155,7 @@ describe('Dashboard (e2e)', () => {
     // A second employee whose join-date anniversary falls 5 days from now
     // (2 years ago) -> shows up as an upcoming work anniversary. Not
     // exactly today: daysUntilNextOccurrence's `next < today` check (ported
-    // verbatim from the old system) always rolls an exact-same-day match to
+    // verbatim from the original release) always rolls an exact-same-day match to
     // next year, since "next" is midnight and "today" already has a
     // time-of-day past midnight — a same-day anniversary would silently
     // roll outside the 30-day window. +5 days avoids that entirely.

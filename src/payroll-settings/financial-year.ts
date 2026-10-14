@@ -1,5 +1,5 @@
 /**
- * Ported verbatim from the old backend's taxEngine.js getFinancialYear.
+ * Ported verbatim from the original release's taxEngine module getFinancialYear.
  * India's fiscal year doesn't run Jan-Dec, so "financial year" is a
  * distinct concept from calendar year everywhere payroll/tax logic
  * touches it (LeaveEncashment, TaxSlabConfig, EmployeeTaxDeclaration, and

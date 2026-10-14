@@ -62,7 +62,7 @@ export class OrganizationsController {
   }
 
   // -- Setup Wizard / Organization Settings --
-  // Old system's route restriction is administrator-only for all of this
+  // The original release's route restriction is administrator-only for all of this
   // except /public (any authenticated) — despite stale comments elsewhere
   // claiming HR can view; the actual enforced behavior is ADMIN-only,
   // ported as-is.

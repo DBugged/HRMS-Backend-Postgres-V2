@@ -1,4 +1,4 @@
-// Pure date-math helpers ported verbatim from the old backend's
+// Pure date-math helpers ported verbatim from the original release's
 // dashboardController.js — financial-year month windows and
 // days-until-next-occurrence, both used by the read-only dashboard
 // aggregation endpoints.

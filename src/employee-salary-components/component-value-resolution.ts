@@ -5,14 +5,14 @@ import {
 } from '../salary-components/formula-engine';
 
 /**
- * Ported verbatim from the old backend's payrollEngine.js
+ * Ported verbatim from the original release's payrollEngine module
  * resolveComponentValue/extractDependencies — resolves one component's
  * current monthly value outside a full payroll run (used by Leave
  * Encashment's "current BASIC" rate, and will be reused by Payroll core).
  * Pure functions: no DB access, the caller resolves the SalaryComponent
  * row + any EmployeeSalaryComponent override and passes plain data in.
  *
- * Old system's own doc-comment, carried forward: "only resolves
+ * The original release's own doc-comment, carried forward: "only resolves
  * fixed/percentage-of-another-fixed-component correctly (sufficient for
  * BASIC, which never depends on a formula in practice); formula-type
  * components resolve against an empty/partial context and may return 0 if

@@ -2,7 +2,7 @@ import { TaxRegime } from '@prisma/client';
 import { getFinancialYear } from '../payroll-settings/financial-year';
 
 /**
- * Indian Income Tax (TDS) engine — pure port of the old backend's
+ * Indian Income Tax (TDS) engine — pure port of the original release's
  * taxEngine.js. All rates/slabs are configurable per financial year via
  * TaxSlabConfig; nothing here is hardcoded to a specific year's rules.
  * `getFinancialYear` itself is reused from Batch 7b, not duplicated.

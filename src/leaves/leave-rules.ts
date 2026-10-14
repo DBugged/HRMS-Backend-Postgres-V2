@@ -1,5 +1,5 @@
 /**
- * Pure port of the old backend's `checkLeaveRules` (`leavePolicyEngine.js`).
+ * Pure port of the original release's `checkLeaveRules` (`leavePolicyEngine.js`).
  * Entirely data-driven off a LeaveType's `rules` JSON — no per-leave-type
  * branching. DB-dependent inputs (holiday dates, the employee's other
  * leaves) are pre-fetched once by LeavesService and passed in as plain

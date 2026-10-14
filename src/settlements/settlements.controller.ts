@@ -24,7 +24,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
-// Old system's PAYROLL_APPROVE_ROLES collapses to [ADMIN, HR], same
+// The original release's PAYROLL_APPROVE_ROLES collapses to [ADMIN, HR], same
 // convention used throughout Payroll/Reimbursements/Loans.
 @ApiTags('settlements')
 @ApiBearerAuth('access-token')

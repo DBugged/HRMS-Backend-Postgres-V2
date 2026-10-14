@@ -119,7 +119,7 @@ export class NotificationsController {
     );
   }
 
-  // Old system's hr_admin/administrator collapses to [ADMIN, HR].
+  // The original release's hr_admin/administrator collapses to [ADMIN, HR].
   @Post('send')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

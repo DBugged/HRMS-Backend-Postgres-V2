@@ -27,7 +27,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
-// Same base gate as the rest of the Reports module (old system mounts
+// Same base gate as the rest of the Reports module (original release mounts
 // these two routes on the same router as attendance/leave, with no
 // per-route override): [ADMIN, HR, MANAGER].
 @ApiTags('reports')

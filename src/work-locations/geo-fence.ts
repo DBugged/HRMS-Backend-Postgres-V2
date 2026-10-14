@@ -1,7 +1,7 @@
 import { FenceType } from '@prisma/client';
 
 /**
- * Geo-fence geometry helpers, direct port of the old backend's
+ * Geo-fence geometry helpers, direct port of the original release's
  * `utils/geoFence.js`. Shared by WorkLocations (config, this module) and
  * Attendance (validation, Batch 6 — not built yet). Three fence types:
  * CIRCLE (legacy — center + radiusMeters), RECTANGLE (two corner points,

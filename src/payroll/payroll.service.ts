@@ -1,6 +1,6 @@
 // Purpose: The payroll engine — computes a full monthly payroll snapshot per employee and drives the
 // PayrollRun status workflow (Draft -> Calculated -> Verified -> Approved -> Locked -> Paid).
-// Responsibilities: Owns calculatePayroll() (pure computation, ported verbatim from the old backend's
+// Responsibilities: Owns calculatePayroll() (pure computation, ported verbatim from the original release's
 // payrollEngine.js — resolves component dependency order, proration, tax, variable-pay scaling, and pending
 // leave-encashment folding) and the TRANSITIONS-table-driven status machine shared by single and bulk
 // endpoints; delegates statutory config resolution to StatutoryConfigService and payslip PDF/email delivery
@@ -511,7 +511,7 @@ export class PayrollService {
 
   // Computes a full payroll snapshot for one employee for one month/year.
   // Does NOT persist anything — callers (draft/calculate) decide when to
-  // write a PayrollRun row. Ported verbatim from the old backend's
+  // write a PayrollRun row. Ported verbatim from the original release's
   // payrollEngine.js calculatePayroll.
   async calculatePayroll(
     employeeId: string,
@@ -3416,7 +3416,7 @@ export class PayrollService {
   }
 
   // Notifies the employee + emails them their payslip with the generated
-  // PDF attached — ported from the old system's afterPay side effect.
+  // PDF attached — ported from the original release's afterPay side effect.
   // A failure here (e.g. PDF generation choking on bad data) must never
   // fail the payment transition itself, which has already committed.
   private async afterPay(run: PayrollRun, organizationId: string) {

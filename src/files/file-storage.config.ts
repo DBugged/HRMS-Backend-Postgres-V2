@@ -40,7 +40,7 @@ export interface FileCategoryConfig {
   defaultExt?: string;
 }
 
-// Same categories/limits as the old system's middleware/upload.js.
+// Same categories/limits as the original release's middleware/upload.js.
 export const FILE_CATEGORIES: Record<string, FileCategoryConfig> = {
   documents: {
     allowedMimePrefixes: ['application/pdf', 'image/', 'video/'],

@@ -1,7 +1,7 @@
 import { PayFrequency } from '@prisma/client';
 
 /**
- * Pure date/period math ported verbatim from the old backend's
+ * Pure date/period math ported verbatim from the original release's
  * payrollEngine.js (daysInMonth, clampLeaveDaysToMonth,
  * isComponentPayableThisMonth, round). No DB access.
  */
@@ -118,7 +118,7 @@ export function round(
 
 // A flat 30-day month for converting a monthly salary figure into a daily
 // rate (settlement pending-salary payout, leave encashment payout) —
-// ported verbatim from the old system, which used this same fixed divisor
+// ported verbatim from the original release, which used this same fixed divisor
 // rather than the actual number of calendar days in the relevant month.
 // Previously duplicated independently in settlements.service.ts and
 // leave-encashments.service.ts.

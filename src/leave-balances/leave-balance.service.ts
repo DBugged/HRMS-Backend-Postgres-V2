@@ -2,7 +2,7 @@
 // recalculate() writer for `closing`, accrual crediting, and year-end carry-forward.
 // Responsibilities: Wraps the pure math in leave-eligibility.ts/leave-balance-math.ts with the actual DB
 // reads/writes; exposed cross-module (e.g. to LeaveEncashmentsService, LeaveTypesService) as the one place
-// balance mutations happen, mirroring the old backend's leavePolicyEngine.js.
+// balance mutations happen, mirroring the original release's leavePolicyEngine module.
 // Important: ensureBalanceRow()/recalculate() must be called with a transaction client so the
 // read-then-maybe-create/read-then-write is atomic under concurrent callers. Every quota-based type is
 // granted upfront (prorated for a mid-year joiner); there is no per-cycle accrual.
@@ -48,7 +48,7 @@ interface CarryForwardShape {
 }
 
 // Roles eligible for leave accrual/balance tracking. Originally ported as
-// just EMPLOYEE/MANAGER (old system's 'employee'/'department_head' —
+// just EMPLOYEE/MANAGER (original release's 'employee'/'department_head' —
 // administrator/hr_admin were never included), but backend-v2's My Leave
 // is self-service for every role, including ADMIN and HR — an Admin or
 // HR user can apply for leave and see a balance, so excluding them here
@@ -67,7 +67,7 @@ const ACCRUAL_ELIGIBLE_ROLES: Role[] = [
 /**
  * Orchestrating service for the leave-balance engine — wraps the pure
  * functions in leave-eligibility.ts/leave-balance-math.ts with the DB reads/
- * writes the old backend's leavePolicyEngine.js performed. Exported from
+ * writes the original release's leavePolicyEngine module performed. Exported from
  * LeaveBalancesModule so the future Leave-requests module (Batch 4b) can
  * inject it too (same cross-module pattern as EmployeeIdService).
  */

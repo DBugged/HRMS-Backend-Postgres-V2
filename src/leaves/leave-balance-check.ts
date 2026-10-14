@@ -1,5 +1,5 @@
 /**
- * Pure port of the old backend's `checkBalance` affordability math
+ * Pure port of the original release's `checkBalance` affordability math
  * (`leavePolicyEngine.js`), for the non-comp-off/non-unlimited case —
  * LeavesService branches to CompOffService.available()/true respectively
  * for those two cases before ever reaching this function.

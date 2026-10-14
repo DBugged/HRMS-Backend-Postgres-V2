@@ -89,7 +89,7 @@ import {
 type Actor = Omit<User, 'password'>;
 
 // The balance-changing actions LeaveTypesService writes (older accrual entries stay on record) — same fixed list the
-// old system's getCreditHistory filtered on.
+// original release's getCreditHistory filtered on.
 const CREDIT_HISTORY_ACTIONS = [
   'LEAVE_ACCRUAL_RUN',
   'LEAVE_ACCRUAL_REPAIRED',
@@ -99,10 +99,10 @@ const CREDIT_HISTORY_ACTIONS = [
   'LEAVE_BALANCE_ADJUSTED',
 ];
 
-// Old system's LEAVE_APPROVE_ROLES / LEAVE_VIEW_ROLES both collapse to this
+// The original release's LEAVE_APPROVE_ROLES / LEAVE_VIEW_ROLES both collapse to this
 // set — see the Batch 4b plan's role-mapping note.
 const APPROVE_ROLES: Role[] = [Role.ADMIN, Role.HR, Role.MANAGER];
-// Old system's LEAVE_CONFIG_ROLES — HR override for cancellation.
+// The original release's LEAVE_CONFIG_ROLES — HR override for cancellation.
 const CANCEL_OVERRIDE_ROLES: Role[] = [Role.ADMIN, Role.HR];
 
 function deriveLeaveYear(startDate: string, cfg: LeaveYearConfig): number {
@@ -207,7 +207,7 @@ export class LeavesService {
 
   // History of periodic accrual/carry-forward runs, visible to whoever can
   // approve leave (HR triggers them, Managers get a read-only view) —
-  // mirrors the old system's getCreditHistory, sourced from the audit log
+  // mirrors the original release's getCreditHistory, sourced from the audit log
   // rather than a dedicated table since these are infrequent admin actions.
   async getCreditHistory(organizationId: string) {
     const logs = await this.scopedPrisma.auditLog.findMany({
@@ -681,7 +681,7 @@ export class LeavesService {
 
     // A MANAGER cannot give the FINAL approval on a 2-level type — only
     // the level-1 sign-off above, or a reject/return (handled below,
-    // matches the old system's "a rejection/return at any level" carve-out).
+    // matches the original release's "a rejection/return at any level" carve-out).
     if (
       leaveType.approvalLevels === 2 &&
       actor.role === Role.MANAGER &&
@@ -1646,7 +1646,7 @@ export class LeavesService {
     return created;
   }
 
-  // Old system notifies the employee's department head, or (if there is
+  // The original release notifies the employee's department head, or (if there is
   // none, or the applicant IS the department head) all HR — ported here
   // against reportingManagerId rather than Department.departmentHeadId,
   // since that's the field the review() approval check actually uses in

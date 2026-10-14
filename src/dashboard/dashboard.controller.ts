@@ -1,6 +1,6 @@
 // Purpose: Exposes role-specific dashboard aggregates (HR, executive, department-head, employee, payroll cost).
 // Responsibilities: Validates the date-range query param and delegates all aggregation to DashboardService.
-// Important: hr/executive are gated to ADMIN/HR (fixed here vs. old system); department-head/employee self-scope in the service.
+// Important: hr/executive are gated to ADMIN/HR (fixed here vs. original release); department-head/employee self-scope in the service.
 import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
@@ -25,9 +25,9 @@ const VALID_RANGES: DashboardRange[] = [
 export class DashboardController {
   constructor(private readonly dashboardService: DashboardService) {}
 
-  // Old system left this endpoint unguarded (any authenticated user could
+  // The original release left this endpoint unguarded (any authenticated user could
   // pull org-wide HR aggregates) — gated to [ADMIN, HR] here, a fix rather
-  // than a port, matching the gate the old system's own Executive dashboard
+  // than a port, matching the gate the original release's own Executive dashboard
   // already had.
   @Get('hr')
   @Roles(Role.ADMIN, Role.HR)

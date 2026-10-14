@@ -58,7 +58,7 @@ import {
 
 type Actor = Omit<User, 'password'>;
 
-// Old system's LEAVE_APPROVE_ROLES — may raise/view comp-off on someone
+// The original release's LEAVE_APPROVE_ROLES — may raise/view comp-off on someone
 // else's behalf.
 const APPROVE_ROLES: Role[] = [Role.ADMIN, Role.HR, Role.MANAGER];
 
@@ -459,7 +459,7 @@ export class CompOffService {
         userId: employee.id,
         title,
         // Reuses the LEAVE category, not a separate COMPOFF one — matches
-        // the old system exactly.
+        // the original release exactly.
         message,
         category: NotificationCategory.LEAVE,
       });

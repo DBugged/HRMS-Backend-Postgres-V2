@@ -3,7 +3,7 @@
 // attendance/leave/reimbursement snapshots, headcount trend, upcoming birthdays/anniversaries); delegates
 // payroll settings lookup to PayrollSettingsService and comp-off balance to CompOffService rather than
 // recomputing them.
-// Important: departmentHeadDashboard() intentionally ports a quirk from the old system — a manager with no
+// Important: departmentHeadDashboard() intentionally ports a quirk from the original release — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
@@ -459,7 +459,7 @@ export class DashboardService {
 
   // 11.2 Department Head Dashboard: team attendance, pending approvals,
   // leave trends. Self-scoped to the caller's own department — ported
-  // exactly from the old system's `where: { department: req.user.department }`,
+  // exactly from the original release's `where: { department: req.user.department }`,
   // including its quirk for a caller with no department: `departmentId: null`
   // matches every other no-department user, not zero rows. Harmless (no
   // dept-scoped data is more exposed than an ADMIN/HR caller already sees
@@ -1029,7 +1029,7 @@ export class DashboardService {
   // trend/company-health focused).
   //
   // Headcount "leavers" are sourced from OffboardingCase.completedAt
-  // instead of an EMPLOYEE_DEACTIVATED audit-log action (the old system's
+  // instead of an EMPLOYEE_DEACTIVATED audit-log action (the original release's
   // source) — OffboardingCase is actually a more precise signal anyway (a
   // dedicated event, not an inferred one). This deliberately does NOT
   // attempt to reconstruct exact historical total headcount for each past

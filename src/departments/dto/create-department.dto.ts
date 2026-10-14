@@ -19,7 +19,7 @@ export class CreateDepartmentDto {
   name!: string;
 
   // Uppercased in DepartmentsService.create() — Prisma has no model-level
-  // hooks (unlike the old Sequelize model's beforeValidate).
+  // hooks (unlike the original model's beforeValidate).
   @ApiProperty({ example: 'ENG' })
   @IsNotEmpty()
   @IsString()

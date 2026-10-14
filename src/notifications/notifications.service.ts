@@ -3,7 +3,7 @@
 // Responsibilities: Owns create()/createMany() as the shared write path every other module calls, and
 // per-user preference storage (muted categories, email-enabled) read via readPreferences(); delegates
 // actual email delivery to EmailService and broadcast auditing to AuditLogService.
-// Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the old system exactly);
+// Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the original release exactly);
 // the optional accompanying email is gated per-recipient by their own emailEnabled preference — the only
 // place that flag is actually consulted.
 import {
@@ -47,7 +47,7 @@ const DEFAULT_PREFERENCES: NotificationPreferences = {
 };
 
 // Every other module in the app calls this to create a Notification row —
-// the closest backend-v2 equivalent to the old system's inline
+// the closest backend-v2 equivalent to the original release's inline
 // `Notification.create(...)` calls (there was no shared helper old-side
 // either; this is a small improvement, not a behavior change).
 export interface CreateNotificationInput {
@@ -279,7 +279,7 @@ export class NotificationsService {
   }
 
   // HR/Admin broadcast — always category=GENERAL (hardcoded, matching the
-  // old system exactly), optionally emailed too (gated per-recipient by
+  // original release exactly), optionally emailed too (gated per-recipient by
   // their own emailEnabled preference — the only place that flag is
   // actually consulted).
   async sendBroadcast(

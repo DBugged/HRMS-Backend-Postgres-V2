@@ -11,7 +11,7 @@ export interface SelfOrRolesMeta {
 }
 
 /**
- * The self-or-role pattern the old backend reimplemented ad hoc in
+ * The self-or-role pattern the original release reimplemented ad hoc in
  * multiple controllers (e.g. "employee can view their own record, or an
  * HR/Manager can view anyone's") instead of sharing one helper. This
  * decorator + RolesGuard's handling of SELF_OR_ROLES_KEY is the single

@@ -5,7 +5,7 @@ export const ROLES_KEY = 'roles';
 
 /**
  * Restricts a route to the given roles. This is one half of the RBAC
- * consolidation for this project: the old backend had role checks scattered
+ * consolidation for this project: the original release had role checks scattered
  * across 8+ route files as hardcoded literal arrays, some importing shared
  * constants and some not. Here there is exactly one mechanism — this
  * decorator plus RolesGuard — so a new module never has to reinvent

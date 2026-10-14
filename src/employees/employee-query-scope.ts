@@ -10,7 +10,7 @@ export interface Actor {
  * Data-scoping, not access-control — @Roles(ADMIN, HR, MANAGER) on the
  * list/get routes already answers "can this caller call the endpoint at
  * all." This answers a different question the guard can't express: which
- * rows should come back. Mirrors the old backend's getEmployees, which
+ * rows should come back. Mirrors the original release's getEmployees, which
  * forced `filter.department = req.user.department` for department_head
  * callers regardless of any `department` query param they passed.
  *

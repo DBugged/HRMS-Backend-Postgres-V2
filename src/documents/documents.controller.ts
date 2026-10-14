@@ -41,7 +41,7 @@ export class DocumentsController {
     return this.documentsService.findPolicies(caller, caller.organizationId);
   }
 
-  // Old system's hr_admin/administrator collapses to [ADMIN, HR].
+  // The original release's hr_admin/administrator collapses to [ADMIN, HR].
   @Post('policies')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

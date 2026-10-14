@@ -76,7 +76,7 @@ const BRANDING_URL_FIELDS = [
 ] as const;
 
 // Whitelist of writable fields per Setup Wizard / Organization Settings
-// section, ported verbatim from the old system's SECTION_FIELDS — the real
+// section, ported verbatim from the original release's SECTION_FIELDS — the real
 // security boundary: a client can send any JSON body, only these keys are
 // ever written per section. `employeeTypes` and `workArrangement` are valid
 // sections but aren't part of the 9-step wizard flow — edited elsewhere
@@ -374,7 +374,7 @@ export class OrganizationSettingsService {
 
   // Deliberately never exposes registration/contact data — safe to
   // read by any authenticated user (used for in-app branding, e.g. logo in
-  // the header), unlike the old system's stale "public" naming (it's
+  // the header), unlike the original release's stale "public" naming (it's
   // actually authenticated too, see org-validators research notes).
   async getPublicBranding(organizationId: string) {
     const org = await this.findOrThrow(organizationId);

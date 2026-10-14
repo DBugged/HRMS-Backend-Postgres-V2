@@ -2,7 +2,7 @@ import { StatutoryModule } from '@prisma/client';
 import { isIndianState, isSupportedState } from '../common/indian-states';
 
 /**
- * Pure port of the old backend's `utils/statutoryValidation.js` — one
+ * Pure port of the original release's `utils/statutoryValidation.js` — one
  * validator per statutory module, ported verbatim (rate bounds, slab
  * monotonicity, day/decimal ranges). Throws a plain Error with a
  * user-facing message on invalid input; the service wraps that as a
@@ -332,7 +332,7 @@ export function validateModuleConfig(
   VALIDATORS[module](config);
 }
 
-// The 9 seed values from the old system's seedStatutoryConfig.js —
+// The 9 seed values from the original release's seedStatutoryConfig module —
 // payroll_calendar/rounding are operational config, always enabled;
 // everything else is a compliance opt-in, disabled by default.
 export const SEED_DEFAULTS: Record<

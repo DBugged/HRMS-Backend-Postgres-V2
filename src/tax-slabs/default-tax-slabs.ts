@@ -1,7 +1,7 @@
 import { TaxRegime } from '@prisma/client';
 
 /**
- * Static reference dataset ported verbatim from the old backend's
+ * Static reference dataset ported verbatim from the original release's
  * `utils/defaultTaxSlabs.js` — the current government slab structure
  * (FY2025-26/26-27 per Budget 2025), used only as a starting point an org
  * can fully override via TaxSlabsService.upsert. Not itself persisted

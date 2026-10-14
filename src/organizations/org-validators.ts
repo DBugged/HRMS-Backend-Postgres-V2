@@ -1,4 +1,4 @@
-// Format-validation regexes, ported verbatim from the old system's
+// Format-validation regexes, ported verbatim from the original release's
 // orgValidators.js/orgValidation.js (kept in sync there across client and
 // server — here it's the single server-side source of truth). Empty/absent
 // values always pass — individual fields are optional; only

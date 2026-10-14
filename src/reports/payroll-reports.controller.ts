@@ -44,7 +44,7 @@ function named<T extends { filename: string }>(
     : report;
 }
 
-// Old system's PAYROLL_VIEW_ROLES collapses to [ADMIN, HR], same
+// The original release's PAYROLL_VIEW_ROLES collapses to [ADMIN, HR], same
 // convention used throughout Payroll/Reimbursements/Loans/Settlements.
 @ApiTags('reports')
 @ApiBearerAuth('access-token')

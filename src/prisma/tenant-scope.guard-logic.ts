@@ -168,7 +168,7 @@ export function evaluateTenantScope(
     return args;
   }
 
-  // Narrow, explicit escape hatch — mirrors the old system's
+  // Narrow, explicit escape hatch — mirrors the original release's
   // `tenantScopeBypass: true`. Only legitimate use: resolving a tenant from
   // a globally-unique column before the caller knows which organization
   // they're in (email lookup at login/registration, opaque-token lookup at

@@ -1,5 +1,5 @@
 /**
- * Pure port of the old backend's utils/formatDate.js — human-facing date
+ * Pure port of the original release's utils/formatDate.js — human-facing date
  * text for generated documents, reports, and notification/email messages.
  * Stored values (DB columns, API JSON) are untouched; this only formats
  * text meant to be read.

@@ -20,7 +20,7 @@ import { decryptPersonalData } from '../common/personal-data-crypto';
 import { FONTS_DIR, ROBOTO_FILES } from '../common/fonts-dir';
 
 /**
- * Pure port of the old backend's payslipPdfController.js — THE universal
+ * Pure port of the original release's payslipPdfController module — THE universal
  * payslip layout, every employee/every run renders through this same
  * template. Nothing here is per-tenant/per-employee custom; only the
  * *data* fed in varies (a component with no line in earnings/deductions
@@ -191,7 +191,7 @@ interface PayslipRun {
   };
 }
 
-// Same fixed, illustrative figures as the old system's buildDummyPayroll —
+// Same fixed, illustrative figures as the original release's buildDummyPayroll —
 // exercises every section of the layout (earnings, deductions, employer
 // contributions, YTD is intentionally skipped since there's no real
 // financial year to aggregate) without reading any real employee data.

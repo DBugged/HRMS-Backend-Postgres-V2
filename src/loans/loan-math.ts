@@ -1,4 +1,4 @@
-// Pure port of the old backend's loanController.js EMI calculation —
+// Pure port of the original release's loanController module EMI calculation —
 // standard reducing-balance EMI formula, falling back to a flat
 // principal/tenure split when interestRate is 0 (the formula is undefined
 // at r=0).

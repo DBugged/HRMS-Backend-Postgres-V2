@@ -58,7 +58,7 @@ function categoryInterceptor(category: string) {
 
 // Any authenticated user may upload — access control lives in what each
 // domain field then does with the returned relativeKey (e.g. only ADMIN/HR
-// can PUT it onto PayrollTemplate.companyLogoUrl), same as the old system.
+// can PUT it onto PayrollTemplate.companyLogoUrl), same as the original release.
 @ApiTags('files')
 @ApiBearerAuth('access-token')
 @Controller('files')

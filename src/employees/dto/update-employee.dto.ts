@@ -28,7 +28,7 @@ import {
 } from '../../common/person-name';
 
 // Note: employeeId is deliberately not editable through this DTO at all
-// (not even by HR/Admin) — unlike the old system, which technically
+// (not even by HR/Admin) — unlike the original release, which technically
 // allowed it via LOCKED_FIELDS_FOR_EMPLOYEE's asymmetric self-vs-HR split.
 // It's auto-generated and uniquely constrained per org; a general update
 // endpoint isn't the right place to let it be hand-edited.
@@ -79,7 +79,7 @@ export class UpdateEmployeeDto {
   selfieRequirement?: SelfieRequirement;
 
   // Locked for self-update, AND locked for HR (Admin only) — mirrors the
-  // old system exactly: even hr_admin couldn't change designation.
+  // original release exactly: even hr_admin couldn't change designation.
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

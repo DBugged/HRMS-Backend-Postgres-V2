@@ -1,6 +1,6 @@
 /**
  * Pure shift-config resolution for AttendanceService.recalculateAttendanceForDay,
- * ported from the old backend's attendanceController.js getOrgDefaultShiftConfig
+ * ported from the original release's attendanceController module getOrgDefaultShiftConfig
  * + its per-department field usage. No DB access — the service fetches the
  * Department/Organization rows and passes plain data in.
  */

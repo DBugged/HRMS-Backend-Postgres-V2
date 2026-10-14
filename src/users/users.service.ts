@@ -20,7 +20,7 @@ export class UsersService {
 
   /**
    * Tenant-unknown lookup — the one legitimate use of the bypass, mirrors
-   * the old system's login/registration email checks. `__tenantScopeBypass`
+   * the original release's login/registration email checks. `__tenantScopeBypass`
    * isn't part of Prisma's generated arg types (it's read and stripped by
    * tenant-scope.extension.ts before the real query runs), so this is the
    * one place in the service that needs an explicit cast rather than a

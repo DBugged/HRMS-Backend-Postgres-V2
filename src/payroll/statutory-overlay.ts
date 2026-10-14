@@ -71,7 +71,7 @@ export interface OverlaidSettings {
 
   lwfEmployeeAmount: number;
   lwfEmployerAmount: number;
-  // Defaults to [6, 12] (the old system's hardcoded LWF_MONTHS fallback)
+  // Defaults to [6, 12] (the original release's hardcoded LWF_MONTHS fallback)
   // when no LWF StatutoryConfigVersion exists yet — not a PayrollSettings
   // column, this fallback lives here.
   lwfMonths: number[];
@@ -104,7 +104,7 @@ export interface OverlaidSettings {
   bonusCalcCeiling: number;
 
   // Not a PayrollSettings column — only ever set when a payroll_calendar
-  // version exists, carried through for parity with the old system.
+  // version exists, carried through for parity with the original release.
   payrollFrequency?: string;
 }
 

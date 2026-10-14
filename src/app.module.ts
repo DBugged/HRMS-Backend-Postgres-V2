@@ -171,7 +171,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // Every route requires a valid access token by default; @Public()
     // (register/login/refresh/logout) is the explicit opt-out. Keeps
     // "forgot to protect a route" from being the default failure mode,
-    // the opposite of the old backend where each route file had to
+    // the opposite of the original release where each route file had to
     // remember to add `protect` itself.
     { provide: APP_INTERCEPTOR, useClass: RequestSanityInterceptor },
     { provide: APP_GUARD, useClass: JwtAuthGuard },

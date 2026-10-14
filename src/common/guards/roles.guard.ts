@@ -21,7 +21,7 @@ import {
  *                                         equals the caller's own id
  * If neither decorator is present, the route only requires authentication
  * (handled by JwtAuthGuard upstream) with no further restriction — matches
- * routes like GET /auth/me in the old system.
+ * routes like GET /auth/me in the original release.
  *
  * Runs after JwtAuthGuard, which populates request.user.
  */
@@ -43,10 +43,8 @@ export class RolesGuard implements CanActivate {
     const user = request.user as User | undefined;
     if (!user) return false; // JwtAuthGuard should have already rejected this; defensive only.
 
-    // Future Super Admin: uncomment once the role exists on the Prisma enum —
-    // a single line here grants every @Roles()/@SelfOrRoles() gated route
-    // without touching any of their call sites individually.
-    // if (user.role === Role.SUPER_ADMIN) return true;
+    // Future Super Admin: once that role exists on the Prisma enum, one early return for it here would grant
+    // every @Roles()/@SelfOrRoles() gated route without touching any call site.
 
     if (requiredRoles?.includes(user.role)) return true;
 

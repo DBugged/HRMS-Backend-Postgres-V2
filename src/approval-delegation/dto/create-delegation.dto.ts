@@ -17,7 +17,7 @@ export class CreateDelegationDto {
 
   // Only honored when the caller is ADMIN/HR — HR setting up a delegation
   // on a manager's behalf. Ignored (forced to the caller's own id)
-  // otherwise, same as the old system.
+  // otherwise, same as the original release.
   @ApiPropertyOptional({
     description: 'ADMIN/HR only: set up a delegation on behalf of this user',
   })

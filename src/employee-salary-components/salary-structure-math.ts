@@ -3,11 +3,11 @@ import { todayInOrgTz } from '../common/org-date';
 
 /**
  * Pure helpers for the employee salary-structure revision system, ported
- * from the old backend's `employeeSalaryController.js`. No DB access —
+ * from the original release's `employeeSalaryController.js`. No DB access —
  * the service does the queries and passes plain data in.
  */
 
-// Org-timezone date, deliberately not `toISOString()` — the old system's
+// Org-timezone date, deliberately not `toISOString()` — the original release's
 // `todayStr()` had a comment documenting a real bug: toISOString() shifts
 // to UTC, which during IST early-morning hours (00:00-05:29) rolls the
 // date back by one, causing effectiveFrom/asOf comparisons to miss
@@ -145,7 +145,7 @@ export interface SynthesizedRow {
 // For active EARNING, non-employer-contribution components whose calcType
 // is PERCENTAGE or FORMULA and that have no per-employee override row,
 // build a read-only synthetic row from the master component. Rationale
-// (from the old system): these auto-apply via payrollEngine without
+// (from the original release): these auto-apply via payrollEngine without
 // needing an explicit override, so the UI would otherwise silently omit
 // them from the structure view entirely.
 export function synthesizeMissingRows(

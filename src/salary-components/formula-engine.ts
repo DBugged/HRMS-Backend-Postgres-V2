@@ -1,5 +1,5 @@
 /**
- * Direct port of the old backend's `utils/formulaEngine.js`. Deliberately
+ * Direct port of the original release's `utils/formulaEngine.js`. Deliberately
  * NOT `eval()`/`Function()` — a hand-rolled tokenizer + recursive-descent
  * parser + tree evaluator, so a salary formula can never run arbitrary JS.
  *
@@ -27,11 +27,11 @@
 
 // The full set of non-component identifiers a formula may reference,
 // ported verbatim from the old salaryComponentController.js. Note: the
-// old system's real seed data (seedSalaryComponents.js) uses
+// original release's real seed data (seedSalaryComponents.js) uses
 // PT_SLAB1_UPTO/PT_SLAB1_AMOUNT/etc. in its PT formula, which are NOT in
 // this list — payrollEngine.js flattens ptSlabs into those context vars at
 // run time even though the static allow-list here doesn't know about
-// them. This is a latent gap in the old system, ported as-is rather than
+// them. This is a latent gap in the original release, ported as-is rather than
 // silently "fixed" — it only matters once Payroll core (not built yet)
 // evaluates formulas at run time.
 export const SYSTEM_VARS = [
@@ -483,7 +483,7 @@ export function evaluateFormula(expr: string, context: Context): number {
 /**
  * DFS topological sort with 3-state visited tracking (undefined =
  * unvisited, 0 = visiting/in-progress, 1 = done). Throws with the exact
- * cycle path on a circular reference — matches the old system's error
+ * cycle path on a circular reference — matches the original release's error
  * format `"Circular reference detected in salary formulas: A -> B -> C"`.
  * Only edges pointing at a key present in `edges` are followed, so
  * references to system variables never participate in cycle detection.

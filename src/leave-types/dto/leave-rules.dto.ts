@@ -11,7 +11,7 @@ import {
   Min,
 } from 'class-validator';
 
-// Mirrors the old system's LeaveType.rules JSON shape exactly — read
+// Mirrors the original release's LeaveType.rules JSON shape exactly — read
 // generically by the future Leave-requests module's rule-checking logic,
 // never branched on per-leave-type name.
 export class LeaveRulesDto {
