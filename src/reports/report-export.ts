@@ -55,7 +55,7 @@ export function detectRasterExtension(
 const FORMULA_TRIGGER_RE = /^[=+\-@\t\r]/;
 // A lone dash ("no value"), a signed number ("-250", "+91 98765 43210") is data, not a formula: guarding it put a
 // visible apostrophe in front of every empty cell ("'-"). Anything with an operator or letters after the sign still is.
-const PLAIN_SIGNED_VALUE_RE = /^[+-]\s*[\d.,\s-]*$/;
+const PLAIN_SIGNED_VALUE_RE = /^(?:[+-]\s*[\d.,\s]*|-+)$/;
 export function sanitizeSpreadsheetValue<T>(value: T): T {
   if (
     typeof value === 'string' &&
@@ -178,28 +178,33 @@ export function renderPdfTable(
   const startX = 30;
   let y = doc.y;
 
+  // Cells wrap onto extra lines (nothing is cut off with an ellipsis); a row that would not fit the page moves to the
+  // next one, and the header row is repeated at the top of every page.
+  const headerValues = columns.map((c) => c.header);
   const drawRow = (
     values: (string | number | boolean | null | undefined)[],
     isHeader = false,
   ) => {
     doc.fontSize(8).font(isHeader ? 'Helvetica-Bold' : 'Helvetica');
-    values.forEach((val, i) => {
-      doc.text(String(val ?? ''), startX + i * colWidth, y, {
-        width: colWidth - 5,
-        ellipsis: true,
-      });
-    });
-    y += 16;
-    if (y > doc.page.height - 40) {
+    const texts = values.map((val) => String(val ?? ''));
+    const textWidth = colWidth - 5;
+    const rowHeight = Math.max(
+      16,
+      ...texts.map((t) => doc.heightOfString(t, { width: textWidth }) + 6),
+    );
+    if (!isHeader && y + rowHeight > doc.page.height - 40) {
       doc.addPage();
       y = 40;
+      drawRow(headerValues, true);
+      doc.fontSize(8).font('Helvetica');
     }
+    texts.forEach((t, i) => {
+      doc.text(t, startX + i * colWidth, y, { width: textWidth });
+    });
+    y += rowHeight;
   };
 
-  drawRow(
-    columns.map((c) => c.header),
-    true,
-  );
+  drawRow(headerValues, true);
   doc
     .moveTo(startX, y - 4)
     .lineTo(startX + pageWidth, y - 4)
@@ -264,7 +269,14 @@ export async function sendReport(
     );
     return;
   }
-  const workbook = buildWorkbook(title, columns, rows, subtitle, logoBuffer);
+  // A CSV is for machines: the header must be line 1, so the descriptive subtitle line is left out of it.
+  const workbook = buildWorkbook(
+    title,
+    columns,
+    rows,
+    format === 'csv' ? undefined : subtitle,
+    logoBuffer,
+  );
   if (format === 'csv') {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(

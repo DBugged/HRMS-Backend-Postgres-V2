@@ -161,7 +161,7 @@ export class ReportsService {
       title: 'Attendance Report',
       columns,
       rows,
-      filename: 'attendance_report',
+      filename: `attendance_report_${from ?? 'start'}_${query.to ?? 'today'}`,
     };
   }
 

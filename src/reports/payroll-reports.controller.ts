@@ -31,6 +31,19 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 type Caller = Omit<User, 'password'>;
 
+// A downloaded file should say which period it covers (the web app renames files itself, other API users do not).
+function named<T extends { filename: string }>(
+  report: T,
+  query: { month?: number; year?: number },
+): T {
+  return query.month && query.year
+    ? {
+        ...report,
+        filename: `${report.filename}_${query.year}_${String(query.month).padStart(2, '0')}`,
+      }
+    : report;
+}
+
 // Old system's PAYROLL_VIEW_ROLES collapses to [ADMIN, HR], same
 // convention used throughout Payroll/Reimbursements/Loans/Settlements.
 @ApiTags('reports')
@@ -57,7 +70,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -73,7 +86,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -89,7 +102,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -105,7 +118,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -121,7 +134,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -137,7 +150,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -153,7 +166,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -169,7 +182,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -185,7 +198,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
@@ -201,7 +214,7 @@ export class PayrollReportsController {
       caller.organizationId,
     );
     await sendReportBranded(res, this.scopedPrisma, caller.organizationId, {
-      ...report,
+      ...named(report, query),
       format: query.format ?? 'xlsx',
     });
   }
