@@ -288,6 +288,42 @@ describe('Dashboard (e2e)', () => {
     ).toBe(true);
   });
 
+  it('Department Leave counts only the days of a leave that fall in this month', async () => {
+    const dashboard = async () => {
+      const res = await request(app.getHttpServer())
+        .get('/dashboard/hr')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      return (
+        res.body as { departmentLeaveSummary: { days: number }[] }
+      ).departmentLeaveSummary.reduce((n, d) => n + d.days, 0);
+    };
+    const before = await dashboard();
+    const now = new Date();
+    const y = now.getUTCFullYear();
+    const m = now.getUTCMonth() + 1;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const prevMonthEnd = new Date(Date.UTC(y, m - 1, 0));
+    const leaveType = await prisma.leaveType.findFirstOrThrow({
+      where: { organizationId },
+    });
+    // Three days of last month (28th onwards at worst) and the first six of this one: 9 calendar days, 6 this month.
+    const startDay = prevMonthEnd.getUTCDate() - 2;
+    await prisma.leave.create({
+      data: {
+        organizationId,
+        employeeId,
+        leaveTypeId: leaveType.id,
+        startDate: `${prevMonthEnd.getUTCFullYear()}-${pad(prevMonthEnd.getUTCMonth() + 1)}-${pad(startDay)}`,
+        endDate: `${y}-${pad(m)}-06`,
+        totalDays: 9,
+        status: 'APPROVED',
+      },
+    });
+    const after = await dashboard();
+    expect(after - before).toBe(6);
+  });
+
   it('HR sees a 12-month payroll cost summary chart, defaulting to this_year', async () => {
     const res = await request(app.getHttpServer())
       .get('/dashboard/hr/payroll-cost-summary')

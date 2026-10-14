@@ -41,11 +41,11 @@ describe('report export layout', () => {
   ];
 
   it('puts the CSV header on line 1 (the subtitle is left out of a CSV)', async () => {
-    let body = Buffer.alloc(0);
+    let body = '';
     const res = {
       setHeader: () => undefined,
       send: (b: Buffer) => {
-        body = b;
+        body = b.toString('utf8');
       },
     };
     await sendReport(res as never, {
@@ -56,7 +56,7 @@ describe('report export layout', () => {
       filename: 'f',
       format: 'csv',
     });
-    const text = body.toString('utf8').replace(/^\uFEFF/, '');
+    const text = body.replace(/^\uFEFF/, '');
     expect(text.split('\n')[0]).toBe('Name,Notes');
     expect(text).not.toContain('Establishment');
   });

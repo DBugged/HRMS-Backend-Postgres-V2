@@ -25,6 +25,7 @@ import {
   User,
   WfhApprovalStatus,
 } from '@prisma/client';
+import { leaveDaysInRange } from '../leaves/leave-days-in-range';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
@@ -357,10 +358,21 @@ export class DashboardService {
         totalDays: Math.round(v.totalDays * 100) / 100,
       }));
 
+    // Only the days that fall in this month count (a leave from 28 Sep to 6 Oct is split between the months), under the
+    // department the leave was filed for (falling back to the employee's current one for old rows).
+    const monthLastDay = new Date(
+      Date.UTC(currentYear, currentMonth, 0),
+    ).getUTCDate();
     const deptTotals = new Map<string, number>();
     for (const l of deptLeaveSummaryRaw) {
-      const deptId = l.employee.departmentId ?? 'unassigned';
-      deptTotals.set(deptId, (deptTotals.get(deptId) ?? 0) + l.totalDays);
+      const days = leaveDaysInRange(
+        l,
+        `${monthPrefix}-01`,
+        `${monthPrefix}-${String(monthLastDay).padStart(2, '0')}`,
+      );
+      if (days <= 0) continue;
+      const deptId = l.departmentId ?? l.employee.departmentId ?? 'unassigned';
+      deptTotals.set(deptId, (deptTotals.get(deptId) ?? 0) + days);
     }
     const deptIds = [...deptTotals.keys()].filter((id) => id !== 'unassigned');
     const depts = deptIds.length

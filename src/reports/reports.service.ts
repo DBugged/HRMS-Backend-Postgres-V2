@@ -34,6 +34,7 @@ import {
   LeaveReportQueryDto,
   PayrollReportQueryDto,
 } from './dto/report-queries.dto';
+import { leaveDaysInRange } from '../leaves/leave-days-in-range';
 import {
   REPORT_ROW_LIMIT,
   assertValidDateRange,
@@ -384,13 +385,21 @@ export class ReportsService {
     ]);
     const deptNameById = new Map(departments.map((d) => [d.id, d.name]));
 
+    // A leave is attributed to the department it was filed under (falling back to the employee's current one for old
+    // rows), and only the days inside the requested range are counted - a leave spanning two months is split between
+    // them, not counted in full in both.
+    const rangeFrom = query.from ?? '0000-01-01';
+    const rangeTo = query.to ?? '9999-12-31';
     const totals = new Map<string, number>();
     for (const l of leaves) {
-      const deptName = l.employee.departmentId
-        ? (deptNameById.get(l.employee.departmentId) ?? 'Unassigned')
+      const days = leaveDaysInRange(l, rangeFrom, rangeTo);
+      if (days <= 0) continue;
+      const deptId = l.departmentId ?? l.employee.departmentId;
+      const deptName = deptId
+        ? (deptNameById.get(deptId) ?? 'Unassigned')
         : 'Unassigned';
       const key = `${deptName}::${l.leaveType.name}`;
-      totals.set(key, (totals.get(key) ?? 0) + l.totalDays);
+      totals.set(key, (totals.get(key) ?? 0) + days);
     }
 
     const rows = [...totals.entries()].map(([key, days]) => {
