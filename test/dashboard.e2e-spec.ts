@@ -443,6 +443,70 @@ describe('Dashboard (e2e)', () => {
     expect((res.body as { teamSize: number }).teamSize).toBe(noDeptCount);
   });
 
+  it("HR dashboard splits Present from Checked in: a bare punch-in is not 'present' yet", async () => {
+    const counts = async () => {
+      const res = await request(app.getHttpServer())
+        .get('/dashboard/hr')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      return (
+        res.body as {
+          attendanceSummary: { presentToday: number; checkedInToday: number };
+        }
+      ).attendanceSummary;
+    };
+    const before = await counts();
+    const mk = async (email: string) =>
+      (
+        (
+          await request(app.getHttpServer())
+            .post('/employees')
+            .set('Authorization', `Bearer ${adminToken}`)
+            .send({
+              name: email.split('@')[0],
+              email,
+              joiningDate: '2026-01-01',
+            })
+            .expect(201)
+        ).body as { employee: { id: string } }
+      ).employee.id;
+    const inOnly = await mk('dash-in-only@example.test');
+    const finished = await mk('dash-finished@example.test');
+    const nine = new Date();
+    nine.setUTCHours(4, 0, 0, 0);
+    const five = new Date(nine.getTime() + 8 * 3_600_000);
+    const row = (employeeId: string, outTime: Date | null) =>
+      prisma.attendance.create({
+        data: {
+          organizationId,
+          employeeId,
+          date: todayStr(),
+          status: AttendanceStatus.PRESENT,
+          source: 'FACE_API',
+          inTime: nine,
+          outTime,
+        },
+      });
+    await row(inOnly, null);
+    await row(finished, five);
+    const after = await counts();
+    expect(after.checkedInToday - before.checkedInToday).toBe(1);
+    expect(after.presentToday - before.presentToday).toBe(1);
+
+    // The attendance list says the same per day, so the apps can label it 'Checked in'.
+    const flag = async (employeeId: string) => {
+      const res = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({ employeeId, from: todayStr(), to: todayStr() })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      return (res.body as { data: { inProgress: boolean }[] }).data[0]
+        ?.inProgress;
+    };
+    expect(await flag(inOnly)).toBe(true);
+    expect(await flag(finished)).toBe(false);
+  });
+
   it('payroll cost summary counts final (locked) payroll only, not runs still being worked on', async () => {
     const cost = async (month: number, year: number) =>
       (
@@ -674,7 +738,8 @@ describe('Dashboard (e2e)', () => {
         .get('/dashboard/hr')
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(200);
-      const hrItems = (hrList.body as { pendingItems: { type: string }[] }).pendingItems;
+      const hrItems = (hrList.body as { pendingItems: { type: string }[] })
+        .pendingItems;
       expect(hrCounts.total).toBeGreaterThanOrEqual(hrItems.length);
       if (hrItems.length < 10) expect(hrCounts.total).toBe(hrItems.length);
 
@@ -683,11 +748,17 @@ describe('Dashboard (e2e)', () => {
         .get('/dashboard/department-head')
         .set('Authorization', `Bearer ${managerToken}`)
         .expect(200);
-      const mgrItems = (mgrList.body as { pendingItems: { type: string }[] }).pendingItems;
+      const mgrItems = (mgrList.body as { pendingItems: { type: string }[] })
+        .pendingItems;
       expect(mgrCounts.total).toBeGreaterThanOrEqual(mgrItems.length);
       if (mgrItems.length < 10) expect(mgrCounts.total).toBe(mgrItems.length);
       // A manager never carries the HR-only queues.
-      expect(mgrCounts.resignations + mgrCounts.loans + mgrCounts.encashments + mgrCounts.reimbursements).toBe(0);
+      expect(
+        mgrCounts.resignations +
+          mgrCounts.loans +
+          mgrCounts.encashments +
+          mgrCounts.reimbursements,
+      ).toBe(0);
     });
   });
 });

@@ -171,6 +171,7 @@ export class DashboardService {
     const [
       totalEmployees,
       presentToday,
+      checkedInToday,
       absentToday,
       incompleteToday,
       onLeaveToday,
@@ -191,11 +192,25 @@ export class DashboardService {
       this.scopedPrisma.user.count({
         where: { organizationId, isActive: true },
       }),
+      // Present = a finished punch pair (or a regularized day). Someone who has only punched in so far is counted
+      // separately as Checked in until their punch-out arrives.
       this.scopedPrisma.attendance.count({
         where: {
           organizationId,
           date: today,
           status: AttendanceStatus.PRESENT,
+          // Everything Present except a bare punch-in (a regularized or manually entered day with no punch pair still
+          // counts as Present).
+          NOT: { inTime: { not: null }, outTime: null },
+        },
+      }),
+      this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          status: AttendanceStatus.PRESENT,
+          inTime: { not: null },
+          outTime: null,
         },
       }),
       this.scopedPrisma.attendance.count({
@@ -434,6 +449,7 @@ export class DashboardService {
       totalEmployees,
       attendanceSummary: {
         presentToday,
+        checkedInToday,
         absentToday,
         incompleteToday,
         onLeaveToday,
@@ -576,7 +592,10 @@ export class DashboardService {
     T extends { wfhRequestId: string | null; date: string; id: string },
   >(rows: T[]): { requestId: string | null; rows: T[] }[] {
     const groups: { requestId: string | null; rows: T[] }[] = [];
-    const byRequest = new Map<string, { requestId: string | null; rows: T[] }>();
+    const byRequest = new Map<
+      string,
+      { requestId: string | null; rows: T[] }
+    >();
     for (const row of rows) {
       if (!row.wfhRequestId) {
         groups.push({ requestId: null, rows: [row] });
@@ -603,7 +622,10 @@ export class DashboardService {
 
   // The ONE definition of "waiting for a decision" for each request type. The Approvals list (pendingItems) and the
   // sidebar badge counts (pendingCounts) both use it, so a badge can never disagree with the list behind it.
-  private pendingWhere(scope: { organizationId: string; employeeId?: { in: string[] } }) {
+  private pendingWhere(scope: {
+    organizationId: string;
+    employeeId?: { in: string[] };
+  }) {
     return {
       leaves: { ...scope, status: LeaveStatus.PENDING },
       regularizations: {
@@ -671,17 +693,22 @@ export class DashboardService {
             });
       employeeIds = team.map((e) => e.id);
     }
-    const where = this.pendingWhere(this.pendingScope(organizationId, employeeIds));
-    const [leaves, regularizations, wfh, overtime, compOffs] = await Promise.all([
-      this.scopedPrisma.leave.count({ where: where.leaves }),
-      this.scopedPrisma.attendance.count({ where: where.regularizations }),
-      this.countPendingWfhRequests(where.wfh),
-      this.scopedPrisma.overtimeRecord.count({ where: where.overtime }),
-      this.scopedPrisma.compOff.count({ where: where.compOffs }),
-    ]);
+    const where = this.pendingWhere(
+      this.pendingScope(organizationId, employeeIds),
+    );
+    const [leaves, regularizations, wfh, overtime, compOffs] =
+      await Promise.all([
+        this.scopedPrisma.leave.count({ where: where.leaves }),
+        this.scopedPrisma.attendance.count({ where: where.regularizations }),
+        this.countPendingWfhRequests(where.wfh),
+        this.scopedPrisma.overtimeRecord.count({ where: where.overtime }),
+        this.scopedPrisma.compOff.count({ where: where.compOffs }),
+      ]);
     const [reimbursements, loans, encashments, resignations] = isHr
       ? await Promise.all([
-          this.scopedPrisma.reimbursement.count({ where: where.reimbursements }),
+          this.scopedPrisma.reimbursement.count({
+            where: where.reimbursements,
+          }),
           this.scopedPrisma.loan.count({ where: where.loans }),
           this.scopedPrisma.leaveEncashment.count({ where: where.encashments }),
           this.scopedPrisma.resignation.count({ where: where.resignations }),

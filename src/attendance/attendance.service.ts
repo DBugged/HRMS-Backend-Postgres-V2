@@ -1494,7 +1494,11 @@ export class AttendanceService {
     // What location this punch needs (their own setting, else the organization's): ENFORCED, RECORD_ONLY or NOT_NEEDED.
     const orgForPunch = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
-      select: { orgPayrollAttendancePrefs: true, name: true, companyName: true },
+      select: {
+        orgPayrollAttendancePrefs: true,
+        name: true,
+        companyName: true,
+      },
     });
     const locationMode = resolveLocationMode(
       employee?.locationRequirement,
@@ -1560,7 +1564,11 @@ export class AttendanceService {
 
     const fence = employee ? effectiveWorkLocation(employee) : null;
     // Only ENFORCED looks at the work location at all: RECORD_ONLY stores the point and NOT_NEEDED takes none.
-    if (locationMode === 'ENFORCED' && !fence && employee?.requireWorkLocationForPunch) {
+    if (
+      locationMode === 'ENFORCED' &&
+      !fence &&
+      employee?.requireWorkLocationForPunch
+    ) {
       // Per-employee, not org-wide: an office-based employee is marked
       // this way so a missing location is a real data gap that blocks
       // them, not an implicit "exempt from geo-fencing" — a remote/field
@@ -1661,8 +1669,10 @@ export class AttendanceService {
           punchTime,
           source: PunchSource.MANUAL,
           // No location is stored when the rule says none is needed.
-          latitude: locationMode === 'NOT_NEEDED' ? null : (dto.latitude ?? null),
-          longitude: locationMode === 'NOT_NEEDED' ? null : (dto.longitude ?? null),
+          latitude:
+            locationMode === 'NOT_NEEDED' ? null : (dto.latitude ?? null),
+          longitude:
+            locationMode === 'NOT_NEEDED' ? null : (dto.longitude ?? null),
           selfieUrl,
           selfieOriginalUrl,
           batteryPercent: dto.batteryPercent ?? null,
@@ -1958,14 +1968,21 @@ export class AttendanceService {
     organizationId: string,
   ) {
     if (query.to < query.from) {
-      throw new BadRequestException('The end date cannot be before the start date.');
+      throw new BadRequestException(
+        'The end date cannot be before the start date.',
+      );
     }
     if (calendarSpan(query.from, query.to) > MAX_WFH_RANGE_DAYS) {
       throw new BadRequestException(
         `A Work From Home request can cover at most ${MAX_WFH_RANGE_DAYS} days.`,
       );
     }
-    const r = await this.wfhDaysFor(actor, organizationId, query.from, query.to);
+    const r = await this.wfhDaysFor(
+      actor,
+      organizationId,
+      query.from,
+      query.to,
+    );
     return { ...r, count: r.days.length };
   }
 
@@ -1987,7 +2004,9 @@ export class AttendanceService {
       );
     }
     if (to < from) {
-      throw new BadRequestException('The end date cannot be before the start date.');
+      throw new BadRequestException(
+        'The end date cannot be before the start date.',
+      );
     }
     if (calendarSpan(from, to) > MAX_WFH_RANGE_DAYS) {
       throw new BadRequestException(
@@ -2014,7 +2033,12 @@ export class AttendanceService {
         `The date is before your joining date (${utcDateStrOf(me.joiningDate)}).`,
       );
     }
-    const { days, skipped } = await this.wfhDaysFor(actor, organizationId, from, to);
+    const { days, skipped } = await this.wfhDaysFor(
+      actor,
+      organizationId,
+      from,
+      to,
+    );
     if (days.length === 0) {
       throw new BadRequestException(
         'There is no working day left to request in that range (weekly offs, holidays, leave and days already requested are not included).',
@@ -2583,6 +2607,13 @@ export class AttendanceService {
             reviewerNameById,
             record.organizationId,
           ),
+          // A day with a punch-in and no punch-out yet is stored as PRESENT (in progress) so the employee is not
+          // called Absent while at work. Clients show it as 'Checked in' until the punch-out arrives (or the shift
+          // ends and the day becomes Incomplete).
+          inProgress:
+            record.status === AttendanceStatus.PRESENT &&
+            !!record.inTime &&
+            !record.outTime,
           ...(holidayName !== undefined && { holidayName }),
           ...(leaveTypeName !== undefined && { leaveTypeName }),
         };
