@@ -118,6 +118,11 @@ export const LEAVING_STATUSES: EmploymentStatus[] = [
   ...EXIT_STATUSES,
 ];
 
+// Accounts close only through Offboarding (final settlement and clearance first), so every exit is a recorded
+// offboarding case: headcount, leavers and attrition stay correct and no final pay is left stranded.
+const DEACTIVATION_BLOCKED_MESSAGE =
+  'An employee is not deactivated directly. Start their Resignation or Offboarding - the account is closed when the offboarding is completed.';
+
 @Injectable()
 export class EmployeesService {
   constructor(
@@ -939,6 +944,9 @@ export class EmployeesService {
         'You cannot deactivate your own account — ask another Admin or HR to do it.',
       );
     }
+    if (clean.isActive === false && before.isActive) {
+      throw new BadRequestException(DEACTIVATION_BLOCKED_MESSAGE);
+    }
 
     // The organization must always keep an active Admin: nobody can demote or deactivate the last one (this used to
     // be possible through PATCH even though the deactivate route refused it, leaving a company nobody could administer).
@@ -1443,70 +1451,24 @@ export class EmployeesService {
     }
   }
 
+  // Kept so the route answers clearly: an employee is never deactivated directly any more (see
+  // DEACTIVATION_BLOCKED_MESSAGE). Closing the account is the last step of Offboarding, which settles the final pay
+  // first and records the exit.
+  // eslint-disable-next-line @typescript-eslint/require-await
   async deactivate(
     id: string,
     dto: DeactivateEmployeeDto,
     actor: Actor & { id: string },
     organizationId: string,
-  ) {
+  ): Promise<never> {
+    void dto;
+    void organizationId;
     if (actor.id === id) {
       throw new BadRequestException(
         'You cannot deactivate your own account — ask another Admin or HR to do it.',
       );
     }
-    const target = await this.findByIdOrThrow(id, organizationId);
-    // An exit in progress is closed through Offboarding (which settles the final pay first); deactivating here would
-    // stop payroll for the employee while their settlement is still outstanding.
-    const openExit = await this.scopedPrisma.offboardingCase.findFirst({
-      where: {
-        organizationId,
-        employeeId: id,
-        status: { in: ['INITIATED', 'IN_PROGRESS'] },
-      },
-      select: { id: true },
-    });
-    if (openExit) {
-      throw new BadRequestException(
-        'This employee has an offboarding in progress - complete it (after the final settlement) instead of deactivating the account.',
-      );
-    }
-    if (target.role === Role.ADMIN) {
-      await this.assertAnotherActiveAdminRemains(id, organizationId);
-    }
-    await reassignDirectReportsBeforeDeactivation(
-      {
-        scopedPrisma: this.scopedPrisma,
-        timelineService: this.timelineService,
-        auditLogService: this.auditLogService,
-      },
-      id,
-      dto.reassignManagerId,
-      organizationId,
-      actor.id,
-    );
-    await this.scopedPrisma.user.updateMany({
-      where: { id, organizationId },
-      data: { isActive: false },
-    });
-    await this.scopedPrisma.refreshToken.updateMany({
-      where: { userId: id, organizationId, revokedAt: null },
-      data: { revokedAt: new Date() },
-    });
-    await this.auditLogService.log({
-      actorId: actor.id,
-      action: 'EMPLOYEE_DEACTIVATED',
-      module: 'EMPLOYEE',
-      organizationId,
-      targetId: id,
-      details: { reason: 'manual_deactivation' },
-    });
-    await this.timelineService.logEvent({
-      organizationId,
-      employeeId: id,
-      eventKey: 'EMPLOYEE_DEACTIVATED',
-      performedById: actor.id,
-    });
-    return toSafe(await this.findByIdOrThrow(id, organizationId));
+    throw new BadRequestException(DEACTIVATION_BLOCKED_MESSAGE);
   }
 
   private async findByIdOrThrow(

@@ -1113,12 +1113,27 @@ describe('Employees + Departments (e2e)', () => {
     });
   });
 
-  it('HR deactivates an employee', async () => {
+  it('an employee cannot be deactivated directly - exits go through Offboarding', async () => {
     const res = await request(app.getHttpServer())
       .patch(`/employees/${salesEmployeeId}/deactivate`)
       .set('Authorization', `Bearer ${hrToken}`)
-      .expect(200);
-    expect((res.body as { isActive: boolean }).isActive).toBe(false);
+      .expect(400);
+    expect((res.body as { message: string }).message).toMatch(/Offboarding/);
+    // The same through the edit endpoint.
+    await request(app.getHttpServer())
+      .patch(`/employees/${salesEmployeeId}`)
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ isActive: false })
+      .expect(400);
+    expect(
+      (await prisma.user.findFirstOrThrow({ where: { id: salesEmployeeId } }))
+        .isActive,
+    ).toBe(true);
+    // Later tests in this file run against a deactivated sales employee (set directly, as an exit would).
+    await prisma.user.update({
+      where: { id: salesEmployeeId },
+      data: { isActive: false },
+    });
   });
 
   describe('HR cannot change their own employment status or decide their own probation', () => {
@@ -1245,7 +1260,7 @@ describe('Employees + Departments (e2e)', () => {
         .expect(400);
     });
 
-    it('an Admin can still deactivate someone else (not blocked by the self-check)', async () => {
+    it('an Admin deactivating someone else is refused too (Offboarding is the way out), with a different message than the self-check', async () => {
       const target = await request(app.getHttpServer())
         .post('/employees')
         .set('Authorization', `Bearer ${adminToken}`)
@@ -1259,8 +1274,10 @@ describe('Employees + Departments (e2e)', () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${targetId}/deactivate`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
-      expect((res.body as { isActive: boolean }).isActive).toBe(false);
+        .expect(400);
+      const message = (res.body as { message: string }).message;
+      expect(message).toMatch(/Offboarding/);
+      expect(message).not.toMatch(/your own account/);
     });
   });
 
