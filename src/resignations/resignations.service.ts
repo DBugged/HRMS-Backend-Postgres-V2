@@ -95,8 +95,14 @@ export class ResignationsService {
       (org?.policies as { defaultNoticeDays?: number } | null)
         ?.defaultNoticeDays ?? 0,
     );
-    const notice =
-      dto.noticePeriodDays ?? (defaultNotice > 0 ? defaultNotice : 0);
+    // The employee states the notice period (required), starting from the organization's default; it can be longer
+    // than the default but not shorter - an earlier release is HR's decision.
+    if (dto.noticePeriodDays < defaultNotice) {
+      throw new BadRequestException(
+        `The notice period cannot be shorter than the organization's ${defaultNotice} day(s) - ask HR if you need an early release.`,
+      );
+    }
+    const notice = dto.noticePeriodDays;
     const earliestLwd = addDaysToDateStr(submittedOn, notice);
     if (dto.requestedLwd < earliestLwd) {
       throw new BadRequestException(

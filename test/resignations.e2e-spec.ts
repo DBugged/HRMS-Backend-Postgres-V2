@@ -156,6 +156,35 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       .expect(400);
   });
 
+  it('requires a notice period, and refuses one shorter than the organization default', async () => {
+    // Missing: required.
+    await request(app.getHttpServer())
+      .post('/resignations')
+      .set('Authorization', `Bearer ${empToken}`)
+      .send({ requestedLwd: dateOffset(45) })
+      .expect(400);
+    // Shorter than the org default: refused. Longer or equal is fine (covered by the next test).
+    const org = await prisma.organization.findFirstOrThrow({ where: { id: organizationId }, select: { policies: true } });
+    const before = (org.policies ?? {}) as Record<string, unknown>;
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { policies: { ...before, defaultNoticeDays: 30 } },
+    });
+    try {
+      const res = await request(app.getHttpServer())
+        .post('/resignations')
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({ requestedLwd: dateOffset(45), noticePeriodDays: 10 })
+        .expect(400);
+      expect(JSON.stringify((res.body as { message: unknown }).message)).toContain('shorter than the organization');
+    } finally {
+      await prisma.organization.update({
+        where: { id: organizationId },
+        data: { policies: before as object },
+      });
+    }
+  });
+
   it('employee submits a resignation; a second open one is refused', async () => {
     const res = await request(app.getHttpServer())
       .post('/resignations')
@@ -408,7 +437,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const sub = await request(app.getHttpServer())
       .post('/resignations')
       .set('Authorization', `Bearer ${emp2Token}`)
-      .send({ requestedLwd: dateOffset(40) })
+      .send({ requestedLwd: dateOffset(40), noticePeriodDays: 30 })
       .expect(201);
     const rejected = await request(app.getHttpServer())
       .patch(`/resignations/${(sub.body as ResignationBody).id}/reject`)
@@ -421,7 +450,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const hrSub = await request(app.getHttpServer())
       .post('/resignations')
       .set('Authorization', `Bearer ${hrToken}`)
-      .send({ requestedLwd: dateOffset(40), noticePeriodDays: 10 })
+      .send({ requestedLwd: dateOffset(40), noticePeriodDays: 30 })
       .expect(201);
     const hrResId = (hrSub.body as ResignationBody).id;
     await request(app.getHttpServer())
