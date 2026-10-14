@@ -128,6 +128,19 @@ describe('Tax Declarations (e2e)', () => {
     ).toBe(employeeId);
   });
 
+  it('lists the previous and current financial year for the pickers, never the next one', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/tax-declarations/financial-years')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const body = res.body as { current: string; years: string[] };
+    expect(body.years).toHaveLength(2);
+    expect(body.years[1]).toBe(body.current);
+    // Consecutive years, e.g. 2025-26 then 2026-27.
+    const [first, second] = body.years.map((y) => Number(y.slice(0, 4)));
+    expect(second).toBe(first + 1);
+  });
+
   it("HR editing the EMPLOYEE's declaration can set status to VERIFIED", async () => {
     const res = await request(app.getHttpServer())
       .post('/tax-declarations')

@@ -21,6 +21,13 @@ export class TaxDeclarationsController {
     private readonly taxDeclarationsService: TaxDeclarationsService,
   ) {}
 
+  // The financial years a declaration can be filed for. Declared before the bare GET so the web and mobile year
+  // pickers read one list instead of each working it out from the device date.
+  @Get('financial-years')
+  financialYears(@CurrentUser() caller: Caller) {
+    return this.taxDeclarationsService.financialYears(caller.organizationId);
+  }
+
   @Get()
   get(
     @Query('employeeId') employeeId: string | undefined,

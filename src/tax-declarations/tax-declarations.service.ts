@@ -86,6 +86,25 @@ export class TaxDeclarationsService {
     }
   }
 
+  // The years an employee can file for: the previous financial year and the current one, worked out from the
+  // organisation's own financial-year start month (April by default). The next year is not offered because upsert()
+  // refuses it until it begins, and it joins the list by itself on that day. Oldest first; `current` is the default.
+  async financialYears(
+    organizationId: string,
+  ): Promise<{ current: string; years: string[] }> {
+    const settings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const today = new Date();
+    const current = getFinancialYear(
+      today.getMonth() + 1,
+      today.getFullYear(),
+      settings.financialYearStartMonth,
+    );
+    const startYear = Number(current.slice(0, 4));
+    const previous = `${startYear - 1}-${String(startYear % 100).padStart(2, '0')}`;
+    return { current, years: [previous, current] };
+  }
+
   async get(
     employeeIdParam: string | undefined,
     financialYear: string | undefined,
