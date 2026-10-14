@@ -569,6 +569,99 @@ export class DashboardService {
     };
   }
 
+  // Who a pending queue is scoped to: employeeIds = null is the whole organization (HR/Admin).
+  private pendingScope(organizationId: string, employeeIds: string[] | null) {
+    return employeeIds
+      ? { organizationId, employeeId: { in: employeeIds } }
+      : { organizationId };
+  }
+
+  // The ONE definition of "waiting for a decision" for each request type. The Approvals list (pendingItems) and the
+  // sidebar badge counts (pendingCounts) both use it, so a badge can never disagree with the list behind it.
+  private pendingWhere(scope: { organizationId: string; employeeId?: { in: string[] } }) {
+    return {
+      leaves: { ...scope, status: LeaveStatus.PENDING },
+      regularizations: {
+        ...scope,
+        regularization: { path: ['status'], equals: 'pending' },
+      },
+      wfh: { ...scope, workArrangementStatus: WfhApprovalStatus.PENDING },
+      overtime: { ...scope, status: OvertimeStatus.PENDING },
+      compOffs: { ...scope, status: CompOffStatus.PENDING },
+      reimbursements: { ...scope, status: ReimbursementStatus.PENDING },
+      loans: { ...scope, status: LoanStatus.PENDING },
+      encashments: { ...scope, status: LeaveEncashmentStatus.PENDING },
+      resignations: { ...scope, status: ResignationStatus.PENDING },
+    };
+  }
+
+  // How many requests are waiting on THIS person, per type, for the sidebar badges. HR/Admin: the whole organization
+  // and every queue; a manager: their department's team and the queues a manager reviews; anyone else: nothing.
+  async pendingCounts(actor: Actor, organizationId: string) {
+    const empty = {
+      leaves: 0,
+      regularizations: 0,
+      wfh: 0,
+      overtime: 0,
+      compOffs: 0,
+      reimbursements: 0,
+      loans: 0,
+      encashments: 0,
+      resignations: 0,
+      total: 0,
+    };
+    const isHr = actor.role === Role.ADMIN || actor.role === Role.HR;
+    if (!isHr && actor.role !== Role.MANAGER) return empty;
+
+    let employeeIds: string[] | null = null;
+    if (!isHr) {
+      // Same team the manager's dashboard uses: active people in their department (none when they have no department).
+      const team =
+        actor.departmentId === null
+          ? []
+          : await this.scopedPrisma.user.findMany({
+              where: {
+                organizationId,
+                departmentId: actor.departmentId,
+                isActive: true,
+              },
+              select: { id: true },
+            });
+      employeeIds = team.map((e) => e.id);
+    }
+    const where = this.pendingWhere(this.pendingScope(organizationId, employeeIds));
+    const [leaves, regularizations, wfh, overtime, compOffs] = await Promise.all([
+      this.scopedPrisma.leave.count({ where: where.leaves }),
+      this.scopedPrisma.attendance.count({ where: where.regularizations }),
+      this.scopedPrisma.attendance.count({ where: where.wfh }),
+      this.scopedPrisma.overtimeRecord.count({ where: where.overtime }),
+      this.scopedPrisma.compOff.count({ where: where.compOffs }),
+    ]);
+    const [reimbursements, loans, encashments, resignations] = isHr
+      ? await Promise.all([
+          this.scopedPrisma.reimbursement.count({ where: where.reimbursements }),
+          this.scopedPrisma.loan.count({ where: where.loans }),
+          this.scopedPrisma.leaveEncashment.count({ where: where.encashments }),
+          this.scopedPrisma.resignation.count({ where: where.resignations }),
+        ])
+      : [0, 0, 0, 0];
+    const counts = {
+      leaves,
+      regularizations,
+      wfh,
+      overtime,
+      compOffs,
+      reimbursements,
+      loans,
+      encashments,
+      resignations,
+    };
+    return {
+      ...counts,
+      total: Object.values(counts).reduce((a, b) => a + b, 0),
+    };
+  }
+
   // The quick-check list of what is waiting for a decision, oldest first (at most 10).
   // Leave, attendance regularization, Work From Home, overtime and comp-off — the request types a manager can
   // review. Each row carries what the dashboard needs to show it and link to the page where it is actioned.
@@ -580,14 +673,13 @@ export class DashboardService {
     includeHrQueues: boolean,
   ) {
     const LIMIT = 10;
-    const scope = employeeIds
-      ? { organizationId, employeeId: { in: employeeIds } }
-      : { organizationId };
+    const scope = this.pendingScope(organizationId, employeeIds);
+    const where = this.pendingWhere(scope);
     const employeeSelect = { select: { name: true, employeeId: true } };
     const [leaves, regularizations, wfh, overtime, compOffs] =
       await Promise.all([
         this.scopedPrisma.leave.findMany({
-          where: { ...scope, status: LeaveStatus.PENDING },
+          where: where.leaves,
           include: {
             employee: employeeSelect,
             leaveType: { select: { name: true } },
@@ -596,28 +688,25 @@ export class DashboardService {
           take: LIMIT,
         }),
         this.scopedPrisma.attendance.findMany({
-          where: {
-            ...scope,
-            regularization: { path: ['status'], equals: 'pending' },
-          },
+          where: where.regularizations,
           include: { employee: employeeSelect },
           orderBy: { updatedAt: 'asc' },
           take: LIMIT,
         }),
         this.scopedPrisma.attendance.findMany({
-          where: { ...scope, workArrangementStatus: WfhApprovalStatus.PENDING },
+          where: where.wfh,
           include: { employee: employeeSelect },
           orderBy: { updatedAt: 'asc' },
           take: LIMIT,
         }),
         this.scopedPrisma.overtimeRecord.findMany({
-          where: { ...scope, status: OvertimeStatus.PENDING },
+          where: where.overtime,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'asc' },
           take: LIMIT,
         }),
         this.scopedPrisma.compOff.findMany({
-          where: { ...scope, status: CompOffStatus.PENDING },
+          where: where.compOffs,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'asc' },
           take: LIMIT,
@@ -626,7 +715,7 @@ export class DashboardService {
     const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
     const reimbursements = includeHrQueues
       ? await this.scopedPrisma.reimbursement.findMany({
-          where: { ...scope, status: ReimbursementStatus.PENDING },
+          where: where.reimbursements,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'asc' },
           take: LIMIT,
@@ -634,7 +723,7 @@ export class DashboardService {
       : [];
     const loans = includeHrQueues
       ? await this.scopedPrisma.loan.findMany({
-          where: { ...scope, status: LoanStatus.PENDING },
+          where: where.loans,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'asc' },
           take: LIMIT,
@@ -642,7 +731,7 @@ export class DashboardService {
       : [];
     const encashments = includeHrQueues
       ? await this.scopedPrisma.leaveEncashment.findMany({
-          where: { ...scope, status: LeaveEncashmentStatus.PENDING },
+          where: where.encashments,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'asc' },
           take: LIMIT,
@@ -650,7 +739,7 @@ export class DashboardService {
       : [];
     const resignations = includeHrQueues
       ? await this.scopedPrisma.resignation.findMany({
-          where: { ...scope, status: ResignationStatus.PENDING },
+          where: where.resignations,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'asc' },
           take: LIMIT,

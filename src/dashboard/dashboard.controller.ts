@@ -29,6 +29,13 @@ export class DashboardController {
   // pull org-wide HR aggregates) — gated to [ADMIN, HR] here, a fix rather
   // than a port, matching the gate the original release's own Executive dashboard
   // already had.
+  // How many requests are waiting on the caller, per type (sidebar badges). Role-scoped in the service; an employee
+  // gets zeros, so no @Roles() is needed.
+  @Get('pending-counts')
+  pendingCounts(@CurrentUser() caller: Caller) {
+    return this.dashboardService.pendingCounts(caller, caller.organizationId);
+  }
+
   @Get('hr')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

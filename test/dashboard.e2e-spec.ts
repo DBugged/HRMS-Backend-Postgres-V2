@@ -648,4 +648,46 @@ describe('Dashboard (e2e)', () => {
     expect(bday).toBeDefined();
     expect(bday?.daysAway).toBe(6);
   });
+
+  describe('pending counts (sidebar badges)', () => {
+    type Counts = Record<string, number>;
+    const get = (token: string) =>
+      request(app.getHttpServer())
+        .get('/dashboard/pending-counts')
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    it('an employee gets zeros; the total is the sum of the queues', async () => {
+      const res = await get(employeeToken);
+      const body = res.body as Counts;
+      expect(body.total).toBe(0);
+      expect(body.leaves).toBe(0);
+      const hr = (await get(hrToken)).body as Counts;
+      const { total, ...queues } = hr;
+      expect(total).toBe(Object.values(queues).reduce((a, b) => a + b, 0));
+    });
+
+    it('the count agrees with the Approvals list behind it (HR and manager)', async () => {
+      // The list is capped at 10 per type, so compare whenever it is not capped; the count may be larger only if capped.
+      const hrCounts = (await get(hrToken)).body as Counts;
+      const hrList = await request(app.getHttpServer())
+        .get('/dashboard/hr')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const hrItems = (hrList.body as { pendingItems: { type: string }[] }).pendingItems;
+      expect(hrCounts.total).toBeGreaterThanOrEqual(hrItems.length);
+      if (hrItems.length < 10) expect(hrCounts.total).toBe(hrItems.length);
+
+      const mgrCounts = (await get(managerToken)).body as Counts;
+      const mgrList = await request(app.getHttpServer())
+        .get('/dashboard/department-head')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(200);
+      const mgrItems = (mgrList.body as { pendingItems: { type: string }[] }).pendingItems;
+      expect(mgrCounts.total).toBeGreaterThanOrEqual(mgrItems.length);
+      if (mgrItems.length < 10) expect(mgrCounts.total).toBe(mgrItems.length);
+      // A manager never carries the HR-only queues.
+      expect(mgrCounts.resignations + mgrCounts.loans + mgrCounts.encashments + mgrCounts.reimbursements).toBe(0);
+    });
+  });
 });
