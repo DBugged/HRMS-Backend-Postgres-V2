@@ -12,13 +12,20 @@ import {
   Inject,
   Injectable,
 } from '@nestjs/common';
-import { Role, User } from '@prisma/client';
+import {
+  AttendanceStatus,
+  LeaveStatus,
+  PayrollRunStatus,
+  Role,
+  User,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CUSTOM_REPORT_SOURCES } from './custom-report-sources';
 import { resolveOrgTimeContext } from '../payroll/format-date';
 import { CustomReportQueryDto } from './dto/custom-report-query.dto';
 import { ReportColumn } from './report-export';
+import { assertValidDateRange } from './report-limits';
 
 type Actor = Omit<User, 'password'>;
 
@@ -26,6 +33,15 @@ type Actor = Omit<User, 'password'>;
 // the dedicated /reports/payroll route already enforces; the generic
 // report builder must not become a side door around it.
 const MANAGER_BLOCKED_SOURCES = new Set(['payroll']);
+
+// What the `status` filter means for each source. Anything else is rejected with a 400 (it used to reach the database
+// and fail as a 500, and for Employees any value other than 'active' silently meant inactive).
+const STATUS_VALUES: Record<string, readonly string[]> = {
+  employees: ['active', 'inactive'],
+  attendance: Object.values(AttendanceStatus),
+  leaves: Object.values(LeaveStatus),
+  payroll: Object.values(PayrollRunStatus),
+};
 
 @Injectable()
 export class CustomReportService {
@@ -49,6 +65,17 @@ export class CustomReportService {
     if (!src) {
       throw new BadRequestException(
         `source must be one of: ${Object.keys(CUSTOM_REPORT_SOURCES).join(', ')}.`,
+      );
+    }
+    assertValidDateRange(query.from, query.to);
+    const allowedStatuses = STATUS_VALUES[query.source];
+    if (
+      query.status &&
+      allowedStatuses &&
+      !allowedStatuses.includes(query.status)
+    ) {
+      throw new BadRequestException(
+        `status for the "${query.source}" source must be one of: ${allowedStatuses.join(', ')}.`,
       );
     }
     if (actor.role === Role.MANAGER) {

@@ -34,7 +34,11 @@ import {
   LeaveReportQueryDto,
   PayrollReportQueryDto,
 } from './dto/report-queries.dto';
-import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
+import {
+  REPORT_ROW_LIMIT,
+  assertValidDateRange,
+  assertWithinReportLimit,
+} from './report-limits';
 
 type Actor = Omit<User, 'password'>;
 
@@ -74,6 +78,7 @@ export class ReportsService {
     actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
+    assertValidDateRange(query.from, query.to);
     const where: Prisma.AttendanceWhereInput = { organizationId };
     // No dates given used to mean every day anyone ever punched - thousands of rows and several seconds. It now means
     // the current month, the same period the screen opens on; a caller who wants more names a from/to.
@@ -341,6 +346,7 @@ export class ReportsService {
     actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
+    assertValidDateRange(query.from, query.to);
     const where: Prisma.LeaveWhereInput = {
       organizationId,
       status: LeaveStatus.APPROVED,

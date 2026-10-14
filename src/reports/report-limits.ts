@@ -14,3 +14,12 @@ export function assertWithinReportLimit(rows: readonly unknown[]): void {
     );
   }
 }
+
+/** A from/to pair given the wrong way round used to return an empty file; say so instead. Dates are YYYY-MM-DD. */
+export function assertValidDateRange(from?: string, to?: string): void {
+  if (from && to && from > to) {
+    throw new BadRequestException(
+      'The From date must not be after the To date.',
+    );
+  }
+}

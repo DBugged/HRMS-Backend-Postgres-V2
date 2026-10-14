@@ -25,7 +25,11 @@ import {
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
-import { REPORT_ROW_LIMIT, assertWithinReportLimit } from './report-limits';
+import {
+  REPORT_ROW_LIMIT,
+  assertValidDateRange,
+  assertWithinReportLimit,
+} from './report-limits';
 import { dayRangeInOrgTz } from '../common/org-date';
 
 interface PayrollLine {
@@ -957,6 +961,7 @@ export class PayrollReportsService {
     query: PayrollAuditReportQueryDto,
     organizationId: string,
   ): Promise<ReportPayload> {
+    assertValidDateRange(query.from, query.to);
     const where: Prisma.AuditLogWhereInput = {
       organizationId,
       module: AuditModule.PAYROLL,

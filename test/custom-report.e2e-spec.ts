@@ -223,4 +223,38 @@ describe('Custom Report Builder (e2e)', () => {
     // they pass — it's always forced to their own.
     expect(emails).not.toContain('cr-e2e-admin@example.test');
   });
+
+  it('rejects a status that does not belong to the source, and a reversed date range, with 400', async () => {
+    for (const query of [
+      { source: 'attendance', status: 'BOGUS' },
+      { source: 'leaves', status: 'NOPE' },
+      { source: 'payroll', status: 'XYZ' },
+      { source: 'employees', status: 'PRESENT' },
+      { source: 'attendance', from: '2026-10-10', to: '2026-10-01' },
+    ]) {
+      await request(app.getHttpServer())
+        .get('/reports/custom')
+        .query(query)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+    }
+    await request(app.getHttpServer())
+      .get('/reports/custom')
+      .query({ source: 'employees', status: 'active' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+  });
+
+  it('rejects a reversed range on the attendance report and the department leave summary', async () => {
+    await request(app.getHttpServer())
+      .get('/reports/attendance')
+      .query({ from: '2026-10-10', to: '2026-10-01' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+    await request(app.getHttpServer())
+      .get('/reports/leave/department-summary')
+      .query({ from: '2026-10-10', to: '2026-10-01' })
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(400);
+  });
 });
