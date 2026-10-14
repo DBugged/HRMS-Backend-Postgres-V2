@@ -1264,6 +1264,11 @@ export class AttendanceService {
       where: { organizationId: dto.organizationId, employeeId: dto.employeeId },
     });
     if (!user) throw new NotFoundException('Employee not found.');
+    if (!user.isActive) {
+      throw new BadRequestException(
+        'This employee is inactive. Attendance cannot be added for an inactive employee.',
+      );
+    }
 
     const rawPayload = dto.rawPayload as
       { location?: string; latitude?: number; longitude?: number } | undefined;
@@ -1278,6 +1283,11 @@ export class AttendanceService {
       punchTime,
       shiftConfig,
     );
+    if (attendanceDate < utcDateStrOf(user.joiningDate)) {
+      throw new BadRequestException(
+        `The date ${attendanceDate} is before this employee's joining date (${utcDateStrOf(user.joiningDate)}).`,
+      );
+    }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       dto.organizationId,
@@ -2944,6 +2954,21 @@ export class AttendanceService {
     if (dto.date < earliestAllowedDate) {
       throw new BadRequestException(
         `Regularization can only be requested for a date within the last ${windowDays} day${windowDays === 1 ? '' : 's'}.`,
+      );
+    }
+    // No attendance can predate the day the person joined, and nobody who has left can be regularized.
+    const requester = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { joiningDate: true, isActive: true },
+    });
+    if (requester && !requester.isActive) {
+      throw new BadRequestException(
+        'This employee is inactive. Attendance cannot be regularized for an inactive employee.',
+      );
+    }
+    if (requester && dto.date < utcDateStrOf(requester.joiningDate)) {
+      throw new BadRequestException(
+        `The date ${dto.date} is before your joining date (${utcDateStrOf(requester.joiningDate)}).`,
       );
     }
     if (dto.evidenceUrl !== undefined && dto.evidenceUrl !== '') {

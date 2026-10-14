@@ -1040,9 +1040,16 @@ describe('Attendance (e2e)', () => {
         await request(app.getHttpServer())
           .post('/attendance/punch/self')
           .set('Authorization', `Bearer ${employeeToken}`)
-          .send({ latitude: FAR_LAT, longitude: FAR_LNG, selfieUrl: 'e2e-selfie.jpg', batteryPercent: 64 })
+          .send({
+            latitude: FAR_LAT,
+            longitude: FAR_LNG,
+            selfieUrl: 'e2e-selfie.jpg',
+            batteryPercent: 64,
+          })
           .expect(201);
-        const stored = await prisma.punch.findFirstOrThrow({ where: { employeeId } });
+        const stored = await prisma.punch.findFirstOrThrow({
+          where: { employeeId },
+        });
         expect(stored.latitude).toBeCloseTo(FAR_LAT, 5);
         expect(stored.batteryPercent).toBe(64);
 
@@ -1060,9 +1067,15 @@ describe('Attendance (e2e)', () => {
         await request(app.getHttpServer())
           .post('/attendance/punch/self')
           .set('Authorization', `Bearer ${employeeToken}`)
-          .send({ selfieUrl: 'e2e-selfie.jpg', latitude: FAR_LAT, longitude: FAR_LNG })
+          .send({
+            selfieUrl: 'e2e-selfie.jpg',
+            latitude: FAR_LAT,
+            longitude: FAR_LNG,
+          })
           .expect(201);
-        const none = await prisma.punch.findFirstOrThrow({ where: { employeeId } });
+        const none = await prisma.punch.findFirstOrThrow({
+          where: { employeeId },
+        });
         expect(none.latitude).toBeNull();
         expect(none.longitude).toBeNull();
 
@@ -1072,7 +1085,11 @@ describe('Attendance (e2e)', () => {
         await request(app.getHttpServer())
           .post('/attendance/punch/self')
           .set('Authorization', `Bearer ${employeeToken}`)
-          .send({ latitude: FAR_LAT, longitude: FAR_LNG, selfieUrl: 'e2e-selfie.jpg' })
+          .send({
+            latitude: FAR_LAT,
+            longitude: FAR_LNG,
+            selfieUrl: 'e2e-selfie.jpg',
+          })
           .expect(403);
         await request(app.getHttpServer())
           .post('/attendance/punch/self')
@@ -1088,7 +1105,11 @@ describe('Attendance (e2e)', () => {
     it('a punch just outside the fence is accepted only when the device reports a matching accuracy (capped at 50 m)', async () => {
       const metresNorth = (m: number) => OFFICE_LAT + m / 111195;
       // The fence radius is 100 m: 130 m away is 30 m outside it.
-      const near = { latitude: metresNorth(130), longitude: OFFICE_LNG, selfieUrl: 'e2e-selfie.jpg' };
+      const near = {
+        latitude: metresNorth(130),
+        longitude: OFFICE_LNG,
+        selfieUrl: 'e2e-selfie.jpg',
+      };
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${employeeToken}`)
@@ -1103,7 +1124,12 @@ describe('Attendance (e2e)', () => {
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ latitude: metresNorth(160), longitude: OFFICE_LNG, selfieUrl: 'e2e-selfie.jpg', accuracyMeters: 5000 })
+        .send({
+          latitude: metresNorth(160),
+          longitude: OFFICE_LNG,
+          selfieUrl: 'e2e-selfie.jpg',
+          accuracyMeters: 5000,
+        })
         .expect(403);
       await request(app.getHttpServer())
         .post('/attendance/punch/self')
@@ -1386,7 +1412,8 @@ describe('Attendance (e2e)', () => {
     it('a multi-day request is one request: working days only, reviewed together, counted once', async () => {
       // A Friday some weeks ahead: Fri-Mon is Fri, Sat, Sun (weekly off), Mon.
       let off = 30;
-      const dow = (n: number) => new Date(`${offsetDate(n)}T00:00:00Z`).getUTCDay();
+      const dow = (n: number) =>
+        new Date(`${offsetDate(n)}T00:00:00Z`).getUTCDay();
       while (dow(off) !== 5) off += 1;
       const from = offsetDate(off);
       const to = offsetDate(off + 3);
@@ -1396,7 +1423,11 @@ describe('Attendance (e2e)', () => {
         .query({ from, to })
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
         .expect(200);
-      const p = preview.body as { days: string[]; skipped: { date: string; reason: string }[]; count: number };
+      const p = preview.body as {
+        days: string[];
+        skipped: { date: string; reason: string }[];
+        count: number;
+      };
       // Fri..Mon is four calendar days; the weekly off (Sunday, and Saturday where the org has it) is left out.
       expect(p.days.length + p.skipped.length).toBe(4);
       expect(p.skipped.every((x) => x.reason === 'WEEKLY_OFF')).toBe(true);
@@ -1410,7 +1441,11 @@ describe('Attendance (e2e)', () => {
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
         .send({ date: from, endDate: to, workArrangement: 'WFH' })
         .expect(200);
-      const body = res.body as { requestId: string; days: string[]; count: number };
+      const body = res.body as {
+        requestId: string;
+        days: string[];
+        count: number;
+      };
       expect(body.count).toBe(expectedCount);
       expect(body.days).toEqual(p.days);
 
@@ -1426,13 +1461,19 @@ describe('Attendance (e2e)', () => {
         where: { employeeId: wfhEmployeeId, wfhRequestId: body.requestId },
       });
       expect(rows).toHaveLength(expectedCount);
-      expect(rows.every((r) => r.workArrangementStatus === 'PENDING')).toBe(true);
+      expect(rows.every((r) => r.workArrangementStatus === 'PENDING')).toBe(
+        true,
+      );
       const counts = await request(app.getHttpServer())
         .get('/dashboard/pending-counts')
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(200);
       const singlesPending = await prisma.attendance.count({
-        where: { workArrangement: 'WFH', workArrangementStatus: 'PENDING', wfhRequestId: null },
+        where: {
+          workArrangement: 'WFH',
+          workArrangementStatus: 'PENDING',
+          wfhRequestId: null,
+        },
       });
       expect((counts.body as { wfh: number }).wfh).toBe(singlesPending + 1);
 
@@ -1451,7 +1492,9 @@ describe('Attendance (e2e)', () => {
       const after = await prisma.attendance.findMany({
         where: { employeeId: wfhEmployeeId, wfhRequestId: body.requestId },
       });
-      expect(after.every((r) => r.workArrangementStatus === 'APPROVED')).toBe(true);
+      expect(after.every((r) => r.workArrangementStatus === 'APPROVED')).toBe(
+        true,
+      );
       // Nothing is left pending for that request, so a second decision finds nothing.
       await request(app.getHttpServer())
         .patch(`/attendance/work-arrangement/group/${body.requestId}/review`)
@@ -1461,29 +1504,45 @@ describe('Attendance (e2e)', () => {
     });
 
     it('a range with no working day, a backwards range and an over-long range are refused', async () => {
-      const dow = (n: number) => new Date(`${offsetDate(n)}T00:00:00Z`).getUTCDay();
+      const dow = (n: number) =>
+        new Date(`${offsetDate(n)}T00:00:00Z`).getUTCDay();
       // A Sunday inside the 60-day window.
       let off = 40;
       while (dow(off) !== 0) off += 1;
       const one = await request(app.getHttpServer())
         .put('/attendance/work-arrangement')
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
-        .send({ date: offsetDate(off), endDate: offsetDate(off + 1), workArrangement: 'WFH' })
+        .send({
+          date: offsetDate(off),
+          endDate: offsetDate(off + 1),
+          workArrangement: 'WFH',
+        })
         .expect(200); // Sun (off) + Mon: one working day is fine
       expect((one.body as { count: number }).count).toBe(1);
       // Leave nothing pending behind: later tests look for this employee's pending row by employee id.
       await prisma.attendance.deleteMany({
-        where: { employeeId: wfhEmployeeId, wfhRequestId: (one.body as { requestId: string }).requestId },
+        where: {
+          employeeId: wfhEmployeeId,
+          wfhRequestId: (one.body as { requestId: string }).requestId,
+        },
       });
       await request(app.getHttpServer())
         .put('/attendance/work-arrangement')
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
-        .send({ date: offsetDate(off + 5), endDate: offsetDate(off + 2), workArrangement: 'WFH' })
+        .send({
+          date: offsetDate(off + 5),
+          endDate: offsetDate(off + 2),
+          workArrangement: 'WFH',
+        })
         .expect(400);
       await request(app.getHttpServer())
         .put('/attendance/work-arrangement')
         .set('Authorization', `Bearer ${wfhEmployeeToken}`)
-        .send({ date: offsetDate(10), endDate: offsetDate(10 + 40), workArrangement: 'WFH' })
+        .send({
+          date: offsetDate(10),
+          endDate: offsetDate(10 + 40),
+          workArrangement: 'WFH',
+        })
         .expect(400);
     });
 
@@ -2276,6 +2335,11 @@ describe('Attendance (e2e)', () => {
 
     describe('Admin self-regularization and the auto-approval sweep', () => {
       it("an Admin's own request applies at once, from hours (not blindly PRESENT), and is audited", async () => {
+        // The founder joined when the organization was created (today): a day before that cannot be regularized.
+        await prisma.user.updateMany({
+          where: { email: 'att-e2e-admin@example.test' },
+          data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+        });
         const date = offsetDate(-2);
         const res = await request(app.getHttpServer())
           .post('/attendance/regularization')
@@ -3325,7 +3389,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('a later correction that removes the overshoot deletes the still-PENDING suggestion', async () => {
-      const date = offsetWeekdayAvoidingHolidays(-32);
+      const date = offsetWeekdayAvoidingHolidays(-52);
       await punchAt(employeeId, istIso(date, '09:30'));
       await punchAt(employeeId, istIso(date, '19:15'));
       const created = await prisma.overtimeRecord.findFirstOrThrow({
