@@ -22,6 +22,9 @@ function build(employee: Row) {
     } as never,
     { user: { findFirst: async () => employee } } as never,
     { send: async (m: Row) => sent.push(m) } as never,
+    {
+      renderOccasion: async (_o: string, _k: string, _v: unknown, f: Row) => ({ ...f }),
+    } as never,
   );
   return { controller, sent };
 }

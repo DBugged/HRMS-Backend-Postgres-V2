@@ -28,6 +28,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { escapeHtml } from '../email-templates/email-layout';
 import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
 import { paginate, skip } from '../common/pagination';
@@ -65,6 +66,7 @@ export class ResignationsService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
@@ -800,15 +802,25 @@ export class ResignationsService {
             select: { companyName: true },
           })
         )?.companyName;
+        // Through the shared email shell (organization header and footer, styled body).
+        const rendered = await this.emailTemplatesService.renderOccasion(
+          organizationId,
+          'RESIGNATION_DECISION',
+          { employeeName: employee.name, companyName: company ?? '' },
+          {
+            subject: `Your resignation has been ${approved ? 'approved' : 'declined'}`,
+            html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${
+              approved
+                ? `Your resignation has been approved. Your last working day is <strong>${escapeHtml(String(extra.approvedLwd))}</strong>.`
+                : 'Your resignation request was not approved. Please speak to HR for details.'
+            }</p>`,
+          },
+        );
         await this.emailService.send({
           organizationId,
           to: employee.email,
-          subject: `Your resignation has been ${approved ? 'approved' : 'declined'}`,
-          html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${
-            approved
-              ? `Your resignation has been approved. Your last working day is <strong>${escapeHtml(String(extra.approvedLwd))}</strong>.`
-              : 'Your resignation request was not approved. Please speak to HR for details.'
-          }</p><p>${escapeHtml(company ?? '')}</p>`,
+          subject: rendered.subject,
+          html: rendered.html,
         });
       }
     } catch {

@@ -29,7 +29,12 @@ import {
   EMAIL_PREHEADERS,
   EMAIL_TEMPLATE_DEFAULTS,
 } from './email-template-defaults';
-import { escapeHtml, finalizeEmailHtml, wrapEmailShell } from './email-layout';
+import {
+  escapeHtml,
+  finalizeEmailHtml,
+  upgradePlainEmailHtml,
+  wrapEmailShell,
+} from './email-layout';
 import { renderTemplate } from './render-template';
 import { sanitizeEmailHtml } from './email-html-sanitizer';
 import { wrapAll } from '../common/pagination';
@@ -509,11 +514,20 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
         ? null
         : stored;
     if (!template) {
+      // A code-written fallback is plain HTML: give it the shared look (heading, spacing, a real button for a lone
+      // link) instead of sending bare paragraphs under the branded header.
+      const category = EMAIL_TEMPLATE_DEFAULTS.find(
+        (d) => d.occasionKey === occasionKey,
+      )?.category;
+      const styled = upgradePlainEmailHtml(fallback.html, {
+        title: fallback.subject,
+        category,
+      });
       return {
         subject: fallback.subject,
         html: await this.applyShell(
           await this.appendSignature(
-            fallback.html,
+            styled,
             organizationId,
             variables,
             null,

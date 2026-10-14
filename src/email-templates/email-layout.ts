@@ -286,6 +286,36 @@ export function emailBody(parts: {
   return eyebrow(parts.category) + title(parts.title) + parts.blocks.join('');
 }
 
+// A fallback body written as plain HTML in code (<p>, <a>) is upgraded to the same components every designed template
+// uses - paragraph spacing and type, a real button for a lone link, and a heading - so an email never goes out as
+// unstyled text under a branded header. A body that already carries components (a table or a heading) is left alone.
+export function upgradePlainEmailHtml(
+  html: string,
+  opts: { title?: string; category?: string } = {},
+): string {
+  if (/<table|<h1/i.test(html)) return html;
+  const blocks: string[] = [];
+  const paragraphs = html.match(/<p\b[^>]*>[\s\S]*?<\/p>/gi);
+  const pieces = paragraphs
+    ? paragraphs.map((p) => p.replace(/^<p\b[^>]*>|<\/p>$/gi, '').trim())
+    : [html.trim()].filter(Boolean);
+  for (const inner of pieces) {
+    if (!inner) continue;
+    const lone = /^<a\s+[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>$/i.exec(inner);
+    if (lone) {
+      // A link whose text is just its own address (a reset link) reads better as a button with a plain label.
+      const text = lone[2].trim();
+      blocks.push(button(lone[1], /^https?:\/\//i.test(text) ? 'Open the link' : text));
+    } else {
+      blocks.push(paragraph(inner));
+    }
+  }
+  const head =
+    (opts.category ? eyebrow(opts.category) : '') +
+    (opts.title ? title(opts.title) : '');
+  return head + blocks.join('');
+}
+
 // ---------------------------------------------------------------- shell
 
 export interface EmailBranding {

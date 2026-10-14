@@ -5,6 +5,7 @@ import { OffboardingModule } from '../offboarding/offboarding.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 @Module({
   imports: [
@@ -12,6 +13,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     AuditLogModule,
     EmployeeTimelineModule,
     NotificationsModule,
+    EmailTemplatesModule,
   ],
   controllers: [ResignationsController],
   providers: [ResignationsService],

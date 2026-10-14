@@ -21,6 +21,10 @@ import {
 import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { ResendVerificationDto, VerifyEmailDto } from './dto/verify-email.dto';
 import { escapeHtml } from '../email-templates/email-layout';
+import {
+  confirmEmailHtml,
+  founderWelcomeHtml,
+} from '../email-templates/founder-emails';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -288,14 +292,13 @@ export class AuthService {
     // fail registration.
     const loginUrl = `${frontendUrl()}/login`;
     const verifyUrl = `${frontendUrl()}/verify-email?token=${verificationToken}`;
-    const fallbackHtml = `
-        <p>Hi ${escapeHtml(user.name)},</p>
-        <p>Thank you for creating your account with ${escapeHtml(organization.name)} HRMS.</p>
-        <p>Please confirm your email address to activate it - the link is valid for 48 hours:</p>
-        <p><a href="${verifyUrl}">Confirm my email address</a></p>
-        <p>Once confirmed you can <a href="${loginUrl}">log in</a>, complete your Organization Setup (company profile, registration details, contact info, branding) and start adding employees.</p>
-        <p>If you didn't create this account, you can safely ignore this email.</p>
-      `;
+    // Built from the shared email components (heading, a real confirm button, next steps), not plain paragraphs.
+    const fallbackHtml = founderWelcomeHtml({
+      name: user.name,
+      companyName: organization.name,
+      loginUrl,
+      verifyUrl: emailVerificationRequired() ? verifyUrl : null,
+    });
     // Platform-level email (D'CoreHR welcoming the org's founder) — never
     // seeded as an org-editable template (see EmailTemplatesService.
     // seedDefaults), so this always renders the fallback below, shelled
@@ -711,11 +714,22 @@ export class AuthService {
       },
     });
     const verifyUrl = `${frontendUrl()}/verify-email?token=${rawToken}`;
+    // Same platform shell (D'CoreHR header and footer) as the welcome email, and the same components - this used to be
+    // sent as bare paragraphs with no shell at all.
+    const confirm = await this.emailTemplatesService.renderOccasion(
+      user.organizationId,
+      'FOUNDER_ACCOUNT_WELCOME',
+      { employeeName: user.name, verifyUrl },
+      {
+        subject: 'Confirm your email address',
+        html: confirmEmailHtml({ name: user.name, verifyUrl }),
+      },
+    );
     await this.emailService.send({
       organizationId: user.organizationId,
       to: user.email,
-      subject: 'Confirm your email address',
-      html: `<p>Hi ${escapeHtml(user.name)},</p><p>Please confirm your email address - the link is valid for 48 hours:</p><p><a href="${verifyUrl}">Confirm my email address</a></p>`,
+      subject: confirm.subject,
+      html: confirm.html,
     });
     return generic;
   }

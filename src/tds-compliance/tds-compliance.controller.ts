@@ -34,6 +34,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { sendReportBranded } from '../reports/report-branding';
 import { TdsComplianceService } from './tds-compliance.service';
 import { renderForm130 } from './form130-pdf';
+import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmailService } from '../notifications/email.service';
 import { escapeHtml } from '../email-templates/email-layout';
 import {
@@ -62,6 +63,7 @@ export class TdsComplianceController {
     private readonly service: TdsComplianceService,
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly emailService: EmailService,
+    private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
   @Get('monthly')
@@ -254,11 +256,21 @@ export class TdsComplianceController {
     const pdf = await renderForm130(data, logo);
     const filename = `${data.formName.replace(' ', '')}_${data.employee.code}_${q.financialYear}.pdf`;
     const subject = `Your ${data.formName} for ${q.financialYear}`;
+    // Through the shared email shell (organization header, footer, styled body) - it used to go out as bare paragraphs.
+    const rendered = await this.emailTemplatesService.renderOccasion(
+      c.organizationId,
+      'TAX_CERTIFICATE_SENT',
+      { employeeName: employee.name, formName: data.formName, financialYear: q.financialYear },
+      {
+        subject,
+        html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Your ${escapeHtml(data.formName)} (tax certificate) for ${escapeHtml(q.financialYear)} is attached. Please keep it for your income-tax filing.</p>`,
+      },
+    );
     await this.emailService.send({
       organizationId: c.organizationId,
       to,
-      subject,
-      html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Your ${escapeHtml(data.formName)} (tax certificate) for ${escapeHtml(q.financialYear)} is attached. Please keep it for your income-tax filing.</p>`,
+      subject: rendered.subject,
+      html: rendered.html,
       attachments: [{ filename, content: pdf }],
     });
     return {
