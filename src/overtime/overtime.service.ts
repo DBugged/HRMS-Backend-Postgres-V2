@@ -34,6 +34,7 @@ import { LogOvertimeDto } from './dto/log-overtime.dto';
 import {
   pickWorkCompensation,
   resolveWorkCompensation,
+  selectableWorkCompensation,
 } from './work-compensation';
 import { overtimeDayProblem, type DayKind } from './overtime-day-rules';
 import {
@@ -300,7 +301,10 @@ export class OvertimeService {
       where: { organizationId },
       select: { workCompensation: true },
     });
-    return resolveWorkCompensation(settings?.workCompensation);
+    // Only the options that grant something: 0 / 0 placeholders are not offered, and not accepted on approval.
+    return selectableWorkCompensation(
+      resolveWorkCompensation(settings?.workCompensation),
+    );
   }
 
   // Current multipliers for each overtime type, so the log form can show

@@ -14,6 +14,14 @@ import { overtimeDayProblem } from './overtime-day-rules';
 
 type Row = Record<string, any>;
 
+const CONFIGURED_OPTIONS = [
+  { key: 'COMP_OFF', label: 'Comp-off (1 day)', compOffDays: 1, payDays: 0 },
+  { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
+  { key: 'PAY_2', label: '2 days pay', compOffDays: 0, payDays: 2 },
+  { key: 'COMP_OFF_PAY_1', label: 'Comp-off + 1 day pay', compOffDays: 1, payDays: 1 },
+  { key: 'COMP_OFF_PAY_2', label: 'Comp-off + 2 days pay', compOffDays: 1, payDays: 2 },
+];
+
 function build(
   opts: {
     overtimePayOn?: boolean;
@@ -57,7 +65,9 @@ function build(
               otWeekendRate: 2,
               otNightRate: 1.75,
               compOffExpiryDays: 90,
-              workCompensation: opts.workCompensation ?? {},
+              // A configured list: the built-in options start at 0 / 0 and are not offered until set, so these
+              // tests state the shapes they approve with.
+              workCompensation: { options: CONFIGURED_OPTIONS, ...(opts.workCompensation ?? {}) },
               ...opts.rates,
             },
     },

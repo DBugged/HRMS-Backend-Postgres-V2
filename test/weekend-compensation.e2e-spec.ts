@@ -197,20 +197,38 @@ describe('Weekend work compensation (e2e)', () => {
     ).toBe(0);
   });
 
-  it('lists the built-in compensation options, with no default', async () => {
+  it('an unconfigured organization is offered no compensation option (the built-in list starts at 0 / 0)', async () => {
     const res = await admin().get('/overtime/compensation-options').expect(200);
     const body = res.body as {
       defaultKey: string | null;
       options: { key: string }[];
     };
     expect(body.defaultKey).toBeNull();
-    expect(body.options.map((o) => o.key)).toEqual([
-      'COMP_OFF',
-      'PAY_1',
-      'PAY_2',
-      'COMP_OFF_PAY_1',
-      'COMP_OFF_PAY_2',
-    ]);
+    expect(body.options).toEqual([]);
+  });
+
+  it('saving the standard options makes them selectable, with no default', async () => {
+    const current = await admin().get('/payroll-settings').expect(200);
+    await admin()
+      .put('/payroll-settings')
+      .send({
+        ...pickSettings(current.body as Record<string, unknown>),
+        workCompensation: {
+          defaultKey: null,
+          options: [
+            { key: 'COMP_OFF', label: 'Comp-off (1 day)', compOffDays: 1, payDays: 0 },
+            { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
+            { key: 'PAY_2', label: '2 days pay', compOffDays: 0, payDays: 2 },
+            { key: 'COMP_OFF_PAY_1', label: 'Comp-off + 1 day pay', compOffDays: 1, payDays: 1 },
+            { key: 'COMP_OFF_PAY_2', label: 'Comp-off + 2 days pay', compOffDays: 1, payDays: 2 },
+          ],
+        },
+      })
+      .expect(200);
+    const res = await admin().get('/overtime/compensation-options').expect(200);
+    const body = res.body as { defaultKey: string | null; options: { key: string }[] };
+    expect(body.defaultKey).toBeNull();
+    expect(body.options.map((o) => o.key)).toEqual(['COMP_OFF', 'PAY_1', 'PAY_2', 'COMP_OFF_PAY_1', 'COMP_OFF_PAY_2']);
   });
 
   it('comp-off + 1 day pay: a comp-off lands in the balance and payroll pays one day', async () => {
