@@ -1296,6 +1296,7 @@ model Leave {
   @@index([organizationId, status])
   @@index([organizationId, createdAt])
   @@index([organizationId, employeeId, startDate])
+  @@index([organizationId, status, startDate])
   @@map("leaves")
 }
 
