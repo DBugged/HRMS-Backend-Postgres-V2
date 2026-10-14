@@ -237,9 +237,11 @@ describe('Comp-Offs (e2e)', () => {
     const res = await request(app.getHttpServer())
       .patch(`/comp-offs/${compOffId}/review`)
       .set('Authorization', `Bearer ${managerToken}`)
-      .send({ decision: 'APPROVED' })
+      .send({ decision: 'APPROVED', comments: '  Approved - worked the full day  ' })
       .expect(200);
     expect((res.body as CompOffBody).status).toBe('APPROVED');
+    // The reviewer's note is stored (trimmed) so the employee can see why.
+    expect((res.body as { decisionNote: string | null }).decisionNote).toBe('Approved - worked the full day');
   });
 
   it('rejects reviewing an already-reviewed comp-off', async () => {

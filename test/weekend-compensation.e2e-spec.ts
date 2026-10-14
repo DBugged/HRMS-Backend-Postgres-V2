@@ -323,10 +323,12 @@ describe('Weekend work compensation (e2e)', () => {
       .expect(400);
     await admin()
       .patch(`/overtime/${monday.id}/review`)
-      .send({ status: 'APPROVED' })
+      .send({ status: 'APPROVED', comments: 'Approved for the release week' })
       .expect(200);
     const after = await otFor('2026-09-14');
     expect(after.compensationKey).toBeNull();
+    // The reviewer's note is stored on the record.
+    expect((after as unknown as { decisionNote: string | null }).decisionNote).toBe('Approved for the release week');
     const run = await admin()
       .post('/payroll/calculate')
       .send({ month: 9, year: 2026, employeeId })

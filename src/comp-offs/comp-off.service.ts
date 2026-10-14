@@ -436,6 +436,7 @@ export class CompOffService {
         status: dto.decision,
         approvedById: actor.id,
         approvedAt: new Date(),
+        decisionNote: dto.comments?.trim() || null,
       },
     });
     if (count === 0) {
@@ -453,7 +454,7 @@ export class CompOffService {
         organizationId,
       );
       const title = `Comp-Off Request ${dto.decision}`;
-      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.`;
+      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.${dto.comments?.trim() ? ` Comments: ${dto.comments.trim()}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -474,6 +475,7 @@ export class CompOffService {
             '',
             dateFormat,
           ),
+          comments: dto.comments?.trim() ?? '',
         },
         { subject: title, html: message },
       );
@@ -494,7 +496,11 @@ export class CompOffService {
       module: 'LEAVE',
       organizationId,
       targetId: id,
-      details: { employeeId: compOff.employeeId, decision: dto.decision },
+      details: {
+        employeeId: compOff.employeeId,
+        decision: dto.decision,
+        ...(dto.comments?.trim() && { comments: dto.comments.trim() }),
+      },
     });
     await this.timelineService.logEvent({
       organizationId,

@@ -474,6 +474,7 @@ export class OvertimeService {
         data: {
           status: dto.status,
           approvedById: actor.id,
+          decisionNote: dto.comments?.trim() || null,
           ...(option && {
             compensationKey: option.key,
             payDays: option.payDays,
@@ -536,6 +537,7 @@ export class OvertimeService {
       details: {
         employeeId: record.employeeId,
         status: dto.status,
+        ...(dto.comments?.trim() && { comments: dto.comments.trim() }),
         ...(option && {
           compensation: option.key,
           compOffDays: option.compOffDays,
@@ -560,7 +562,7 @@ export class OvertimeService {
         organizationId,
       );
       const title = `Overtime Request ${dto.status}`;
-      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat, timeZone)} has been ${dto.status.toLowerCase()}.`;
+      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat, timeZone)} has been ${dto.status.toLowerCase()}.${dto.comments?.trim() ? ` Comments: ${dto.comments.trim()}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -576,6 +578,7 @@ export class OvertimeService {
           hours: String(record.hours),
           date: formatDateDisplay(record.date, '', dateFormat, timeZone),
           status: dto.status,
+          comments: dto.comments?.trim() ?? '',
         },
         { subject: title, html: message },
       );

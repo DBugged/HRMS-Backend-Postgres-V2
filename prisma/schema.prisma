@@ -1331,6 +1331,8 @@ model CompOff {
   approvedById String?
   approvedBy   User?         @relation("CompOffApprovedBy", fields: [approvedById], references: [id])
   approvedAt   DateTime?
+  // The reviewer's note on the decision (why it was rejected, or a remark on an approval).
+  decisionNote String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2078,6 +2080,8 @@ model OvertimeRecord {
   payDays         Float   @default(0)
   compOffDays     Float   @default(0)
   compOffId       String?
+  // The reviewer's note on the decision (why it was rejected, or a remark on an approval).
+  decisionNote    String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
