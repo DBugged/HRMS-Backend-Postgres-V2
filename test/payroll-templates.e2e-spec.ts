@@ -85,6 +85,16 @@ describe('Payroll Templates (e2e)', () => {
   let firstId: string;
   let secondId: string;
 
+  it('refuses a template name that is only marks or holds characters a name cannot have', async () => {
+    for (const name of ['....', '/', '?', '***', 'Q1/2026', '<script>']) {
+      await request(app.getHttpServer())
+        .post('/payroll-templates')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name })
+        .expect(400);
+    }
+  });
+
   it('EMPLOYEE gets 403', async () => {
     await request(app.getHttpServer())
       .get('/payroll-templates')

@@ -19,6 +19,12 @@ import {
 // Plain text only: no angle brackets (markup) in anything that is printed on a payslip.
 const PLAIN_TEXT = /^[^<>]*$/;
 const PLAIN_TEXT_MESSAGE = '$property cannot contain < or > characters';
+// A template's name is a label people pick from a list: it needs at least one letter or digit, and only letters,
+// digits, spaces and a few ordinary marks ( _ - . , & ' # + : and brackets ). "....", "/" or "?" alone are not names.
+export const TEMPLATE_NAME =
+  /^(?=.*[\p{L}\p{N}])[\p{L}\p{M}\p{N} _\-.,&()'’#+:]+$/u;
+export const TEMPLATE_NAME_MESSAGE =
+  "name must contain a letter or a number, and only letters, numbers, spaces and the marks _ - . , & ( ) ' # + :";
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 const HEX_MESSAGE = '$property must be a hex color such as #5546e0';
 // Never an address on someone else's server: a stored file key or one of our own signed /files/ paths.
@@ -32,6 +38,7 @@ export class CreatePayrollTemplateDto {
   @MinLength(1)
   @MaxLength(100)
   @Matches(PLAIN_TEXT, { message: PLAIN_TEXT_MESSAGE })
+  @Matches(TEMPLATE_NAME, { message: TEMPLATE_NAME_MESSAGE })
   name?: string;
 
   @ApiPropertyOptional({

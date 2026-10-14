@@ -39,3 +39,36 @@ describe('CreatePayrollTemplateDto headerColor', () => {
     expect(errors).toContain('headerColor');
   });
 });
+
+describe('CreatePayrollTemplateDto name', () => {
+  it.each([
+    'Standard Payslip 2026',
+    'Q1 (2026) - Pune',
+    "Ravi's Template #2",
+    'Salary Slip & Tax, v2.1',
+    'वेतन पर्ची 2026',
+  ])('accepts %s', async (name) => {
+    expect((await errorsFor({ name })).errors).not.toContain('name');
+  });
+
+  it.each([
+    '....',
+    '/',
+    '?',
+    '***',
+    '___',
+    '- - -',
+    'Q1/2026',
+    'What?',
+    '<script>',
+    '',
+  ])('refuses %j', async (name) => {
+    expect((await errorsFor({ name })).errors).toContain('name');
+  });
+
+  it('refuses a name longer than 100 characters', async () => {
+    expect((await errorsFor({ name: 'A'.repeat(101) })).errors).toContain(
+      'name',
+    );
+  });
+});
