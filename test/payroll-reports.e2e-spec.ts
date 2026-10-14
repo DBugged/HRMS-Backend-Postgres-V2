@@ -149,7 +149,8 @@ describe('Payroll Reports (e2e)', () => {
 
   const endpoints: { path: string; filename: string }[] = [
     { path: 'salary-register', filename: 'salary_register.xlsx' },
-    { path: 'bank-transfer', filename: 'bank_transfer_report.xlsx' },
+    // The bank file needs a pay period (month + year), so its filename carries it too.
+    { path: 'bank-transfer', filename: 'bank_transfer_report_2026_06.xlsx' },
     { path: 'income-tax', filename: 'income_tax_report.xlsx' },
     { path: 'pf', filename: 'pf_report.xlsx' },
     { path: 'esi', filename: 'esi_report.xlsx' },
@@ -176,10 +177,24 @@ describe('Payroll Reports (e2e)', () => {
     for (const { path: p, filename } of endpoints) {
       const res = await request(app.getHttpServer())
         .get(`/reports/payroll/${p}`)
+        .query(p === 'bank-transfer' ? { month: MONTH, year: YEAR } : {})
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(200);
       expect(res.headers['content-type']).toContain('spreadsheetml');
       expect(res.headers['content-disposition']).toContain(filename);
+    }
+  });
+
+  it('the bank transfer file needs both a month and a year (it never mixes pay periods)', async () => {
+    for (const query of [{}, { month: MONTH }, { year: YEAR }]) {
+      const res = await request(app.getHttpServer())
+        .get('/reports/payroll/bank-transfer')
+        .query(query)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(400);
+      expect((res.body as { message: string }).message).toMatch(
+        /month and year/,
+      );
     }
   });
 

@@ -201,6 +201,13 @@ export class PayrollReportsService {
     query: PayrollReportQueryDto,
     organizationId: string,
   ): Promise<ReportPayload> {
+    // One bank file covers one pay period. Without a month and year this used to return every locked run ever (all
+    // months mixed together), and uploading that to a bank would pay old months again.
+    if (!query.month || !query.year) {
+      throw new BadRequestException(
+        'Choose a month and year for the bank transfer file.',
+      );
+    }
     const runs = await this.fetchRuns(query, organizationId);
     // Only runs with something to transfer: a settlement that nets to a recovery (zero or negative) has no payout.
     const paidRuns = runs.filter((r) => isExportableRun(r) && r.netPay > 0);
