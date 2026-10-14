@@ -11,7 +11,6 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AttendanceStatus } from '@prisma/client';
-import { daysUntilNextOccurrence } from '../src/dashboard/dashboard-date-math';
 
 interface AuthBody {
   accessToken: string;
@@ -63,10 +62,6 @@ describe('Dashboard (e2e)', () => {
   let employeeToken: string;
   let employeeId: string;
   let organizationId: string;
-  let anniversaryJoinMonth: number;
-  let anniversaryJoinDay: number;
-  let birthdayMonth: number;
-  let birthdayDay: number;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -166,8 +161,6 @@ describe('Dashboard (e2e)', () => {
     // roll outside the 30-day window. +5 days avoids that entirely.
     const anniversaryJoin = new Date();
     anniversaryJoin.setDate(anniversaryJoin.getDate() + 5);
-    anniversaryJoinMonth = anniversaryJoin.getMonth() + 1;
-    anniversaryJoinDay = anniversaryJoin.getDate();
     anniversaryJoin.setFullYear(anniversaryJoin.getFullYear() - 2);
     await request(app.getHttpServer())
       .post('/employees')
@@ -184,8 +177,6 @@ describe('Dashboard (e2e)', () => {
     // daysUntilNextOccurrence).
     const birthday = new Date();
     birthday.setDate(birthday.getDate() + 6);
-    birthdayMonth = birthday.getMonth() + 1;
-    birthdayDay = birthday.getDate();
     birthday.setFullYear(birthday.getFullYear() - 30);
     const birthdayEmpCreate = await request(app.getHttpServer())
       .post('/employees')
@@ -598,24 +589,16 @@ describe('Dashboard (e2e)', () => {
     const anniv = body.upcomingAnniversaries.find(
       (a) => a.name === 'Anniversary Employee',
     );
-    const expectedAnnivDaysAway = daysUntilNextOccurrence(
-      anniversaryJoinMonth,
-      anniversaryJoinDay,
-      new Date(),
-    );
+    // Seeded exactly 5 calendar days ahead: the count is whole calendar days from the organisation's today, whatever the
+    // time of day (it used to depend on the clock time and could read one day short in the afternoon).
     expect(anniv).toBeDefined();
     expect(anniv?.years).toBe(2);
-    expect(anniv?.daysAway).toBe(expectedAnnivDaysAway);
+    expect(anniv?.daysAway).toBe(5);
 
     const bday = body.upcomingBirthdays.find(
       (b) => b.name === 'Birthday Employee',
     );
-    const expectedBdayDaysAway = daysUntilNextOccurrence(
-      birthdayMonth,
-      birthdayDay,
-      new Date(),
-    );
     expect(bday).toBeDefined();
-    expect(bday?.daysAway).toBe(expectedBdayDaysAway);
+    expect(bday?.daysAway).toBe(6);
   });
 });

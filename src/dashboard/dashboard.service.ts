@@ -8,7 +8,6 @@
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { currentLeaveYear } from '../leave-balances/leave-year';
-import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable } from '@nestjs/common';
 import {
   AllocationType,
@@ -39,7 +38,11 @@ import {
   daysUntilNextOccurrence,
   monthsForRange,
 } from './dashboard-date-math';
-import { todayInOrgTz } from '../common/org-date';
+import {
+  dateStrInOrgTz,
+  startOfDayInOrgTzUtc,
+  todayInOrgTz,
+} from '../common/org-date';
 import {
   enumerateDateStrings,
   isWeeklyOff,
@@ -416,7 +419,9 @@ export class DashboardService {
         label: `${MONTH_LABELS[month - 1]} ${year}`,
         employeeCount: monthRuns.length,
         netPay: monthRuns.reduce((sum, r) => sum + r.netPay, 0),
-        paymentDate: new Date(year, month, 0).toISOString().slice(0, 10),
+        paymentDate: new Date(Date.UTC(year, month, 0))
+          .toISOString()
+          .slice(0, 10),
       };
     }
 
@@ -457,8 +462,6 @@ export class DashboardService {
   // elsewhere), but worth knowing before wiring a frontend "my team" widget
   // to this endpoint for a non-manager caller.
   async departmentHeadDashboard(actor: Actor, organizationId: string) {
-    const currentYear = new Date().getFullYear();
-
     // A department-less MANAGER has no team: scope to nobody rather than to every unassigned user.
     // (Other roles keep the documented null-department behaviour above.)
     const deptEmployees =
@@ -809,7 +812,6 @@ export class DashboardService {
     const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
     const now = new Date(`${today}T00:00:00`);
     const monthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const currentYear = now.getFullYear();
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
     const currentFinancialYear = getFinancialYear(
@@ -1039,11 +1041,18 @@ export class DashboardService {
   // with no dateOfBirth set just never appears in the widget, same as an
   // employee with no personalData at all).
   async computeHeadcountTrend(months: number, organizationId: string) {
-    const today = new Date();
+    // "Now" is the organisation's calendar day, not the server clock. Joining dates are calendar dates stored at UTC
+    // midnight, so they are bucketed by their UTC fields; a completed offboarding is an instant, so it is bucketed by
+    // its date in the organisation's time zone.
+    const timezone = await this.getOrgTimezone(organizationId);
+    const today = await this.orgNow(organizationId);
     const windowStart = new Date(
-      today.getFullYear(),
-      today.getMonth() - (months - 1),
-      1,
+      Date.UTC(today.getFullYear(), today.getMonth() - (months - 1), 1),
+    );
+    const windowStartDateStr = windowStart.toISOString().slice(0, 10);
+    const windowStartInstant = startOfDayInOrgTzUtc(
+      windowStartDateStr,
+      timezone,
     );
 
     const [
@@ -1061,7 +1070,7 @@ export class DashboardService {
         where: {
           organizationId,
           status: OffboardingStatus.COMPLETED,
-          completedAt: { gte: windowStart },
+          completedAt: { gte: windowStartInstant },
         },
         select: { completedAt: true },
       }),
@@ -1075,20 +1084,23 @@ export class DashboardService {
         where: {
           organizationId,
           status: OffboardingStatus.COMPLETED,
-          completedAt: { lt: windowStart },
+          completedAt: { lt: windowStartInstant },
         },
       }),
     ]);
 
     const joinersByKey = new Map<string, number>();
     for (const j of joiners) {
-      const key = `${j.joiningDate.getFullYear()}-${j.joiningDate.getMonth() + 1}`;
+      const key = `${j.joiningDate.getUTCFullYear()}-${j.joiningDate.getUTCMonth() + 1}`;
       joinersByKey.set(key, (joinersByKey.get(key) ?? 0) + 1);
     }
     const leaversByKey = new Map<string, number>();
     for (const l of leavers) {
       if (!l.completedAt) continue;
-      const key = `${l.completedAt.getFullYear()}-${l.completedAt.getMonth() + 1}`;
+      const [cy, cm] = dateStrInOrgTz(timezone, l.completedAt)
+        .split('-')
+        .map(Number);
+      const key = `${cy}-${cm}`;
       leaversByKey.set(key, (leaversByKey.get(key) ?? 0) + 1);
     }
 
@@ -1151,7 +1163,7 @@ export class DashboardService {
 
   async executiveDashboard(organizationId: string) {
     const WINDOW_DAYS = 30;
-    const today = new Date();
+    const today = await this.orgNow(organizationId);
 
     // Birthdays only need the date of birth, which is stored as plain text inside personalData. Reading the whole
     // personalData would decrypt every employee's PAN / Aadhaar / bank fields just to throw them away, so the one key is
@@ -1189,14 +1201,14 @@ export class DashboardService {
     for (const e of activeEmployees) {
       const jd = e.joiningDate;
       const days = daysUntilNextOccurrence(
-        jd.getMonth() + 1,
-        jd.getDate(),
+        jd.getUTCMonth() + 1,
+        jd.getUTCDate(),
         today,
       );
       if (days <= WINDOW_DAYS) {
         const anniversaryDate = new Date(today);
         anniversaryDate.setDate(today.getDate() + days);
-        const years = anniversaryDate.getFullYear() - jd.getFullYear();
+        const years = anniversaryDate.getFullYear() - jd.getUTCFullYear();
         if (years >= 1) {
           upcomingAnniversaries.push({
             id: e.id,
@@ -1209,22 +1221,21 @@ export class DashboardService {
       }
 
       const dob = e.dateOfBirth;
-      if (typeof dob === 'string' && dob) {
-        const parsed = new Date(dob);
-        if (!Number.isNaN(parsed.getTime())) {
-          const birthdayDays = daysUntilNextOccurrence(
-            parsed.getMonth() + 1,
-            parsed.getDate(),
-            today,
-          );
-          if (birthdayDays <= WINDOW_DAYS) {
-            upcomingBirthdays.push({
-              id: e.id,
-              name: e.name,
-              employeeId: e.employeeId,
-              daysAway: birthdayDays,
-            });
-          }
+      // YYYY-MM-DD, read as the calendar date it is (not through a time zone).
+      const dobParts = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob ?? '');
+      if (dobParts) {
+        const birthdayDays = daysUntilNextOccurrence(
+          Number(dobParts[2]),
+          Number(dobParts[3]),
+          today,
+        );
+        if (birthdayDays <= WINDOW_DAYS) {
+          upcomingBirthdays.push({
+            id: e.id,
+            name: e.name,
+            employeeId: e.employeeId,
+            daysAway: birthdayDays,
+          });
         }
       }
     }
