@@ -493,7 +493,9 @@ export class AttendanceService {
     // quiet: the day is being filled in after the fact (a joining date moved earlier, an HR backfill). The row is written
     // exactly the same, but nobody is told about it: no overtime suggestion and no "marked absent" notification or e-mail
     // for a day that is long past.
-    opts?: { quiet?: boolean },
+    // deferAbsenceNotice: the day is still written (so payroll and dashboards see it), but the "Marked Absent" notice and
+    // e-mail are left for the morning job (sendMorningAbsenceNotices), so they land when people read them.
+    opts?: { quiet?: boolean; deferAbsenceNotice?: boolean },
   ) {
     const employee = await db.user.findFirst({
       where: { id: employeeId, organizationId },
@@ -656,6 +658,7 @@ export class AttendanceService {
         organizationId,
         // A punch-in with no punch-out yet: the person is at work, so the day must not be reported as an absence.
         inTime !== null && outTime === null,
+        opts?.deferAbsenceNotice === true,
       );
     }
 
@@ -1104,6 +1107,8 @@ export class AttendanceService {
     // A punch-in with no punch-out yet: still working, not absent. Until the punch-out arrives (or the day closes as
     // Incomplete) the "Marked Absent" notice and email are not sent - they used to go out the moment someone punched in.
     punchInProgress = false,
+    // Leave the "Marked Absent" notice and e-mail for the morning job; every other notice still goes out now.
+    deferAbsenceNotice = false,
   ) {
     const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
@@ -1132,7 +1137,11 @@ export class AttendanceService {
       return;
     }
 
-    if (status === AttendanceStatus.ABSENT && !punchInProgress) {
+    if (
+      status === AttendanceStatus.ABSENT &&
+      !punchInProgress &&
+      !deferAbsenceNotice
+    ) {
       const title = `Marked Absent — ${displayDate}`;
       const alreadyNotified = await this.scopedPrisma.notification.findFirst({
         where: { organizationId, userId: employeeId, title },
@@ -4305,7 +4314,12 @@ export class AttendanceService {
   // and reports who resolves to ABSENT. Actual notification/email delivery
   // is Batch 9 — this endpoint's shape is preserved so that batch can wire
   // in real delivery without a contract change.
-  async notifyAbsentees(dto: NotifyAbsenteesDto, organizationId: string) {
+  async notifyAbsentees(
+    dto: NotifyAbsenteesDto,
+    organizationId: string,
+    // true for the early-morning sweep: write the absences but hold the notices back for sendMorningAbsenceNotices.
+    deferNotices = false,
+  ) {
     // Only a day that has finished can be called an absence: today an employee who has not punched in yet may still
     // do so, and marking them absent (with an in-app notice and an email) before the day ends is wrong. So the default
     // is yesterday and nothing later than yesterday is accepted.
@@ -4357,6 +4371,7 @@ export class AttendanceService {
         employee.id,
         date,
         organizationId,
+        deferNotices ? { deferAbsenceNotice: true } : undefined,
       );
       if (row.status === AttendanceStatus.ABSENT) {
         employeeIds.push(employee.id);
@@ -4568,10 +4583,46 @@ export class AttendanceService {
         // ahead/behind UTC at 01:00 UTC would get the wrong calendar day
         // marked.
         const yesterday = yesterdayInOrgTz(org.timezone, now);
-        await this.notifyAbsentees({ date: yesterday }, org.id);
+        // Written now, announced at 08:00 org-local time by sendMorningAbsenceNotices.
+        await this.notifyAbsentees({ date: yesterday }, org.id, true);
       } catch (err) {
         this.logger.error(
           `markYesterdayAbsences failed for org ${org.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+  }
+
+  // Tells employees about yesterday's absence at 08:00 in their organization's own timezone, instead of at 01:00 when the
+  // mail would sit unread overnight. Runs hourly and acts only for orgs whose local hour is 8, so each org is handled
+  // once a day. The day is recalculated first, so a night shift that ended after the 01:00 sweep, a late regularization
+  // or an approved leave is picked up before anyone is told they were absent. Re-running is safe: the notice and e-mail
+  // are de-duplicated per employee and date (notifyLateOrAbsent).
+  @Cron('0 * * * *')
+  async sendMorningAbsenceNotices() {
+    const now = new Date();
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true, timezone: true },
+    });
+    for (const org of organizations) {
+      try {
+        const localHour = Number(
+          new Intl.DateTimeFormat('en-GB', {
+            timeZone: org.timezone,
+            hour: '2-digit',
+            hour12: false,
+          }).format(now),
+        );
+        if (localHour !== 8) continue;
+        await this.notifyAbsentees(
+          { date: yesterdayInOrgTz(org.timezone, now) },
+          org.id,
+        );
+      } catch (err) {
+        this.logger.error(
+          `sendMorningAbsenceNotices failed for org ${org.id}`,
           err instanceof Error ? err.stack : String(err),
         );
       }
