@@ -1,7 +1,11 @@
 import { FenceType } from '@prisma/client';
 import {
+  accuracyAllowanceMeters,
   deriveCircleSummary,
   distanceMeters,
+  distanceOutsideFenceMeters,
+  isInsideGeoFenceWithAccuracy,
+  MAX_ACCURACY_ALLOWANCE_METERS,
   isInsideGeoFence,
   isPointInCircle,
   isPointInPolygon,
@@ -224,5 +228,82 @@ describe('deriveCircleSummary', () => {
       longitude: OFFICE_LNG,
       radiusMeters: 200,
     });
+  });
+});
+
+describe('accuracy allowance', () => {
+  // A point `m` metres north of the office (1 deg latitude ~ 111,195 m).
+  const north = (m: number) => OFFICE_LAT + m / 111195;
+  const circle = {
+    fenceType: FenceType.CIRCLE,
+    latitude: OFFICE_LAT,
+    longitude: OFFICE_LNG,
+    radiusMeters: 200,
+    boundary: null,
+  };
+
+  it('caps the allowance and ignores a missing or invalid accuracy', () => {
+    expect(accuracyAllowanceMeters(undefined)).toBe(0);
+    expect(accuracyAllowanceMeters(-5)).toBe(0);
+    expect(accuracyAllowanceMeters('abc')).toBe(0);
+    expect(accuracyAllowanceMeters(30)).toBe(30);
+    expect(accuracyAllowanceMeters(900)).toBe(MAX_ACCURACY_ALLOWANCE_METERS);
+  });
+
+  it('accepts a point just outside a circle only when the reading is that imprecise', () => {
+    const p = north(215); // ~15 m outside the 200 m radius
+    expect(isInsideGeoFence(p, OFFICE_LNG, circle)).toBe(false);
+    expect(isInsideGeoFenceWithAccuracy(p, OFFICE_LNG, circle)).toBe(false);
+    expect(isInsideGeoFenceWithAccuracy(p, OFFICE_LNG, circle, 10)).toBe(false);
+    expect(isInsideGeoFenceWithAccuracy(p, OFFICE_LNG, circle, 20)).toBe(true);
+  });
+
+  it('never widens the fence beyond the cap, however poor the fix', () => {
+    const p = north(200 + MAX_ACCURACY_ALLOWANCE_METERS + 30);
+    expect(isInsideGeoFenceWithAccuracy(p, OFFICE_LNG, circle, 5000)).toBe(false);
+  });
+
+  it('measures the distance to the nearest edge of a rectangle and a polygon', () => {
+    const deg = 100 / 111195; // ~100 m
+    const rect = {
+      fenceType: FenceType.RECTANGLE,
+      latitude: OFFICE_LAT,
+      longitude: OFFICE_LNG,
+      radiusMeters: 1,
+      boundary: {
+        bounds: [
+          [OFFICE_LAT, OFFICE_LNG],
+          [OFFICE_LAT + deg, OFFICE_LNG + deg],
+        ],
+      },
+    };
+    const outside = distanceOutsideFenceMeters(OFFICE_LAT + deg + 20 / 111195, OFFICE_LNG + deg / 2, rect);
+    expect(outside).not.toBeNull();
+    expect(outside as number).toBeGreaterThan(18);
+    expect(outside as number).toBeLessThan(22);
+    expect(isInsideGeoFenceWithAccuracy(OFFICE_LAT + deg + 20 / 111195, OFFICE_LNG + deg / 2, rect, 25)).toBe(true);
+    expect(isInsideGeoFenceWithAccuracy(OFFICE_LAT + deg / 2, OFFICE_LNG + deg / 2, rect)).toBe(true);
+
+    const poly = {
+      fenceType: FenceType.POLYGON,
+      latitude: OFFICE_LAT,
+      longitude: OFFICE_LNG,
+      radiusMeters: 1,
+      boundary: {
+        vertices: [
+          [OFFICE_LAT, OFFICE_LNG],
+          [OFFICE_LAT + deg, OFFICE_LNG],
+          [OFFICE_LAT + deg, OFFICE_LNG + deg],
+        ],
+      },
+    };
+    expect(isInsideGeoFenceWithAccuracy(OFFICE_LAT + deg / 2, OFFICE_LNG + deg / 4, poly)).toBe(true);
+    expect(isInsideGeoFenceWithAccuracy(OFFICE_LAT - 15 / 111195, OFFICE_LNG, poly, 20)).toBe(true);
+    expect(isInsideGeoFenceWithAccuracy(OFFICE_LAT - 80 / 111195, OFFICE_LNG, poly, 20)).toBe(false);
+  });
+
+  it('stays null (unknown) when the geometry is incomplete', () => {
+    const broken = { ...circle, fenceType: FenceType.POLYGON, boundary: { vertices: [[1, 2]] } };
+    expect(isInsideGeoFenceWithAccuracy(OFFICE_LAT, OFFICE_LNG, broken, 30)).toBeNull();
   });
 });

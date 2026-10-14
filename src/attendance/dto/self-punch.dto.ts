@@ -1,6 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
+  IsNumber,
+  Max,
+  Min,
   IsLatitude,
   IsLongitude,
   IsOptional,
@@ -31,4 +34,14 @@ export class SelfPunchDto {
   @IsOptional()
   @IsBoolean()
   mockedLocation?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      "The device's reported accuracy of this fix, in metres. A punch whose point is just outside the fence is accepted when the reading is that imprecise (allowance capped at 50 m); omitted = no allowance.",
+  })
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  @Max(100000)
+  accuracyMeters?: number;
 }

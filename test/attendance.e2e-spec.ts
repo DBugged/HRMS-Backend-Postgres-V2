@@ -1025,6 +1025,33 @@ describe('Attendance (e2e)', () => {
         .expect(403);
     });
 
+    it('a punch just outside the fence is accepted only when the device reports a matching accuracy (capped at 50 m)', async () => {
+      const metresNorth = (m: number) => OFFICE_LAT + m / 111195;
+      // The fence radius is 100 m: 130 m away is 30 m outside it.
+      const near = { latitude: metresNorth(130), longitude: OFFICE_LNG, selfieUrl: 'e2e-selfie.jpg' };
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send(near)
+        .expect(403);
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ ...near, accuracyMeters: 10 })
+        .expect(403);
+      // 160 m away is 60 m outside: beyond the 50 m cap, so even a very poor fix does not get it in.
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ latitude: metresNorth(160), longitude: OFFICE_LNG, selfieUrl: 'e2e-selfie.jpg', accuracyMeters: 5000 })
+        .expect(403);
+      await request(app.getHttpServer())
+        .post('/attendance/punch/self')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ ...near, accuracyMeters: 40 })
+        .expect(201);
+    });
+
     it('accepts a punch inside the assigned geo-fence', async () => {
       const res = await request(app.getHttpServer())
         .post('/attendance/punch/self')

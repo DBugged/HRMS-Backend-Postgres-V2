@@ -124,6 +124,92 @@ export function isInsideGeoFence(
   );
 }
 
+// How far outside the fence (metres) a reading may be and still count as inside, given the accuracy the device
+// reported for it. A phone indoors often reports a fix that is off by tens of metres, which used to turn an employee
+// standing a few metres inside the boundary into "outside". The allowance is the device's own reported accuracy,
+// capped so a very poor fix can never widen the fence by more than MAX_ACCURACY_ALLOWANCE_METERS.
+export const MAX_ACCURACY_ALLOWANCE_METERS = 50;
+
+export function accuracyAllowanceMeters(accuracyMeters: unknown): number {
+  const a = Number(accuracyMeters);
+  if (!Number.isFinite(a) || a <= 0) return 0;
+  return Math.min(a, MAX_ACCURACY_ALLOWANCE_METERS);
+}
+
+// Shortest distance in metres from a point to the segment a-b. Small distances only, so a local flat approximation
+// (equirectangular) is accurate to well under a metre.
+function distanceToSegmentMeters(
+  lat: number,
+  lng: number,
+  a: [number, number],
+  b: [number, number],
+): number {
+  const mPerDegLat = (Math.PI / 180) * EARTH_RADIUS_METERS;
+  const mPerDegLng = mPerDegLat * Math.cos(toRad(lat));
+  const px = (lng - a[1]) * mPerDegLng;
+  const py = (lat - a[0]) * mPerDegLat;
+  const bx = (b[1] - a[1]) * mPerDegLng;
+  const by = (b[0] - a[0]) * mPerDegLat;
+  const len2 = bx * bx + by * by;
+  const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, (px * bx + py * by) / len2));
+  return Math.hypot(px - t * bx, py - t * by);
+}
+
+// How far (metres) a point is from the inside of the fence: 0 when it is inside, otherwise the distance to the
+// nearest edge. null when the geometry is incomplete (callers treat that as "unknown", never "outside").
+export function distanceOutsideFenceMeters(
+  lat: number,
+  lng: number,
+  workLocation: GeoFenceable | null | undefined,
+): number | null {
+  const inside = isInsideGeoFence(lat, lng, workLocation);
+  if (inside === null || !workLocation) return null;
+  if (inside) return 0;
+  const type = workLocation.fenceType || FenceType.CIRCLE;
+  const boundary = workLocation.boundary as
+    | { bounds?: [number, number][]; vertices?: [number, number][] }
+    | null
+    | undefined;
+  let ring: [number, number][] | null = null;
+  if (type === FenceType.RECTANGLE && boundary?.bounds?.length === 2) {
+    const [[latA, lngA], [latB, lngB]] = boundary.bounds;
+    ring = [
+      [latA, lngA],
+      [latA, lngB],
+      [latB, lngB],
+      [latB, lngA],
+    ];
+  } else if (type === FenceType.POLYGON && boundary?.vertices) {
+    ring = boundary.vertices;
+  }
+  if (ring) {
+    let min = Infinity;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      min = Math.min(min, distanceToSegmentMeters(lat, lng, ring[j], ring[i]));
+    }
+    return min;
+  }
+  const d = distanceMeters(
+    lat,
+    lng,
+    workLocation.latitude,
+    workLocation.longitude,
+  );
+  return Math.max(0, d - workLocation.radiusMeters);
+}
+
+// isInsideGeoFence, widened by the reading's accuracy allowance. true/false/null with the same meaning.
+export function isInsideGeoFenceWithAccuracy(
+  lat: number,
+  lng: number,
+  workLocation: GeoFenceable | null | undefined,
+  accuracyMeters?: unknown,
+): boolean | null {
+  const outside = distanceOutsideFenceMeters(lat, lng, workLocation);
+  if (outside === null) return null;
+  return outside <= accuracyAllowanceMeters(accuracyMeters);
+}
+
 export interface CircleSummary {
   latitude: number;
   longitude: number;

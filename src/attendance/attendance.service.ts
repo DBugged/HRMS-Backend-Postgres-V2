@@ -53,7 +53,10 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { effectiveWorkLocation } from '../common/effective-work-location';
 import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
-import { isInsideGeoFence } from '../work-locations/geo-fence';
+import {
+  isInsideGeoFenceWithAccuracy,
+  MAX_ACCURACY_ALLOWANCE_METERS,
+} from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
@@ -1564,7 +1567,14 @@ export class AttendanceService {
         today?.workArrangementStatus === WfhApprovalStatus.APPROVED;
 
       if (!wfhExempt) {
-        const inside = isInsideGeoFence(dto.latitude, dto.longitude, fence);
+        // The device's own accuracy widens the fence slightly (capped), so a good-faith punch from the edge of the
+        // area is not refused because of GPS drift.
+        const inside = isInsideGeoFenceWithAccuracy(
+          dto.latitude,
+          dto.longitude,
+          fence,
+          dto.accuracyMeters,
+        );
         if (inside === false) {
           throw new ForbiddenException(
             `You must be inside your office geo-fence (${fence.name}) to punch in/out.`,
@@ -2095,10 +2105,13 @@ export class AttendanceService {
           fence &&
           record.checkinLatitude !== null &&
           record.checkinLongitude !== null
-            ? isInsideGeoFence(
+            ? isInsideGeoFenceWithAccuracy(
                 record.checkinLatitude,
                 record.checkinLongitude,
                 fence,
+                // The accuracy allowance a punch may have been accepted with (the reading's own accuracy is not
+                // stored), so a punch the server accepted never shows here as outside.
+                MAX_ACCURACY_ALLOWANCE_METERS,
               )
             : null;
         // Same verdict for the check-out point, so the Attendance table's Checkout Location can show the
@@ -2107,10 +2120,13 @@ export class AttendanceService {
           fence &&
           record.checkoutLatitude !== null &&
           record.checkoutLongitude !== null
-            ? isInsideGeoFence(
+            ? isInsideGeoFenceWithAccuracy(
                 record.checkoutLatitude,
                 record.checkoutLongitude,
                 fence,
+                // The accuracy allowance a punch may have been accepted with (the reading's own accuracy is not
+                // stored), so a punch the server accepted never shows here as outside.
+                MAX_ACCURACY_ALLOWANCE_METERS,
               )
             : null;
 
