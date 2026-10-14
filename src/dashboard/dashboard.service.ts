@@ -26,6 +26,7 @@ import {
   WfhApprovalStatus,
 } from '@prisma/client';
 import { leaveDaysInRange } from '../leaves/leave-days-in-range';
+import { EXPORTABLE_RUN_STATUSES } from '../payroll/exportable-runs';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
@@ -109,7 +110,9 @@ export class DashboardService {
       where: {
         organizationId,
         OR: months.map((m) => ({ month: m.month, year: m.year })),
-        status: { not: PayrollRunStatus.DRAFT },
+        // Final payroll only (locked or paid), the same runs the Reports are built from: a run that is still
+        // calculated / verified / approved can change, so it is not counted here yet.
+        status: { in: EXPORTABLE_RUN_STATUSES },
         isFinalSettlement: false,
       },
     });
@@ -245,7 +248,8 @@ export class DashboardService {
           organizationId,
           month: currentMonth,
           year: currentYear,
-          status: { not: PayrollRunStatus.DRAFT },
+          // Final payroll only (locked or paid) - see payrollCostSummary.
+          status: { in: EXPORTABLE_RUN_STATUSES },
           isFinalSettlement: false,
           runSequence: 0,
         },

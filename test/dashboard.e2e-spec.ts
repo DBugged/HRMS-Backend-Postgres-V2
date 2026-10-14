@@ -443,6 +443,53 @@ describe('Dashboard (e2e)', () => {
     expect((res.body as { teamSize: number }).teamSize).toBe(noDeptCount);
   });
 
+  it('payroll cost summary counts final (locked) payroll only, not runs still being worked on', async () => {
+    const cost = async (month: number, year: number) =>
+      (
+        (
+          await request(app.getHttpServer())
+            .get('/dashboard/hr/payroll-cost-summary')
+            .query({ range: 'this_year' })
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as {
+          chart: { month: number; year: number; netPay: number }[];
+        }
+      ).chart.find((c) => c.month === month && c.year === year)?.netPay ?? 0;
+    // Two months of the current year (inside any financial year that contains today's date is not guaranteed for old
+    // months, so use the current and previous month, which are always in this_year).
+    const now = new Date();
+    const cur = { month: now.getUTCMonth() + 1, year: now.getUTCFullYear() };
+    const prev =
+      cur.month === 1
+        ? { month: 12, year: cur.year - 1 }
+        : { month: cur.month - 1, year: cur.year };
+    const mk = (
+      m: { month: number; year: number },
+      status: 'CALCULATED' | 'LOCKED',
+    ) =>
+      prisma.payrollRun.create({
+        data: {
+          organizationId,
+          employeeId,
+          month: m.month,
+          year: m.year,
+          status,
+          netPay: 1234,
+        },
+      });
+    const beforeOpen = await cost(cur.month, cur.year);
+    const beforeFinal = await cost(prev.month, prev.year);
+    await mk(cur, 'CALCULATED');
+    await mk(prev, 'LOCKED');
+    expect(await cost(cur.month, cur.year)).toBe(beforeOpen);
+    expect(await cost(prev.month, prev.year)).toBe(beforeFinal + 1234);
+    // Removed again so the employee dashboard test that follows still sees no payslip.
+    await prisma.payrollRun.deleteMany({
+      where: { organizationId, employeeId, netPay: 1234 },
+    });
+  });
+
   it('EMPLOYEE cannot read the department-head dashboard', async () => {
     await request(app.getHttpServer())
       .get('/dashboard/department-head')
