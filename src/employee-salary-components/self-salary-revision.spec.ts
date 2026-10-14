@@ -18,6 +18,7 @@ function build() {
     controller: new EmployeeSalaryComponentsController(
       service as never,
       {} as never,
+      {} as never,
     ),
     calls,
   };

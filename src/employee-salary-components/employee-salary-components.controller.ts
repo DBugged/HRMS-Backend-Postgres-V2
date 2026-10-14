@@ -17,6 +17,8 @@ import { ForbiddenException } from '@nestjs/common';
 import { Role, User } from '@prisma/client';
 import { EmployeeSalaryComponentsService } from './employee-salary-components.service';
 import { SalaryStructurePdfService } from './salary-structure-pdf.service';
+import { PrivacyAuditService } from '../privacy/privacy-audit.service';
+import { auditSensitive } from '../common/sensitive-audit';
 import { SetComponentValueDto } from './dto/set-component-value.dto';
 import { BulkSetStructureDto } from './dto/bulk-set-structure.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -44,6 +46,7 @@ export class EmployeeSalaryComponentsController {
   constructor(
     private readonly employeeSalaryComponentsService: EmployeeSalaryComponentsService,
     private readonly salaryStructurePdf: SalaryStructurePdfService,
+    private readonly privacyAudit: PrivacyAuditService,
   ) {}
 
   // Employees whose Basic + DA is under 50% of the monthly pay (new Labour Code), for HR to correct.
@@ -87,6 +90,14 @@ export class EmployeeSalaryComponentsController {
       caller.organizationId,
       asOf,
     );
+    // A salary document leaves the system here, so it is on the sensitive-access trail like a payslip download.
+    auditSensitive(this.privacyAudit, caller, {
+      action: 'SALARY_STRUCTURE_DOWNLOADED',
+      category: 'PAYROLL',
+      targetUserId: id,
+      entity: 'EmployeeSalaryStructure',
+      entityId: id,
+    });
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `inline; filename="${filename}"`,

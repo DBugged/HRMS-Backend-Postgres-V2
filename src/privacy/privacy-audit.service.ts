@@ -63,49 +63,66 @@ export class PrivacyAuditService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
 
+  // The chain write is serialized per organization by an advisory lock, but two overlapping requests (e.g. two quick
+  // exports) can still fail a transaction with a write conflict / deadlock. That used to be logged and swallowed, so
+  // the second export left no audit row. It is retried a few times with a short random back-off before giving up.
   async log(input: PrivacyAuditInput): Promise<void> {
-    try {
-      const id = randomUUID();
-      const createdAt = new Date();
-      const meta = sanitizeMeta(input.meta);
-      await this.scopedPrisma.$transaction(async (tx) => {
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'privacy-audit:' + input.organizationId}))`;
-        const last = await tx.privacyAuditLog.findFirst({
-          where: { organizationId: input.organizationId },
-          orderBy: { seq: 'desc' },
-          select: { hash: true },
-        });
-        const prevHash = last?.hash ?? '';
-        const row = {
-          id,
-          organizationId: input.organizationId,
-          actorId: input.actorId ?? null,
-          actorRole: input.actorRole ?? '',
-          action: input.action,
-          category: input.category,
-          targetUserId: input.targetUserId ?? null,
-          entity: input.entity ?? null,
-          entityId: input.entityId ?? null,
-          result: input.result ?? 'SUCCESS',
-          ip: input.ip ?? '',
-          userAgent: (input.userAgent ?? '').slice(0, 300),
-          meta,
-          createdAt,
-        };
-        await tx.privacyAuditLog.create({
-          data: {
-            ...row,
-            meta: meta as Prisma.InputJsonValue,
-            prevHash,
-            hash: computeHash(prevHash, row),
-          },
-        });
-      });
-    } catch (err) {
-      this.logger.error(
-        `Failed to write privacy audit log: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await this.writeRow(input);
+        return;
+      } catch (err) {
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) =>
+            setTimeout(r, 20 * attempt + Math.floor(Math.random() * 40)),
+          );
+          continue;
+        }
+        this.logger.error(
+          `Failed to write privacy audit log after ${MAX_ATTEMPTS} attempts: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
+  }
+
+  private async writeRow(input: PrivacyAuditInput): Promise<void> {
+    const id = randomUUID();
+    const createdAt = new Date();
+    const meta = sanitizeMeta(input.meta);
+    await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'privacy-audit:' + input.organizationId}))`;
+      const last = await tx.privacyAuditLog.findFirst({
+        where: { organizationId: input.organizationId },
+        orderBy: { seq: 'desc' },
+        select: { hash: true },
+      });
+      const prevHash = last?.hash ?? '';
+      const row = {
+        id,
+        organizationId: input.organizationId,
+        actorId: input.actorId ?? null,
+        actorRole: input.actorRole ?? '',
+        action: input.action,
+        category: input.category,
+        targetUserId: input.targetUserId ?? null,
+        entity: input.entity ?? null,
+        entityId: input.entityId ?? null,
+        result: input.result ?? 'SUCCESS',
+        ip: input.ip ?? '',
+        userAgent: (input.userAgent ?? '').slice(0, 300),
+        meta,
+        createdAt,
+      };
+      await tx.privacyAuditLog.create({
+        data: {
+          ...row,
+          meta: meta as Prisma.InputJsonValue,
+          prevHash,
+          hash: computeHash(prevHash, row),
+        },
+      });
+    });
   }
 
   async findAll(query: QueryPrivacyAuditDto, organizationId: string) {

@@ -6,6 +6,7 @@ import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.m
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 import { SalaryStructurePdfService } from './salary-structure-pdf.service';
+import { PrivacyModule } from '../privacy/privacy.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { SalaryStructurePdfService } from './salary-structure-pdf.service';
     EmployeeTimelineModule,
     NotificationsModule,
     EmailTemplatesModule,
+    PrivacyModule,
   ],
   controllers: [EmployeeSalaryComponentsController],
   providers: [EmployeeSalaryComponentsService, SalaryStructurePdfService],
