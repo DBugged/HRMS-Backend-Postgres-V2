@@ -10,6 +10,7 @@ import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { currentLeaveYear } from '../leave-balances/leave-year';
 import { Inject, Injectable } from '@nestjs/common';
 import {
+  Prisma,
   AllocationType,
   AttendanceStatus,
   CompOffStatus,
@@ -569,6 +570,30 @@ export class DashboardService {
     };
   }
 
+  // Pending Work From Home rows -> requests: the days of one multi-day request (same wfhRequestId) are one entry, a
+  // single day stands alone. Days are in date order within a request; requests keep the oldest-first order.
+  private groupWfhRows<
+    T extends { wfhRequestId: string | null; date: string; id: string },
+  >(rows: T[]): { requestId: string | null; rows: T[] }[] {
+    const groups: { requestId: string | null; rows: T[] }[] = [];
+    const byRequest = new Map<string, { requestId: string | null; rows: T[] }>();
+    for (const row of rows) {
+      if (!row.wfhRequestId) {
+        groups.push({ requestId: null, rows: [row] });
+        continue;
+      }
+      let g = byRequest.get(row.wfhRequestId);
+      if (!g) {
+        g = { requestId: row.wfhRequestId, rows: [] };
+        byRequest.set(row.wfhRequestId, g);
+        groups.push(g);
+      }
+      g.rows.push(row);
+    }
+    for (const g of groups) g.rows.sort((a, b) => a.date.localeCompare(b.date));
+    return groups;
+  }
+
   // Who a pending queue is scoped to: employeeIds = null is the whole organization (HR/Admin).
   private pendingScope(organizationId: string, employeeIds: string[] | null) {
     return employeeIds
@@ -593,6 +618,23 @@ export class DashboardService {
       encashments: { ...scope, status: LeaveEncashmentStatus.PENDING },
       resignations: { ...scope, status: ResignationStatus.PENDING },
     };
+  }
+
+  // Pending Work From Home REQUESTS (not days): single days count one each, and all days of a multi-day request count
+  // one together - the same unit the approver sees in the list.
+  private async countPendingWfhRequests(
+    where: Prisma.AttendanceWhereInput,
+  ): Promise<number> {
+    const [singles, groups] = await Promise.all([
+      this.scopedPrisma.attendance.count({
+        where: { ...where, wfhRequestId: null },
+      }),
+      this.scopedPrisma.attendance.groupBy({
+        by: ['wfhRequestId'],
+        where: { ...where, wfhRequestId: { not: null } },
+      }),
+    ]);
+    return singles + groups.length;
   }
 
   // How many requests are waiting on THIS person, per type, for the sidebar badges. HR/Admin: the whole organization
@@ -633,7 +675,7 @@ export class DashboardService {
     const [leaves, regularizations, wfh, overtime, compOffs] = await Promise.all([
       this.scopedPrisma.leave.count({ where: where.leaves }),
       this.scopedPrisma.attendance.count({ where: where.regularizations }),
-      this.scopedPrisma.attendance.count({ where: where.wfh }),
+      this.countPendingWfhRequests(where.wfh),
       this.scopedPrisma.overtimeRecord.count({ where: where.overtime }),
       this.scopedPrisma.compOff.count({ where: where.compOffs }),
     ]);
@@ -697,7 +739,9 @@ export class DashboardService {
           where: where.wfh,
           include: { employee: employeeSelect },
           orderBy: { updatedAt: 'asc' },
-          take: LIMIT,
+          // More than LIMIT rows: a multi-day request is several rows that are shown as ONE item below, so the cap
+          // is applied to requests, not to days.
+          take: 200,
         }),
         this.scopedPrisma.overtimeRecord.findMany({
           where: where.overtime,
@@ -809,15 +853,20 @@ export class DashboardService {
         endDate: null,
         requestedAt: a.updatedAt,
       })),
-      ...wfh.map((a) => ({
+      ...this.groupWfhRows(wfh).map((g) => ({
         type: 'WFH' as const,
-        id: a.id,
-        employee: a.employee.name,
-        employeeId: a.employee.employeeId,
-        summary: 'Work From Home',
-        date: a.date,
-        endDate: null,
-        requestedAt: a.updatedAt,
+        // A multi-day request is decided as one, through its request id (groupId); a single day by its row id.
+        id: g.rows[0].id,
+        groupId: g.requestId,
+        employee: g.rows[0].employee.name,
+        employeeId: g.rows[0].employee.employeeId,
+        summary:
+          g.rows.length > 1
+            ? `Work From Home (${days(g.rows.length)})`
+            : 'Work From Home',
+        date: g.rows[0].date,
+        endDate: g.rows.length > 1 ? g.rows[g.rows.length - 1].date : null,
+        requestedAt: g.rows[0].updatedAt,
       })),
       ...overtime.map((o) => ({
         type: 'OVERTIME' as const,

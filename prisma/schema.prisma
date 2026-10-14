@@ -1934,6 +1934,8 @@ model Attendance {
   workArrangementReviewedById   String?
   workArrangementReviewedAt     DateTime?
   workArrangementReviewComments String?
+  // Rows requested together as one multi-day Work From Home request share this id (see wfh-request-days.ts).
+  wfhRequestId                  String?
   isLate                        Boolean           @default(false)
   isEarlyOut                    Boolean           @default(false)
   // Reflects how this row was last derived, not any individual punch's own
@@ -1955,6 +1957,7 @@ model Attendance {
 
   @@unique([organizationId, employeeId, date])
   @@index([organizationId, date])
+  @@index([organizationId, wfhRequestId])
   @@map("attendances")
 }
 

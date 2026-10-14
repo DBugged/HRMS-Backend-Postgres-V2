@@ -25,6 +25,7 @@ import { SetWorkArrangementDto } from './dto/set-work-arrangement.dto';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { RequestRegularizationDto } from './dto/request-regularization.dto';
 import { ReviewRegularizationDto } from './dto/review-regularization.dto';
+import { PreviewWfhDaysQueryDto } from './dto/preview-wfh-days-query.dto';
 import { ReviewWfhDto } from './dto/review-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
@@ -102,6 +103,19 @@ export class AttendanceController {
     );
   }
 
+  // What a multi-day request would cover (nothing is written). Literal path, registered before the :id routes.
+  @Get('work-arrangement/preview-days')
+  previewWfhDays(
+    @Query() query: PreviewWfhDaysQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.previewWfhDays(
+      query,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   // Literal path, so it must be registered before Patch('work-arrangement/:id/review').
   @Get('work-arrangement/pending')
   @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
@@ -109,6 +123,25 @@ export class AttendanceController {
   @ApiBearerAuth('access-token')
   listPendingWfhRequests(@CurrentUser() caller: Caller) {
     return this.attendanceService.listPendingWfhRequests(
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // Decide every pending day of a multi-day Work From Home request at once (the id is the request id the days share).
+  // Two path segments, so it never collides with the single-day ':id/review' below.
+  @Patch('work-arrangement/group/:requestId/review')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  reviewWfhRequestGroup(
+    @Param('requestId') requestId: string,
+    @Body() dto: ReviewWfhDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.reviewWfhRequestGroup(
+      requestId,
+      dto,
       caller,
       caller.organizationId,
     );

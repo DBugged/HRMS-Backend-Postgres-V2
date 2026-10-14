@@ -12,4 +12,12 @@ export class SetWorkArrangementDto {
   @ApiProperty({ enum: WorkArrangement })
   @IsEnum(WorkArrangement)
   workArrangement!: WorkArrangement;
+
+  @ApiPropertyOptional({
+    description:
+      'Last day of a multi-day Work From Home request (YYYY-MM-DD), with `date` as the first. Only the working days in the range are requested - weekly offs, holidays and leave days are left out - and they are reviewed together as one request. Up to 31 calendar days.',
+  })
+  @IsOptional()
+  @IsValidCalendarDateString()
+  endDate?: string;
 }

@@ -1323,6 +1323,110 @@ describe('Attendance (e2e)', () => {
         .expect(403);
     });
 
+    it('a multi-day request is one request: working days only, reviewed together, counted once', async () => {
+      // A Friday some weeks ahead: Fri-Mon is Fri, Sat, Sun (weekly off), Mon.
+      let off = 30;
+      const dow = (n: number) => new Date(`${offsetDate(n)}T00:00:00Z`).getUTCDay();
+      while (dow(off) !== 5) off += 1;
+      const from = offsetDate(off);
+      const to = offsetDate(off + 3);
+
+      const preview = await request(app.getHttpServer())
+        .get('/attendance/work-arrangement/preview-days')
+        .query({ from, to })
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .expect(200);
+      const p = preview.body as { days: string[]; skipped: { date: string; reason: string }[]; count: number };
+      // Fri..Mon is four calendar days; the weekly off (Sunday, and Saturday where the org has it) is left out.
+      expect(p.days.length + p.skipped.length).toBe(4);
+      expect(p.skipped.every((x) => x.reason === 'WEEKLY_OFF')).toBe(true);
+      expect(p.skipped.map((x) => x.date)).toContain(offsetDate(off + 2));
+      expect(p.days).toContain(offsetDate(off));
+      expect(p.days).toContain(offsetDate(off + 3));
+      const expectedCount = p.days.length;
+
+      const res = await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date: from, endDate: to, workArrangement: 'WFH' })
+        .expect(200);
+      const body = res.body as { requestId: string; days: string[]; count: number };
+      expect(body.count).toBe(expectedCount);
+      expect(body.days).toEqual(p.days);
+
+      // The same days cannot be asked for twice (the rows are already pending).
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date: from, endDate: to, workArrangement: 'WFH' })
+        .expect(400);
+
+      // Three rows share the request id, and the sidebar count treats them as ONE request.
+      const rows = await prisma.attendance.findMany({
+        where: { employeeId: wfhEmployeeId, wfhRequestId: body.requestId },
+      });
+      expect(rows).toHaveLength(expectedCount);
+      expect(rows.every((r) => r.workArrangementStatus === 'PENDING')).toBe(true);
+      const counts = await request(app.getHttpServer())
+        .get('/dashboard/pending-counts')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const singlesPending = await prisma.attendance.count({
+        where: { workArrangement: 'WFH', workArrangementStatus: 'PENDING', wfhRequestId: null },
+      });
+      expect((counts.body as { wfh: number }).wfh).toBe(singlesPending + 1);
+
+      // A MANAGER of another department cannot decide it; HR decides every pending day at once.
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/group/${body.requestId}/review`)
+        .set('Authorization', `Bearer ${otherDeptManagerToken}`)
+        .send({ decision: 'APPROVED' })
+        .expect(403);
+      const done = await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/group/${body.requestId}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVED', comments: 'Fine' })
+        .expect(200);
+      expect((done.body as { count: number }).count).toBe(expectedCount);
+      const after = await prisma.attendance.findMany({
+        where: { employeeId: wfhEmployeeId, wfhRequestId: body.requestId },
+      });
+      expect(after.every((r) => r.workArrangementStatus === 'APPROVED')).toBe(true);
+      // Nothing is left pending for that request, so a second decision finds nothing.
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/group/${body.requestId}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'REJECTED' })
+        .expect(404);
+    });
+
+    it('a range with no working day, a backwards range and an over-long range are refused', async () => {
+      const dow = (n: number) => new Date(`${offsetDate(n)}T00:00:00Z`).getUTCDay();
+      // A Sunday inside the 60-day window.
+      let off = 40;
+      while (dow(off) !== 0) off += 1;
+      const one = await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date: offsetDate(off), endDate: offsetDate(off + 1), workArrangement: 'WFH' })
+        .expect(200); // Sun (off) + Mon: one working day is fine
+      expect((one.body as { count: number }).count).toBe(1);
+      // Leave nothing pending behind: later tests look for this employee's pending row by employee id.
+      await prisma.attendance.deleteMany({
+        where: { employeeId: wfhEmployeeId, wfhRequestId: (one.body as { requestId: string }).requestId },
+      });
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date: offsetDate(off + 5), endDate: offsetDate(off + 2), workArrangement: 'WFH' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date: offsetDate(10), endDate: offsetDate(10 + 40), workArrangement: 'WFH' })
+        .expect(400);
+    });
+
     it('EMPLOYEE gets 403 listing or reviewing pending WFH requests', async () => {
       await request(app.getHttpServer())
         .get('/attendance/work-arrangement/pending')

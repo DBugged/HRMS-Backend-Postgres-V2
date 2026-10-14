@@ -77,6 +77,13 @@ import { IngestPunchDto } from './dto/ingest-punch.dto';
 import { ManualPunchDto } from './dto/manual-punch.dto';
 import { SelfPunchDto } from './dto/self-punch.dto';
 import { SetWorkArrangementDto } from './dto/set-work-arrangement.dto';
+import { PreviewWfhDaysQueryDto } from './dto/preview-wfh-days-query.dto';
+import {
+  calendarSpan,
+  MAX_WFH_RANGE_DAYS,
+  wfhRequestDays,
+  type WfhRequestDays,
+} from './wfh-request-days';
 import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { RequestRegularizationDto } from './dto/request-regularization.dto';
 import { ReviewRegularizationDto } from './dto/review-regularization.dto';
@@ -1687,7 +1694,17 @@ export class AttendanceService {
       workArrangementReviewedById: null,
       workArrangementReviewedAt: null,
       workArrangementReviewComments: null,
+      // A single day stands alone; a group id left from an earlier multi-day request must not stick to it.
+      wfhRequestId: null,
     };
+
+    // A date range is a different request: several days, reviewed together.
+    if (isWfh && dto.endDate && dto.date && dto.endDate !== dto.date) {
+      return this.requestWfhRange(dto, actor, organizationId);
+    }
+    if (dto.endDate && !dto.date) {
+      throw new BadRequestException('endDate needs a start date.');
+    }
 
     const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
     const dateStr = dto.date ?? todayStr;
@@ -1758,10 +1775,216 @@ export class AttendanceService {
     });
   }
 
+  // The working days a multi-day Work From Home request would cover for the caller, and the days left out with why.
+  // Shared by the preview and by the request itself, so what is shown is what is asked for.
+  private async wfhDaysFor(
+    actor: Actor,
+    organizationId: string,
+    from: string,
+    to: string,
+  ): Promise<WfhRequestDays> {
+    const [employee, org] = await Promise.all([
+      this.scopedPrisma.user.findFirst({
+        where: { id: actor.id, organizationId },
+        include: { department: true },
+      }),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+      }),
+    ]);
+    const { weeklyOffs } = resolveShiftConfig(
+      employee?.department ?? null,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      org?.timezone ?? DEFAULT_ORG_TIMEZONE,
+    );
+    const [holidays, leaves, existing] = await Promise.all([
+      this.scopedPrisma.holiday.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          isOptional: false,
+          date: { gte: from, lte: to },
+          OR: employee?.departmentId
+            ? [{ departmentId: null }, { departmentId: employee.departmentId }]
+            : [{ departmentId: null }],
+        },
+        select: { date: true },
+      }),
+      this.scopedPrisma.leave.findMany({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          isHalfDay: false,
+          status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
+          startDate: { lte: to },
+          endDate: { gte: from },
+        },
+        select: { startDate: true, endDate: true },
+      }),
+      this.scopedPrisma.attendance.findMany({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          date: { gte: from, lte: to },
+          workArrangement: WorkArrangement.WFH,
+          workArrangementStatus: {
+            in: [WfhApprovalStatus.PENDING, WfhApprovalStatus.APPROVED],
+          },
+        },
+        select: { date: true },
+      }),
+    ]);
+    const leaveDates = new Set<string>();
+    for (const l of leaves) {
+      const start = l.startDate > from ? l.startDate : from;
+      const end = l.endDate < to ? l.endDate : to;
+      for (let d = start; d <= end; d = addDaysStr(d, 1)) leaveDates.add(d);
+    }
+    const result = wfhRequestDays({
+      from,
+      to,
+      isWeeklyOff: (date) => isWeeklyOff(date, weeklyOffs),
+      holidayDates: new Set(holidays.map((h) => h.date)),
+      leaveDates,
+    });
+    // A day that is already requested or approved is not asked for again (that would reset its review).
+    const already = new Set(existing.map((e) => e.date));
+    if (already.size === 0) return result;
+    return {
+      days: result.days.filter((d) => !already.has(d)),
+      skipped: [
+        ...result.skipped,
+        ...result.days
+          .filter((d) => already.has(d))
+          .map((date) => ({ date, reason: 'ALREADY_REQUESTED' as const })),
+      ].sort((a, b) => a.date.localeCompare(b.date)),
+    };
+  }
+
+  // What a multi-day request would cover, before it is sent (nothing is written).
+  async previewWfhDays(
+    query: PreviewWfhDaysQueryDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    if (query.to < query.from) {
+      throw new BadRequestException('The end date cannot be before the start date.');
+    }
+    if (calendarSpan(query.from, query.to) > MAX_WFH_RANGE_DAYS) {
+      throw new BadRequestException(
+        `A Work From Home request can cover at most ${MAX_WFH_RANGE_DAYS} days.`,
+      );
+    }
+    const r = await this.wfhDaysFor(actor, organizationId, query.from, query.to);
+    return { ...r, count: r.days.length };
+  }
+
+  // One request for several days: each working day becomes its own attendance row (that is where the arrangement and
+  // its review live), all sharing one wfhRequestId so the approver sees and decides them as a single request.
+  private async requestWfhRange(
+    dto: SetWorkArrangementDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const from = dto.date as string;
+    const to = dto.endDate as string;
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+    if (!org?.enableWFH) {
+      throw new BadRequestException(
+        'Work From Home is disabled for this organization.',
+      );
+    }
+    if (to < from) {
+      throw new BadRequestException('The end date cannot be before the start date.');
+    }
+    if (calendarSpan(from, to) > MAX_WFH_RANGE_DAYS) {
+      throw new BadRequestException(
+        `A Work From Home request can cover at most ${MAX_WFH_RANGE_DAYS} days.`,
+      );
+    }
+    const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    if (from < addDaysStr(todayStr, -31)) {
+      throw new BadRequestException(
+        'The date is too far in the past. A work arrangement can be set for the last 31 days or up to 60 days ahead.',
+      );
+    }
+    if (to > addDaysStr(todayStr, 60)) {
+      throw new BadRequestException(
+        'The date is too far ahead. A work arrangement can be set up to 60 days ahead.',
+      );
+    }
+    const me = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { joiningDate: true },
+    });
+    if (me && from < utcDateStrOf(me.joiningDate)) {
+      throw new BadRequestException(
+        `The date is before your joining date (${utcDateStrOf(me.joiningDate)}).`,
+      );
+    }
+    const { days, skipped } = await this.wfhDaysFor(actor, organizationId, from, to);
+    if (days.length === 0) {
+      throw new BadRequestException(
+        'There is no working day left to request in that range (weekly offs, holidays, leave and days already requested are not included).',
+      );
+    }
+    for (const day of days) {
+      await assertPayrollPeriodUnlocked(
+        this.scopedPrisma,
+        organizationId,
+        actor.id,
+        day,
+      );
+    }
+    const requestId = crypto.randomUUID();
+    const fields = {
+      workArrangement: WorkArrangement.WFH,
+      workArrangementStatus: WfhApprovalStatus.PENDING,
+      workArrangementReviewedById: null,
+      workArrangementReviewedAt: null,
+      workArrangementReviewComments: null,
+      wfhRequestId: requestId,
+    };
+    for (const day of days) {
+      const existing = await this.scopedPrisma.attendance.findFirst({
+        where: { organizationId, employeeId: actor.id, date: day },
+      });
+      if (existing) {
+        await this.scopedPrisma.attendance.updateMany({
+          where: { id: existing.id, organizationId },
+          data: fields,
+        });
+      } else {
+        await this.scopedPrisma.attendance.create({
+          data: { organizationId, employeeId: actor.id, date: day, ...fields },
+        });
+      }
+    }
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const label = `${formatDateDisplay(days[0], '', dateFormat, timeZone)} to ${formatDateDisplay(days[days.length - 1], '', dateFormat, timeZone)} (${days.length} day${days.length === 1 ? '' : 's'})`;
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: actor.id,
+      eventKey: 'WFH_REQUESTED',
+      performedById: actor.id,
+      description: `Requested Work From Home for ${label}.`,
+      metadata: { wfhRequestId: requestId, days },
+    });
+    await this.notifyWfhRequested(actor, label, organizationId, true);
+    return { requestId, days, skipped, count: days.length };
+  }
+
   private async notifyWfhRequested(
     actor: Actor,
     date: string,
     organizationId: string,
+    // `date` is already a display label (a range), not a single YYYY-MM-DD.
+    preformatted = false,
   ) {
     const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
@@ -1771,7 +1994,7 @@ export class AttendanceService {
       organizationId,
       requester: actor,
       title: 'Work From Home Requested',
-      message: `${actor.name} requested Work From Home for ${formatDateDisplay(date, '', dateFormat, timeZone)}, pending your approval.`,
+      message: `${actor.name} requested Work From Home for ${preformatted ? date : formatDateDisplay(date, '', dateFormat, timeZone)}, pending your approval.`,
       category: NotificationCategory.ATTENDANCE,
       managerFirst: true,
     });
@@ -1916,6 +2139,106 @@ export class AttendanceService {
     return this.scopedPrisma.attendance.findFirstOrThrow({
       where: { id, organizationId },
     });
+  }
+
+  // Decide a multi-day Work From Home request as one: every still-pending day sharing the request id gets the same
+  // decision. One timeline entry, one notification and one email summarise it (not one per day). A day already
+  // reviewed on its own is left as it is. Scope and delegation rules are the same as for a single day.
+  async reviewWfhRequestGroup(
+    requestId: string,
+    dto: ReviewWfhDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const rows = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        wfhRequestId: requestId,
+        workArrangement: WorkArrangement.WFH,
+        workArrangementStatus: WfhApprovalStatus.PENDING,
+      },
+      include: { employee: true },
+      orderBy: { date: 'asc' },
+    });
+    if (rows.length === 0) {
+      throw new NotFoundException(
+        'No pending Work From Home days found for this request - it may already have been reviewed.',
+      );
+    }
+    const employee = rows[0].employee;
+    await assertManagerScopeOrDelegate(
+      this.scopedPrisma,
+      this.delegationService,
+      actor,
+      organizationId,
+      employee.id,
+    );
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'ATTENDANCE',
+      targetId: requestId,
+      employeeId: employee.id,
+      request: 'Work From Home',
+    });
+    const status =
+      dto.decision === 'APPROVED'
+        ? WfhApprovalStatus.APPROVED
+        : WfhApprovalStatus.REJECTED;
+    await this.scopedPrisma.attendance.updateMany({
+      where: { id: { in: rows.map((r) => r.id) }, organizationId },
+      data: {
+        workArrangementStatus: status,
+        workArrangementReviewedById: actor.id,
+        workArrangementReviewedAt: new Date(),
+        workArrangementReviewComments: dto.comments ?? '',
+      },
+    });
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const first = rows[0].date;
+    const last = rows[rows.length - 1].date;
+    const label =
+      rows.length === 1
+        ? formatDateDisplay(first, '', dateFormat, timeZone)
+        : `${formatDateDisplay(first, '', dateFormat, timeZone)} to ${formatDateDisplay(last, '', dateFormat, timeZone)} (${rows.length} days)`;
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: employee.id,
+      eventKey: dto.decision === 'APPROVED' ? 'WFH_APPROVED' : 'WFH_REJECTED',
+      performedById: actor.id,
+      description: `${label}${dto.comments ? `: ${dto.comments}` : ''}`,
+      metadata: { wfhRequestId: requestId, days: rows.map((r) => r.date) },
+    });
+    const title = `Work From Home Request ${dto.decision}`;
+    const message = `Your Work From Home request for ${label} has been ${dto.decision.toLowerCase()}.${dto.comments ? ` Comments: ${dto.comments}` : ''}`;
+    await this.notificationsService.create({
+      organizationId,
+      userId: employee.id,
+      title,
+      message,
+      category: NotificationCategory.ATTENDANCE,
+    });
+    {
+      const { subject, html } = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'WFH_DECISION',
+        {
+          employeeName: employee.name,
+          decision: dto.decision,
+          date: label,
+          comments: dto.comments ?? '',
+        },
+        { subject: title, html: message },
+      );
+      void this.emailService.send({
+        to: employee.email,
+        subject,
+        html,
+        organizationId,
+      });
+    }
+    return { requestId, decision: dto.decision, count: rows.length };
   }
 
   async getMyGeoFence(actor: Actor, organizationId: string) {
