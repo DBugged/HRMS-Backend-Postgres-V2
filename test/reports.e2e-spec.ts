@@ -234,8 +234,9 @@ describe('Reports (e2e)', () => {
       .set('Authorization', `Bearer ${managerToken}`)
       .expect(200);
     expect(res.headers['content-type']).toContain('spreadsheetml');
-    expect(res.headers['content-disposition']).toContain(
-      'attendance_report.xlsx',
+    // The filename now carries the period (default: from the start of the current month to today).
+    expect(res.headers['content-disposition']).toMatch(
+      /attendance_report_\d{4}-\d{2}-01_today\.xlsx/,
     );
   });
 
