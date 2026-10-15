@@ -75,6 +75,10 @@ const emailVerificationRequired = () =>
 export const REFRESH_REUSE_GRACE_MS = 5_000;
 // Same generic message regardless of whether the email exists — never
 // reveals account existence, ported from the original release's forgotPassword.
+// Shown when a new password equals the one it replaces (change password and reset password alike).
+const SAME_PASSWORD_MESSAGE =
+  'The new password cannot be the same as the previous password.';
+
 const FORGOT_PASSWORD_GENERIC_MESSAGE =
   'If that email exists, a reset link has been sent.';
 // Final exit statuses — never allowed to log in or refresh, independent of isActive. RESIGNED is not here: it is the
@@ -798,6 +802,12 @@ export class AuthService {
       throw new BadRequestException('Reset link is invalid or has expired.');
     }
 
+    // The new password has to be a different one: a reset that hands back the same password changes nothing and
+    // would use up the single-use link. The link stays valid, so the person can simply choose another.
+    if (await bcrypt.compare(dto.password, user.password)) {
+      throw new BadRequestException(SAME_PASSWORD_MESSAGE);
+    }
+
     const hashedPassword = await bcrypt.hash(dto.password, SALT_ROUNDS);
     await this.scopedPrisma.$transaction([
       this.scopedPrisma.user.updateMany({
@@ -864,9 +874,7 @@ export class AuthService {
     }
 
     if (dto.newPassword === dto.currentPassword) {
-      throw new BadRequestException(
-        'The new password must be different from your current password.',
-      );
+      throw new BadRequestException(SAME_PASSWORD_MESSAGE);
     }
     const wasFirstTimeChange = user.mustChangePassword;
     const hashedPassword = await bcrypt.hash(dto.newPassword, SALT_ROUNDS);
