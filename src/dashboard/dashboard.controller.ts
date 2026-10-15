@@ -40,7 +40,10 @@ export class DashboardController {
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
   hrDashboard(@CurrentUser() caller: Caller) {
-    return this.dashboardService.hrDashboard(caller.organizationId);
+    return this.dashboardService.hrDashboard(caller.organizationId, {
+      id: caller.id,
+      role: caller.role,
+    });
   }
 
   @Get('hr/payroll-cost-summary')

@@ -161,7 +161,10 @@ export class DashboardService {
 
   // 11.1 HR Dashboard: total employees, attendance summary, pending
   // approvals, payroll status, leave stats.
-  async hrDashboard(organizationId: string) {
+  async hrDashboard(
+    organizationId: string,
+    viewer?: { id: string; role: Role },
+  ) {
     const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
     const now = new Date(`${today}T00:00:00`);
     const currentMonth = now.getMonth() + 1;
@@ -454,7 +457,12 @@ export class DashboardService {
         incompleteToday,
         onLeaveToday,
       },
-      pendingItems: await this.pendingItems(organizationId, null, true),
+      pendingItems: await this.pendingItems(
+        organizationId,
+        null,
+        true,
+        viewer,
+      ),
       pendingApprovals: {
         leaves: pendingLeaves,
         regularizations: pendingRegularizationCount,
@@ -580,7 +588,10 @@ export class DashboardService {
         leaves: pendingLeaves,
         regularizations: pendingRegularizations,
       },
-      pendingItems: await this.pendingItems(organizationId, ids, false),
+      pendingItems: await this.pendingItems(organizationId, ids, false, {
+        id: actor.id,
+        role: actor.role,
+      }),
       leaveTrends: [...leaveTrendsByType.values()],
       teamLeaveBalances,
     };
@@ -622,23 +633,50 @@ export class DashboardService {
 
   // The ONE definition of "waiting for a decision" for each request type. The Approvals list (pendingItems) and the
   // sidebar badge counts (pendingCounts) both use it, so a badge can never disagree with the list behind it.
-  private pendingWhere(scope: {
-    organizationId: string;
-    employeeId?: { in: string[] };
-  }) {
-    return {
-      leaves: { ...scope, status: LeaveStatus.PENDING },
-      regularizations: {
+  //
+  // A request is not waiting for a person's decision when they are not allowed to decide it: nobody, Admin included,
+  // may review their own leave, comp-off or encashment (assertNotOwnRequest), and only an Admin may review their own
+  // other requests (assertNotSelfApproval). Those are left out of the count and the list when the viewer is known, so
+  // the badge never promises an action the person cannot take.
+  private pendingWhere(
+    scope: {
+      organizationId: string;
+      employeeId?: { in?: string[]; not?: string };
+    },
+    viewer?: { id: string; role: Role },
+  ) {
+    const withoutOwn = (strict: boolean) => {
+      if (!viewer || (!strict && viewer.role === Role.ADMIN)) return scope;
+      return {
         ...scope,
+        employeeId: { ...(scope.employeeId ?? {}), not: viewer.id },
+      };
+    };
+    return {
+      leaves: { ...withoutOwn(true), status: LeaveStatus.PENDING },
+      regularizations: {
+        ...withoutOwn(false),
         regularization: { path: ['status'], equals: 'pending' },
       },
-      wfh: { ...scope, workArrangementStatus: WfhApprovalStatus.PENDING },
-      overtime: { ...scope, status: OvertimeStatus.PENDING },
-      compOffs: { ...scope, status: CompOffStatus.PENDING },
-      reimbursements: { ...scope, status: ReimbursementStatus.PENDING },
-      loans: { ...scope, status: LoanStatus.PENDING },
-      encashments: { ...scope, status: LeaveEncashmentStatus.PENDING },
-      resignations: { ...scope, status: ResignationStatus.PENDING },
+      wfh: {
+        ...withoutOwn(false),
+        workArrangementStatus: WfhApprovalStatus.PENDING,
+      },
+      overtime: { ...withoutOwn(false), status: OvertimeStatus.PENDING },
+      compOffs: { ...withoutOwn(true), status: CompOffStatus.PENDING },
+      reimbursements: {
+        ...withoutOwn(false),
+        status: ReimbursementStatus.PENDING,
+      },
+      loans: { ...withoutOwn(false), status: LoanStatus.PENDING },
+      encashments: {
+        ...withoutOwn(true),
+        status: LeaveEncashmentStatus.PENDING,
+      },
+      resignations: {
+        ...withoutOwn(false),
+        status: ResignationStatus.PENDING,
+      },
     };
   }
 
@@ -695,6 +733,7 @@ export class DashboardService {
     }
     const where = this.pendingWhere(
       this.pendingScope(organizationId, employeeIds),
+      { id: actor.id, role: actor.role },
     );
     const [leaves, regularizations, wfh, overtime, compOffs] =
       await Promise.all([
@@ -740,10 +779,11 @@ export class DashboardService {
     organizationId: string,
     employeeIds: string[] | null,
     includeHrQueues: boolean,
+    viewer?: { id: string; role: Role },
   ) {
     const LIMIT = 10;
     const scope = this.pendingScope(organizationId, employeeIds);
-    const where = this.pendingWhere(scope);
+    const where = this.pendingWhere(scope, viewer);
     const employeeSelect = { select: { name: true, employeeId: true } };
     const [leaves, regularizations, wfh, overtime, compOffs] =
       await Promise.all([
