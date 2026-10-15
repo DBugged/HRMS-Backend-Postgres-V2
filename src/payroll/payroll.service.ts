@@ -63,6 +63,7 @@ import {
   withCityHra,
 } from '../employee-salary-components/city-hra';
 import { buildBankAdvice } from './bank-advice';
+import { redactHoldForEmployee } from './payroll-hold';
 import { buildReadiness } from './payroll-readiness';
 import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import { computeStructurePreview } from './structure-preview';
@@ -2920,7 +2921,7 @@ export class PayrollService {
       where.employeeId = query.employeeId;
     }
 
-    return paginate(
+    const page = await paginate(
       () =>
         this.scopedPrisma.payrollRun.findMany({
           where,
@@ -2946,6 +2947,11 @@ export class PayrollService {
       query.page,
       query.limit,
     );
+    // HR's reason for a hold is not for the employee's own payslip list.
+    if (actor.role === Role.EMPLOYEE || actor.role === Role.MANAGER) {
+      return { ...page, data: page.data.map(redactHoldForEmployee) };
+    }
+    return page;
   }
 
   async findOne(id: string, actor: Actor, organizationId: string) {
@@ -2976,6 +2982,9 @@ export class PayrollService {
       !EMPLOYEE_VISIBLE_STATUSES.includes(run.status)
     ) {
       throw new NotFoundException('Payslip not found.');
+    }
+    if (actor.role === Role.EMPLOYEE || actor.role === Role.MANAGER) {
+      return redactHoldForEmployee(run);
     }
     return run;
   }
