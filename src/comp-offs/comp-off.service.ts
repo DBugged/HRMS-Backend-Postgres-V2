@@ -258,7 +258,13 @@ export class CompOffService {
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
           },
-          orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
+          // Requests still waiting for a decision come first (PENDING is the first value of the status enum), so a new
+          // request is on the first page for the approver however many past records there are.
+          orderBy: [
+            { status: 'asc' },
+            ...EMPLOYEE_RELATION_ORDER_BY,
+            { createdAt: 'desc' },
+          ],
           skip: skip(query.page, query.limit),
           take: query.limit,
         }),
