@@ -813,6 +813,12 @@ export class AuthService {
           // nothing left to protect against here.
           failedLoginAttempts: 0,
           lockedUntil: null,
+          // The link was delivered to the address on the account, so the owner has also proved it is theirs. Without
+          // this a founder whose confirmation email was missed or expired could reset the password and still be
+          // refused at login ("confirm your email first"), however many times they reset.
+          emailVerified: true,
+          emailVerificationToken: null,
+          emailVerificationExpires: null,
         },
       }),
       this.scopedPrisma.refreshToken.updateMany({
