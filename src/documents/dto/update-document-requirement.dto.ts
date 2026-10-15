@@ -1,10 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional } from 'class-validator';
+import { DocumentName } from './document-name';
 
 export class UpdateDocumentRequirementDto {
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({ maxLength: 100 })
   @IsOptional()
-  @IsString()
+  @DocumentName()
   name?: string;
 
   @ApiPropertyOptional()

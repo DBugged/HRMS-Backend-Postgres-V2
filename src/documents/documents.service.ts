@@ -6,6 +6,7 @@
 // canViewPolicy; HR/Admin bypass visibility entirely since they manage the library, not just consume it.
 // deletePolicy() only deletes the underlying file when fileUrl is an internal storage key, never an
 // external URL a user pasted in.
+import { documentNameProblem } from './dto/document-name';
 import {
   BadRequestException,
   ConflictException,
@@ -713,6 +714,9 @@ export class DocumentsService {
         if (!name) {
           return Promise.reject(new Error('Row has no document name.'));
         }
+        // The same rule as a single create: a bad name skips this row with its reason, the rest still import.
+        const problem = documentNameProblem(name);
+        if (problem) return Promise.reject(new Error(problem));
         const existingId = existingByName.get(name);
         if (existingId) {
           return this.scopedPrisma.documentRequirement
