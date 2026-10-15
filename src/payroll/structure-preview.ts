@@ -30,8 +30,13 @@ export interface StructurePreviewInput {
   mode: 'CTC' | 'GROSS';
   annualCtc?: number;
   monthlyGross?: number;
-  /** Variable pay for the year, paid on top of the fixed package (not part of the monthly figures). */
+  /** Variable pay for the year (not part of the monthly figures). */
   variableAnnual?: number;
+  /**
+   * CTC mode only. true: the annual CTC already includes the variable pay, so the fixed part is CTC minus variable.
+   * false/absent: the annual figure is the fixed pay and the variable is paid on top of it.
+   */
+  variableIncludedInCtc?: boolean;
   cityClass: CityClassName;
   employeeType?: string;
   /** Basic as a percentage of the total monthly package. Default 50, the Labour Codes' wages rule. */
@@ -163,8 +168,19 @@ export function computeStructurePreview(args: {
   const allowancesTotal = allowances.reduce((s, [, a]) => s + a, 0);
   const hasSpecial = has('SPECIAL_ALLOWANCE');
 
+  const variableInCtc =
+    input.mode === 'CTC' && input.variableIncludedInCtc
+      ? Math.max(0, Math.round(num(input.variableAnnual)))
+      : 0;
+  if (variableInCtc > 0 && variableInCtc >= num(input.annualCtc)) {
+    throw new BadRequestException(
+      'Variable pay must be less than the annual CTC.',
+    );
+  }
   const target =
-    input.mode === 'CTC' ? num(input.annualCtc) / 12 : num(input.monthlyGross);
+    input.mode === 'CTC'
+      ? (num(input.annualCtc) - variableInCtc) / 12
+      : num(input.monthlyGross);
   if (!(target > 0)) {
     throw new BadRequestException(
       input.mode === 'CTC'
@@ -313,7 +329,12 @@ export function computeStructurePreview(args: {
     const total =
       input.mode === 'CTC' ? target : gross + (result.employerTotal || 0);
     ctcMonthly = total;
-    basic = Math.max(0, Math.round((total * basicPercent) / 100 - daAmount));
+    // Rounded UP: to the nearest rupee Basic can land a few paise under half of gross, which the Labour Codes' 50%
+    // wages check then flags on a structure this builder made. (The tiny epsilon absorbs floating-point noise.)
+    basic = Math.max(
+      0,
+      Math.ceil((total * basicPercent) / 100 - daAmount - 1e-9),
+    );
     const hra = hraEnabled ? Math.round((basic * hraPercent) / 100) : 0;
     special = Math.round(gross - basic - daAmount - hra - allowancesTotal);
     result = build(basic, hasSpecial ? special : 0);

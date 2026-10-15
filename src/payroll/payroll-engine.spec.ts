@@ -835,3 +835,44 @@ describe('payroll engine: one-off earnings and deductions, and safety nets', () 
     );
   });
 });
+
+describe('payroll engine: HRA follows the work location when the structure has no HRA line', () => {
+  // Basic only: the org's HRA component (a percentage of Basic) auto-applies, at the city class's percentage.
+  const basicOnly = [fixed('BASIC', 30000)];
+  const employeeAt = (workLocation: { cityClass: string } | null) => ({
+    ...makeWorld().employee,
+    workLocation,
+    department: null,
+  });
+  const hraFor = async (workLocation: { cityClass: string } | null) => {
+    const r = await run({
+      overrides: basicOnly,
+      employee: employeeAt(workLocation),
+    });
+    return line(r.earnings, 'HRA');
+  };
+
+  it('a metro work location pays 50% of Basic', async () => {
+    expect(await hraFor({ cityClass: 'METRO' })).toBe(15000);
+  });
+
+  it('a non-metro work location pays 40% of Basic', async () => {
+    expect(await hraFor({ cityClass: 'NON_METRO' })).toBe(12000);
+  });
+
+  it('a rural work location pays no HRA', async () => {
+    expect(await hraFor({ cityClass: 'RURAL' })).toBeFalsy();
+  });
+
+  it('no work location at all pays 40% of Basic', async () => {
+    expect(await hraFor(null)).toBe(12000);
+  });
+
+  it('a saved HRA line wins over the city class', async () => {
+    const r = await run({
+      overrides: structure(30000),
+      employee: employeeAt({ cityClass: 'METRO' }),
+    });
+    expect(line(r.earnings, 'HRA')).toBe(12000);
+  });
+});

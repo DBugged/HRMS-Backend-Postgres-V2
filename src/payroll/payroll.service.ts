@@ -58,6 +58,13 @@ import {
   splitPeriodAtRevisions,
   type PeriodSegment,
 } from '../employee-salary-components/salary-structure-math';
+import {
+  employeeCityClass,
+  withCityHra,
+} from '../employee-salary-components/city-hra';
+import { buildBankAdvice } from './bank-advice';
+import { buildReadiness } from './payroll-readiness';
+import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import { computeStructurePreview } from './structure-preview';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
 import type { CityClassName } from '../common/hra-cities';
@@ -775,7 +782,7 @@ export class PayrollService {
       lwfExempt: employee.lwfExempt,
     });
 
-    const [allComponents, overrideRows] = await Promise.all([
+    const [masterComponents, overrideRows, cityClass] = await Promise.all([
       this.scopedPrisma.salaryComponent.findMany({
         where: { organizationId, isActive: true },
         orderBy: { displayOrder: 'asc' },
@@ -783,7 +790,10 @@ export class PayrollService {
       this.scopedPrisma.employeeSalaryComponent.findMany({
         where: { organizationId, employeeId },
       }),
+      employeeCityClass(this.scopedPrisma, employeeId, organizationId),
     ]);
+    // HRA without a saved line of its own follows the work location's city class (50% metro / 40% / 0 rural).
+    const allComponents = withCityHra(masterComponents, cityClass);
     const currentOverrides = resolveCurrentRows(overrideRows, periodDate);
     // Without a salary structure there is nothing to pay from: HRA and the like are calculated off Basic, so the row
     // would come out as a "calculated" payslip of zeros. Fail this employee with a reason instead.
@@ -1662,6 +1672,7 @@ export class PayrollService {
         annualCtc: dto.annualCtc,
         monthlyGross: dto.monthlyGross,
         variableAnnual: dto.variableAnnual,
+        variableIncludedInCtc: dto.variableIncludedInCtc,
         cityClass,
         employeeType: dto.employeeType,
         basicPercent: dto.basicPercent,
@@ -3569,6 +3580,211 @@ export class PayrollService {
 
   // Reverts a Locked/Paid run back to Calculated so it can be corrected
   // and re-run through the workflow.
+  // Hold a salary: calculated and approved as usual, but not paid (and left out of the bank file) until released.
+  async holdSalary(
+    id: string,
+    dto: HoldPayrollDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
+    assertNotOwnPayroll(actor, run.employeeId, 'hold');
+    if (run.status === PayrollRunStatus.PAID) {
+      throw new BadRequestException('This salary is already paid.');
+    }
+    if (run.heldAt) {
+      throw new BadRequestException('This salary is already on hold.');
+    }
+    const { count } = await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId, heldAt: null },
+      data: {
+        heldAt: new Date(),
+        heldById: actor.id,
+        holdReason: dto.reason.trim(),
+      },
+    });
+    if (count === 0) {
+      throw new BadRequestException('This salary is already on hold.');
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_SALARY_HELD',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        reason: dto.reason.trim(),
+      },
+    });
+    return this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+  }
+
+  async releaseHold(id: string, actor: Actor, organizationId: string) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotOwnPayroll(actor, run.employeeId, 'release the hold on');
+    if (!run.heldAt) {
+      throw new BadRequestException('This salary is not on hold.');
+    }
+    await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId },
+      data: { heldAt: null, heldById: null, holdReason: null },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_SALARY_RELEASED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        heldReason: run.holdReason,
+      },
+    });
+    return this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+  }
+
+  // The checklist before running a month's payroll: what will stop a clean run (no salary structure), what will stop
+  // someone being paid (no bank details), attendance not marked, and who joins or leaves in the month.
+  async getReadiness(month: number, year: number, organizationId: string) {
+    const employees = await this.targetEmployees(undefined, organizationId);
+    const monthEnd = lastDayOfMonth(month, year);
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const ids = employees.map((e) => e.id);
+
+    const [structureRows, exitCases, gaps] = await Promise.all([
+      this.scopedPrisma.employeeSalaryComponent.findMany({
+        where: { organizationId, employeeId: { in: ids } },
+        select: {
+          employeeId: true,
+          componentCode: true,
+          effectiveFrom: true,
+          effectiveTo: true,
+          isEnabled: true,
+        },
+      }),
+      this.scopedPrisma.offboardingCase.findMany({
+        where: {
+          organizationId,
+          employeeId: { in: ids },
+          status: { in: ['INITIATED', 'IN_PROGRESS', 'COMPLETED'] },
+          lastWorkingDay: { gte: monthStart, lte: monthEnd },
+        },
+        select: { employeeId: true, lastWorkingDay: true },
+      }),
+      this.getAttendanceGaps(month, year, organizationId),
+    ]);
+
+    const rowsByEmployee = new Map<string, typeof structureRows>();
+    for (const r of structureRows) {
+      rowsByEmployee.set(r.employeeId, [
+        ...(rowsByEmployee.get(r.employeeId) ?? []),
+        r,
+      ]);
+    }
+    // Same rule the calculation applies: the structure in force on the last day of the month, with something switched on.
+    const withStructure = new Set(
+      ids.filter((id) =>
+        resolveCurrentRows(rowsByEmployee.get(id) ?? [], monthEnd).some(
+          (r) => r.isEnabled,
+        ),
+      ),
+    );
+
+    const checks = buildReadiness({
+      month,
+      year,
+      employees: employees.map((e) => ({
+        id: e.id,
+        name: e.name,
+        code: e.employeeId ?? '',
+        joiningDate: e.joiningDate.toISOString().slice(0, 10),
+        personalData: e.personalData,
+      })),
+      withStructure,
+      exits: new Map(exitCases.map((c) => [c.employeeId, c.lastWorkingDay])),
+    });
+    if (gaps.length > 0) {
+      // Between "no salary structure" and "bank details": unmarked days are paid as unpaid leave.
+      checks.splice(
+        checks.findIndex((c) => c.level === 'info') === -1
+          ? checks.length
+          : checks.findIndex((c) => c.level === 'info'),
+        0,
+        {
+          key: 'attendance',
+          level: 'warning',
+          title: 'Attendance not marked (unmarked days are unpaid)',
+          people: gaps.map((g) => ({
+            id: g.employeeId,
+            name: g.name,
+            code: g.employeeCode ?? '',
+            detail: `${g.unmarkedDays} of ${g.daysSoFar} days`,
+          })),
+        },
+      );
+    }
+    return { month, year, employeeCount: employees.length, checks };
+  }
+
+  // What to send the bank for a month: every locked, un-held, regular payslip with its account details, plus the ones
+  // left out and why. Locked only - the file is made after sign-off and before "mark paid".
+  async bankAdvice(month: number, year: number, organizationId: string) {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        month,
+        year,
+        status: PayrollRunStatus.LOCKED,
+        isFinalSettlement: false,
+      },
+      orderBy: [{ runSequence: 'asc' }],
+    });
+    const users = runs.length
+      ? await this.scopedPrisma.user.findMany({
+          where: {
+            organizationId,
+            id: { in: [...new Set(runs.map((r) => r.employeeId))] },
+          },
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            personalData: true,
+          },
+        })
+      : [];
+    const advice = buildBankAdvice(
+      runs,
+      new Map(
+        users.map((u) => [
+          u.id,
+          {
+            employeeId: u.employeeId ?? '',
+            name: u.name,
+            personalData: u.personalData,
+          },
+        ]),
+      ),
+    );
+    return { month, year, ...advice };
+  }
+
   async unlock(
     id: string,
     dto: UnlockPayrollDto,
@@ -3899,6 +4115,15 @@ export class PayrollService {
           status: 'final_settlement',
           reason:
             'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+        });
+        continue;
+      }
+      // A salary on hold is signed off like any other but is not paid until the hold is released.
+      if (config.toStatus === PayrollRunStatus.PAID && run.heldAt) {
+        skipped.push({
+          id: run.id,
+          status: 'on_hold',
+          reason: `Salary is on hold${run.holdReason ? ` (${run.holdReason})` : ''}. Release the hold before paying.`,
         });
         continue;
       }

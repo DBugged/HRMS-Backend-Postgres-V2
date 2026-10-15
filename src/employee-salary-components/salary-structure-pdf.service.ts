@@ -24,6 +24,7 @@ import {
   synthesizeMissingRows,
   type StructureBreakdown,
 } from './salary-structure-math';
+import { employeeCityClass, withCityHra } from './city-hra';
 
 const PAGE_W = 595.28; // A4 portrait, points
 const MARGIN = 40;
@@ -317,7 +318,16 @@ export class SalaryStructurePdfService {
       components.map((c) => [c.code, c.name]),
     );
     const current = resolveCurrentRows(withRef, asOf);
-    const synthesized = synthesizeMissingRows(withRef, components, asOf);
+    const cityClass = await employeeCityClass(
+      this.scopedPrisma,
+      employeeId,
+      organizationId,
+    );
+    const synthesized = synthesizeMissingRows(
+      withRef,
+      withCityHra(components, cityClass),
+      asOf,
+    );
     const breakdown = breakdownStructure(
       [...current, ...synthesized],
       nameByCode,

@@ -193,6 +193,51 @@ describe('salary structure preview', () => {
     ).toBe(plain.earnings.find((l) => l.code === 'SPECIAL_ALLOWANCE')?.monthly);
   });
 
+  it('Basic is never under half of gross, even when the package does not split into whole rupees', () => {
+    for (const annualCtc of [1100000, 1234567, 999999, 2400001]) {
+      const p = preview({ mode: 'CTC', annualCtc, cityClass: 'METRO' });
+      const basic = p.earnings.find((l) => l.code === 'BASIC')!.monthly;
+      expect(basic * 2).toBeGreaterThanOrEqual(p.grossMonthly);
+    }
+  });
+
+  it('variable pay inside the CTC is carved out of it: fixed + variable add back to the CTC', () => {
+    const p = preview({
+      mode: 'CTC',
+      annualCtc: 600000,
+      variableAnnual: 60000,
+      variableIncludedInCtc: true,
+      cityClass: 'METRO',
+    });
+    expect(p.variableAnnual).toBe(60000);
+    expect(p.ctcAnnual).toBe(540000);
+    expect(p.totalAnnual).toBe(600000);
+  });
+
+  it('variable pay on top of the CTC leaves the fixed CTC as entered', () => {
+    const p = preview({
+      mode: 'CTC',
+      annualCtc: 600000,
+      variableAnnual: 60000,
+      variableIncludedInCtc: false,
+      cityClass: 'METRO',
+    });
+    expect(p.ctcAnnual).toBe(600000);
+    expect(p.totalAnnual).toBe(660000);
+  });
+
+  it('refuses variable pay that is as large as the CTC it is part of', () => {
+    expect(() =>
+      preview({
+        mode: 'CTC',
+        annualCtc: 600000,
+        variableAnnual: 600000,
+        variableIncludedInCtc: true,
+        cityClass: 'METRO',
+      }),
+    ).toThrow('Variable pay must be less than the annual CTC.');
+  });
+
   it('variable pay is yearly and stays out of the monthly figures', () => {
     const p = preview({
       mode: 'CTC',

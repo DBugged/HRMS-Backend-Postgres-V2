@@ -36,6 +36,10 @@ import {
   summarizeStructure,
   synthesizeMissingRows,
 } from '../employee-salary-components/salary-structure-math';
+import {
+  employeeCityClass,
+  withCityHra,
+} from '../employee-salary-components/city-hra';
 import { LetterPdfService } from './letter-pdf.service';
 import {
   editedTextToParagraphs,
@@ -481,7 +485,16 @@ export class LettersService {
             componentRef: r.component,
           }));
           const current = resolveCurrentRows(withRef, asOf);
-          const synthesized = synthesizeMissingRows(withRef, components, asOf);
+          const cityClass = await employeeCityClass(
+            this.scopedPrisma,
+            employeeId,
+            organizationId,
+          );
+          const synthesized = synthesizeMissingRows(
+            withRef,
+            withCityHra(components, cityClass),
+            asOf,
+          );
           const summary = summarizeStructure([...current, ...synthesized]);
           if (summary.annualCTC <= 0) {
             throw new BadRequestException(

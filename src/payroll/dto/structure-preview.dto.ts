@@ -84,6 +84,14 @@ export class StructurePreviewDto {
   variableAnnual?: number;
 
   @ApiPropertyOptional({
+    description:
+      'CTC mode only. true: the annual CTC includes the variable pay (fixed = CTC - variable). Otherwise the variable is paid on top of the fixed CTC.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  variableIncludedInCtc?: boolean;
+
+  @ApiPropertyOptional({
     enum: CityClass,
     description: 'Used when no work location is given.',
   })

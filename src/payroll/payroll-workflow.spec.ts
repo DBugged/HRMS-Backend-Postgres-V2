@@ -95,6 +95,8 @@ const run = (over: Row = {}): Row => ({
   calculatedById: 'calc',
   verifiedById: null,
   approvedById: null,
+  heldAt: null,
+  holdReason: null,
   ...over,
 });
 
@@ -458,5 +460,161 @@ describe('nonFiniteMoneyField', () => {
         deductions: [{ code: 'PF', amount: null }],
       }),
     ).toBe('deductions line PF');
+  });
+});
+
+describe('payroll workflow: salary on hold', () => {
+  const locked = (over: Row = {}) =>
+    run({
+      status: 'LOCKED',
+      lockEffectsAppliedAt: new Date('2026-10-01T00:00:00Z'),
+      approvedById: 'a1',
+      ...over,
+    });
+
+  it('holding records who, when and why, and is audited', async () => {
+    const { service, store, audit } = build([locked()]);
+    await service.holdSalary(
+      'r1',
+      { reason: 'Asset not returned' },
+      hr('h1'),
+      'org',
+    );
+    expect(store[0]).toMatchObject({
+      heldById: 'h1',
+      holdReason: 'Asset not returned',
+    });
+    expect(store[0].heldAt).toBeInstanceOf(Date);
+    expect(audit.map((a) => a.action)).toContain('PAYROLL_SALARY_HELD');
+  });
+
+  it('a held salary cannot be marked paid, one at a time or in bulk', async () => {
+    const { service, store } = build([locked()]);
+    await service.holdSalary(
+      'r1',
+      { reason: 'Notice period dues' },
+      hr('h1'),
+      'org',
+    );
+    await expect(service.pay('r1', hr('p1'), 'org')).rejects.toThrow(
+      /on hold/i,
+    );
+    const res = await service.bulkTransition(
+      { ids: ['r1'], action: 'pay' } as never,
+      hr('p1'),
+      'org',
+    );
+    expect(res.updatedCount).toBe(0);
+    expect(res.skipped[0]).toMatchObject({ id: 'r1', status: 'on_hold' });
+    expect(store[0].status).toBe('LOCKED');
+  });
+
+  it('releasing the hold lets it be paid', async () => {
+    const { service, store, audit } = build([locked()]);
+    await service.holdSalary(
+      'r1',
+      { reason: 'Notice period dues' },
+      hr('h1'),
+      'org',
+    );
+    await service.releaseHold('r1', hr('h2'), 'org');
+    expect(store[0]).toMatchObject({ heldAt: null, holdReason: null });
+    expect((await service.pay('r1', hr('p1'), 'org')).status).toBe('PAID');
+    expect(audit.map((a) => a.action)).toContain('PAYROLL_SALARY_RELEASED');
+  });
+
+  it('a hold does not stop the earlier sign-off steps', async () => {
+    const { service } = build([run()]);
+    await service.holdSalary(
+      'r1',
+      { reason: 'Joined on the 28th' },
+      hr('h1'),
+      'org',
+    );
+    expect((await service.verify('r1', hr('v1'), 'org')).status).toBe(
+      'VERIFIED',
+    );
+  });
+
+  it('cannot hold a salary that is already paid, or already held', async () => {
+    const paid = build([run({ status: 'PAID' })]);
+    await expect(
+      paid.service.holdSalary('r1', { reason: 'Too late' }, hr('h1'), 'org'),
+    ).rejects.toThrow(/already paid/);
+    const held = build([locked()]);
+    await held.service.holdSalary('r1', { reason: 'First' }, hr('h1'), 'org');
+    await expect(
+      held.service.holdSalary('r1', { reason: 'Second' }, hr('h1'), 'org'),
+    ).rejects.toThrow(/already on hold/);
+  });
+
+  it('cannot release a salary that is not held', async () => {
+    const { service } = build([locked()]);
+    await expect(service.releaseHold('r1', hr('h1'), 'org')).rejects.toThrow(
+      /not on hold/,
+    );
+  });
+
+  it('HR cannot hold or release their own salary; an Admin can', async () => {
+    const { service } = build([locked({ employeeId: 'h1' })]);
+    await expect(
+      service.holdSalary('r1', { reason: 'Self hold' }, hr('h1'), 'org'),
+    ).rejects.toThrow(/your own payslip/);
+    await expect(
+      service.holdSalary(
+        'r1',
+        { reason: 'Admin hold' },
+        hr('h1', Role.ADMIN),
+        'org',
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('a final-settlement payslip cannot be held from here', async () => {
+    const { service } = build([locked({ isFinalSettlement: true })]);
+    await expect(
+      service.holdSalary('r1', { reason: 'Settlement' }, hr('h1'), 'org'),
+    ).rejects.toThrow(/Settlements/);
+  });
+});
+
+describe('payroll workflow: bank advice', () => {
+  it('lists locked payslips with bank details and leaves out a held one', async () => {
+    const users = [
+      {
+        id: 'emp',
+        name: 'Priya Sharma',
+        employeeId: 'DP-00002',
+        personalData: {
+          bankAccountNo: '500100207919',
+          bankIFSC: 'HDFC0001234',
+        },
+      },
+      {
+        id: 'emp2',
+        name: 'Rohan Mehta',
+        employeeId: 'DP-00003',
+        personalData: {},
+      },
+    ];
+    const { service } = build(
+      [
+        run({ id: 'a', status: 'LOCKED' }),
+        run({ id: 'b', status: 'LOCKED', employeeId: 'emp2' }),
+        run({ id: 'c', status: 'CALCULATED' }),
+        run({
+          id: 'd',
+          status: 'LOCKED',
+          employeeId: 'emp',
+          heldAt: new Date(),
+          runSequence: 1,
+        }),
+      ],
+      { user: { findMany: async () => users, findFirst: async () => null } },
+    );
+    const advice = await service.bankAdvice(9, 2026, 'org');
+    expect(advice.rows.map((r) => r.runId)).toEqual(['a']);
+    expect(advice.total).toBe(42000);
+    expect(advice.leftOut.map((l) => l.runId).sort()).toEqual(['b', 'd']);
   });
 });
