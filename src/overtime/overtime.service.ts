@@ -362,6 +362,8 @@ export class OvertimeService {
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
+            // Who decided it, so the employee's list can say "Approved by ...".
+            approvedBy: { select: { id: true, name: true } },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
           skip: skip(query.page, query.limit),
