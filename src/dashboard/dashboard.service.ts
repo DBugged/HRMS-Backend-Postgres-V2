@@ -869,6 +869,9 @@ export class DashboardService {
         date: l.startDate,
         endDate: l.endDate === l.startDate ? null : l.endDate,
         requestedAt: l.createdAt,
+        // Set once the reporting manager has signed off level 1 of a two-level leave type; the request then waits
+        // for HR/Admin's final decision, so the list can say so instead of offering the manager Approve again.
+        levelOneApprovedAt: l.level1ApprovedAt,
       })),
       ...regularizations.map((a) => ({
         type: 'REGULARIZATION' as const,
