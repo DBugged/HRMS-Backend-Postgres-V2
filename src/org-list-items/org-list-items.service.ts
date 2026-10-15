@@ -140,7 +140,16 @@ export class OrgListItemsService {
       // isSystemDefault: false), so this is a no-op there.
       orderBy: [{ isSystemDefault: 'desc' }, { name: 'asc' }],
     });
-    return wrapAll(data);
+    // The management screens (not the dropdowns, which ask for activeOnly) also need to know which entries are in
+    // use, so Edit / Delete can be offered only where the server would accept them.
+    if (activeOnly) return wrapAll(data);
+    const withUsage = await Promise.all(
+      data.map(async (item) => ({
+        ...item,
+        usageCount: await this.countUsage(item, organizationId),
+      })),
+    );
+    return wrapAll(withUsage);
   }
 
   async create(
@@ -185,6 +194,20 @@ export class OrgListItemsService {
       throw new ConflictException(
         'This is a built-in category — its name cannot be changed.',
       );
+    }
+    // A reason that exit interviews already point to is stored by name inside each interview, so renaming it would
+    // leave those interviews showing a reason that no longer exists in the list.
+    if (
+      item.type === OrgListType.REASON_FOR_LEAVING &&
+      trimmed !== undefined &&
+      trimmed !== item.name
+    ) {
+      const used = await this.countUsage(item, organizationId);
+      if (used > 0) {
+        throw new ConflictException(
+          `This reason is used by ${used} exit ${used === 1 ? 'interview' : 'interviews'} and cannot be renamed - deactivate it and add a new one instead.`,
+        );
+      }
     }
     // updateMany (not update) — its `where` accepts arbitrary filters, so
     // it can be organizationId-scoped directly, matching the same
