@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   IsBoolean,
   IsInt,
@@ -19,6 +20,8 @@ export class SubmitExitInterviewDto {
   reasonForLeaving!: string;
 
   @ApiProperty({ minimum: 1, maximum: 5 })
+  // A form posts the choice as text ("3"); read it as the number it stands for before checking the range.
+  @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(5)
