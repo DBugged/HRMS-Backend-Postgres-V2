@@ -80,22 +80,6 @@ function withSignedFileUrl<T extends EmployeeDocument>(doc: T): T {
   };
 }
 
-// personalData fields only the employee may change (HR/Admin: view-only): bank details and government IDs. The
-// address is not one of them - HR and Admin may correct it on an employee's record (audited, and the employee is told).
-export const SELF_ONLY_PERSONAL_DATA_KEYS = [
-  'bankAccountHolderName',
-  'bankName',
-  'bankAccountNo',
-  'bankIFSC',
-  'cancelledChequeUrl',
-  'panNumber',
-  'aadharNumber',
-  'uanNumber',
-  'pfNumber',
-  'esicNumber',
-  'passportNumber',
-] as const;
-
 @Injectable()
 export class EmployeeProfileService {
   constructor(
@@ -293,21 +277,6 @@ export class EmployeeProfileService {
       // The company, not the employee, decides what an employee's CTC is.
       delete patch.currentCTC;
     }
-    // Bank details and government IDs are the employee's own to enter: HR/Admin see them but cannot change them on
-    // someone else's record. (The address is not in that list - HR/Admin may update it.) Values equal to what is stored are ignored (the edit forms resend a
-    // whole section), so only an actual change is refused. Editing your own record is unaffected.
-    if (actor.id !== id) {
-      const same = (a: unknown, b: unknown) =>
-        String(a ?? '').trim() === String(b ?? '').trim();
-      const changed = SELF_ONLY_PERSONAL_DATA_KEYS.filter(
-        (key) => key in patch && !same(patch[key], before[key]),
-      );
-      if (changed.length > 0) {
-        throw new ForbiddenException(
-          "An employee's bank details and government IDs are view-only for HR and Admin - the employee updates them themselves.",
-        );
-      }
-    }
     assertPersonalDataShape(patch, before);
     assertValidIdentifiers(patch);
     assertValidDates(patch);
@@ -354,6 +323,34 @@ export class EmployeeProfileService {
       where: { id, organizationId },
       data: { personalData: merged as Prisma.InputJsonValue },
     });
+
+    // HR/Admin may fill in or correct bank details and government IDs on an employee's record (the employee can
+    // still enter them on My Profile). A change made on someone else's record leaves a trace - which identifiers
+    // changed, never their values - so a correction is never silent.
+    if (actor.id !== id) {
+      const IDENTIFIER_KEYS = [
+        'panNumber',
+        'aadharNumber',
+        'uanNumber',
+        'pfNumber',
+        'esicNumber',
+        'passportNumber',
+      ] as const;
+      const changedIdentifiers = IDENTIFIER_KEYS.filter(
+        (key) =>
+          String(before[key] ?? '').trim() !== String(merged[key] ?? '').trim(),
+      );
+      if (changedIdentifiers.length > 0) {
+        await this.auditLogService.log({
+          actorId: actor.id,
+          action: 'STATUTORY_IDENTIFIERS_UPDATED',
+          module: 'EMPLOYEE',
+          organizationId,
+          targetId: id,
+          details: { fields: changedIdentifiers, byRole: actor.role },
+        });
+      }
+    }
 
     // HR/Admin changing an employee's address: leave a trace (who, when - not the address itself) and tell the
     // employee, so a correction made on their behalf is never silent.
