@@ -414,7 +414,13 @@ export class OrganizationSettingsService {
       // Lets Offboarding suggest a Last Working Day (resignation date +
       // this many days) without every caller needing ADMIN-only access to
       // the full /organizations/settings payload.
-      defaultNoticeDays: Number(policies.defaultNoticeDays) || 30,
+      // 0 is a valid setting (no notice period), so only a missing / non-numeric value falls back to 30.
+      defaultNoticeDays:
+        policies.defaultNoticeDays !== undefined &&
+        policies.defaultNoticeDays !== null &&
+        Number.isFinite(Number(policies.defaultNoticeDays))
+          ? Number(policies.defaultNoticeDays)
+          : 30,
       // Drives every date/time display across the app (see
       // frontend/src/utils/date.js and backend-v2/src/payroll/format-date.ts)
       // — same "read from Policies, apply everywhere" pattern as
