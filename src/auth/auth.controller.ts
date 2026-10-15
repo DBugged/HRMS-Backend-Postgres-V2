@@ -7,6 +7,7 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Post,
   Req,
   Res,
@@ -88,6 +89,13 @@ export class AuthController {
   @Post('forgot-password')
   forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.authService.forgotPassword(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: AUTH_THROTTLE_LIMIT, ttl: 60_000 } })
+  @Get('reset-password/:token/status')
+  resetLinkStatus(@Param('token') token: string) {
+    return this.authService.resetLinkStatus(token);
   }
 
   @Public()

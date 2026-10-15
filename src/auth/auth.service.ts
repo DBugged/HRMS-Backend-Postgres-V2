@@ -769,6 +769,19 @@ export class AuthService {
     return { message: FORGOT_PASSWORD_GENERIC_MESSAGE };
   }
 
+  // Whether an emailed set-password / reset link can still be used, so the page can say "expired" as soon as the link
+  // is opened (and again on a second click) instead of letting the person type a password first. Same single vague
+  // answer for unknown, used and expired tokens.
+  async resetLinkStatus(token: string): Promise<{ valid: boolean }> {
+    const user = await this.usersService.findByResetToken(hashToken(token));
+    return {
+      valid:
+        !!user &&
+        !!user.resetPasswordExpires &&
+        user.resetPasswordExpires >= new Date(),
+    };
+  }
+
   // One vague error for both "invalid" and "expired" — deliberately
   // doesn't distinguish, same as the original release. Also revokes every
   // active refresh token for the account (an enhancement beyond the old
@@ -863,6 +876,10 @@ export class AuthService {
           password: hashedPassword,
           mustChangePassword: false,
           passwordChangedAt: new Date(),
+          // A set-password / reset link that is still outstanding dies with this change: the password has been set
+          // another way, so the emailed link must not work a second time.
+          resetPasswordToken: null,
+          resetPasswordExpires: null,
         },
       }),
       this.scopedPrisma.refreshToken.updateMany({
