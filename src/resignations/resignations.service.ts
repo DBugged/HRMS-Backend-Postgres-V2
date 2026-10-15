@@ -1,4 +1,5 @@
-// Purpose: Employee resignation requests — submit/withdraw (own), and HR/Admin approve/reject.
+// Purpose: Employee resignation requests — submit/withdraw (own), HR/Admin approve/reject, and the employee's request
+// to withdraw an approved one (raised here, decided by HR/Admin).
 // Responsibilities: Owns the Resignation state machine (PENDING -> APPROVED/REJECTED/WITHDRAWN); approving
 // delegates the exit itself to OffboardingService.initiate() (which moves the employee to RESIGNED, the notice stage) and
 // links the resulting case; timeline/audit/in-app notifications are best-effort side effects.
@@ -18,6 +19,7 @@ import {
   NotificationCategory,
   OffboardingStatus,
   ResignationStatus,
+  WithdrawalRequestStatus,
   Role,
   User,
 } from '@prisma/client';
@@ -31,6 +33,7 @@ import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { escapeHtml } from '../email-templates/email-layout';
 import { RequestWithdrawalDto } from './dto/request-withdrawal.dto';
+import { DecideWithdrawalDto } from './dto/decide-withdrawal.dto';
 import { paginate, skip } from '../common/pagination';
 import { SubmitResignationDto } from './dto/submit-resignation.dto';
 import { RecordResignationDto } from './dto/record-resignation.dto';
@@ -303,7 +306,8 @@ export class ResignationsService {
         },
         select: { id: true },
       });
-      if (!reportsToActor) throw new NotFoundException('Resignation not found.');
+      if (!reportsToActor)
+        throw new NotFoundException('Resignation not found.');
     }
     const [row] = await this.withRecordedBy([record], actor.organizationId);
     return row;
@@ -563,6 +567,38 @@ export class ResignationsService {
           : 'Only an approved resignation needs a withdrawal request.',
       );
     }
+    if (record.withdrawalStatus === WithdrawalRequestStatus.REQUESTED) {
+      throw new ConflictException(
+        'Your withdrawal request is already with HR. They will answer it here.',
+      );
+    }
+    // The request is kept on the resignation so it shows as waiting (and HR can act on it); a declined one can be
+    // raised again. The status check in the where makes a double tap a no-op rather than a second request.
+    const { count } = await this.scopedPrisma.resignation.updateMany({
+      where: {
+        id,
+        organizationId,
+        employeeId: actor.id,
+        status: ResignationStatus.APPROVED,
+        OR: [
+          { withdrawalStatus: null },
+          { withdrawalStatus: { not: WithdrawalRequestStatus.REQUESTED } },
+        ],
+      },
+      data: {
+        withdrawalStatus: WithdrawalRequestStatus.REQUESTED,
+        withdrawalReason: dto.reason,
+        withdrawalRequestedAt: new Date(),
+        withdrawalDecidedById: null,
+        withdrawalDecidedAt: null,
+        withdrawalDecisionNote: null,
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException(
+        'Your withdrawal request is already with HR. They will answer it here.',
+      );
+    }
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: actor.id, organizationId },
       select: { id: true, name: true, reportingManagerId: true },
@@ -589,7 +625,112 @@ export class ResignationsService {
       'Resignation Withdrawal Requested',
       `${actor.name} has asked to withdraw their approved resignation: ${dto.reason}`,
     );
-    return { message: 'Your request was sent to HR.' };
+    // `message` keeps the success toast the clients already show for this call.
+    return {
+      ...(await this.scopedPrisma.resignation.findFirstOrThrow({
+        where: { id, organizationId },
+      })),
+      message: 'Your request was sent to HR.',
+    };
+  }
+
+  // HR / Admin answers a withdrawal request. Approving cancels the exit (the same cancel HR can do from Offboarding,
+  // which also withdraws this resignation and restores the employee's previous status); if that cannot be done - e.g. a
+  // processed settlement has to be reversed first - the error is returned and the request stays open. Declining
+  // needs a note, which the employee sees. Same tier rule as every resignation decision.
+  async decideWithdrawal(id: string, dto: DecideWithdrawalDto, actor: Actor) {
+    const organizationId = actor.organizationId;
+    const record = await this.loadForDecision(
+      id,
+      actor,
+      ResignationStatus.APPROVED,
+    );
+    if (record.withdrawalStatus !== WithdrawalRequestStatus.REQUESTED) {
+      throw new BadRequestException(
+        'There is no withdrawal request waiting for a decision on this resignation.',
+      );
+    }
+    const note = dto.note?.trim() || undefined;
+    const approve = dto.decision === 'APPROVE';
+    if (!approve && !note) {
+      throw new BadRequestException(
+        'Add a note explaining why the withdrawal is declined - the employee will see it.',
+      );
+    }
+
+    if (approve) {
+      if (record.offboardingCaseId) {
+        // Throws when the exit cannot be cancelled (completed, or its settlement is processed / paid).
+        await this.offboardingService.cancel(
+          record.offboardingCaseId,
+          organizationId,
+          actor.id,
+        );
+      } else {
+        await this.scopedPrisma.resignation.updateMany({
+          where: { id, organizationId, status: ResignationStatus.APPROVED },
+          data: {
+            status: ResignationStatus.WITHDRAWN,
+            decisionNote: 'Withdrawal approved.',
+          },
+        });
+      }
+    }
+    const { count } = await this.scopedPrisma.resignation.updateMany({
+      where: {
+        id,
+        organizationId,
+        withdrawalStatus: WithdrawalRequestStatus.REQUESTED,
+      },
+      data: {
+        withdrawalStatus: approve
+          ? WithdrawalRequestStatus.APPROVED
+          : WithdrawalRequestStatus.DECLINED,
+        withdrawalDecidedById: actor.id,
+        withdrawalDecidedAt: new Date(),
+        withdrawalDecisionNote: note ?? null,
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException(
+        'This withdrawal request was already decided.',
+      );
+    }
+
+    const outcome = approve ? 'APPROVED' : 'DECLINED';
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: record.employeeId,
+      eventKey: `RESIGNATION_WITHDRAWAL_${outcome}`,
+      performedById: actor.id,
+      description: note,
+      metadata: { resignationId: id },
+    });
+    await this.auditLogService.logSelfApproval(actor, {
+      module: 'EMPLOYEE',
+      targetId: id,
+      employeeId: record.employeeId,
+      request: 'Resignation withdrawal',
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: `RESIGNATION_WITHDRAWAL_${outcome}`,
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: record.employeeId,
+      details: { resignationId: id, note },
+    });
+    await this.notify(
+      organizationId,
+      record.employeeId,
+      approve ? 'Withdrawal Approved' : 'Withdrawal Declined',
+      approve
+        ? 'HR approved your request: your resignation is withdrawn and your exit is cancelled.'
+        : `HR declined your request to withdraw your resignation: ${note}`,
+    );
+    return this.scopedPrisma.resignation.findFirstOrThrow({
+      where: { id, organizationId },
+    });
   }
 
   async approve(id: string, dto: ApproveResignationDto, actor: Actor) {
@@ -715,7 +856,11 @@ export class ResignationsService {
 
   // Own-request + tiering rule, same as the privacy module: nobody decides their own, and only an ADMIN
   // decides an HR/ADMIN user's resignation.
-  private async loadForDecision(id: string, actor: Actor) {
+  private async loadForDecision(
+    id: string,
+    actor: Actor,
+    expectedStatus: ResignationStatus = ResignationStatus.PENDING,
+  ) {
     const record = await this.scopedPrisma.resignation.findFirst({
       where: { id, organizationId: actor.organizationId },
     });
@@ -739,9 +884,11 @@ export class ResignationsService {
         'Only an Admin can decide an HR or Admin employee’s resignation.',
       );
     }
-    if (record.status !== ResignationStatus.PENDING) {
+    if (record.status !== expectedStatus) {
       throw new BadRequestException(
-        'Only a pending resignation can be decided.',
+        expectedStatus === ResignationStatus.PENDING
+          ? 'Only a pending resignation can be decided.'
+          : 'Only an approved resignation has a withdrawal request.',
       );
     }
     return record;

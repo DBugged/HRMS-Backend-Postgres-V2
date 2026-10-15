@@ -157,7 +157,10 @@ describe('Resignations & exit lifecycle (e2e)', () => {
   });
 
   it("uses the organization's notice period whatever the client sends, and the last working day must respect it", async () => {
-    const org = await prisma.organization.findFirstOrThrow({ where: { id: organizationId }, select: { policies: true } });
+    const org = await prisma.organization.findFirstOrThrow({
+      where: { id: organizationId },
+      select: { policies: true },
+    });
     const before = (org.policies ?? {}) as Record<string, unknown>;
     await prisma.organization.update({
       where: { id: organizationId },
@@ -170,7 +173,9 @@ describe('Resignations & exit lifecycle (e2e)', () => {
         .set('Authorization', `Bearer ${empToken}`)
         .send({ requestedLwd: dateOffset(10), noticePeriodDays: 5 })
         .expect(400);
-      expect(JSON.stringify((res.body as { message: unknown }).message)).toContain('notice period of 30 day');
+      expect(
+        JSON.stringify((res.body as { message: unknown }).message),
+      ).toContain('notice period of 30 day');
     } finally {
       await prisma.organization.update({
         where: { id: organizationId },
@@ -462,7 +467,10 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     const approved = await request(app.getHttpServer())
       .patch(`/resignations/${hrResId}/approve`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ approvedLwd: dateOffset(15), decisionNote: 'Released early at their request' })
+      .send({
+        approvedLwd: dateOffset(15),
+        decisionNote: 'Released early at their request',
+      })
       .expect(200);
     const body = approved.body as ResignationBody;
     expect(body.approvedLwd).toBe(dateOffset(15));
@@ -591,8 +599,11 @@ describe('Resignations & exit lifecycle (e2e)', () => {
   });
 
   describe('manager view, withdrawal request and early release', () => {
-    it('a manager sees a direct report\'s resignation read-only; an unrelated employee does not', async () => {
-      const manager = await createEmployee('resig-e2e-mgr@example.test', 'MANAGER');
+    it("a manager sees a direct report's resignation read-only; an unrelated employee does not", async () => {
+      const manager = await createEmployee(
+        'resig-e2e-mgr@example.test',
+        'MANAGER',
+      );
       const report = await createEmployee('resig-e2e-report@example.test');
       await prisma.user.update({
         where: { id: report.id },
@@ -601,7 +612,11 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       await request(app.getHttpServer())
         .post(`/employee-salary/${report.id}/structure`)
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ componentCode: 'BASIC', fixedAmount: 30000, effectiveFrom: '2026-01-01' })
+        .send({
+          componentCode: 'BASIC',
+          fixedAmount: 30000,
+          effectiveFrom: '2026-01-01',
+        })
         .expect(201);
 
       const submitted = await request(app.getHttpServer())
@@ -650,11 +665,80 @@ describe('Resignations & exit lifecycle (e2e)', () => {
         .expect(201);
       // The request leaves a trace, and nothing changed in the resignation itself.
       const audit = await prisma.auditLog.count({
-        where: { action: 'RESIGNATION_WITHDRAWAL_REQUESTED', targetId: report.id },
+        where: {
+          action: 'RESIGNATION_WITHDRAWAL_REQUESTED',
+          targetId: report.id,
+        },
       });
       expect(audit).toBe(1);
-      const after = await prisma.resignation.findFirstOrThrow({ where: { id } });
+      const after = await prisma.resignation.findFirstOrThrow({
+        where: { id },
+      });
       expect(after.status).toBe('APPROVED');
+      // ...except that the request is now kept on it, so it shows as waiting for HR.
+      expect(after.withdrawalStatus).toBe('REQUESTED');
+      expect(after.withdrawalReason).toBe('Plans changed');
+
+      // Sending it again while it is waiting is refused (no second notification).
+      await request(app.getHttpServer())
+        .post(`/resignations/${id}/withdrawal-request`)
+        .set('Authorization', `Bearer ${report.token}`)
+        .send({ reason: 'Plans changed' })
+        .expect(409);
+
+      // Only HR/Admin decide; the employee cannot.
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/withdrawal-request/decision`)
+        .set('Authorization', `Bearer ${report.token}`)
+        .send({ decision: 'APPROVE' })
+        .expect(403);
+
+      // Declining needs a note, which the employee then sees.
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/withdrawal-request/decision`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'DECLINE' })
+        .expect(400);
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/withdrawal-request/decision`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'DECLINE', note: 'We need you through the handover' })
+        .expect(200);
+      const declined = await prisma.resignation.findFirstOrThrow({
+        where: { id },
+      });
+      expect(declined.status).toBe('APPROVED');
+      expect(declined.withdrawalStatus).toBe('DECLINED');
+      expect(declined.withdrawalDecisionNote).toBe(
+        'We need you through the handover',
+      );
+      // Nothing is waiting any more, so a decision now has nothing to act on.
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/withdrawal-request/decision`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVE' })
+        .expect(400);
+
+      // A declined request can be raised again; approving it cancels the exit and withdraws the resignation.
+      await request(app.getHttpServer())
+        .post(`/resignations/${id}/withdrawal-request`)
+        .set('Authorization', `Bearer ${report.token}`)
+        .send({ reason: 'Counter-offer accepted' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .patch(`/resignations/${id}/withdrawal-request/decision`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'APPROVE' })
+        .expect(200);
+      const approved = await prisma.resignation.findFirstOrThrow({
+        where: { id },
+      });
+      expect(approved.status).toBe('WITHDRAWN');
+      expect(approved.withdrawalStatus).toBe('APPROVED');
+      const exitCase = await prisma.offboardingCase.findFirstOrThrow({
+        where: { id: approved.offboardingCaseId! },
+      });
+      expect(exitCase.status).toBe('CANCELLED');
     });
   });
 });

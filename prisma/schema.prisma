@@ -3555,6 +3555,14 @@ enum ResignationStatus {
   WITHDRAWN
 }
 
+// Where an employee's request to withdraw an APPROVED resignation stands (null = none was made). REQUESTED waits for
+// HR/Admin; APPROVED means the exit was cancelled and the resignation withdrawn; DECLINED leaves the resignation as is.
+enum WithdrawalRequestStatus {
+  REQUESTED
+  APPROVED
+  DECLINED
+}
+
 // An employee's own resignation request. Approving it initiates the existing OffboardingCase (linked via
 // offboardingCaseId, a plain id, no FK). decidedById is a plain id like the privacy tables' user refs.
 model Resignation {
@@ -3580,6 +3588,15 @@ model Resignation {
 
   offboardingCaseId String?
 
+  // The employee's request to withdraw this resignation once it was approved (only HR/Admin can cancel the exit).
+  // Plain ids like decidedById. A declined request can be raised again, which resets these fields.
+  withdrawalStatus      WithdrawalRequestStatus?
+  withdrawalReason      String?
+  withdrawalRequestedAt DateTime?
+  withdrawalDecidedById String?
+  withdrawalDecidedAt   DateTime?
+  withdrawalDecisionNote String?
+
   // Set when HR or an Admin recorded the resignation on the employee's behalf (given by email or in person): the id
   // of whoever entered it. NULL = the employee submitted it themselves. A plain id, like decidedById.
   recordedById String?
@@ -3589,6 +3606,7 @@ model Resignation {
 
   @@index([organizationId, employeeId])
   @@index([organizationId, status])
+  @@index([organizationId, withdrawalStatus])
   @@map("resignations")
 }
 

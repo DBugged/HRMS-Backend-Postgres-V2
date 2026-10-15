@@ -23,6 +23,7 @@ import {
   RejectResignationDto,
 } from './dto/decide-resignation.dto';
 import { ListResignationsQueryDto } from './dto/list-resignations-query.dto';
+import { DecideWithdrawalDto } from './dto/decide-withdrawal.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -84,6 +85,18 @@ export class ResignationsController {
     @CurrentUser() caller: Caller,
   ) {
     return this.resignationsService.requestWithdrawal(id, dto, caller);
+  }
+
+  // HR / Admin answers an employee's request to withdraw an approved resignation: approving cancels the exit.
+  @Patch(':id/withdrawal-request/decision')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  decideWithdrawal(
+    @Param('id') id: string,
+    @Body() dto: DecideWithdrawalDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.resignationsService.decideWithdrawal(id, dto, caller);
   }
 
   @Patch(':id/withdraw')

@@ -22,6 +22,7 @@ import {
   PayrollRunStatus,
   ReimbursementStatus,
   ResignationStatus,
+  WithdrawalRequestStatus,
   Role,
   User,
   WfhApprovalStatus,
@@ -457,12 +458,7 @@ export class DashboardService {
         incompleteToday,
         onLeaveToday,
       },
-      pendingItems: await this.pendingItems(
-        organizationId,
-        null,
-        true,
-        viewer,
-      ),
+      pendingItems: await this.pendingItems(organizationId, null, true, viewer),
       pendingApprovals: {
         leaves: pendingLeaves,
         regularizations: pendingRegularizationCount,
@@ -673,9 +669,16 @@ export class DashboardService {
         ...withoutOwn(true),
         status: LeaveEncashmentStatus.PENDING,
       },
+      // Pending resignations, plus approved ones whose employee asked to withdraw (HR/Admin answer those too).
       resignations: {
         ...withoutOwn(false),
-        status: ResignationStatus.PENDING,
+        OR: [
+          { status: ResignationStatus.PENDING },
+          {
+            status: ResignationStatus.APPROVED,
+            withdrawalStatus: WithdrawalRequestStatus.REQUESTED,
+          },
+        ],
       },
     };
   }
@@ -887,16 +890,31 @@ export class DashboardService {
         endDate: null as string | null,
         requestedAt: e.createdAt,
       })),
-      ...resignations.map((r) => ({
-        type: 'RESIGNATION' as const,
-        id: r.id,
-        employee: r.employee.name,
-        employeeId: r.employee.employeeId,
-        summary: 'Resignation, last working day',
-        date: r.requestedLwd,
-        endDate: null as string | null,
-        requestedAt: r.createdAt,
-      })),
+      ...resignations.map((r) =>
+        r.status === ResignationStatus.APPROVED
+          ? {
+              type: 'RESIGNATION_WITHDRAWAL' as const,
+              id: r.id,
+              employee: r.employee.name,
+              employeeId: r.employee.employeeId,
+              summary: 'Withdrawal of approved resignation',
+              date: (r.withdrawalRequestedAt ?? r.createdAt)
+                .toISOString()
+                .slice(0, 10),
+              endDate: null as string | null,
+              requestedAt: r.withdrawalRequestedAt ?? r.createdAt,
+            }
+          : {
+              type: 'RESIGNATION' as const,
+              id: r.id,
+              employee: r.employee.name,
+              employeeId: r.employee.employeeId,
+              summary: 'Resignation, last working day',
+              date: r.requestedLwd,
+              endDate: null as string | null,
+              requestedAt: r.createdAt,
+            },
+      ),
     ];
     const items = [
       ...hrItems,
