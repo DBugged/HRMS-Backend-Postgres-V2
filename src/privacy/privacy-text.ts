@@ -28,11 +28,24 @@ const PLAIN_OPTIONS: sanitizeHtml.IOptions = {
   ],
 };
 
-export function cleanNoticeText(text: string): string {
+// One pass: strip markup, then turn the entities back into the characters they stand for.
+function cleanOnce(text: string): string {
   return sanitizeHtml(text, PLAIN_OPTIONS)
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#0*39;|&apos;/g, "'")
     .replace(/&amp;/g, '&');
+}
+
+// Repeated until nothing more changes: decoding "&lt;script&gt;" in the first pass produces a real <script> tag,
+// which the next pass removes. Without this an entity-encoded script was stored as a literal "<script>...</script>".
+export function cleanNoticeText(text: string): string {
+  let current = text;
+  for (let i = 0; i < 5; i++) {
+    const next = cleanOnce(current);
+    if (next === current) break;
+    current = next;
+  }
+  return current;
 }
