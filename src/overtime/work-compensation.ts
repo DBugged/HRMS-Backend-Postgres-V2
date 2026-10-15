@@ -20,21 +20,24 @@ export interface WorkCompensationSettings {
   options: WorkCompensationOption[];
 }
 
+// The starting list: the usual shapes of compensation, with the days at 0 so that nothing is promised until the
+// organization sets what it actually grants. An option with 0 comp-off days and 0 pay days is never offered to an
+// approver (see selectableWorkCompensation), so an organization that has not configured this keeps the hourly rate.
 export const DEFAULT_WORK_COMPENSATION_OPTIONS: WorkCompensationOption[] = [
-  { key: 'COMP_OFF', label: 'Comp-off (1 day)', compOffDays: 1, payDays: 0 },
-  { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
-  { key: 'PAY_2', label: '2 days pay', compOffDays: 0, payDays: 2 },
+  { key: 'COMP_OFF', label: 'Comp-off (1 day)', compOffDays: 0, payDays: 0 },
+  { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 0 },
+  { key: 'PAY_2', label: '2 days pay', compOffDays: 0, payDays: 0 },
   {
     key: 'COMP_OFF_PAY_1',
     label: 'Comp-off + 1 day pay',
-    compOffDays: 1,
-    payDays: 1,
+    compOffDays: 0,
+    payDays: 0,
   },
   {
     key: 'COMP_OFF_PAY_2',
     label: 'Comp-off + 2 days pay',
-    compOffDays: 1,
-    payDays: 2,
+    compOffDays: 0,
+    payDays: 0,
   },
 ];
 
@@ -54,6 +57,23 @@ export function resolveWorkCompensation(
     typeof raw.defaultKey === 'string' &&
     options.some((o) => o.key === raw.defaultKey)
       ? raw.defaultKey
+      : null;
+  return { defaultKey, options };
+}
+
+/**
+ * What an approver may actually choose: the options that grant something (some comp-off or pay days). A 0 / 0 option is
+ * a placeholder. The default is dropped when it is one of those.
+ */
+export function selectableWorkCompensation(
+  settings: WorkCompensationSettings,
+): WorkCompensationSettings {
+  const options = settings.options.filter(
+    (o) => Number(o.compOffDays) > 0 || Number(o.payDays) > 0,
+  );
+  const defaultKey =
+    settings.defaultKey && options.some((o) => o.key === settings.defaultKey)
+      ? settings.defaultKey
       : null;
   return { defaultKey, options };
 }
@@ -116,11 +136,7 @@ export function assertValidWorkCompensation(
         );
       }
     }
-    if (compOffDays === 0 && payDays === 0) {
-      throw new BadRequestException(
-        `${where}: give at least some comp-off or pay days.`,
-      );
-    }
+    // 0 and 0 is allowed: it is a placeholder that is kept but never offered to an approver (selectableWorkCompensation).
     return { key, label, compOffDays, payDays };
   });
   const defaultKey =

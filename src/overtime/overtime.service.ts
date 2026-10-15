@@ -34,6 +34,7 @@ import { LogOvertimeDto } from './dto/log-overtime.dto';
 import {
   pickWorkCompensation,
   resolveWorkCompensation,
+  selectableWorkCompensation,
 } from './work-compensation';
 import { overtimeDayProblem, type DayKind } from './overtime-day-rules';
 import {
@@ -300,7 +301,10 @@ export class OvertimeService {
       where: { organizationId },
       select: { workCompensation: true },
     });
-    return resolveWorkCompensation(settings?.workCompensation);
+    // Only the options that grant something: 0 / 0 placeholders are not offered, and not accepted on approval.
+    return selectableWorkCompensation(
+      resolveWorkCompensation(settings?.workCompensation),
+    );
   }
 
   // Current multipliers for each overtime type, so the log form can show
@@ -358,6 +362,8 @@ export class OvertimeService {
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
+            // Who decided it, so the employee's list can say "Approved by ...".
+            approvedBy: { select: { id: true, name: true } },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
           skip: skip(query.page, query.limit),
@@ -470,6 +476,7 @@ export class OvertimeService {
         data: {
           status: dto.status,
           approvedById: actor.id,
+          decisionNote: dto.comments?.trim() || null,
           ...(option && {
             compensationKey: option.key,
             payDays: option.payDays,
@@ -532,6 +539,7 @@ export class OvertimeService {
       details: {
         employeeId: record.employeeId,
         status: dto.status,
+        ...(dto.comments?.trim() && { comments: dto.comments.trim() }),
         ...(option && {
           compensation: option.key,
           compOffDays: option.compOffDays,
@@ -556,7 +564,7 @@ export class OvertimeService {
         organizationId,
       );
       const title = `Overtime Request ${dto.status}`;
-      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat, timeZone)} has been ${dto.status.toLowerCase()}.`;
+      const message = `Your overtime of ${record.hours} hour(s) on ${formatDateDisplay(record.date, '', dateFormat, timeZone)} has been ${dto.status.toLowerCase()}.${dto.comments?.trim() ? ` Comments: ${dto.comments.trim()}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -572,6 +580,7 @@ export class OvertimeService {
           hours: String(record.hours),
           date: formatDateDisplay(record.date, '', dateFormat, timeZone),
           status: dto.status,
+          comments: dto.comments?.trim() ?? '',
         },
         { subject: title, html: message },
       );

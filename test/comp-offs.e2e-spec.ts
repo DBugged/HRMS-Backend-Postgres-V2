@@ -237,9 +237,11 @@ describe('Comp-Offs (e2e)', () => {
     const res = await request(app.getHttpServer())
       .patch(`/comp-offs/${compOffId}/review`)
       .set('Authorization', `Bearer ${managerToken}`)
-      .send({ decision: 'APPROVED' })
+      .send({ decision: 'APPROVED', comments: '  Approved - worked the full day  ' })
       .expect(200);
     expect((res.body as CompOffBody).status).toBe('APPROVED');
+    // The reviewer's note is stored (trimmed) so the employee can see why.
+    expect((res.body as { decisionNote: string | null }).decisionNote).toBe('Approved - worked the full day');
   });
 
   it('rejects reviewing an already-reviewed comp-off', async () => {
@@ -430,5 +432,16 @@ describe('Comp-Offs (e2e)', () => {
         .expect(200);
       expect((review.body as CompOffBody).status).toBe('APPROVED');
     });
+  });
+
+  it('accepts a regular working day: the approver decides, the date is not refused up front', async () => {
+    // pastDate() is a Sunday (the weekly off); one day before it is an ordinary Saturday-or-weekday the old rule refused.
+    const d = new Date(`${pastDate(5)}T00:00:00.000Z`);
+    d.setUTCDate(d.getUTCDate() + 2); // the Tuesday after that Sunday
+    await request(app.getHttpServer())
+      .post('/comp-offs')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ earnedForDate: d.toISOString().slice(0, 10), reason: 'Covered a release on a working day' })
+      .expect(201);
   });
 });

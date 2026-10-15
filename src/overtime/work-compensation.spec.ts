@@ -4,6 +4,7 @@ import {
   assertValidWorkCompensation,
   pickWorkCompensation,
   resolveWorkCompensation,
+  selectableWorkCompensation,
 } from './work-compensation';
 
 describe('work compensation options', () => {
@@ -11,6 +12,32 @@ describe('work compensation options', () => {
     const s = resolveWorkCompensation({});
     expect(s.options).toEqual(DEFAULT_WORK_COMPENSATION_OPTIONS);
     expect(s.defaultKey).toBeNull();
+  });
+
+  it('the built-in options start at 0 and 0, and none of them is offered to an approver until it grants something', () => {
+    expect(
+      DEFAULT_WORK_COMPENSATION_OPTIONS.every(
+        (o) => o.compOffDays === 0 && o.payDays === 0,
+      ),
+    ).toBe(true);
+    const offered = selectableWorkCompensation(resolveWorkCompensation({}));
+    expect(offered.options).toEqual([]);
+    expect(offered.defaultKey).toBeNull();
+  });
+
+  it('a saved list keeps its 0 / 0 placeholders but offers only the options that grant something', () => {
+    const saved = assertValidWorkCompensation({
+      defaultKey: 'NONE_YET',
+      options: [
+        { key: 'NONE_YET', label: 'Not set up', compOffDays: 0, payDays: 0 },
+        { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
+      ],
+    });
+    expect(saved.options).toHaveLength(2);
+    const offered = selectableWorkCompensation(saved);
+    expect(offered.options.map((o) => o.key)).toEqual(['PAY_1']);
+    // The default pointed at a placeholder, so there is no default.
+    expect(offered.defaultKey).toBeNull();
   });
 
   it('keeps saved options and drops a default that no longer exists', () => {
@@ -50,10 +77,6 @@ describe('work compensation options', () => {
       /name/,
     ],
     [
-      { options: [{ key: 'A', label: 'x', compOffDays: 0, payDays: 0 }] },
-      /at least some/,
-    ],
-    [
       { options: [{ key: 'A', label: 'x', compOffDays: 1.3, payDays: 0 }] },
       /half a day/,
     ],
@@ -85,7 +108,15 @@ describe('work compensation options', () => {
   });
 
   it('picks the requested option, else the default, else the hourly rate', () => {
-    const s = resolveWorkCompensation({ defaultKey: 'PAY_1' });
+    const s = selectableWorkCompensation(
+      resolveWorkCompensation({
+        defaultKey: 'PAY_1',
+        options: [
+          { key: 'COMP_OFF', label: 'Comp-off', compOffDays: 1, payDays: 0 },
+          { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
+        ],
+      }),
+    );
     expect(pickWorkCompensation(s, 'COMP_OFF')?.key).toBe('COMP_OFF');
     expect(pickWorkCompensation(s, undefined)?.key).toBe('PAY_1');
     expect(

@@ -14,4 +14,10 @@ export class ReviewOvertimeDto {
   @IsString()
   @MaxLength(40)
   compensationKey?: string;
+
+  @ApiPropertyOptional({ maxLength: 1000, description: 'Why it was decided this way; shown to the employee.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  comments?: string;
 }

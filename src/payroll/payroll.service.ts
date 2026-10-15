@@ -3733,11 +3733,21 @@ export class PayrollService {
         message,
         category: NotificationCategory.PAYROLL,
       });
+      // Through the shared email shell, like every other designed email.
+      const rendered = await this.emailTemplatesService.renderOccasion(
+        organizationId,
+        'PAYSLIP_WITHDRAWN',
+        { employeeName: employee.name },
+        {
+          subject: title,
+          html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${escapeHtml(message)}</p>`,
+        },
+      );
       void this.emailService.send({
         organizationId,
         to: employee.email,
-        subject: title,
-        html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${escapeHtml(message)}</p>`,
+        subject: rendered.subject,
+        html: rendered.html,
       });
     } catch (err) {
       new Logger(PayrollService.name).warn(

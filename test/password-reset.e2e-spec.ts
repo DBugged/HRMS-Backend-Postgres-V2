@@ -215,4 +215,69 @@ describe('Password Reset (e2e)', () => {
     });
     expect(activeTokensAfter).toBe(0);
   });
+
+  it('the link status says valid until the link is used, then expired', async () => {
+    const rawToken = 'status-check-token';
+    await prisma.user.updateMany({
+      where: { email: 'pwreset-e2e-admin@example.test' },
+      data: {
+        resetPasswordToken: hashToken(rawToken),
+        resetPasswordExpires: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+    const before = await request(app.getHttpServer())
+      .get(`/auth/reset-password/${rawToken}/status`)
+      .expect(200);
+    expect((before.body as { valid: boolean }).valid).toBe(true);
+
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .send({ token: rawToken, password: 'StatusUsedPassword123!' })
+      .expect(201);
+
+    const after = await request(app.getHttpServer())
+      .get(`/auth/reset-password/${rawToken}/status`)
+      .expect(200);
+    expect((after.body as { valid: boolean }).valid).toBe(false);
+
+    const unknown = await request(app.getHttpServer())
+      .get('/auth/reset-password/not-a-token/status')
+      .expect(200);
+    expect((unknown.body as { valid: boolean }).valid).toBe(false);
+  });
+
+  it('changing the password another way kills an outstanding set-password link', async () => {
+    const rawToken = 'outstanding-link-token';
+    await prisma.user.updateMany({
+      where: { email: 'pwreset-e2e-admin@example.test' },
+      data: {
+        resetPasswordToken: hashToken(rawToken),
+        resetPasswordExpires: new Date(Date.now() + 10 * 60 * 1000),
+      },
+    });
+    const login = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: 'pwreset-e2e-admin@example.test',
+        password: 'StatusUsedPassword123!',
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/auth/change-password')
+      .set('Authorization', `Bearer ${(login.body as AuthBody).accessToken}`)
+      .send({
+        currentPassword: 'StatusUsedPassword123!',
+        newPassword: 'ChangedAnotherWay123!',
+      })
+      .expect(201);
+
+    const status = await request(app.getHttpServer())
+      .get(`/auth/reset-password/${rawToken}/status`)
+      .expect(200);
+    expect((status.body as { valid: boolean }).valid).toBe(false);
+    await request(app.getHttpServer())
+      .post('/auth/reset-password')
+      .send({ token: rawToken, password: 'ShouldNotWork123!' })
+      .expect(400);
+  });
 });

@@ -32,11 +32,6 @@ import {
   sumAvailableOn,
 } from './comp-off-consumption';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
-import {
-  resolveShiftConfig,
-  isWeeklyOff,
-  type OrganizationAttendancePrefs,
-} from '../attendance/attendance-shift-config';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -102,49 +97,14 @@ export class CompOffService {
       throw new BadRequestException('earnedForDate cannot be in the future.');
     }
 
-    // Comp-off is only earned by working a day you weren't scheduled to —
-    // a weekly off or an org/department holiday. Previously earn() trusted
-    // the client-supplied earnedForDate outright, so a claim for an
-    // ordinary working weekday would go straight into the approval queue
-    // with no way for a reviewer to tell it apart from a legitimate one
-    // without checking the calendar by hand. Resolves the same shift
-    // config (department, falling back to org defaults) AttendanceService
-    // itself uses, so this can never disagree with what Attendance
-    // considers a working day.
+    // Any past day can be claimed: the approver (manager / HR) sees the date and the reason and decides, so the
+    // request is not refused up front for falling on a working day or a public holiday that was not set up in the
+    // calendar (it was refusing, for example, Gandhi Jayanti when the holiday had not been loaded). The target must
+    // still exist in the organisation.
     const targetEmployee = await this.scopedPrisma.user.findFirst({
       where: { id: targetEmployeeId, organizationId },
-      include: { department: true },
     });
     if (!targetEmployee) throw new NotFoundException('Employee not found.');
-
-    const org = await this.scopedPrisma.organization.findFirst({
-      where: { id: organizationId },
-    });
-    const shiftConfig = resolveShiftConfig(
-      targetEmployee.department,
-      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
-    );
-    const isOffDay = isWeeklyOff(dto.earnedForDate, shiftConfig.weeklyOffs);
-    const isHoliday = isOffDay
-      ? false
-      : !!(await this.scopedPrisma.holiday.findFirst({
-          where: {
-            organizationId,
-            isActive: true,
-            date: dto.earnedForDate,
-            OR: targetEmployee.departmentId
-              ? [
-                  { departmentId: null },
-                  { departmentId: targetEmployee.departmentId },
-                ]
-              : [{ departmentId: null }],
-          },
-        }));
-    if (!isOffDay && !isHoliday) {
-      throw new BadRequestException(
-        'Comp-off can only be earned for a weekly off or a holiday — this date is a regular working day.',
-      );
-    }
 
     // Duplicate-claim guard: block a new earn request when this employee
     // already has a non-REJECTED CompOff for the same earnedForDate
@@ -436,6 +396,7 @@ export class CompOffService {
         status: dto.decision,
         approvedById: actor.id,
         approvedAt: new Date(),
+        decisionNote: dto.comments?.trim() || null,
       },
     });
     if (count === 0) {
@@ -453,7 +414,7 @@ export class CompOffService {
         organizationId,
       );
       const title = `Comp-Off Request ${dto.decision}`;
-      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.`;
+      const message = `Your comp-off request for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat, timeZone)} has been ${dto.decision.toLowerCase()}.${dto.comments?.trim() ? ` Comments: ${dto.comments.trim()}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
@@ -474,6 +435,7 @@ export class CompOffService {
             '',
             dateFormat,
           ),
+          comments: dto.comments?.trim() ?? '',
         },
         { subject: title, html: message },
       );
@@ -494,7 +456,11 @@ export class CompOffService {
       module: 'LEAVE',
       organizationId,
       targetId: id,
-      details: { employeeId: compOff.employeeId, decision: dto.decision },
+      details: {
+        employeeId: compOff.employeeId,
+        decision: dto.decision,
+        ...(dto.comments?.trim() && { comments: dto.comments.trim() }),
+      },
     });
     await this.timelineService.logEvent({
       organizationId,

@@ -23,7 +23,15 @@ function build(user: Row | null, emailConfigured = true) {
     },
   };
   const stub = <T>(x: T) => x as never;
-  const nothing = stub({});
+  // Unused collaborators; the one the confirmation email goes through hands back the fallback it was given.
+  const nothing = stub({
+    renderOccasion: async (
+      _org: string,
+      _key: string,
+      _vars: unknown,
+      fallback: { subject: string; html: string },
+    ) => ({ ...fallback, ccAllActive: false }),
+  });
   const service = new AuthService(
     stub(prisma),
     stub({ findByEmail: async () => user }),

@@ -3,11 +3,11 @@
 // delegates actual delivery to NotificationsService/EmailService, and email subject/body content to
 // EmailTemplatesService (falls back to the old hardcoded strings when an org has no active template for the
 // occasion, so nothing breaks for orgs that predate email-templates seeding).
-// Important: matches month/day in UTC to stay consistent with how joiningDate/dateOfBirth are stored
-// elsewhere, and is not deduped against a same-day re-run (e.g. after a restart) — wishes simply resend,
-// same accepted precedent as the Marked Absent email in AttendanceService. The new-joiner announcement is
-// the one exception that matches the *full* calendar date (not just month/day) — unlike a birthday or
-// anniversary, it must fire exactly once, on the actual joining day, not every year after.
+// Important: runs hourly and acts only for orgs whose local time is 09:00, with "today" taken in the org's own
+// timezone; the month/day is then compared against joiningDate/dateOfBirth as plain calendar dates (stored
+// UTC-anchored elsewhere). A same-day re-run (restart, manual run) is deduped per person and occasion by
+// alreadySentToday(). The new-joiner announcement matches the *full* calendar date (not just month/day) — unlike
+// a birthday or anniversary, it must fire exactly once, on the actual joining day, not every year after.
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
@@ -18,6 +18,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { companyLogoImgTag } from '../email-templates/company-logo';
+import { todayInOrgTz } from '../common/org-date';
 
 // joiningDate/dateOfBirth are entered as plain calendar dates (no
 // meaningful time-of-day) and stored/read as UTC-anchored values
@@ -61,16 +62,26 @@ export class HrEventsService {
     private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
-  // Once a day is enough granularity for a calendar-date match. A re-run on the same day (e.g. after a restart)
-  // is deduped per person and occasion by alreadySentToday().
-  @Cron('0 8 * * *')
+  // Hourly tick; each org is handled once a day, when its own local clock reads 09:00, so wishes land at a sensible
+  // hour everywhere instead of at one server-time hour. A re-run on the same day (e.g. after a restart) is deduped
+  // per person and occasion by alreadySentToday().
+  @Cron('0 * * * *')
   async sendDailyWishes() {
+    const now = new Date();
     const organizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
-      select: { id: true },
+      select: { id: true, timezone: true },
     });
     for (const org of organizations) {
       try {
+        const localHour = Number(
+          new Intl.DateTimeFormat('en-GB', {
+            timeZone: org.timezone,
+            hour: '2-digit',
+            hour12: false,
+          }).format(now),
+        );
+        if (localHour !== 9) continue;
         await this.sendWishesForOrg(org.id);
       } catch (err) {
         this.logger.error(
@@ -81,7 +92,16 @@ export class HrEventsService {
   }
 
   async sendWishesForOrg(organizationId: string) {
-    const today = new Date();
+    // "Today" is the org's own calendar date, held as a UTC-anchored Date so the UTC month/day helpers below compare it
+    // like-for-like with joiningDate/dateOfBirth.
+    const tz =
+      (
+        await this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        })
+      )?.timezone ?? 'UTC';
+    const today = new Date(`${todayInOrgTz(tz)}T00:00:00Z`);
     const todayMonthDay = monthDay(today);
     const todayIso = isoDate(today);
 
@@ -173,10 +193,11 @@ export class HrEventsService {
     userId: string,
     title: string,
   ): Promise<boolean> {
-    const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    // A rolling window rather than a server-midnight cut-off: wishes go out once a day at the org's 09:00, so anything
+    // sent in the last 20 hours is the same occasion, whatever timezone the server or org is in.
+    const since = new Date(Date.now() - 20 * 60 * 60 * 1000);
     const count = await this.scopedPrisma.notification.count({
-      where: { organizationId, userId, title, createdAt: { gte: startOfDay } },
+      where: { organizationId, userId, title, createdAt: { gte: since } },
     });
     return count > 0;
   }

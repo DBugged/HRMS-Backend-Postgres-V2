@@ -1,7 +1,6 @@
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import type { NextFunction, Request, Response } from 'express';
@@ -9,6 +8,7 @@ import helmet from 'helmet';
 import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { initSentry } from './common/sentry';
+import { createValidationPipe } from './common/validation-pipe';
 import { assertPersonalDataKeyConfigured } from './common/personal-data-crypto';
 import {
   assertProductionConfig,
@@ -83,11 +83,7 @@ async function bootstrap() {
   // on the same class) — a request field not declared on the DTO is
   // rejected rather than silently ignored.
   app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    }),
+    createValidationPipe(),
   );
 
   // Only allowlisted origins (CORS_ORIGIN, else FRONTEND_URL) may make
