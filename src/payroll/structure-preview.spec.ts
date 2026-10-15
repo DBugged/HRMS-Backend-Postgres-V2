@@ -201,6 +201,89 @@ describe('salary structure preview', () => {
     }
   });
 
+  describe('the package adds up exactly', () => {
+    // A CTC that is not a multiple of 12 used to drift by a few rupees (12,00,000 came out as 12,00,004).
+    const monthlyOf = (p: ReturnType<typeof preview>) =>
+      p.lines
+        .filter(
+          (l) =>
+            l.isEnabled &&
+            l.valueType === 'FIXED' &&
+            l.amountBasis === 'MONTHLY',
+        )
+        .reduce((sum, l) => sum + (l.fixedAmount ?? 0), 0);
+
+    it.each([1100000, 1200000, 999999, 1234567, 2400001, 600000, 720000])(
+      'CTC %s: the lines, the yearly column and the CTC all agree',
+      (annualCtc) => {
+        const p = preview({ mode: 'CTC', annualCtc, cityClass: 'METRO' });
+        expect(p.ctcAnnual).toBe(annualCtc);
+        expect(p.totalAnnual).toBe(annualCtc);
+        const hra = p.lines.find((l) => l.componentCode === 'HRA')!;
+        const basic = p.lines.find((l) => l.componentCode === 'BASIC')!;
+        const hraAmount =
+          ((basic.fixedAmount ?? 0) * (hra.percentageValue ?? 0)) / 100;
+        // Saved monthly amounts: Basic and the percentage HRA, plus the rest.
+        const savedMonthly = monthlyOf(p) + hraAmount;
+        // CTC = the monthly pay plus what the employer pays on top (PF and the like), for twelve months.
+        expect(
+          Math.abs((savedMonthly + p.employerMonthly) * 12 - annualCtc),
+        ).toBeLessThan(0.01);
+        // The yearly column adds up to the yearly pay.
+        const yearlySum = p.earnings.reduce((s, l) => s + l.annual, 0);
+        expect(yearlySum).toBe(p.ctcAnnual - p.employerMonthly * 12);
+      },
+    );
+
+    it('HRA is a whole-rupee amount, so only the balancing allowance is ever fractional', () => {
+      for (const annualCtc of [1100000, 1234567, 999999]) {
+        const p = preview({ mode: 'CTC', annualCtc, cityClass: 'NON_METRO' });
+        const basic = p.lines.find(
+          (l) => l.componentCode === 'BASIC',
+        )!.fixedAmount!;
+        const pct = p.lines.find(
+          (l) => l.componentCode === 'HRA',
+        )!.percentageValue!;
+        expect(((basic * pct) / 100) % 1).toBeCloseTo(0, 6);
+        expect(Number.isInteger(basic)).toBe(true);
+      }
+    });
+
+    it('Basic is still at least half of the pay after rounding it to suit HRA', () => {
+      for (const annualCtc of [1100000, 1234567, 999999, 2400001]) {
+        for (const cityClass of ['METRO', 'NON_METRO'] as const) {
+          const p = preview({ mode: 'CTC', annualCtc, cityClass });
+          const basic = p.lines.find(
+            (l) => l.componentCode === 'BASIC',
+          )!.fixedAmount!;
+          expect(basic * 2).toBeGreaterThanOrEqual(p.grossMonthly);
+        }
+      }
+    });
+
+    it('a month is paid as the nearest rupee of the package', () => {
+      const p = preview({
+        mode: 'CTC',
+        annualCtc: 1100000,
+        cityClass: 'METRO',
+      });
+      // Pay plus what the employer adds on top (PF and the like) is the package for the month.
+      expect(Math.round(p.grossMonthly + p.employerMonthly)).toBe(
+        Math.round(1100000 / 12),
+      );
+    });
+
+    it('a monthly gross that is a whole number stays whole', () => {
+      const p = preview({
+        mode: 'GROSS',
+        monthlyGross: 55000,
+        cityClass: 'METRO',
+      });
+      expect(p.grossMonthly).toBe(55000);
+      expect(p.earnings.every((l) => Number.isInteger(l.monthly))).toBe(true);
+    });
+  });
+
   it('variable pay inside the CTC is carved out of it: fixed + variable add back to the CTC', () => {
     const p = preview({
       mode: 'CTC',
@@ -331,7 +414,8 @@ describe('salary structure preview', () => {
     it.each(cases)('%s', async (_name, input) => {
       const p = preview(input);
       const run = await engine(p.lines);
-      expect(run.grossSalary).toBe(p.grossMonthly);
+      // The structure carries the exact amount; payroll pays the nearest rupee of it.
+      expect(run.grossSalary).toBe(Math.round(p.grossMonthly));
       expect(Math.abs(run.ctcMonthly - p.ctcMonthly)).toBeLessThanOrEqual(1);
       expect(
         Math.abs(run.totalEmployerContributions - p.employerMonthly),
