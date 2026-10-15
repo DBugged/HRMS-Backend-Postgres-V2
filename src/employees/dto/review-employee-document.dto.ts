@@ -1,12 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import {
-  IsIn,
-  IsNotEmpty,
-  IsString,
-  MaxLength,
-  ValidateIf,
-} from 'class-validator';
+import { IsIn, IsString, Length, ValidateIf } from 'class-validator';
 
 export class ReviewEmployeeDocumentDto {
   @ApiProperty({ enum: ['APPROVED', 'REJECTED'] })
@@ -20,8 +14,10 @@ export class ReviewEmployeeDocumentDto {
   })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @ValidateIf((o: ReviewEmployeeDocumentDto) => o.status === 'REJECTED')
-  @IsNotEmpty({ message: 'A reason is required to reject a document.' })
-  @IsString()
-  @MaxLength(500)
+  @IsString({ message: 'A reason is required to reject a document.' })
+  @Length(1, 500, {
+    message:
+      'A reason is required to reject a document (at most 500 characters).',
+  })
   reason?: string;
 }

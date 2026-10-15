@@ -536,6 +536,20 @@ describe('Employee Rich Profile (e2e)', () => {
         .expect(403);
     });
 
+    it('rejecting a document needs a reason, and the message says so', async () => {
+      for (const body of [
+        { status: 'REJECTED' },
+        { status: 'REJECTED', reason: '   ' },
+      ]) {
+        const res = await request(app.getHttpServer())
+          .patch(`/employees/${empId}/documents/${docId}/review`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send(body)
+          .expect(400);
+        expect(JSON.stringify(res.body)).toMatch(/reason is required/i);
+      }
+    });
+
     it('HR can approve a document with a reason', async () => {
       const res = await request(app.getHttpServer())
         .patch(`/employees/${empId}/documents/${docId}/review`)
