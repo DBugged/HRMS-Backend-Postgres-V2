@@ -3138,6 +3138,9 @@ model EmployeeDocument {
   fileName String
   fileUrl  String
   category EmployeeDocumentCategory @default(DOCUMENT)
+  // Only meaningful for an uploaded Letter (category LETTER): HR/Admin can switch it off so the employee no longer sees
+  // it (the "Visible to employee" tick, as on the generated letters). Defaults to visible, as before.
+  visibleToEmployee Boolean @default(true)
 
   status       EmployeeDocumentStatus @default(PENDING)
   reviewReason String?

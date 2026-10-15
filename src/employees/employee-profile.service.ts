@@ -41,6 +41,7 @@ import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
 import { ReviewEmployeeDocumentDto } from './dto/review-employee-document.dto';
+import { SetDocumentVisibilityDto } from './dto/set-document-visibility.dto';
 import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
 import {
@@ -744,7 +745,18 @@ export class EmployeeProfileService {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
     this.assertMayAccessDocumentsFor(actor, employee);
     const docs = await this.scopedPrisma.employeeDocument.findMany({
-      where: { organizationId, employeeId: id, ...(category && { category }) },
+      where: {
+        organizationId,
+        employeeId: id,
+        ...(category && { category }),
+        // Looking at one's own record: an uploaded letter HR has switched off ("Visible to employee") is not listed.
+        ...(actor.id === id && {
+          OR: [
+            { category: { not: EmployeeDocumentCategory.LETTER } },
+            { visibleToEmployee: true },
+          ],
+        }),
+      },
       orderBy: { uploadedAt: 'desc' },
     });
     // Signed links are minted here, so this is the "document accessed" moment (self-access is logged too).
@@ -834,6 +846,36 @@ export class EmployeeProfileService {
       await this.refreshProfileCompletion(id, organizationId);
     }
     return withSignedFileUrl(doc);
+  }
+
+  // The "Visible to employee" tick on an uploaded letter. HR/Admin only (route-guarded); letters only, since a
+  // personal document the employee uploaded themselves has no such switch.
+  async setDocumentVisibility(
+    id: string,
+    docId: string,
+    dto: SetDocumentVisibilityDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    this.assertMayAccessDocumentsFor(actor, employee);
+    const doc = await this.scopedPrisma.employeeDocument.findFirst({
+      where: { id: docId, employeeId: id, organizationId },
+    });
+    if (!doc) throw new NotFoundException('Document not found.');
+    if (doc.category !== EmployeeDocumentCategory.LETTER) {
+      throw new BadRequestException(
+        'Only an uploaded letter can be hidden from the employee.',
+      );
+    }
+    await this.scopedPrisma.employeeDocument.updateMany({
+      where: { id: docId, organizationId },
+      data: { visibleToEmployee: dto.visibleToEmployee },
+    });
+    const updated = await this.scopedPrisma.employeeDocument.findFirstOrThrow({
+      where: { id: docId, organizationId },
+    });
+    return withSignedFileUrl(updated);
   }
 
   async removeDocument(

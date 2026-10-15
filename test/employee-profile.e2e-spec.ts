@@ -602,6 +602,76 @@ describe('Employee Rich Profile (e2e)', () => {
         .expect(200);
     });
 
+    it('an uploaded letter HR switches off is hidden from the employee but stays visible to HR', async () => {
+      const uploadRes = await request(app.getHttpServer())
+        .post(`/employees/${empId}/documents`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          docType: 'Signed Offer Letter',
+          fileName: 'offer-signed.pdf',
+          fileUrl: 'documents/offer-signed.pdf',
+          category: 'LETTER',
+        })
+        .expect(201);
+      const letterId = (uploadRes.body as DocumentBody).id;
+      const listLetters = (token: string) =>
+        request(app.getHttpServer())
+          .get(`/employees/${empId}/documents?category=LETTER`)
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+
+      // Visible by default.
+      expect((await listLetters(empToken)).body as DocumentBody[]).toHaveLength(
+        1,
+      );
+
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/documents/${letterId}/visibility`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ visibleToEmployee: false })
+        .expect(200);
+      expect((await listLetters(empToken)).body as DocumentBody[]).toHaveLength(
+        0,
+      );
+      expect((await listLetters(hrToken)).body as DocumentBody[]).toHaveLength(
+        1,
+      );
+
+      // The employee cannot flip it back, and switching it on again shows it.
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/documents/${letterId}/visibility`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({ visibleToEmployee: true })
+        .expect(403);
+      await request(app.getHttpServer())
+        .patch(`/employees/${empId}/documents/${letterId}/visibility`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ visibleToEmployee: true })
+        .expect(200);
+      expect((await listLetters(empToken)).body as DocumentBody[]).toHaveLength(
+        1,
+      );
+    });
+
+    it('only an uploaded letter has a visibility switch', async () => {
+      const personal = await request(app.getHttpServer())
+        .post(`/employees/${empId}/documents`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .send({
+          docType: 'Driving Licence',
+          fileName: 'dl.pdf',
+          fileUrl: 'documents/dl.pdf',
+        })
+        .expect(201);
+      await request(app.getHttpServer())
+        .patch(
+          `/employees/${empId}/documents/${(personal.body as DocumentBody).id}/visibility`,
+        )
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ visibleToEmployee: false })
+        .expect(400);
+    });
+
     // Regression: a double-submitted upload (same stored file, same docType)
     // used to create two independent rows when the requests raced.
     it('concurrent duplicate uploads of the same file create exactly one document', async () => {
