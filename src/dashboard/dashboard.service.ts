@@ -793,19 +793,19 @@ export class DashboardService {
             employee: employeeSelect,
             leaveType: { select: { name: true } },
           },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         }),
         this.scopedPrisma.attendance.findMany({
           where: where.regularizations,
           include: { employee: employeeSelect },
-          orderBy: { updatedAt: 'asc' },
+          orderBy: { updatedAt: 'desc' },
           take: LIMIT,
         }),
         this.scopedPrisma.attendance.findMany({
           where: where.wfh,
           include: { employee: employeeSelect },
-          orderBy: { updatedAt: 'asc' },
+          orderBy: { updatedAt: 'desc' },
           // More than LIMIT rows: a multi-day request is several rows that are shown as ONE item below, so the cap
           // is applied to requests, not to days.
           take: 200,
@@ -813,13 +813,13 @@ export class DashboardService {
         this.scopedPrisma.overtimeRecord.findMany({
           where: where.overtime,
           include: { employee: employeeSelect },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         }),
         this.scopedPrisma.compOff.findMany({
           where: where.compOffs,
           include: { employee: employeeSelect },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         }),
       ]);
@@ -828,7 +828,7 @@ export class DashboardService {
       ? await this.scopedPrisma.reimbursement.findMany({
           where: where.reimbursements,
           include: { employee: employeeSelect },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         })
       : [];
@@ -836,7 +836,7 @@ export class DashboardService {
       ? await this.scopedPrisma.loan.findMany({
           where: where.loans,
           include: { employee: employeeSelect },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         })
       : [];
@@ -844,7 +844,7 @@ export class DashboardService {
       ? await this.scopedPrisma.leaveEncashment.findMany({
           where: where.encashments,
           include: { employee: employeeSelect },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         })
       : [];
@@ -852,7 +852,7 @@ export class DashboardService {
       ? await this.scopedPrisma.resignation.findMany({
           where: where.resignations,
           include: { employee: employeeSelect },
-          orderBy: { createdAt: 'asc' },
+          orderBy: { createdAt: 'desc' },
           take: LIMIT,
         })
       : [];
@@ -959,8 +959,11 @@ export class DashboardService {
         requestedAt: c.createdAt,
       })),
     ];
+    // Newest first: the latest request is on top. With more than LIMIT waiting the list is the LIMIT newest (each
+    // type was also read newest first), and the counts beside it come from pending-counts, so nothing is hidden
+    // silently.
     return items
-      .sort((a, b) => a.requestedAt.getTime() - b.requestedAt.getTime())
+      .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
       .slice(0, LIMIT);
   }
 
