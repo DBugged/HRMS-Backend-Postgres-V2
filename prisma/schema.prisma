@@ -254,6 +254,7 @@ model Organization {
   salaryComponents                 SalaryComponent[]
   payrollSettings                  PayrollSettings?
   employeeSalaryComponents         EmployeeSalaryComponent[]
+  openingBalances                  EmployeeOpeningBalance[]
   payrollTemplates                 PayrollTemplate[]
   statutoryConfigVersions          StatutoryConfigVersion[]
   employeeTaxDeclarations          EmployeeTaxDeclaration[]
@@ -551,6 +552,7 @@ model User {
   createdSalaryComponents          SalaryComponent[]
   updatedPayrollSettings           PayrollSettings[]
   employeeSalaryComponents         EmployeeSalaryComponent[]         @relation("EmployeeSalaryComponentEmployee")
+  openingBalances                  EmployeeOpeningBalance[]          @relation("OpeningBalanceEmployee")
   createdEmployeeSalaryComponents  EmployeeSalaryComponent[]         @relation("EmployeeSalaryComponentCreatedBy")
   createdPayrollTemplates          PayrollTemplate[]
   createdStatutoryConfigVersions   StatutoryConfigVersion[]
@@ -1560,6 +1562,33 @@ model EmployeeSalaryComponent {
 
   @@index([organizationId, employeeId, componentCode, effectiveFrom])
   @@map("employee_salary_components")
+}
+
+// Year-to-date figures for a company that starts payroll partway through a financial year: what the employee earned
+// and what was deducted in the months BEFORE the first run here. The tax engine adds them to the runs it holds, so the
+// annual income is the whole year, not just the months paid by this system.
+model EmployeeOpeningBalance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("OpeningBalanceEmployee", fields: [employeeId], references: [id])
+
+  financialYear   String // "2026-27"
+  monthsCovered   Int // months of this FY already paid elsewhere (Apr..go-live month - 1)
+  taxableEarnings Float  @default(0)
+  tdsDeducted     Float  @default(0)
+  pfPaid          Float  @default(0)
+  ptPaid          Float  @default(0)
+
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([employeeId, financialYear])
+  @@index([organizationId, financialYear])
+  @@map("employee_opening_balances")
 }
 
 enum HeaderStyle {
@@ -3139,13 +3168,13 @@ model EmployeeDocument {
   // (PAN Card / Aadhaar Card / Passport Photo / Educational Certificate /
   // Relieving Letter or Experience Certificate / Other) and the org's own
   // DocumentRequirement master list — same as the old system.
-  docType  String
-  fileName String
-  fileUrl  String
-  category EmployeeDocumentCategory @default(DOCUMENT)
+  docType           String
+  fileName          String
+  fileUrl           String
+  category          EmployeeDocumentCategory @default(DOCUMENT)
   // Only meaningful for an uploaded Letter (category LETTER): HR/Admin can switch it off so the employee no longer sees
   // it (the "Visible to employee" tick, as on the generated letters). Defaults to visible, as before.
-  visibleToEmployee Boolean @default(true)
+  visibleToEmployee Boolean                  @default(true)
 
   status       EmployeeDocumentStatus @default(PENDING)
   reviewReason String?
@@ -3595,11 +3624,11 @@ model Resignation {
 
   // The employee's request to withdraw this resignation once it was approved (only HR/Admin can cancel the exit).
   // Plain ids like decidedById. A declined request can be raised again, which resets these fields.
-  withdrawalStatus      WithdrawalRequestStatus?
-  withdrawalReason      String?
-  withdrawalRequestedAt DateTime?
-  withdrawalDecidedById String?
-  withdrawalDecidedAt   DateTime?
+  withdrawalStatus       WithdrawalRequestStatus?
+  withdrawalReason       String?
+  withdrawalRequestedAt  DateTime?
+  withdrawalDecidedById  String?
+  withdrawalDecidedAt    DateTime?
   withdrawalDecisionNote String?
 
   // Set when HR or an Admin recorded the resignation on the employee's behalf (given by email or in person): the id

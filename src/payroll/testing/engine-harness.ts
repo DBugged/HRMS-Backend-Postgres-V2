@@ -282,6 +282,10 @@ export function makeEngine(world: World, today: string) {
     employeeTaxDeclaration: {
       findFirst: async () => world.declaration,
     },
+    employeeOpeningBalance: {
+      findFirst: async () => null,
+      findMany: async () => [],
+    },
     taxSlabConfig: {
       findFirst: async (a?: { where?: Row; orderBy?: Row }) => {
         const w = a?.where ?? {};

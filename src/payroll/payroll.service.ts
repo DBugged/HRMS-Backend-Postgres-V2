@@ -65,6 +65,7 @@ import {
 import { buildBankAdvice } from './bank-advice';
 import { redactHoldForEmployee } from './payroll-hold';
 import { buildReadiness } from './payroll-readiness';
+import { withOpeningBalance } from './opening-balances';
 import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import { computeStructurePreview } from './structure-preview';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
@@ -3676,28 +3677,54 @@ export class PayrollService {
     const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
     const ids = employees.map((e) => e.id);
 
-    const [structureRows, exitCases, gaps] = await Promise.all([
-      this.scopedPrisma.employeeSalaryComponent.findMany({
-        where: { organizationId, employeeId: { in: ids } },
-        select: {
-          employeeId: true,
-          componentCode: true,
-          effectiveFrom: true,
-          effectiveTo: true,
-          isEnabled: true,
-        },
-      }),
-      this.scopedPrisma.offboardingCase.findMany({
-        where: {
-          organizationId,
-          employeeId: { in: ids },
-          status: { in: ['INITIATED', 'IN_PROGRESS', 'COMPLETED'] },
-          lastWorkingDay: { gte: monthStart, lte: monthEnd },
-        },
-        select: { employeeId: true, lastWorkingDay: true },
-      }),
-      this.getAttendanceGaps(month, year, organizationId),
-    ]);
+    const payrollSettings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const financialYear = getFinancialYear(
+      month,
+      year,
+      payrollSettings.financialYearStartMonth,
+    );
+    const [structureRows, exitCases, gaps, openingRows, priorRuns] =
+      await Promise.all([
+        this.scopedPrisma.employeeSalaryComponent.findMany({
+          where: { organizationId, employeeId: { in: ids } },
+          select: {
+            employeeId: true,
+            componentCode: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+            isEnabled: true,
+          },
+        }),
+        this.scopedPrisma.offboardingCase.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: ids },
+            status: { in: ['INITIATED', 'IN_PROGRESS', 'COMPLETED'] },
+            lastWorkingDay: { gte: monthStart, lte: monthEnd },
+          },
+          select: { employeeId: true, lastWorkingDay: true },
+        }),
+        this.getAttendanceGaps(month, year, organizationId),
+        this.scopedPrisma.employeeOpeningBalance.findMany({
+          where: { organizationId, employeeId: { in: ids }, financialYear },
+          select: { employeeId: true },
+        }),
+        this.scopedPrisma.payrollRun.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: ids },
+            financialYear,
+            isFinalSettlement: false,
+            OR: [{ year: { lt: year } }, { year, month: { lt: month } }],
+          },
+          select: { employeeId: true },
+        }),
+      ]);
+    const statutoryOff = await this.statutoryConfigService.isStatutoryOff(
+      organizationId,
+      monthEnd,
+    );
 
     const rowsByEmployee = new Map<string, typeof structureRows>();
     for (const r of structureRows) {
@@ -3726,7 +3753,13 @@ export class PayrollService {
         personalData: e.personalData,
       })),
       withStructure,
+      fyStartMonth: payrollSettings.financialYearStartMonth,
+      hasYtd: new Set([
+        ...openingRows.map((r) => r.employeeId),
+        ...priorRuns.map((r) => r.employeeId),
+      ]),
       exits: new Map(exitCases.map((c) => [c.employeeId, c.lastWorkingDay])),
+      statutoryOff,
     });
     if (gaps.length > 0) {
       // Between "no salary structure" and "bank details": unmarked days are paid as unpaid leave.
@@ -5058,12 +5091,14 @@ export class PayrollService {
         .filter((d) => d.code === 'PT')
         .reduce((sum, d) => sum + d.amount, 0);
     }
-    return {
-      ytdGross,
-      ytdTDS,
-      ytdMonths: paidMonths.size,
-      ytdProfessionalTax,
-    };
+    // Months paid before this system took over payroll (company started mid-year).
+    const opening = await this.scopedPrisma.employeeOpeningBalance.findFirst({
+      where: { organizationId, employeeId, financialYear },
+    });
+    return withOpeningBalance(
+      { ytdGross, ytdTDS, ytdMonths: paidMonths.size, ytdProfessionalTax },
+      opening,
+    );
   }
 
   private runTaxableGross(run: PayrollRun): number {

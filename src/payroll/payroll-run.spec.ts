@@ -63,6 +63,10 @@ function build(employees: Row[], runs: Row[] = [], extraPrisma: Row = {}) {
     },
     department: { findMany: async () => [] },
     settlement: { findMany: async () => [] },
+    employeeOpeningBalance: {
+      findFirst: async () => null,
+      findMany: async () => [],
+    },
     taxSlabConfig: { findMany: async () => [] },
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
     payrollRun: {

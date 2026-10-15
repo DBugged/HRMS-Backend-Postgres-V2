@@ -89,3 +89,75 @@ describe('buildReadiness', () => {
     ]);
   });
 });
+
+describe('buildReadiness - statutory', () => {
+  const run = (statutoryOff: boolean, employees = [emp()]) =>
+    buildReadiness({
+      month: 9,
+      year: 2026,
+      employees,
+      withStructure: new Set(employees.map((e) => e.id)),
+      exits: new Map(),
+      statutoryOff,
+    });
+
+  it('flags statutory not set up when everything is off', () => {
+    expect(run(true)).toEqual([
+      {
+        key: 'statutory',
+        level: 'warning',
+        title: 'Statutory not set up',
+        people: [],
+      },
+    ]);
+  });
+
+  it('says nothing when something is switched on', () => {
+    expect(run(false)).toEqual([]);
+  });
+
+  it('says nothing when nobody is on payroll that month', () => {
+    expect(run(true, [emp({ joiningDate: '2026-12-01' })])).toEqual([]);
+  });
+});
+
+describe('buildReadiness - opening balances', () => {
+  const run = (
+    over: {
+      month?: number;
+      hasYtd?: string[];
+      employees?: ReadinessEmployee[];
+    } = {},
+  ) =>
+    buildReadiness({
+      month: over.month ?? 9,
+      year: 2026,
+      employees: over.employees ?? [emp()],
+      withStructure: new Set((over.employees ?? [emp()]).map((e) => e.id)),
+      exits: new Map(),
+      fyStartMonth: 4,
+      hasYtd: new Set(over.hasYtd ?? []),
+    });
+
+  it('asks for opening balances when payroll starts after April and none exist', () => {
+    const [c] = run();
+    expect(c).toMatchObject({ key: 'opening', level: 'warning' });
+    expect(c.people[0].code).toBe('DP-00002');
+  });
+
+  it('is quiet once the balance is entered or earlier runs exist', () => {
+    expect(run({ hasYtd: ['e1'] })).toEqual([]);
+  });
+
+  it('is quiet in the first month of the financial year', () => {
+    expect(run({ month: 4 }).map((c) => c.key)).not.toContain('opening');
+  });
+
+  it('skips someone who joined this month', () => {
+    expect(
+      run({ employees: [emp({ joiningDate: '2026-09-10' })] }).map(
+        (c) => c.key,
+      ),
+    ).not.toContain('opening');
+  });
+});

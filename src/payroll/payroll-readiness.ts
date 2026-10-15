@@ -22,7 +22,14 @@ export interface ReadinessPerson {
 export type ReadinessLevel = 'blocker' | 'warning' | 'info';
 
 export interface ReadinessCheck {
-  key: 'structure' | 'bank' | 'attendance' | 'joiners' | 'exits';
+  key:
+    | 'structure'
+    | 'statutory'
+    | 'opening'
+    | 'bank'
+    | 'attendance'
+    | 'joiners'
+    | 'exits';
   level: ReadinessLevel;
   title: string;
   people: ReadinessPerson[];
@@ -64,6 +71,12 @@ export function buildReadiness(input: {
   withStructure: Set<string>;
   /** Last working days that fall in the month, by employee id. */
   exits: Map<string, string>;
+  /** No PF/ESI/PT/LWF/gratuity/bonus in force for the month - payslips would carry only TDS. */
+  statutoryOff?: boolean;
+  /** Month the financial year starts (4 = April). */
+  fyStartMonth?: number;
+  /** Employees who already have year-to-date earnings/tax on record. */
+  hasYtd?: Set<string>;
 }): ReadinessCheck[] {
   const monthStart = `${input.year}-${String(input.month).padStart(2, '0')}-01`;
   const monthEnd = new Date(Date.UTC(input.year, input.month, 0))
@@ -78,6 +91,19 @@ export function buildReadiness(input: {
     const pd = (e.personalData ?? {}) as Record<string, unknown>;
     return !text(pd.bankAccountNo) || !text(pd.bankIFSC);
   });
+  // Payroll starting after the FY start month: anyone employed before this month with no year so far on record would
+  // be taxed as if the year began now.
+  const needsOpening =
+    input.fyStartMonth !== undefined &&
+    input.hasYtd !== undefined &&
+    input.month !== input.fyStartMonth
+      ? onPayroll.filter(
+          (e) =>
+            e.joiningDate < monthStart &&
+            !input.hasYtd!.has(e.id) &&
+            input.withStructure.has(e.id),
+        )
+      : [];
   const joiners = onPayroll.filter(
     (e) => e.joiningDate >= monthStart && e.joiningDate <= monthEnd,
   );
@@ -89,6 +115,19 @@ export function buildReadiness(input: {
       level: 'blocker',
       title: 'No salary structure',
       people: noStructure.map((e) => person(e)),
+    },
+    {
+      key: 'statutory',
+      level: 'warning',
+      title: 'Statutory not set up',
+      // Not about particular people; kept when payroll has anyone on it.
+      people: [],
+    },
+    {
+      key: 'opening',
+      level: 'warning',
+      title: 'Set opening balances (earnings and tax so far this year)',
+      people: needsOpening.map((e) => person(e)),
     },
     {
       key: 'bank',
@@ -111,5 +150,8 @@ export function buildReadiness(input: {
       ),
     },
   ];
-  return checks.filter((c) => c.people.length > 0);
+  const statutory = input.statutoryOff && onPayroll.length > 0;
+  return checks.filter((c) =>
+    c.key === 'statutory' ? statutory : c.people.length > 0,
+  );
 }
