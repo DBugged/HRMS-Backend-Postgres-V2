@@ -101,14 +101,10 @@ export class ResignationsService {
       (org?.policies as { defaultNoticeDays?: number } | null)
         ?.defaultNoticeDays ?? 0,
     );
-    // The employee states the notice period (required), starting from the organization's default; it can be longer
-    // than the default but not shorter - an earlier release is HR's decision.
-    if (dto.noticePeriodDays < defaultNotice) {
-      throw new BadRequestException(
-        `The notice period cannot be shorter than the organization's ${defaultNotice} day(s) - ask HR if you need an early release.`,
-      );
-    }
-    const notice = dto.noticePeriodDays;
+    // The notice period is the organization's default and is not the employee's to choose: whatever the client sent
+    // is ignored. A different period (an early release, a longer one) is HR's decision when the resignation is
+    // approved or recorded on the employee's behalf.
+    const notice = defaultNotice;
     const earliestLwd = addDaysToDateStr(submittedOn, notice);
     if (dto.requestedLwd < earliestLwd) {
       throw new BadRequestException(
@@ -156,7 +152,7 @@ export class ResignationsService {
         employeeId: actor.id,
         submittedOn,
         requestedLwd: dto.requestedLwd,
-        noticePeriodDays: dto.noticePeriodDays,
+        noticePeriodDays: notice,
         reason: dto.reason,
       },
     });

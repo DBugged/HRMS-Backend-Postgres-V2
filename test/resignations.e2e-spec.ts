@@ -156,14 +156,7 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       .expect(400);
   });
 
-  it('requires a notice period, and refuses one shorter than the organization default', async () => {
-    // Missing: required.
-    await request(app.getHttpServer())
-      .post('/resignations')
-      .set('Authorization', `Bearer ${empToken}`)
-      .send({ requestedLwd: dateOffset(45) })
-      .expect(400);
-    // Shorter than the org default: refused. Longer or equal is fine (covered by the next test).
+  it("uses the organization's notice period whatever the client sends, and the last working day must respect it", async () => {
     const org = await prisma.organization.findFirstOrThrow({ where: { id: organizationId }, select: { policies: true } });
     const before = (org.policies ?? {}) as Record<string, unknown>;
     await prisma.organization.update({
@@ -171,12 +164,13 @@ describe('Resignations & exit lifecycle (e2e)', () => {
       data: { policies: { ...before, defaultNoticeDays: 30 } },
     });
     try {
+      // The employee's own figure (5) is ignored: the 30-day default applies, so a last day 10 days out is refused.
       const res = await request(app.getHttpServer())
         .post('/resignations')
         .set('Authorization', `Bearer ${empToken}`)
-        .send({ requestedLwd: dateOffset(45), noticePeriodDays: 10 })
+        .send({ requestedLwd: dateOffset(10), noticePeriodDays: 5 })
         .expect(400);
-      expect(JSON.stringify((res.body as { message: unknown }).message)).toContain('shorter than the organization');
+      expect(JSON.stringify((res.body as { message: unknown }).message)).toContain('notice period of 30 day');
     } finally {
       await prisma.organization.update({
         where: { id: organizationId },

@@ -23,13 +23,14 @@ export class SubmitResignationDto {
   @MaxLength(2000)
   reason?: string;
 
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: 30,
     description:
-      "Notice period (days) the employee is serving. Required; the form starts at the organization's default notice period and may be raised, never set below it.",
+      "Ignored. The notice period is the organization's default notice period and is set by the server; an employee cannot choose it. Still accepted so an older app that sends it does not fail.",
   })
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(365)
-  noticePeriodDays!: number;
+  noticePeriodDays?: number;
 }
