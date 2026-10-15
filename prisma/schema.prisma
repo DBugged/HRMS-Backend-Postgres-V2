@@ -187,6 +187,11 @@ model Organization {
   // not a branding value, so it's the one exception), and Report exports
   // (reportLogoUrl). See common/pdf-watermark.ts for the actual drawing.
   watermarkLogo  Boolean @default(false)
+  // Optional full-width header and footer strips for generated Letters & Certificates (A4 width). When a header is set
+  // it replaces the built-in logo / name / address block at the top of every page; the footer is drawn at the bottom
+  // of every page. Both null = the built-in header, no footer strip. See letters/letter-pdf.service.ts.
+  letterHeaderUrl String?
+  letterFooterUrl String?
   // Original filename/size per uploaded image, keyed by upload field name
   // (logo/favicon/reportLogo/emailLogo/signature/seal) — the URL columns
   // point at a generated relativeKey, so this is the only place the real

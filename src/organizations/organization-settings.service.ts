@@ -72,6 +72,8 @@ const BRANDING_URL_FIELDS = [
   'faviconUrl',
   'reportLogoUrl',
   'emailLogoUrl',
+  'letterHeaderUrl',
+  'letterFooterUrl',
   'sealUrl',
 ] as const;
 
@@ -143,6 +145,8 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'faviconUrl',
     'reportLogoUrl',
     'emailLogoUrl',
+    'letterHeaderUrl',
+    'letterFooterUrl',
     'assetMeta',
     'watermarkLogo',
   ],

@@ -361,6 +361,8 @@ export class LettersService {
         msmeRegistrationNumber: true,
         labourLicenseNumber: true,
         companyLogoUrl: true,
+        letterHeaderUrl: true,
+        letterFooterUrl: true,
         signatories: true,
         policies: true,
         timezone: true,
@@ -828,12 +830,23 @@ export class LettersService {
     const primarySignatory =
       signatories.find((s) => s.isPrimary) ?? signatories[0] ?? null;
 
-    const [companyLogoBuffer, signatureBuffer] = await Promise.all([
+    const [
+      companyLogoBuffer,
+      signatureBuffer,
+      letterHeaderBuffer,
+      letterFooterBuffer,
+    ] = await Promise.all([
       organization.companyLogoUrl
         ? readStoredFile(organization.companyLogoUrl).catch(() => null)
         : Promise.resolve(null),
       primarySignatory?.signatureUrl
         ? readStoredFile(primarySignatory.signatureUrl).catch(() => null)
+        : Promise.resolve(null),
+      organization.letterHeaderUrl
+        ? readStoredFile(organization.letterHeaderUrl).catch(() => null)
+        : Promise.resolve(null),
+      organization.letterFooterUrl
+        ? readStoredFile(organization.letterFooterUrl).catch(() => null)
         : Promise.resolve(null),
     ]);
 
@@ -851,6 +864,8 @@ export class LettersService {
       signatoryDesignation: primarySignatory?.designation || null,
       signatureBuffer,
       watermarkEnabled: organization.watermarkLogo,
+      letterHeaderBuffer,
+      letterFooterBuffer,
     });
 
     await this.auditLogService.log({

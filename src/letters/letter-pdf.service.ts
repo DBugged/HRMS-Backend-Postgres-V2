@@ -77,6 +77,9 @@ function parseInlineRuns(paragraph: string): InlineRun[] {
 const PAGE_W = 595.28; // A4 portrait, points
 const MARGIN = 56;
 const CONTENT_W = PAGE_W - MARGIN * 2;
+// The tallest a header / footer strip may be on the page (points); a taller image is scaled down to fit.
+const HEADER_MAX_H = 170;
+const FOOTER_MAX_H = 120;
 
 // Roboto, not pdfkit's standard Helvetica — Helvetica's WinAnsi encoding has no ₹ (Indian Rupee) glyph at all
 // (Salary Certificate/Full & Final Settlement both print currency amounts). The bundled Roboto is the full font
@@ -117,24 +120,81 @@ export interface LetterPdfInput {
   // Organization Settings > Branding > "Watermark this logo on generated
   // documents" — see common/pdf-watermark.ts.
   watermarkEnabled: boolean;
+  // Organization Settings > Branding > Letter header / footer images: full-width A4 strips drawn at the top and the
+  // bottom of every page, so the body text only ever uses the space between them. null = the built-in header (logo,
+  // name, address, rule) is drawn / no footer strip.
+  letterHeaderBuffer?: Buffer | null;
+  letterFooterBuffer?: Buffer | null;
 }
 
 @Injectable()
 export class LetterPdfService {
   render(input: LetterPdfInput): Promise<Buffer> {
     return new Promise<Buffer>((resolve, reject) => {
-      const doc = new PDFDocument({ margin: MARGIN, size: 'A4' });
+      // How tall each strip is on the page (the image scaled to the page width, within a cap), and so how much room
+      // the body gives up at the top and the bottom. An unreadable image is ignored and the page keeps its defaults.
+      const measure = (buf: Buffer | null | undefined, cap: number) => {
+        if (!buf) return null;
+        try {
+          const probe = new PDFDocument({ size: 'A4' });
+          const img = (
+            probe as unknown as {
+              openImage: (b: Buffer) => { width: number; height: number };
+            }
+          ).openImage(buf);
+          probe.end();
+          const height = Math.min(cap, (img.height * PAGE_W) / img.width);
+          return { buf, height };
+        } catch {
+          return null;
+        }
+      };
+      const header = measure(input.letterHeaderBuffer, HEADER_MAX_H);
+      const footer = measure(input.letterFooterBuffer, FOOTER_MAX_H);
+      const doc = new PDFDocument({
+        size: 'A4',
+        margins: {
+          top: header ? header.height + 18 : MARGIN,
+          bottom: footer ? footer.height + 14 : MARGIN,
+          left: MARGIN,
+          right: MARGIN,
+        },
+      });
       const chunks: Buffer[] = [];
       doc.on('data', (chunk: Buffer) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
       doc.on('error', reject);
       registerFonts(doc);
+      // The header and footer strips go on every page: the first now, later ones as they are added.
+      const drawStrips = () => {
+        try {
+          if (header) {
+            doc.image(header.buf, 0, 0, {
+              fit: [PAGE_W, header.height],
+              align: 'center',
+            });
+          }
+          if (footer) {
+            doc.image(footer.buf, 0, doc.page.height - footer.height, {
+              fit: [PAGE_W, footer.height],
+              align: 'center',
+              valign: 'bottom',
+            });
+          }
+        } catch {
+          // A format pdfkit cannot draw: the page simply has no strip.
+        }
+      };
+      if (header || footer) {
+        drawStrips();
+        doc.on('pageAdded', drawStrips);
+      }
       if (input.watermarkEnabled) attachWatermark(doc, input.companyLogoBuffer);
 
-      // Letterhead
-      let headerY = 40;
+      // Built-in letterhead (logo, name, address, rule) - only when no header image has been uploaded.
+      let headerY = header ? doc.page.margins.top : 40;
       const logoSize = 40;
-      if (input.companyLogoBuffer) {
+      if (!header && input.companyLogoBuffer) {
         try {
           doc.image(input.companyLogoBuffer, MARGIN, headerY, {
             fit: [logoSize, logoSize],
@@ -143,25 +203,27 @@ export class LetterPdfService {
           // Unsupported image format (e.g. an SVG company logo) — continue without it.
         }
       }
-      const textX = input.companyLogoBuffer ? MARGIN + logoSize + 12 : MARGIN;
-      doc.font('Letter-Bold').fontSize(14).fillColor(INK_900);
-      doc.text(input.companyName, textX, headerY, {
-        width: CONTENT_W - (textX - MARGIN),
-      });
-      if (input.companyAddress) {
-        doc.font('Letter-Regular').fontSize(8.5).fillColor(INK_600);
-        doc.text(input.companyAddress, textX, doc.y + 2, {
+      if (!header) {
+        const textX = input.companyLogoBuffer ? MARGIN + logoSize + 12 : MARGIN;
+        doc.font('Letter-Bold').fontSize(14).fillColor(INK_900);
+        doc.text(input.companyName, textX, headerY, {
           width: CONTENT_W - (textX - MARGIN),
         });
-      }
-      headerY = Math.max(doc.y, headerY + logoSize) + 14;
+        if (input.companyAddress) {
+          doc.font('Letter-Regular').fontSize(8.5).fillColor(INK_600);
+          doc.text(input.companyAddress, textX, doc.y + 2, {
+            width: CONTENT_W - (textX - MARGIN),
+          });
+        }
+        headerY = Math.max(doc.y, headerY + logoSize) + 14;
 
-      doc
-        .moveTo(MARGIN, headerY)
-        .lineTo(MARGIN + CONTENT_W, headerY)
-        .strokeColor(BORDER)
-        .stroke();
-      headerY += 20;
+        doc
+          .moveTo(MARGIN, headerY)
+          .lineTo(MARGIN + CONTENT_W, headerY)
+          .strokeColor(BORDER)
+          .stroke();
+        headerY += 20;
+      }
 
       // Ref No / Date, right-aligned
       doc.font('Letter-Regular').fontSize(9).fillColor(INK_600);
@@ -263,7 +325,7 @@ export class LetterPdfService {
         8 +
         14 + // name
         (input.signatoryName && input.signatoryDesignation ? 12 : 0);
-      const bottomLimit = doc.page.height - MARGIN;
+      const bottomLimit = doc.page.height - doc.page.margins.bottom;
       if (doc.y + blockHeight > bottomLimit) doc.addPage();
       doc.font('Letter-Regular').fontSize(10.5).fillColor(INK_900);
       doc.text(`For ${input.companyName},`, MARGIN, doc.y, {

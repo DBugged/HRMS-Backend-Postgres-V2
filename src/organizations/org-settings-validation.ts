@@ -57,6 +57,8 @@ export const FIELD_KINDS: Record<string, FieldKind> = {
   secondaryColor: 'requiredString',
   faviconUrl: 'fileUrl',
   reportLogoUrl: 'fileUrl',
+  letterHeaderUrl: 'fileUrl',
+  letterFooterUrl: 'fileUrl',
   emailLogoUrl: 'fileUrl',
   watermarkLogo: 'boolean',
   signatories: 'array',
@@ -316,11 +318,11 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
   }
   if (
     p.locationMode !== undefined &&
-    !['ENFORCED', 'RECORD_ONLY', 'NOT_NEEDED'].includes(p.locationMode as string)
+    !['ENFORCED', 'RECORD_ONLY', 'NOT_NEEDED'].includes(
+      p.locationMode as string,
+    )
   ) {
-    bad(
-      `${path('locationMode')} must be ENFORCED, RECORD_ONLY or NOT_NEEDED.`,
-    );
+    bad(`${path('locationMode')} must be ENFORCED, RECORD_ONLY or NOT_NEEDED.`);
   }
   if (
     p.notifySalaryRevision !== undefined &&
