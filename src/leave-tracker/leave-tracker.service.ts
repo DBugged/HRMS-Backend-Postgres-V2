@@ -330,6 +330,9 @@ export class LeaveTrackerService {
         joiningDate: true,
         // An inactive employee earns no leave: no balance row is created for them here (existing rows still show).
         isActive: true,
+        // Shown by the Employee Leave Stat page.
+        designation: true,
+        department: { select: { name: true } },
       },
       orderBy: EMPLOYEE_ORDER_BY,
     });
@@ -437,11 +440,21 @@ export class LeaveTrackerService {
       // Display code (e.g. "DP-00001"); `employeeId` above is the User.id join key.
       employeeCode: string;
       name: string;
+      department: string | null;
+      designation: string;
+      isActive: boolean;
       leaveBalances: {
         leaveTypeCode: string;
         leaveTypeName: string;
+        // Carried in from the previous leave year, and HR corrections / encashed days - together with `credited`
+        // they make up the total the employee had this year.
+        opening: number;
         credited: number;
+        adjusted: number;
         availed: number;
+        encashed: number;
+        // Applied for but not yet decided.
+        pending: number;
         closing: number;
       }[];
       compOffAvailable: number;
@@ -515,8 +528,12 @@ export class LeaveTrackerService {
             {
               leaveTypeCode: leaveType.code,
               leaveTypeName: leaveType.name,
+              opening: row.opening,
               credited: row.credited,
+              adjusted: row.adjusted,
               availed: row.availed,
+              encashed: row.encashed,
+              pending: row.pending,
               closing:
                 Math.round(
                   (row.closing - (lapsedByRow.get(row.id) ?? 0)) * 100,
@@ -536,6 +553,9 @@ export class LeaveTrackerService {
         employeeId: employee.id,
         employeeCode: employee.employeeId,
         name: employee.name,
+        department: employee.department?.name ?? null,
+        designation: employee.designation,
+        isActive: employee.isActive,
         leaveBalances,
         compOffAvailable,
         wfhDaysUsed,
