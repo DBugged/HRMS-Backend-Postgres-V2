@@ -1489,6 +1489,12 @@ model PayrollSettings {
   // employee is taxed under the default regime with no declared deductions.
   taxDeclarationRequiresVerification Boolean @default(false)
 
+  // Tax regime. Employees may switch regime themselves once a financial year (HR/Admin can always change it): on by
+  // default, and `taxRegimeCutoffMonth` is the last calendar month of the year in which they may (null = until the
+  // year ends). The regime an employee has chosen drives TDS from the first payroll; proofs only gate the deductions.
+  taxRegimeEmployeeChange Boolean @default(true)
+  taxRegimeCutoffMonth    Int?
+
   // Section 206AA: when on, an employee with no valid PAN is withheld at the higher of the normal TDS and 20% of
   // the month's taxable pay. Off by default — whether it applies to salary is the employer's CA's call.
   higherTdsWithoutPan Boolean @default(false)
@@ -1755,6 +1761,11 @@ model EmployeeTaxDeclaration {
   // Section 89 relief for arrears/advance salary — computed by HR from the employee's Form 10E and entered by
   // HR/Admin only (an employee cannot set it). Reduces the annual tax in either regime.
   section89Relief        Float   @default(0)
+
+  // How many times the employee changed regime after payroll had started using it this year (the limit is one), and
+  // when. Choices made before the first payroll of the year are free and are not counted.
+  regimeChangeCount Int       @default(0)
+  regimeChangedAt   DateTime?
 
   status TaxDeclarationStatus @default(DRAFT)
 

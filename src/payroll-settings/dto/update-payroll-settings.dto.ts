@@ -204,6 +204,25 @@ export class UpdatePayrollSettingsDto {
 
   @ApiPropertyOptional({
     description:
+      'Employees may switch their tax regime themselves, once a financial year. HR/Admin can always change it.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  taxRegimeEmployeeChange?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Last calendar month (1-12) of the financial year in which employees may switch regime; null = until the year ends.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(12)
+  taxRegimeCutoffMonth?: number | null;
+
+  @ApiPropertyOptional({
+    description:
       'Section 206AA: withhold at the higher of normal TDS and 20% for an employee without a valid PAN.',
   })
   @IsOptional()

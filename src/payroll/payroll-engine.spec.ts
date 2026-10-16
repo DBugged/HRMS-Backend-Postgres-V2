@@ -560,7 +560,7 @@ describe('payroll engine: income tax (TDS)', () => {
     expect(r.taxDetails?.deductions.professionalTax).toBe(1400);
   });
 
-  it('a SUBMITTED old-regime declaration switches the regime; a DRAFT is ignored', async () => {
+  it("the chosen regime applies from the first run, even from a DRAFT; a DRAFT's deductions are not counted", async () => {
     const decl = (status: string) => ({
       id: 'd1',
       organizationId: 'org-1',
@@ -579,6 +579,7 @@ describe('payroll engine: income tax (TDS)', () => {
       ],
     });
     expect(submitted.taxDetails?.regime).toBe('OLD');
+    expect(submitted.taxDetails?.deductions.section80C).toBe(150000);
     const draft = await run({
       overrides: structure(150000),
       declaration: decl('DRAFT'),
@@ -587,10 +588,12 @@ describe('payroll engine: income tax (TDS)', () => {
         slabRow('2026-27', 'OLD' as never),
       ],
     });
-    expect(draft.taxDetails?.regime).toBe('NEW');
+    // Telling the employer the regime is separate from proving investments: the regime counts, the figures do not.
+    expect(draft.taxDetails?.regime).toBe('OLD');
+    expect(draft.taxDetails?.deductions.section80C).toBe(0);
   });
 
-  it('with "require verification" on, a SUBMITTED declaration is not used yet but a VERIFIED one is', async () => {
+  it('with "require verification" on, a SUBMITTED declaration\'s deductions are not used yet but a VERIFIED one\'s are; the regime always is', async () => {
     const decl = (status: string) => ({
       id: 'd1',
       organizationId: 'org-1',
@@ -598,6 +601,7 @@ describe('payroll engine: income tax (TDS)', () => {
       financialYear: '2026-27',
       regimeChosen: 'OLD',
       status,
+      section80C: 150000,
     });
     const slabs = [
       slabRow('2026-27', 'NEW' as never),
@@ -612,7 +616,8 @@ describe('payroll engine: income tax (TDS)', () => {
       overrides: structure(150000),
       declaration: decl('SUBMITTED'),
     });
-    expect(submitted.taxDetails?.regime).toBe('NEW');
+    expect(submitted.taxDetails?.regime).toBe('OLD');
+    expect(submitted.taxDetails?.deductions.section80C).toBe(0);
     const verified = await run({
       settings,
       slabs,
@@ -620,6 +625,12 @@ describe('payroll engine: income tax (TDS)', () => {
       declaration: decl('VERIFIED'),
     });
     expect(verified.taxDetails?.regime).toBe('OLD');
+    expect(verified.taxDetails?.deductions.section80C).toBe(150000);
+  });
+
+  it('an employee with no declaration is on the New regime', async () => {
+    const r = await run({ overrides: structure(150000) });
+    expect(r.taxDetails?.regime).toBe('NEW');
   });
 
   it('Section 206AA: with no valid PAN at least 20% of the month taxable pay is withheld', async () => {

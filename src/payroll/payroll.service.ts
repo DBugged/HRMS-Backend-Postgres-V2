@@ -1140,8 +1140,10 @@ export class PayrollService {
         await this.scopedPrisma.employeeTaxDeclaration.findFirst({
           where: { organizationId, employeeId, financialYear },
         });
-      // A DRAFT is work in progress and never drives TDS. With "require verification" on, only a VERIFIED
-      // declaration does; until then the employee is taxed under the default regime with no declared deductions.
+      // The regime the employee (or HR) chose drives TDS from the first run, whatever state the declaration is in:
+      // intimating the regime to the employer is separate from proving investments. The declared figures are another
+      // matter: a DRAFT is work in progress and never counts, and with "require verification" on only a VERIFIED
+      // declaration does - until then the employee is taxed under their regime with no declared deductions.
       const declaration =
         storedDeclaration &&
         (storedDeclaration.status === TaxDeclarationStatus.VERIFIED ||
@@ -1149,7 +1151,7 @@ export class PayrollService {
             !settingsRow.taxDeclarationRequiresVerification))
           ? storedDeclaration
           : null;
-      const regime = declaration?.regimeChosen ?? TaxRegime.NEW;
+      const regime = storedDeclaration?.regimeChosen ?? TaxRegime.NEW;
       let taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
         where: { organizationId, financialYear, regime, isActive: true },
       });

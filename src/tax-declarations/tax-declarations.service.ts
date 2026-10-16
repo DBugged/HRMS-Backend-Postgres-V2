@@ -18,6 +18,7 @@ import {
   NotificationCategory,
   Role,
   TaxDeclarationStatus,
+  TaxRegime,
   User,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -31,6 +32,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { getFinancialYear } from '../payroll-settings/financial-year';
+import { decideRegimeChange, regimeChangeStatus } from './regime-rules';
 
 type Actor = Omit<User, 'password'>;
 
@@ -105,6 +107,42 @@ export class TaxDeclarationsService {
     return { current, years: [previous, current] };
   }
 
+  // Everything the regime rules need to know about one employee and year.
+  private async regimeContext(
+    employeeId: string,
+    financialYear: string,
+    current: TaxRegime,
+    changesUsed: number,
+    organizationId: string,
+  ) {
+    const settings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const today = new Date();
+    const currentFinancialYear = getFinancialYear(
+      today.getMonth() + 1,
+      today.getFullYear(),
+      settings.financialYearStartMonth,
+    );
+    const payrollRuns = await this.scopedPrisma.payrollRun.count({
+      where: {
+        organizationId,
+        employeeId,
+        financialYear,
+        isFinalSettlement: false,
+      },
+    });
+    return {
+      current,
+      changesUsed,
+      payrollStarted: payrollRuns > 0,
+      isCurrentYear: financialYear === currentFinancialYear,
+      employeeChangeAllowed: settings.taxRegimeEmployeeChange,
+      cutoffMonth: settings.taxRegimeCutoffMonth ?? null,
+      fyStartMonth: settings.financialYearStartMonth,
+      currentMonth: today.getMonth() + 1,
+    };
+  }
+
   async get(
     employeeIdParam: string | undefined,
     financialYear: string | undefined,
@@ -141,7 +179,17 @@ export class TaxDeclarationsService {
       await this.scopedPrisma.employeeTaxDeclaration.findFirst({
         where: { organizationId, employeeId, financialYear },
       });
-    return { declaration };
+    // Whether the employee may change regime now, and why not - the screen shows it instead of letting them try.
+    const regimeRule = regimeChangeStatus(
+      await this.regimeContext(
+        employeeId,
+        financialYear,
+        declaration?.regimeChosen ?? TaxRegime.NEW,
+        declaration?.regimeChangeCount ?? 0,
+        organizationId,
+      ),
+    );
+    return { declaration, regimeRule };
   }
 
   private async assertEmployeeInOrg(
@@ -242,9 +290,19 @@ export class TaxDeclarationsService {
       // outright. HR/Admin can still reopen it by setting status back to
       // DRAFT via their own (non-own-declaration) edit path below.
       if (existing && existing.status !== TaxDeclarationStatus.DRAFT) {
-        throw new BadRequestException(
-          `Your declaration for FY ${dto.financialYear} has already been submitted and can no longer be changed.`,
+        // Once submitted only the regime may still be changed (within the rules below); every figure stays locked.
+        const otherEdits = Object.entries(
+          dto as unknown as Record<string, unknown>,
+        ).filter(
+          ([k, v]) =>
+            v !== undefined &&
+            !['employeeId', 'financialYear', 'regimeChosen'].includes(k),
         );
+        if (otherEdits.length > 0) {
+          throw new BadRequestException(
+            `Your declaration for FY ${dto.financialYear} has already been submitted and can no longer be changed. Only your tax regime can still be changed, once a year.`,
+          );
+        }
       }
 
       // "Next FY opens in April" — an employee can't start/edit a
@@ -267,6 +325,29 @@ export class TaxDeclarationsService {
       }
     }
 
+    // Switching regime follows its own rules (once a year after payroll has started, a company cut-off month, HR can
+    // always do it); it is checked for every own edit, submitted or not.
+    let usesRegimeChange = false;
+    if (
+      isOwnDeclaration &&
+      dto.regimeChosen !== undefined &&
+      dto.regimeChosen !== (existing?.regimeChosen ?? TaxRegime.NEW)
+    ) {
+      const decision = decideRegimeChange({
+        ...(await this.regimeContext(
+          employeeId,
+          dto.financialYear,
+          existing?.regimeChosen ?? TaxRegime.NEW,
+          existing?.regimeChangeCount ?? 0,
+          organizationId,
+        )),
+        requested: dto.regimeChosen,
+        byHr: false,
+      });
+      if (!decision.ok) throw new BadRequestException(decision.reason);
+      usesRegimeChange = decision.usesChange;
+    }
+
     // The one status transition an employee can make on their own
     // declaration — DRAFT -> SUBMITTED via `submit`, never any other value
     // (that's still `dto.status`, still stripped for isOwnDeclaration).
@@ -278,6 +359,10 @@ export class TaxDeclarationsService {
 
     const data = {
       ...(dto.regimeChosen !== undefined && { regimeChosen: dto.regimeChosen }),
+      ...(usesRegimeChange && {
+        regimeChangeCount: (existing?.regimeChangeCount ?? 0) + 1,
+        regimeChangedAt: new Date(),
+      }),
       ...(dto.section80C !== undefined && { section80C: dto.section80C }),
       ...(dto.section80CCD1B !== undefined && {
         section80CCD1B: dto.section80CCD1B,
@@ -417,5 +502,86 @@ export class TaxDeclarationsService {
     }
 
     return declaration;
+  }
+
+  // HR / Admin set the regime for one employee or many (a bulk change at the start of a year, or a correction). It never
+  // uses up the employee's own change, works whatever the company's employee settings and cut-off, and is audited with
+  // the reason. The employee's figures are untouched; payroll picks the regime up from the next run and spreads the
+  // difference over the months left.
+  async setRegimeForEmployees(
+    dto: {
+      employeeIds: string[];
+      financialYear: string;
+      regime: TaxRegime;
+      reason: string;
+    },
+    actor: Actor,
+    organizationId: string,
+  ) {
+    if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
+      throw new ForbiddenException('Only HR or an Admin can set a tax regime.');
+    }
+    const ids = [...new Set(dto.employeeIds)];
+    const employees = await this.scopedPrisma.user.findMany({
+      where: { organizationId, id: { in: ids } },
+      select: { id: true, name: true },
+    });
+    const known = new Map(employees.map((e) => [e.id, e.name]));
+    const changed: string[] = [];
+    const unchanged: string[] = [];
+    const notFound = ids.filter((id) => !known.has(id));
+    for (const employeeId of ids.filter((id) => known.has(id))) {
+      const existing = await this.scopedPrisma.employeeTaxDeclaration.findFirst(
+        {
+          where: {
+            organizationId,
+            employeeId,
+            financialYear: dto.financialYear,
+          },
+        },
+      );
+      if ((existing?.regimeChosen ?? TaxRegime.NEW) === dto.regime) {
+        unchanged.push(known.get(employeeId)!);
+        continue;
+      }
+      if (existing) {
+        await this.scopedPrisma.employeeTaxDeclaration.updateMany({
+          where: { id: existing.id, organizationId },
+          data: { regimeChosen: dto.regime },
+        });
+      } else {
+        await this.scopedPrisma.employeeTaxDeclaration.create({
+          data: {
+            organizationId,
+            employeeId,
+            financialYear: dto.financialYear,
+            regimeChosen: dto.regime,
+          },
+        });
+      }
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'TAX_REGIME_SET_BY_HR',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: employeeId,
+        details: {
+          employeeId,
+          financialYear: dto.financialYear,
+          from: existing?.regimeChosen ?? TaxRegime.NEW,
+          to: dto.regime,
+          reason: dto.reason,
+        },
+      });
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId,
+        eventKey: 'TAX_DECLARATION_UPDATED',
+        performedById: actor.id,
+        description: `Tax regime for FY ${dto.financialYear} set to ${dto.regime === TaxRegime.OLD ? 'Old' : 'New'} by HR.`,
+      });
+      changed.push(known.get(employeeId)!);
+    }
+    return { changed, unchanged, notFound };
   }
 }

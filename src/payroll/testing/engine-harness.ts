@@ -79,6 +79,8 @@ export function defaultSettings(over: Row = {}): Row {
     otNightRate: 1.75,
     companyPerformanceEnabled: false,
     taxDeclarationRequiresVerification: false,
+    taxRegimeEmployeeChange: true,
+    taxRegimeCutoffMonth: null,
     higherTdsWithoutPan: false,
     refundExcessTdsOnExit: true,
     perquisiteLoanBenchmarkRate: 0,
