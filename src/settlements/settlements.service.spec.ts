@@ -49,7 +49,22 @@ function build(o: Opts = {}) {
       if (v && typeof v === 'object' && 'in' in v) return v.in.includes(r[k]);
       return v === undefined || r[k] === v;
     });
-  const tx: Row = {};
+  const unlinked: Row[] = [];
+  const tx: Row = {
+    offboardingCase: {
+      updateMany: async (a: Row) => {
+        unlinked.push(a.where);
+        return { count: 1 };
+      },
+    },
+    settlement: {
+      deleteMany: async (a: Row) => {
+        const i = settlements.findIndex((x) => match(x, a.where));
+        if (i >= 0) settlements.splice(i, 1);
+        return { count: i >= 0 ? 1 : 0 };
+      },
+    },
+  };
   const prisma: Row = {
     user: {
       findFirst: async () => employee,
@@ -169,7 +184,7 @@ function build(o: Opts = {}) {
       }),
     }),
   );
-  return { service, settlements, audit, payrollService };
+  return { service, settlements, audit, payrollService, unlinked };
 }
 
 const admin = { id: 'admin', role: Role.ADMIN } as never;
@@ -464,6 +479,46 @@ describe('final settlement: processing', () => {
     await expect(service.process('s1', admin, 'org')).rejects.toThrow(
       /final settlement has already been processed for this employee \(10\/2026\)/,
     );
+  });
+});
+
+describe('final settlement: discarding a draft', () => {
+  it('deletes a draft, unlinks it from its exit case and audits it', async () => {
+    const { service, settlements, audit, unlinked } = build({
+      settlements: [
+        {
+          id: 's1',
+          employeeId: 'e1',
+          status: 'DRAFT',
+          lastWorkingDay: '2026-10-06',
+        },
+      ],
+    });
+    await expect(service.discardDraft('s1', admin, 'org')).resolves.toEqual({
+      id: 's1',
+      discarded: true,
+    });
+    expect(settlements).toHaveLength(0);
+    expect(unlinked).toEqual([{ organizationId: 'org', settlementId: 's1' }]);
+    expect(audit.at(-1)).toMatchObject({
+      action: 'SETTLEMENT_DISCARDED',
+      targetId: 's1',
+    });
+  });
+
+  it('never deletes a processed or paid settlement', async () => {
+    for (const status of ['PROCESSED', 'PAID']) {
+      const { service, settlements } = build({
+        settlements: [{ id: 's1', employeeId: 'e1', status }],
+      });
+      await expect(service.discardDraft('s1', admin, 'org')).rejects.toThrow(
+        /Only a draft settlement can be discarded/,
+      );
+      expect(settlements).toHaveLength(1);
+    }
+    await expect(
+      build().service.discardDraft('ghost', admin, 'org'),
+    ).rejects.toThrow(/Settlement not found/);
   });
 });
 

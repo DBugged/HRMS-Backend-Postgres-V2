@@ -4,6 +4,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Post,
@@ -98,6 +99,18 @@ export class SettlementsController {
       id,
       dto.outcome,
       dto.note,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // Deletes a DRAFT only (a preview for the wrong employee or date); processed / paid settlements are refused.
+  @Delete(':id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  discardDraft(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.settlementsService.discardDraft(
+      id,
       caller,
       caller.organizationId,
     );

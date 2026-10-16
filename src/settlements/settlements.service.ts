@@ -1853,6 +1853,46 @@ export class SettlementsService {
     );
   }
 
+  // Throws away a DRAFT - a preview calculated for the wrong employee or date. A draft has booked nothing (no payroll
+  // run, loans, claims or leave touched), so it is deleted outright; an exit case it was linked to is unlinked first.
+  // Processed and paid settlements are never deleted - reverse a processed one instead.
+  async discardDraft(id: string, actor: Actor, organizationId: string) {
+    const settlement = await this.scopedPrisma.settlement.findFirst({
+      where: { id, organizationId },
+    });
+    if (!settlement) throw new NotFoundException('Settlement not found.');
+    if (settlement.status !== SettlementStatus.DRAFT) {
+      throw new BadRequestException(
+        'Only a draft settlement can be discarded - reverse a processed settlement instead.',
+      );
+    }
+    await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.offboardingCase.updateMany({
+        where: { organizationId, settlementId: id },
+        data: { settlementId: null },
+      });
+      const { count } = await tx.settlement.deleteMany({
+        where: { id, organizationId, status: SettlementStatus.DRAFT },
+      });
+      if (count === 0) {
+        throw new ConflictException('This settlement was already changed.');
+      }
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'SETTLEMENT_DISCARDED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: settlement.employeeId,
+        lastWorkingDay: settlement.lastWorkingDay,
+        netSettlementAmount: settlement.netSettlementAmount,
+      },
+    });
+    return { id, discarded: true };
+  }
+
   async markPaid(
     id: string,
     actor: Actor,
