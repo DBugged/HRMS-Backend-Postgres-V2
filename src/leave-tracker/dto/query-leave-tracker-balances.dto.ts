@@ -1,6 +1,14 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsInt, IsOptional, IsUUID, Max, Min, Matches } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+  Matches,
+} from 'class-validator';
 
 export class QueryLeaveTrackerBalancesDto {
   @ApiPropertyOptional()
@@ -25,4 +33,13 @@ export class QueryLeaveTrackerBalancesDto {
   @IsOptional()
   @IsUUID()
   departmentId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Leave balances only: skips the comp-off and work-from-home figures, which are the slowest part of the response. Used by the Employee Leave Stat page.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  lite?: boolean;
 }

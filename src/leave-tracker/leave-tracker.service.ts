@@ -373,20 +373,29 @@ export class LeaveTrackerService {
     // counts with one grouped query — same final per-employee numbers either way.
     const [compOffAvailableByEmployee, wfhCounts, monthLeaves] =
       await Promise.all([
-        this.compOffService.availableForEmployees(
-          balanceEmployeeIds,
-          organizationId,
-        ),
-        this.scopedPrisma.attendance.groupBy({
-          by: ['employeeId'],
-          where: {
-            organizationId,
-            employeeId: { in: balanceEmployeeIds },
-            date: { gte: periodStart ?? yearStart, lte: periodEnd ?? yearEnd },
-            workArrangement: WorkArrangement.WFH,
-          },
-          _count: { _all: true },
-        }),
+        query.lite
+          ? Promise.resolve(new Map<string, number>())
+          : this.compOffService.availableForEmployees(
+              balanceEmployeeIds,
+              organizationId,
+            ),
+        query.lite
+          ? Promise.resolve(
+              [] as { employeeId: string; _count: { _all: number } }[],
+            )
+          : this.scopedPrisma.attendance.groupBy({
+              by: ['employeeId'],
+              where: {
+                organizationId,
+                employeeId: { in: balanceEmployeeIds },
+                date: {
+                  gte: periodStart ?? yearStart,
+                  lte: periodEnd ?? yearEnd,
+                },
+                workArrangement: WorkArrangement.WFH,
+              },
+              _count: { _all: true },
+            }),
         // Approved leave overlapping the chosen month, to say how much of each type was taken in it.
         periodStart && periodEnd
           ? this.scopedPrisma.leave.findMany({
