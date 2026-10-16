@@ -31,6 +31,7 @@ import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto } from './dto/adjust-payroll.dto';
 import { BulkTransitionPayrollDto } from './dto/bulk-transition-payroll.dto';
 import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
+import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
 import { ArrearsPreviewDto, CreateArrearsDto } from './dto/arrears.dto';
 import { ImportPaymentsDto, RecordPaymentDto } from './dto/payment.dto';
@@ -83,6 +84,79 @@ export class PayrollController {
     @CurrentUser() caller: Caller,
   ) {
     return this.payrollService.getAttendanceGaps(
+      query.month,
+      query.year,
+      caller.organizationId,
+    );
+  }
+
+  // "Which regime saves more": the year's tax under both regimes. Own figures for anyone; HR/Admin may pass employeeId.
+  // Registered before ':id' like the other fixed paths.
+  @Get('regime-comparison')
+  regimeComparison(
+    @Query('financialYear') financialYear: string | undefined,
+    @Query('employeeId') employeeId: string | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.compareRegimes(
+      employeeId,
+      financialYear,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // What the employer pays on top of each employee's pay every month - the part of the CTC that the pay lines do not
+  // show. Registered before ':id' like the other fixed paths.
+  @Get('employer-cost')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  employerCost(
+    @Query('employeeId') employeeId: string | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.employerCost(
+      caller.organizationId,
+      employeeId || undefined,
+    );
+  }
+
+  // The same for the caller's own structure - any authenticated employee, since it is their own CTC.
+  @Get('employer-cost/me')
+  async employerCostMine(@CurrentUser() caller: Caller) {
+    const [mine] = await this.payrollService.employerCost(
+      caller.organizationId,
+      caller.id,
+    );
+    return { employerMonthly: mine?.employerMonthly ?? 0 };
+  }
+
+  // The checklist before running a month: missing salary structures, bank details, unmarked attendance, joiners and
+  // leavers. Registered before ':id' like the other fixed paths.
+  @Get('readiness')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  readiness(
+    @Query() query: AttendanceGapsQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.getReadiness(
+      query.month,
+      query.year,
+      caller.organizationId,
+    );
+  }
+
+  // The bank file for a month: locked, un-held payslips with account details, plus who was left out and why.
+  // Registered before ':id' like the other fixed paths.
+  @Get('bank-advice')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bankAdvice(
+    @Query() query: AttendanceGapsQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.bankAdvice(
       query.month,
       query.year,
       caller.organizationId,
@@ -367,6 +441,29 @@ export class PayrollController {
   @UseGuards(RolesGuard)
   pay(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.payrollService.pay(id, caller, caller.organizationId);
+  }
+
+  @Post(':id/hold')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  hold(
+    @Param('id') id: string,
+    @Body() dto: HoldPayrollDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.holdSalary(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  @Post(':id/release-hold')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  releaseHold(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.payrollService.releaseHold(id, caller, caller.organizationId);
   }
 
   // The original release's PAYROLL_UNLOCK_ROLES (hr_admin, payroll_manager,

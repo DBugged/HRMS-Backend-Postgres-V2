@@ -259,6 +259,7 @@ model Organization {
   salaryComponents                 SalaryComponent[]
   payrollSettings                  PayrollSettings?
   employeeSalaryComponents         EmployeeSalaryComponent[]
+  openingBalances                  EmployeeOpeningBalance[]
   payrollTemplates                 PayrollTemplate[]
   statutoryConfigVersions          StatutoryConfigVersion[]
   employeeTaxDeclarations          EmployeeTaxDeclaration[]
@@ -556,6 +557,7 @@ model User {
   createdSalaryComponents          SalaryComponent[]
   updatedPayrollSettings           PayrollSettings[]
   employeeSalaryComponents         EmployeeSalaryComponent[]         @relation("EmployeeSalaryComponentEmployee")
+  openingBalances                  EmployeeOpeningBalance[]          @relation("OpeningBalanceEmployee")
   createdEmployeeSalaryComponents  EmployeeSalaryComponent[]         @relation("EmployeeSalaryComponentCreatedBy")
   createdPayrollTemplates          PayrollTemplate[]
   createdStatutoryConfigVersions   StatutoryConfigVersion[]
@@ -1492,6 +1494,12 @@ model PayrollSettings {
   // employee is taxed under the default regime with no declared deductions.
   taxDeclarationRequiresVerification Boolean @default(false)
 
+  // Tax regime. Employees may switch regime themselves once a financial year (HR/Admin can always change it): on by
+  // default, and `taxRegimeCutoffMonth` is the last calendar month of the year in which they may (null = until the
+  // year ends). The regime an employee has chosen drives TDS from the first payroll; proofs only gate the deductions.
+  taxRegimeEmployeeChange Boolean @default(true)
+  taxRegimeCutoffMonth    Int?
+
   // Section 206AA: when on, an employee with no valid PAN is withheld at the higher of the normal TDS and 20% of
   // the month's taxable pay. Off by default — whether it applies to salary is the employer's CA's call.
   higherTdsWithoutPan Boolean @default(false)
@@ -1565,6 +1573,33 @@ model EmployeeSalaryComponent {
 
   @@index([organizationId, employeeId, componentCode, effectiveFrom])
   @@map("employee_salary_components")
+}
+
+// Year-to-date figures for a company that starts payroll partway through a financial year: what the employee earned
+// and what was deducted in the months BEFORE the first run here. The tax engine adds them to the runs it holds, so the
+// annual income is the whole year, not just the months paid by this system.
+model EmployeeOpeningBalance {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("OpeningBalanceEmployee", fields: [employeeId], references: [id])
+
+  financialYear   String // "2026-27"
+  monthsCovered   Int // months of this FY already paid elsewhere (Apr..go-live month - 1)
+  taxableEarnings Float  @default(0)
+  tdsDeducted     Float  @default(0)
+  pfPaid          Float  @default(0)
+  ptPaid          Float  @default(0)
+
+  updatedById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([employeeId, financialYear])
+  @@index([organizationId, financialYear])
+  @@map("employee_opening_balances")
 }
 
 enum HeaderStyle {
@@ -1731,6 +1766,11 @@ model EmployeeTaxDeclaration {
   // Section 89 relief for arrears/advance salary — computed by HR from the employee's Form 10E and entered by
   // HR/Admin only (an employee cannot set it). Reduces the annual tax in either regime.
   section89Relief        Float   @default(0)
+
+  // How many times the employee changed regime after payroll had started using it this year (the limit is one), and
+  // when. Choices made before the first payroll of the year are free and are not counted.
+  regimeChangeCount Int       @default(0)
+  regimeChangedAt   DateTime?
 
   status TaxDeclarationStatus @default(DRAFT)
 
@@ -2405,6 +2445,11 @@ model PayrollRun {
   paymentMode          String?
   paymentReference     String?
   paymentDate          String?
+  // Salary on hold: the run is calculated and signed off as usual but is not paid (and stays out of the bank file) until
+  // the hold is released - e.g. a new joiner's pay that should roll into next month, or an unreturned asset.
+  heldAt               DateTime?
+  heldById             String?
+  holdReason           String?
   // Set once a lock's side effects (loan EMIs charged, leave encashments processed) have been applied. A LOCKED/PAID
   // run where this is null had its process die between the status change and the side effects - see
   // PayrollService.lockEffectsPending / reapplyLockEffects.
@@ -3139,13 +3184,13 @@ model EmployeeDocument {
   // (PAN Card / Aadhaar Card / Passport Photo / Educational Certificate /
   // Relieving Letter or Experience Certificate / Other) and the org's own
   // DocumentRequirement master list — same as the old system.
-  docType  String
-  fileName String
-  fileUrl  String
-  category EmployeeDocumentCategory @default(DOCUMENT)
+  docType           String
+  fileName          String
+  fileUrl           String
+  category          EmployeeDocumentCategory @default(DOCUMENT)
   // Only meaningful for an uploaded Letter (category LETTER): HR/Admin can switch it off so the employee no longer sees
   // it (the "Visible to employee" tick, as on the generated letters). Defaults to visible, as before.
-  visibleToEmployee Boolean @default(true)
+  visibleToEmployee Boolean                  @default(true)
 
   status       EmployeeDocumentStatus @default(PENDING)
   reviewReason String?
@@ -3595,11 +3640,11 @@ model Resignation {
 
   // The employee's request to withdraw this resignation once it was approved (only HR/Admin can cancel the exit).
   // Plain ids like decidedById. A declined request can be raised again, which resets these fields.
-  withdrawalStatus      WithdrawalRequestStatus?
-  withdrawalReason      String?
-  withdrawalRequestedAt DateTime?
-  withdrawalDecidedById String?
-  withdrawalDecidedAt   DateTime?
+  withdrawalStatus       WithdrawalRequestStatus?
+  withdrawalReason       String?
+  withdrawalRequestedAt  DateTime?
+  withdrawalDecidedById  String?
+  withdrawalDecidedAt    DateTime?
   withdrawalDecisionNote String?
 
   // Set when HR or an Admin recorded the resignation on the employee's behalf (given by email or in person): the id

@@ -25,8 +25,12 @@ import {
   dayBefore,
   localDateStr,
   resolveCurrentRows,
+  summarizeStructure,
   synthesizeMissingRows,
 } from './salary-structure-math';
+import { effectiveWorkLocation } from '../common/effective-work-location';
+import { employeeCityClass, withCityHra } from './city-hra';
+import { defaultHraPercent } from '../common/hra-cities';
 import {
   extractDependencies,
   resolveComponentValue,
@@ -151,6 +155,82 @@ export class EmployeeSalaryComponentsService {
     return org?.timezone ?? 'Asia/Kolkata';
   }
 
+  // One line per active employee for the directory: is a salary set up, and what is the CTC. HRA that has no line of its
+  // own follows the work location, the same as everywhere else (see city-hra.ts).
+  async listSalarySummaries(organizationId: string) {
+    const asOf = localDateStr(await this.getOrgTimezone(organizationId));
+    const [users, rows, components] = await Promise.all([
+      this.scopedPrisma.user.findMany({
+        where: { organizationId, isActive: true },
+        select: {
+          id: true,
+          workLocation: { select: { cityClass: true } },
+          department: {
+            select: { workLocation: { select: { cityClass: true } } },
+          },
+        },
+      }),
+      this.scopedPrisma.employeeSalaryComponent.findMany({
+        where: { organizationId },
+        include: {
+          component: {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              type: true,
+              calcType: true,
+              payFrequency: true,
+              isEmployerContribution: true,
+              displayOrder: true,
+            },
+          },
+        },
+      }),
+      this.scopedPrisma.salaryComponent.findMany({
+        where: { organizationId, isActive: true },
+      }),
+    ]);
+    const rowsByEmployee = new Map<string, typeof rows>();
+    for (const r of rows) {
+      rowsByEmployee.set(r.employeeId, [
+        ...(rowsByEmployee.get(r.employeeId) ?? []),
+        r,
+      ]);
+    }
+    return users.map((u) => {
+      const own = (rowsByEmployee.get(u.id) ?? []).map((r) => ({
+        ...r,
+        componentRef: r.component,
+      }));
+      const current = resolveCurrentRows(own, asOf);
+      if (!current.some((r) => r.isEnabled)) {
+        return {
+          employeeId: u.id,
+          hasStructure: false,
+          annualCtc: 0,
+          fixedMonthly: 0,
+          variableAnnual: 0,
+        };
+      }
+      const cityClass = effectiveWorkLocation(u)?.cityClass ?? 'NON_METRO';
+      const synthesized = synthesizeMissingRows(
+        own,
+        withCityHra(components, cityClass),
+        asOf,
+      );
+      const summary = summarizeStructure([...current, ...synthesized]);
+      return {
+        employeeId: u.id,
+        hasStructure: true,
+        annualCtc: summary.annualCTC,
+        fixedMonthly: summary.fixedMonthly,
+        // Yearly lines whether labelled variable or one-time: both are paid on top of the monthly fixed pay.
+        variableAnnual: summary.variableAnnual + summary.oneTimeAnnual,
+      };
+    });
+  }
+
   async getStructure(
     employeeId: string,
     asOfParam: string | undefined,
@@ -199,7 +279,16 @@ export class EmployeeSalaryComponentsService {
     const rows = rawRows.map((r) => ({ ...r, componentRef: r.component }));
 
     const current = resolveCurrentRows(rows, asOf);
-    const synthesized = synthesizeMissingRows(rows, activeComponents, asOf);
+    const cityClass = await employeeCityClass(
+      this.scopedPrisma,
+      employeeId,
+      organizationId,
+    );
+    const synthesized = synthesizeMissingRows(
+      rows,
+      withCityHra(activeComponents, cityClass),
+      asOf,
+    );
 
     const displayOrderByCode = new Map(
       activeComponents.map((c) => [c.code, c.displayOrder]),
@@ -210,7 +299,9 @@ export class EmployeeSalaryComponentsService {
         (displayOrderByCode.get(b.componentCode) ?? 0),
     );
 
-    return { structure };
+    // The HRA percentage of Basic that applies to this employee's city class - lets the revision history, which
+    // rebuilds past batches in the browser, fill in HRA the same way.
+    return { structure, hraDefaultPercent: defaultHraPercent(cityClass) };
   }
 
   async getHistory(

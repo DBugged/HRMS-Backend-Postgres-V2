@@ -560,7 +560,7 @@ describe('payroll engine: income tax (TDS)', () => {
     expect(r.taxDetails?.deductions.professionalTax).toBe(1400);
   });
 
-  it('a SUBMITTED old-regime declaration switches the regime; a DRAFT is ignored', async () => {
+  it("the chosen regime applies from the first run, even from a DRAFT; a DRAFT's deductions are not counted", async () => {
     const decl = (status: string) => ({
       id: 'd1',
       organizationId: 'org-1',
@@ -579,6 +579,7 @@ describe('payroll engine: income tax (TDS)', () => {
       ],
     });
     expect(submitted.taxDetails?.regime).toBe('OLD');
+    expect(submitted.taxDetails?.deductions.section80C).toBe(150000);
     const draft = await run({
       overrides: structure(150000),
       declaration: decl('DRAFT'),
@@ -587,10 +588,12 @@ describe('payroll engine: income tax (TDS)', () => {
         slabRow('2026-27', 'OLD' as never),
       ],
     });
-    expect(draft.taxDetails?.regime).toBe('NEW');
+    // Telling the employer the regime is separate from proving investments: the regime counts, the figures do not.
+    expect(draft.taxDetails?.regime).toBe('OLD');
+    expect(draft.taxDetails?.deductions.section80C).toBe(0);
   });
 
-  it('with "require verification" on, a SUBMITTED declaration is not used yet but a VERIFIED one is', async () => {
+  it('with "require verification" on, a SUBMITTED declaration\'s deductions are not used yet but a VERIFIED one\'s are; the regime always is', async () => {
     const decl = (status: string) => ({
       id: 'd1',
       organizationId: 'org-1',
@@ -598,6 +601,7 @@ describe('payroll engine: income tax (TDS)', () => {
       financialYear: '2026-27',
       regimeChosen: 'OLD',
       status,
+      section80C: 150000,
     });
     const slabs = [
       slabRow('2026-27', 'NEW' as never),
@@ -612,7 +616,8 @@ describe('payroll engine: income tax (TDS)', () => {
       overrides: structure(150000),
       declaration: decl('SUBMITTED'),
     });
-    expect(submitted.taxDetails?.regime).toBe('NEW');
+    expect(submitted.taxDetails?.regime).toBe('OLD');
+    expect(submitted.taxDetails?.deductions.section80C).toBe(0);
     const verified = await run({
       settings,
       slabs,
@@ -620,6 +625,12 @@ describe('payroll engine: income tax (TDS)', () => {
       declaration: decl('VERIFIED'),
     });
     expect(verified.taxDetails?.regime).toBe('OLD');
+    expect(verified.taxDetails?.deductions.section80C).toBe(150000);
+  });
+
+  it('an employee with no declaration is on the New regime', async () => {
+    const r = await run({ overrides: structure(150000) });
+    expect(r.taxDetails?.regime).toBe('NEW');
   });
 
   it('Section 206AA: with no valid PAN at least 20% of the month taxable pay is withheld', async () => {
@@ -833,5 +844,46 @@ describe('payroll engine: one-off earnings and deductions, and safety nets', () 
     expect(r.deductions.reduce((s, d) => s + d.amount, 0)).toBe(
       r.totalDeductions,
     );
+  });
+});
+
+describe('payroll engine: HRA follows the work location when the structure has no HRA line', () => {
+  // Basic only: the org's HRA component (a percentage of Basic) auto-applies, at the city class's percentage.
+  const basicOnly = [fixed('BASIC', 30000)];
+  const employeeAt = (workLocation: { cityClass: string } | null) => ({
+    ...makeWorld().employee,
+    workLocation,
+    department: null,
+  });
+  const hraFor = async (workLocation: { cityClass: string } | null) => {
+    const r = await run({
+      overrides: basicOnly,
+      employee: employeeAt(workLocation),
+    });
+    return line(r.earnings, 'HRA');
+  };
+
+  it('a metro work location pays 50% of Basic', async () => {
+    expect(await hraFor({ cityClass: 'METRO' })).toBe(15000);
+  });
+
+  it('a non-metro work location pays 40% of Basic', async () => {
+    expect(await hraFor({ cityClass: 'NON_METRO' })).toBe(12000);
+  });
+
+  it('a rural work location pays no HRA', async () => {
+    expect(await hraFor({ cityClass: 'RURAL' })).toBeFalsy();
+  });
+
+  it('no work location at all pays 40% of Basic', async () => {
+    expect(await hraFor(null)).toBe(12000);
+  });
+
+  it('a saved HRA line wins over the city class', async () => {
+    const r = await run({
+      overrides: structure(30000),
+      employee: employeeAt({ cityClass: 'METRO' }),
+    });
+    expect(line(r.earnings, 'HRA')).toBe(12000);
   });
 });

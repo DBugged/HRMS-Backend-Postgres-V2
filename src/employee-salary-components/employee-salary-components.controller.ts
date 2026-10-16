@@ -59,6 +59,16 @@ export class EmployeeSalaryComponentsController {
     );
   }
 
+  // Salary status of every active employee (set up or not, and the CTC) for the employee directory.
+  @Get('summary')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  listSummaries(@CurrentUser() caller: Caller) {
+    return this.employeeSalaryComponentsService.listSalarySummaries(
+      caller.organizationId,
+    );
+  }
+
   @Get(':id/structure')
   @SelfOrRoles('id', Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

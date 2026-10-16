@@ -11,6 +11,8 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
+import { OpeningBalancesController } from './opening-balances.controller';
+import { OpeningBalancesService } from './opening-balances.service';
 import { LoansModule } from '../loans/loans.module';
 
 @Module({
@@ -24,9 +26,10 @@ import { LoansModule } from '../loans/loans.module';
     LoansModule,
     PrivacyModule,
   ],
-  controllers: [PayrollController],
+  controllers: [PayrollController, OpeningBalancesController],
   providers: [
     PayrollService,
+    OpeningBalancesService,
     PayslipPdfService,
     PayslipEmailQueueService,
     PayslipEmailWorker,

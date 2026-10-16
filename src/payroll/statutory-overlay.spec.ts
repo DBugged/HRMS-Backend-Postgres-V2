@@ -42,6 +42,8 @@ function baseSettings(
     workCompensation: {},
     companyPerformanceEnabled: false,
     taxDeclarationRequiresVerification: false,
+    taxRegimeEmployeeChange: true,
+    taxRegimeCutoffMonth: null,
     higherTdsWithoutPan: false,
     refundExcessTdsOnExit: true,
     perquisiteLoanBenchmarkRate: 0,

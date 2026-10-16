@@ -16,6 +16,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, StatutoryModule, User } from '@prisma/client';
 import { StatutoryConfigService } from './statutory-config.service';
 import { StatutorySourceMonitorService } from './statutory-source-monitor.service';
+import { ApplyStatutorySetupDto } from './dto/apply-statutory-setup.dto';
 import { CreateStatutoryConfigVersionDto } from './dto/create-statutory-config-version.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
@@ -50,6 +51,24 @@ export class StatutoryConfigController {
   @Get('gratuity-coverage-hint')
   gratuityCoverageHint(@CurrentUser() caller: Caller) {
     return this.statutoryConfigService.gratuityCoverageHint(
+      caller.organizationId,
+    );
+  }
+
+  // Guided setup. Declared before ':module' routes so 'setup' is not read as a module name.
+  @Get('setup/status')
+  setupStatus(@CurrentUser() caller: Caller) {
+    return this.statutoryConfigService.getSetupStatus(caller.organizationId);
+  }
+
+  @Post('setup')
+  applySetup(
+    @Body() dto: ApplyStatutorySetupDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.statutoryConfigService.applySetup(
+      dto,
+      caller.id,
       caller.organizationId,
     );
   }

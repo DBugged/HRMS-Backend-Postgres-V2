@@ -30,8 +30,13 @@ export interface StructurePreviewInput {
   mode: 'CTC' | 'GROSS';
   annualCtc?: number;
   monthlyGross?: number;
-  /** Variable pay for the year, paid on top of the fixed package (not part of the monthly figures). */
+  /** Variable pay for the year (not part of the monthly figures). */
   variableAnnual?: number;
+  /**
+   * CTC mode only. true: the annual CTC already includes the variable pay, so the fixed part is CTC minus variable.
+   * false/absent: the annual figure is the fixed pay and the variable is paid on top of it.
+   */
+  variableIncludedInCtc?: boolean;
   cityClass: CityClassName;
   employeeType?: string;
   /** Basic as a percentage of the total monthly package. Default 50, the Labour Codes' wages rule. */
@@ -114,6 +119,209 @@ function override(
   } as unknown as EmployeeSalaryComponent;
 }
 
+// The smallest step Basic can move in so that Basic x hraPercent / 100 is a whole number (HRA percent has at most 2 decimals).
+function wholeHraStep(hraPercent: number): number {
+  const p = Math.round(hraPercent * 100);
+  if (p <= 0) return 1;
+  let a = 10000;
+  let b = p;
+  while (b) [a, b] = [b, a % b];
+  return 10000 / a;
+}
+
+// A month of full attendance with no Labour Welfare Fund instalment - what a package is worked out on.
+function fullMonthBase(settings: OverlaidSettings): Record<string, number> {
+  const attendance = computeAttendanceSummary(
+    [],
+    [],
+    [],
+    PREVIEW_MONTH,
+    PREVIEW_YEAR,
+  );
+  attendance.payableDays = attendance.totalDaysInMonth;
+  attendance.presentDays = attendance.totalDaysInMonth;
+  attendance.workingDays = attendance.totalDaysInMonth;
+  return buildBaseContext(attendance, settings, PREVIEW_MONTH, {
+    state: null,
+    gender: null,
+    lwfExempt: true,
+  });
+}
+
+// The part of the calculation payroll itself runs for a month with full attendance: the monthly earnings from these
+// overrides, then what the employer pays on top. Shared by the builder (which solves for the amounts) and by the CTC
+// views (which only need the employer's share of an amount that is already saved).
+function evaluateStructure(
+  components: SalaryComponent[],
+  settings: OverlaidSettings,
+  overrides: Map<string, EmployeeSalaryComponent>,
+  base: Record<string, number>,
+) {
+  const earningComponents = components.filter(
+    (c) =>
+      c.type === SalaryComponentType.EARNING &&
+      !c.isEmployerContribution &&
+      c.payFrequency === PayFrequency.MONTHLY &&
+      isComponentApplicable(
+        c,
+        overrides.get(c.code) ?? null,
+        PREVIEW_MONTH,
+        settings,
+      ),
+  );
+  const earned = resolveGroup(
+    earningComponents,
+    overrides,
+    base,
+    1,
+    Math.round,
+  );
+  const gross = earned.results.reduce((s, l) => s + Math.round(l.amount), 0);
+
+  const afterEarnings: Record<string, number> = { ...base };
+  for (const line of earned.results) {
+    afterEarnings[line.code] = Math.round(line.amount);
+  }
+  afterEarnings.GROSS_EARNINGS = gross;
+  afterEarnings.ESI_WAGES = gross;
+  afterEarnings.FULL_MONTH_ESI_WAGES = gross;
+  afterEarnings.FULL_MONTH_BASIC_DA =
+    (afterEarnings.BASIC ?? 0) + (afterEarnings.DA ?? 0);
+  Object.assign(
+    afterEarnings,
+    deriveStatutoryContext(afterEarnings, settings, false),
+  );
+  if (settings.pfOnActualWages && settings.pfEnabled) {
+    afterEarnings.PF_WAGE_CEILING = Math.max(
+      afterEarnings.PF_WAGES ?? 0,
+      settings.pfWageCeiling,
+    );
+  }
+  const employerComponents = components.filter(
+    (c) =>
+      c.isEmployerContribution &&
+      c.type === SalaryComponentType.EARNING &&
+      isComponentApplicable(
+        c,
+        overrides.get(c.code) ?? null,
+        PREVIEW_MONTH,
+        settings,
+      ),
+  );
+  const employer = resolveGroup(
+    employerComponents,
+    overrides,
+    { ...afterEarnings, TOTAL_DEDUCTIONS: 0 },
+    1,
+    Math.round,
+  );
+  const employerLines = employer.results
+    .map((l) => ({
+      code: l.code,
+      name: l.name,
+      amount: Math.round(l.amount),
+    }))
+    .filter((l) => l.amount > 0);
+  return {
+    earnedLines: earned.results.map((l) => ({
+      code: l.code,
+      name: l.name,
+      amount: Math.round(l.amount),
+    })),
+    gross,
+    employerLines,
+    employerTotal: employerLines.reduce((s, l) => s + l.amount, 0),
+  };
+}
+
+export interface SavedStructureRow {
+  componentCode: string;
+  valueType: string;
+  fixedAmount?: number | null;
+  percentageValue?: number | null;
+  percentageOf?: string | null;
+  amountBasis?: string | null;
+  isEnabled?: boolean | null;
+}
+
+/**
+ * What the employer pays on top of the pay each month (PF, EDLI, admin charge, ESI, gratuity and bonus accrual, NPS) for a
+ * salary structure that is already saved - the part of the CTC that the pay lines do not show. The same calculation payroll
+ * runs for a full month, so the CTC shown on a profile is the CTC the builder worked to.
+ * Pass the components with their HRA already following the work location (see city-hra.ts).
+ */
+export function employerMonthlyForStructure(args: {
+  components: SalaryComponent[];
+  settings: OverlaidSettings;
+  rows: SavedStructureRow[];
+}): number {
+  const components = args.components.filter((c) => c.isActive);
+  if (!args.rows.some((r) => r.isEnabled !== false)) return 0;
+  const overrides = new Map<string, EmployeeSalaryComponent>();
+  for (const r of args.rows) {
+    overrides.set(
+      r.componentCode,
+      override(r.componentCode, {
+        valueType: r.valueType as CalcType,
+        fixedAmount: r.fixedAmount ?? null,
+        percentageValue: r.percentageValue ?? null,
+        percentageOf: r.percentageOf ?? null,
+        amountBasis: (r.amountBasis ?? 'MONTHLY') as 'MONTHLY' | 'ANNUAL',
+        isEnabled: r.isEnabled !== false,
+      }),
+    );
+  }
+  return evaluateStructure(
+    components,
+    args.settings,
+    overrides,
+    fullMonthBase(args.settings),
+  ).employerTotal;
+}
+
+/**
+ * The regular month of a saved structure, as payroll would pay it with full attendance: the total and the lines the tax
+ * workings need (Basic, DA, HRA, LTA). Used for estimates (which tax regime saves more) where there is no payslip yet.
+ */
+export function monthlyFiguresForStructure(args: {
+  components: SalaryComponent[];
+  settings: OverlaidSettings;
+  rows: SavedStructureRow[];
+}): { gross: number; basic: number; da: number; hra: number; lta: number } {
+  const zero = { gross: 0, basic: 0, da: 0, hra: 0, lta: 0 };
+  if (!args.rows.some((r) => r.isEnabled !== false)) return zero;
+  const components = args.components.filter((c) => c.isActive);
+  const overrides = new Map<string, EmployeeSalaryComponent>();
+  for (const r of args.rows) {
+    overrides.set(
+      r.componentCode,
+      override(r.componentCode, {
+        valueType: r.valueType as CalcType,
+        fixedAmount: r.fixedAmount ?? null,
+        percentageValue: r.percentageValue ?? null,
+        percentageOf: r.percentageOf ?? null,
+        amountBasis: (r.amountBasis ?? 'MONTHLY') as 'MONTHLY' | 'ANNUAL',
+        isEnabled: r.isEnabled !== false,
+      }),
+    );
+  }
+  const { earnedLines, gross } = evaluateStructure(
+    components,
+    args.settings,
+    overrides,
+    fullMonthBase(args.settings),
+  );
+  const of = (code: string) =>
+    earnedLines.find((l) => l.code === code)?.amount ?? 0;
+  return {
+    gross,
+    basic: of('BASIC'),
+    da: of('DA'),
+    hra: of('HRA'),
+    lta: of('LTA'),
+  };
+}
+
 export function computeStructurePreview(args: {
   input: StructurePreviewInput;
   components: SalaryComponent[];
@@ -163,8 +371,19 @@ export function computeStructurePreview(args: {
   const allowancesTotal = allowances.reduce((s, [, a]) => s + a, 0);
   const hasSpecial = has('SPECIAL_ALLOWANCE');
 
+  const variableInCtc =
+    input.mode === 'CTC' && input.variableIncludedInCtc
+      ? Math.max(0, Math.round(num(input.variableAnnual)))
+      : 0;
+  if (variableInCtc > 0 && variableInCtc >= num(input.annualCtc)) {
+    throw new BadRequestException(
+      'Variable pay must be less than the annual CTC.',
+    );
+  }
   const target =
-    input.mode === 'CTC' ? num(input.annualCtc) / 12 : num(input.monthlyGross);
+    input.mode === 'CTC'
+      ? (num(input.annualCtc) - variableInCtc) / 12
+      : num(input.monthlyGross);
   if (!(target > 0)) {
     throw new BadRequestException(
       input.mode === 'CTC'
@@ -173,21 +392,7 @@ export function computeStructurePreview(args: {
     );
   }
 
-  const attendance = computeAttendanceSummary(
-    [],
-    [],
-    [],
-    PREVIEW_MONTH,
-    PREVIEW_YEAR,
-  );
-  attendance.payableDays = attendance.totalDaysInMonth;
-  attendance.presentDays = attendance.totalDaysInMonth;
-  attendance.workingDays = attendance.totalDaysInMonth;
-  const base = buildBaseContext(attendance, settings, PREVIEW_MONTH, {
-    state: null,
-    gender: null,
-    lwfExempt: true,
-  });
+  const base = fullMonthBase(settings);
 
   const build = (basic: number, special: number) => {
     const hra = hraEnabled ? Math.round((basic * hraPercent) / 100) : 0;
@@ -224,83 +429,8 @@ export function computeStructurePreview(args: {
       }
     }
 
-    const earningComponents = components.filter(
-      (c) =>
-        c.type === SalaryComponentType.EARNING &&
-        !c.isEmployerContribution &&
-        c.payFrequency === PayFrequency.MONTHLY &&
-        isComponentApplicable(
-          c,
-          overrides.get(c.code) ?? null,
-          PREVIEW_MONTH,
-          settings,
-        ),
-    );
-    const earned = resolveGroup(
-      earningComponents,
-      overrides,
-      base,
-      1,
-      Math.round,
-    );
-    const gross = earned.results.reduce((s, l) => s + Math.round(l.amount), 0);
-
-    const afterEarnings: Record<string, number> = { ...base };
-    for (const line of earned.results) {
-      afterEarnings[line.code] = Math.round(line.amount);
-    }
-    afterEarnings.GROSS_EARNINGS = gross;
-    afterEarnings.ESI_WAGES = gross;
-    afterEarnings.FULL_MONTH_ESI_WAGES = gross;
-    afterEarnings.FULL_MONTH_BASIC_DA =
-      (afterEarnings.BASIC ?? 0) + (afterEarnings.DA ?? 0);
-    Object.assign(
-      afterEarnings,
-      deriveStatutoryContext(afterEarnings, settings, false),
-    );
-    if (settings.pfOnActualWages && settings.pfEnabled) {
-      afterEarnings.PF_WAGE_CEILING = Math.max(
-        afterEarnings.PF_WAGES ?? 0,
-        settings.pfWageCeiling,
-      );
-    }
-    const employerComponents = components.filter(
-      (c) =>
-        c.isEmployerContribution &&
-        c.type === SalaryComponentType.EARNING &&
-        isComponentApplicable(
-          c,
-          overrides.get(c.code) ?? null,
-          PREVIEW_MONTH,
-          settings,
-        ),
-    );
-    const employer = resolveGroup(
-      employerComponents,
-      overrides,
-      { ...afterEarnings, TOTAL_DEDUCTIONS: 0 },
-      1,
-      Math.round,
-    );
-    const employerLines = employer.results
-      .map((l) => ({
-        code: l.code,
-        name: l.name,
-        amount: Math.round(l.amount),
-      }))
-      .filter((l) => l.amount > 0);
-    return {
-      hra,
-      overrides,
-      earnedLines: earned.results.map((l) => ({
-        code: l.code,
-        name: l.name,
-        amount: Math.round(l.amount),
-      })),
-      gross,
-      employerLines,
-      employerTotal: employerLines.reduce((s, l) => s + l.amount, 0),
-    };
+    const evaluated = evaluateStructure(components, settings, overrides, base);
+    return { hra, overrides, ...evaluated };
   };
 
   // Solve: the package is gross + the employer's contributions, and those depend on Basic and on gross, so iterate.
@@ -313,7 +443,16 @@ export function computeStructurePreview(args: {
     const total =
       input.mode === 'CTC' ? target : gross + (result.employerTotal || 0);
     ctcMonthly = total;
-    basic = Math.max(0, Math.round((total * basicPercent) / 100 - daAmount));
+    // Rounded UP: to the nearest rupee Basic can land a few paise under half of gross, which the Labour Codes' 50%
+    // wages check then flags on a structure this builder made. (The tiny epsilon absorbs floating-point noise.)
+    basic = Math.max(
+      0,
+      Math.ceil((total * basicPercent) / 100 - daAmount - 1e-9),
+    );
+    // A Basic that makes HRA a whole-rupee amount (a multiple of 2 for 50%, of 5 for 40%), so only the balancing
+    // Special Allowance is ever fractional and a month's pay is the nearest rupee of the package, not a drift of one.
+    const step = hraEnabled ? wholeHraStep(hraPercent) : 1;
+    basic = Math.ceil(basic / step) * step;
     const hra = hraEnabled ? Math.round((basic * hraPercent) / 100) : 0;
     special = Math.round(gross - basic - daAmount - hra - allowancesTotal);
     result = build(basic, hasSpecial ? special : 0);
@@ -336,7 +475,30 @@ export function computeStructurePreview(args: {
     );
   }
   const employerMonthly = result.employerTotal;
-  const ctcMonthlyRounded = finalGross + employerMonthly;
+  // Whole-rupee amounts cannot add up to a package that is not a multiple of 12 (a 12,00,000 CTC less 1,00,000 variable
+  // is 91,666.67 a month): rounding every line made the total drift by a few rupees (12,00,004). So the Special
+  // Allowance - the balancing component - carries the leftover fraction, and the package adds up exactly. Everything
+  // else, and every statutory figure, stays in whole rupees; payroll rounds each month's pay to the rupee as it always did.
+  const exactGross = hasSpecial
+    ? input.mode === 'CTC'
+      ? target - employerMonthly
+      : target
+    : null;
+  const hraExact = hraEnabled ? (basic * hraPercent) / 100 : 0;
+  const specialExact =
+    exactGross === null
+      ? null
+      : Math.round(
+          (exactGross - basic - daAmount - hraExact - allowancesTotal) * 10000,
+        ) / 10000;
+  const exact = specialExact !== null && specialExact >= 0;
+  const grossMonthlyOut = exact
+    ? Math.round(exactGross! * 10000) / 10000
+    : finalGross;
+  const ctcMonthlyRounded = exact
+    ? grossMonthlyOut + employerMonthly
+    : finalGross + employerMonthly;
+  const ctcAnnualOut = Math.round(ctcMonthlyRounded * 12);
   const variableAnnual = Math.max(0, Math.round(num(input.variableAnnual)));
   if (input.cityClass === 'RURAL' && hraEnabled) {
     notes.push('HRA is switched on for a village location by choice.');
@@ -410,7 +572,7 @@ export function computeStructurePreview(args: {
     lines.push({
       componentCode: 'SPECIAL_ALLOWANCE',
       valueType: 'FIXED',
-      fixedAmount: Math.max(0, special),
+      fixedAmount: exact ? specialExact! : Math.max(0, special),
       amountBasis: 'MONTHLY',
       isEnabled: true,
     });
@@ -442,16 +604,36 @@ export function computeStructurePreview(args: {
   // A line that comes to nothing (Overtime Pay, which is paid for hours worked) is not part of a package.
   const earningsOut: PreviewLine[] = result.earnedLines
     .filter((l) => l.amount > 0 || l.code === 'BASIC')
-    .map((l) => ({
-      code: l.code,
-      name: l.name,
-      monthly: l.amount,
-      annual: l.amount * 12,
-      ...(l.code === 'HRA' ? { note: `${hraPercent}% of Basic` } : {}),
-      ...(l.code === 'BASIC'
-        ? { note: `${basicPercent}% of the package` }
-        : {}),
-    }));
+    .map((l) => {
+      // HRA and the Special Allowance carry their exact (fractional) monthly amounts; see above.
+      const monthly = !exact
+        ? l.amount
+        : l.code === 'HRA'
+          ? hraExact
+          : l.code === 'SPECIAL_ALLOWANCE'
+            ? specialExact!
+            : l.amount;
+      return {
+        code: l.code,
+        name: l.name,
+        monthly,
+        annual: Math.round(monthly * 12),
+        ...(l.code === 'HRA' ? { note: `${hraPercent}% of Basic` } : {}),
+        ...(l.code === 'BASIC'
+          ? { note: `${basicPercent}% of the package` }
+          : {}),
+      };
+    });
+  if (exact) {
+    // The yearly figures add up to the yearly pay exactly: the Special Allowance takes whatever rounding is left.
+    const special = earningsOut.find((l) => l.code === 'SPECIAL_ALLOWANCE');
+    if (special) {
+      const others = earningsOut
+        .filter((l) => l !== special)
+        .reduce((sum, l) => sum + l.annual, 0);
+      special.annual = Math.round(grossMonthlyOut * 12) - others;
+    }
+  }
   const employerOut: PreviewLine[] = result.employerLines.map((l) => ({
     code: l.code,
     name: l.name,
@@ -465,12 +647,12 @@ export function computeStructurePreview(args: {
   return {
     earnings: earningsOut,
     employer: employerOut,
-    grossMonthly: finalGross,
+    grossMonthly: grossMonthlyOut,
     employerMonthly,
     ctcMonthly: ctcMonthlyRounded,
-    ctcAnnual: ctcMonthlyRounded * 12,
+    ctcAnnual: ctcAnnualOut,
     variableAnnual,
-    totalAnnual: ctcMonthlyRounded * 12 + variableAnnual,
+    totalAnnual: ctcAnnualOut + variableAnnual,
     wagesPercent:
       ctcMonthlyRounded > 0
         ? Math.round((wagesBase / ctcMonthlyRounded) * 1000) / 10

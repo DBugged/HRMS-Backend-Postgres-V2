@@ -32,6 +32,19 @@ const COMPONENTS: Row[] = [
     payFrequency: 'MONTHLY',
     isEmployerContribution: false,
   },
+  {
+    id: 'c-VARIABLE_PAY',
+    organizationId: 'org',
+    code: 'VARIABLE_PAY',
+    name: 'Variable Pay',
+    type: 'EARNING',
+    calcType: 'MANUAL',
+    defaultValue: 0,
+    displayOrder: 20,
+    isActive: true,
+    payFrequency: 'YEARLY',
+    isEmployerContribution: false,
+  },
 ];
 
 function build(
@@ -40,6 +53,7 @@ function build(
     finalizedRun?: Row | null;
     employee?: boolean;
     prefs?: Row;
+    users?: Row[];
   } = {},
 ) {
   const rows: Row[] = (opts.rows ?? []).map((r) => ({
@@ -85,6 +99,7 @@ function build(
   };
   const prisma: Row = {
     user: {
+      findMany: async () => opts.users ?? [],
       findFirst: async () =>
         opts.employee === false
           ? null
@@ -538,5 +553,94 @@ describe('salary structure: telling the employee', () => {
     await flush();
     expect(notifications).toHaveLength(0);
     expect(emails).toHaveLength(0);
+  });
+});
+
+describe('salary summaries for the directory', () => {
+  const at = (cityClass: string | null) => ({
+    id: 'e1',
+    workLocation: cityClass ? { cityClass } : null,
+    department: null,
+  });
+
+  it('an employee with no structure is "not set up", with no CTC', async () => {
+    const { service } = build({ users: [at('METRO')] });
+    expect(await service.listSalarySummaries('org')).toEqual([
+      {
+        employeeId: 'e1',
+        hasStructure: false,
+        annualCtc: 0,
+        fixedMonthly: 0,
+        variableAnnual: 0,
+      },
+    ]);
+  });
+
+  it.each([
+    ['METRO', 75000],
+    ['NON_METRO', 70000],
+    ['RURAL', 50000],
+  ])(
+    '%s: Basic 50,000 with no HRA line of its own gives %s a month',
+    async (cityClass, monthly) => {
+      const { service } = build({
+        rows: [open('BASIC', 50000, '2026-04-01')],
+        users: [at(cityClass)],
+      });
+      const [s] = await service.listSalarySummaries('org');
+      expect(s).toMatchObject({ hasStructure: true, fixedMonthly: monthly });
+      expect(s.annualCtc).toBe(monthly * 12);
+    },
+  );
+
+  it('a saved HRA line wins over the city class', async () => {
+    const { service } = build({
+      rows: [
+        open('BASIC', 50000, '2026-04-01'),
+        open('HRA', 0, '2026-04-01', {
+          valueType: 'PERCENTAGE',
+          fixedAmount: null,
+          percentageValue: 30,
+          percentageOf: 'BASIC',
+        }),
+      ],
+      users: [at('METRO')],
+    });
+    const [s] = await service.listSalarySummaries('org');
+    expect(s.fixedMonthly).toBe(65000);
+  });
+
+  it('yearly variable pay is reported separately and added to the CTC', async () => {
+    const { service } = build({
+      rows: [
+        open('BASIC', 50000, '2026-04-01'),
+        open('VARIABLE_PAY', 120000, '2026-04-01', {
+          valueType: 'MANUAL',
+          amountBasis: 'ANNUAL',
+        }),
+      ],
+      users: [at('NON_METRO')],
+    });
+    const [s] = await service.listSalarySummaries('org');
+    expect(s.variableAnnual).toBe(120000);
+    expect(s.annualCtc).toBe(70000 * 12 + 120000);
+  });
+
+  it('a structure that starts in the future does not count yet', async () => {
+    const { service } = build({
+      rows: [open('BASIC', 50000, '2027-01-01')],
+      users: [at('METRO')],
+    });
+    const [s] = await service.listSalarySummaries('org');
+    expect(s.hasStructure).toBe(false);
+  });
+
+  it('a structure with everything switched off is not set up', async () => {
+    const { service } = build({
+      rows: [open('BASIC', 50000, '2026-04-01', { isEnabled: false })],
+      users: [at('METRO')],
+    });
+    const [s] = await service.listSalarySummaries('org');
+    expect(s.hasStructure).toBe(false);
   });
 });

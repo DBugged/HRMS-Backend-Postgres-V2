@@ -101,7 +101,12 @@ describe('Letters (e2e)', () => {
     const empCreate = await request(app.getHttpServer())
       .post('/employees')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Plain Employee', email: 'letters-e2e-emp@example.test' });
+      .send({
+        name: 'Plain Employee',
+        email: 'letters-e2e-emp@example.test',
+        // An exit cannot start without a personal email (the final payslip goes there).
+        personalEmail: 'letters-e2e-emp.personal@example.test',
+      });
     const empBody = empCreate.body as EmployeeCreateBody;
     employeeId = empBody.employee.id;
     const empLogin = await request(app.getHttpServer())

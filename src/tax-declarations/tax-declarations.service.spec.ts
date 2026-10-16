@@ -9,6 +9,8 @@ function build(
     orgPrefs?: Row;
     employeeInOrg?: boolean;
     settings?: Row;
+    // Payroll runs already calculated for the employee this year (the regime has started to be used).
+    payrollRuns?: number;
   } = {},
 ) {
   const store: Row[] = opts.existing ? [{ ...opts.existing }] : [];
@@ -25,6 +27,10 @@ function build(
       }),
     },
     user: {
+      findMany: async (a: Row) =>
+        (a?.where?.id?.in ?? [])
+          .filter((id: string) => id !== 'ghost')
+          .map((id: string) => ({ id, name: `Emp ${id}` })),
       findFirst: async (a: Row) =>
         opts.employeeInOrg === false
           ? null
@@ -35,6 +41,7 @@ function build(
               departmentId: 'd1',
             },
     },
+    payrollRun: { count: async () => opts.payrollRuns ?? 0 },
     employeeTaxDeclaration: {
       findFirst: async (a: Row) => {
         const r = store.find((x) => match(x, a?.where));
@@ -70,6 +77,8 @@ function build(
     stub({
       getOrCreate: async () => ({
         financialYearStartMonth: 4,
+        taxRegimeEmployeeChange: true,
+        taxRegimeCutoffMonth: null,
         ...opts.settings,
       }),
     }),
@@ -343,5 +352,205 @@ describe('tax declaration: reading', () => {
     });
     const r = await service.get('e9', FY, employee, 'org');
     expect(r.declaration).toMatchObject({ employeeId: 'e1' });
+  });
+});
+
+describe('tax regime: the employee changes it once a year', () => {
+  const submitted = (over: Row = {}) => ({
+    id: 'd1',
+    organizationId: 'org',
+    employeeId: 'e1',
+    financialYear: FY,
+    regimeChosen: 'NEW',
+    status: TaxDeclarationStatus.SUBMITTED,
+    regimeChangeCount: 0,
+    ...over,
+  });
+  const regimeOnly = (regime: string) =>
+    ({ financialYear: FY, regimeChosen: regime }) as never;
+
+  it('choosing Old before the first payroll is free and not counted', async () => {
+    const { service, store } = build({ payrollRuns: 0 });
+    await service.upsert(regimeOnly('OLD'), employee, 'org');
+    expect(store[0]).toMatchObject({ regimeChosen: 'OLD' });
+    expect(store[0].regimeChangeCount ?? 0).toBe(0);
+  });
+
+  it('after payroll has started, the first change goes through and is counted', async () => {
+    const { service, store } = build({ existing: submitted(), payrollRuns: 3 });
+    await service.upsert(regimeOnly('OLD'), employee, 'org');
+    expect(store[0]).toMatchObject({
+      regimeChosen: 'OLD',
+      regimeChangeCount: 1,
+    });
+    expect(store[0].regimeChangedAt).toBeInstanceOf(Date);
+  });
+
+  it('works on a submitted declaration - the regime is the one thing still editable - and the figures stay locked', async () => {
+    const { service } = build({ existing: submitted(), payrollRuns: 3 });
+    await expect(
+      service.upsert(
+        { financialYear: FY, section80C: 90000 } as never,
+        employee,
+        'org',
+      ),
+    ).rejects.toThrow(/Only your tax regime/);
+    await expect(
+      service.upsert(
+        { financialYear: FY, regimeChosen: 'OLD', section80C: 90000 } as never,
+        employee,
+        'org',
+      ),
+    ).rejects.toThrow(/Only your tax regime/);
+  });
+
+  it('a second change is refused', async () => {
+    const { service, store } = build({
+      existing: submitted({ regimeChosen: 'OLD', regimeChangeCount: 1 }),
+      payrollRuns: 5,
+    });
+    await expect(
+      service.upsert(regimeOnly('NEW'), employee, 'org'),
+    ).rejects.toThrow(/once a year/);
+    expect(store[0].regimeChosen).toBe('OLD');
+  });
+
+  it('sending the regime already on file is not a change', async () => {
+    const { service, store } = build({
+      existing: submitted({ regimeChosen: 'OLD', regimeChangeCount: 1 }),
+      payrollRuns: 5,
+    });
+    await service.upsert(regimeOnly('OLD'), employee, 'org');
+    expect(store[0].regimeChangeCount).toBe(1);
+  });
+
+  it('is refused after the company cut-off month', async () => {
+    // "now" is October 2026 in the fixtures; the cut-off was September.
+    const { service } = build({
+      existing: submitted(),
+      payrollRuns: 3,
+      settings: { taxRegimeCutoffMonth: 9 },
+    });
+    await expect(
+      service.upsert(regimeOnly('OLD'), employee, 'org'),
+    ).rejects.toThrow(/September/);
+  });
+
+  it('is refused when the company has switched employee changes off', async () => {
+    const { service } = build({ settings: { taxRegimeEmployeeChange: false } });
+    await expect(
+      service.upsert(regimeOnly('OLD'), employee, 'org'),
+    ).rejects.toThrow(/HR/);
+  });
+
+  it('get() tells the screen whether the regime can be changed and why not', async () => {
+    const free = build({ payrollRuns: 0 });
+    expect(
+      (await free.service.get(undefined, FY, employee, 'org')).regimeRule,
+    ).toEqual({
+      canChange: true,
+      reason: null,
+      free: true,
+    });
+    const used = build({
+      existing: submitted({ regimeChosen: 'OLD', regimeChangeCount: 1 }),
+      payrollRuns: 5,
+    });
+    const rule = (await used.service.get(undefined, FY, employee, 'org'))
+      .regimeRule;
+    expect(rule.canChange).toBe(false);
+    expect(rule.reason).toMatch(/already changed/);
+  });
+});
+
+describe('tax regime: HR sets it', () => {
+  it('sets it for one employee with no declaration yet, audited with the reason', async () => {
+    const { service, store, audit } = build();
+    const out = await service.setRegimeForEmployees(
+      {
+        employeeIds: ['e9'],
+        financialYear: FY,
+        regime: 'OLD',
+        reason: 'Employee asked by email',
+      } as never,
+      hr,
+      'org',
+    );
+    expect(out.changed).toEqual(['Emp e9']);
+    expect(store[0]).toMatchObject({ employeeId: 'e9', regimeChosen: 'OLD' });
+    expect(audit[0]).toMatchObject({ action: 'TAX_REGIME_SET_BY_HR' });
+    expect(audit[0].details.reason).toBe('Employee asked by email');
+  });
+
+  it('does not use up the employee change, and ignores the company cut-off and switch', async () => {
+    const { service, store } = build({
+      existing: {
+        id: 'd1',
+        organizationId: 'org',
+        employeeId: 'e1',
+        financialYear: FY,
+        regimeChosen: 'NEW',
+        regimeChangeCount: 1,
+        status: 'SUBMITTED',
+      },
+      payrollRuns: 9,
+      settings: { taxRegimeEmployeeChange: false, taxRegimeCutoffMonth: 5 },
+    });
+    await service.setRegimeForEmployees(
+      {
+        employeeIds: ['e1'],
+        financialYear: FY,
+        regime: 'OLD',
+        reason: 'Correction',
+      } as never,
+      hr,
+      'org',
+    );
+    expect(store[0]).toMatchObject({
+      regimeChosen: 'OLD',
+      regimeChangeCount: 1,
+    });
+  });
+
+  it('a bulk change reports who changed, who already had it, and who was not found', async () => {
+    const { service } = build({
+      existing: {
+        id: 'd1',
+        organizationId: 'org',
+        employeeId: 'e1',
+        financialYear: FY,
+        regimeChosen: 'OLD',
+        status: 'DRAFT',
+      },
+    });
+    const out = await service.setRegimeForEmployees(
+      {
+        employeeIds: ['e1', 'e2', 'ghost', 'e2'],
+        financialYear: FY,
+        regime: 'OLD',
+        reason: 'Bulk',
+      } as never,
+      hr,
+      'org',
+    );
+    expect(out.unchanged).toEqual(['Emp e1']);
+    expect(out.changed).toEqual(['Emp e2']);
+    expect(out.notFound).toEqual(['ghost']);
+  });
+
+  it('an employee cannot call it', async () => {
+    const { service } = build();
+    await expect(
+      service.setRegimeForEmployees(
+        {
+          employeeIds: ['e1'],
+          financialYear: FY,
+          regime: 'OLD',
+          reason: 'me',
+        } as never,
+        employee,
+        'org',
+      ),
+    ).rejects.toThrow(/Only HR or an Admin/);
   });
 });

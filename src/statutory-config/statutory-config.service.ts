@@ -35,6 +35,22 @@ import {
   validateModuleConfig,
 } from './statutory-config-validation';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { ApplyStatutorySetupDto } from './dto/apply-statutory-setup.dto';
+import {
+  compulsorySkipped,
+  planSetup,
+  suggestedAnswers,
+} from './statutory-setup';
+
+// The deduction/contribution modules - "statutory not set up" means none of these is on.
+const SETUP_MODULES: StatutoryModule[] = [
+  StatutoryModule.PF,
+  StatutoryModule.ESI,
+  StatutoryModule.PT,
+  StatutoryModule.LWF,
+  StatutoryModule.GRATUITY,
+  StatutoryModule.BONUS,
+];
 
 // getEffective() is hit once per statutory module (9) per employee inside
 // PayrollService.calculatePayroll — a full payroll batch does O(9xN)
@@ -124,6 +140,36 @@ export class StatutoryConfigService {
     });
   }
 
+  // A version effective in (or before) a month the org has already
+  // finalized payroll for can never reach those payslips - locked runs are
+  // not recalculated - so it used to be accepted and silently ignored for
+  // them. Rejected instead, same rule as a backdated salary revision.
+  private async assertNotFinalized(
+    module: StatutoryModule,
+    effectiveFrom: string,
+    organizationId: string,
+  ) {
+    const fromYear = Number(effectiveFrom.slice(0, 4));
+    const fromMonth = Number(effectiveFrom.slice(5, 7));
+    const finalized = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+        OR: [
+          { year: { gt: fromYear } },
+          { year: fromYear, month: { gte: fromMonth } },
+        ],
+      },
+      orderBy: [{ year: 'asc' }, { month: 'asc' }],
+      select: { month: true, year: true },
+    });
+    if (finalized) {
+      throw new BadRequestException(
+        `Cannot add a ${module} version effective ${effectiveFrom}: payroll for ${finalized.month}/${finalized.year} is already locked or paid. Choose an effective date after the last finalized payroll month, or unlock those payroll runs first.`,
+      );
+    }
+  }
+
   async create(
     module: StatutoryModule,
     dto: CreateStatutoryConfigVersionDto,
@@ -162,29 +208,7 @@ export class StatutoryConfigService {
       );
     }
 
-    // A version effective in (or before) a month the org has already
-    // finalized payroll for can never reach those payslips — locked runs are
-    // not recalculated — so it used to be accepted and silently ignored for
-    // them. Rejected instead, same rule as a backdated salary revision.
-    const fromYear = Number(dto.effectiveFrom.slice(0, 4));
-    const fromMonth = Number(dto.effectiveFrom.slice(5, 7));
-    const finalized = await this.scopedPrisma.payrollRun.findFirst({
-      where: {
-        organizationId,
-        status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
-        OR: [
-          { year: { gt: fromYear } },
-          { year: fromYear, month: { gte: fromMonth } },
-        ],
-      },
-      orderBy: [{ year: 'asc' }, { month: 'asc' }],
-      select: { month: true, year: true },
-    });
-    if (finalized) {
-      throw new BadRequestException(
-        `Cannot add a ${module} version effective ${dto.effectiveFrom}: payroll for ${finalized.month}/${finalized.year} is already locked or paid. Choose an effective date after the last finalized payroll month, or unlock those payroll runs first.`,
-      );
-    }
+    await this.assertNotFinalized(module, dto.effectiveFrom, organizationId);
 
     const current = await this.scopedPrisma.statutoryConfigVersion.findFirst({
       where: { organizationId, module, effectiveTo: null },
@@ -275,6 +299,100 @@ export class StatutoryConfigService {
       this.effectiveCacheKeyPrefix(organizationId, module),
     );
     return { message: 'Statutory config version deleted' };
+  }
+
+  // True when none of PF/ESI/PT/LWF/gratuity/bonus is in force on the date - payslips would carry only TDS.
+  async isStatutoryOff(organizationId: string, date?: string) {
+    const results = await Promise.all(
+      SETUP_MODULES.map((m) => this.getEffective(m, date, organizationId)),
+    );
+    return !results.some((r) => r.version?.isEnabled);
+  }
+
+  // What the guide needs: whether setup is still due, the headcount, and which of PF/ESI/PT to pre-select.
+  async getSetupStatus(organizationId: string) {
+    const [off, activeEmployees] = await Promise.all([
+      this.isStatutoryOff(organizationId),
+      this.scopedPrisma.user.count({
+        where: { organizationId, isActive: true },
+      }),
+    ]);
+    return {
+      needsSetup: off,
+      activeEmployees,
+      suggested: suggestedAnswers(activeEmployees),
+    };
+  }
+
+  // Switches on the chosen modules with India defaults from `effectiveFrom`. Modules already on are left alone (never
+  // overwrite a customised rate); an untouched default (single, switched-off version) is replaced in place so the
+  // start date can reach back to an earlier payroll month; otherwise a new version is added.
+  async applySetup(
+    dto: ApplyStatutorySetupDto,
+    actorId: string,
+    organizationId: string,
+  ) {
+    let plan;
+    try {
+      plan = planSetup(dto);
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+    const enabled: StatutoryModule[] = [];
+    const alreadyOn: StatutoryModule[] = [];
+    for (const item of plan) {
+      const versions = await this.scopedPrisma.statutoryConfigVersion.findMany({
+        where: { organizationId, module: item.module },
+        orderBy: { effectiveFrom: 'desc' },
+      });
+      const latest = versions[0];
+      if (latest?.isEnabled) {
+        alreadyOn.push(item.module);
+        continue;
+      }
+      if (versions.length === 1) {
+        await this.assertNotFinalized(
+          item.module,
+          dto.effectiveFrom,
+          organizationId,
+        );
+        await this.scopedPrisma.statutoryConfigVersion.updateMany({
+          where: { id: latest.id, organizationId },
+          data: {
+            effectiveFrom: dto.effectiveFrom,
+            effectiveTo: null,
+            config: item.config as Prisma.InputJsonValue,
+            isEnabled: true,
+            notes: 'Set up with the guide',
+          },
+        });
+        await this.cache.invalidatePrefix(
+          this.effectiveCacheKeyPrefix(organizationId, item.module),
+        );
+        await this.auditLogService.log({
+          actorId,
+          action: 'STATUTORY_CONFIG_VERSION_CREATED',
+          module: 'PAYROLL',
+          organizationId,
+          targetId: latest.id,
+          details: { module: item.module, effectiveFrom: dto.effectiveFrom },
+        });
+      } else {
+        await this.create(
+          item.module,
+          {
+            config: item.config as Record<string, unknown>,
+            isEnabled: true,
+            effectiveFrom: dto.effectiveFrom,
+            notes: 'Set up with the guide',
+          },
+          actorId,
+          organizationId,
+        );
+      }
+      enabled.push(item.module);
+    }
+    return { enabled, alreadyOn, compulsorySkipped: compulsorySkipped(dto) };
   }
 
   // Active headcount vs the usual ten-employee coverage line of the Payment of Gratuity Act.

@@ -58,7 +58,20 @@ import {
   splitPeriodAtRevisions,
   type PeriodSegment,
 } from '../employee-salary-components/salary-structure-math';
-import { computeStructurePreview } from './structure-preview';
+import {
+  employeeCityClass,
+  withCityHra,
+} from '../employee-salary-components/city-hra';
+import { buildBankAdvice } from './bank-advice';
+import { redactHoldForEmployee } from './payroll-hold';
+import { buildReadiness } from './payroll-readiness';
+import { withOpeningBalance } from './opening-balances';
+import { HoldPayrollDto } from './dto/hold-payroll.dto';
+import {
+  computeStructurePreview,
+  employerMonthlyForStructure,
+  monthlyFiguresForStructure,
+} from './structure-preview';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
 import type { CityClassName } from '../common/hra-cities';
 import {
@@ -775,7 +788,7 @@ export class PayrollService {
       lwfExempt: employee.lwfExempt,
     });
 
-    const [allComponents, overrideRows] = await Promise.all([
+    const [masterComponents, overrideRows, cityClass] = await Promise.all([
       this.scopedPrisma.salaryComponent.findMany({
         where: { organizationId, isActive: true },
         orderBy: { displayOrder: 'asc' },
@@ -783,7 +796,10 @@ export class PayrollService {
       this.scopedPrisma.employeeSalaryComponent.findMany({
         where: { organizationId, employeeId },
       }),
+      employeeCityClass(this.scopedPrisma, employeeId, organizationId),
     ]);
+    // HRA without a saved line of its own follows the work location's city class (50% metro / 40% / 0 rural).
+    const allComponents = withCityHra(masterComponents, cityClass);
     const currentOverrides = resolveCurrentRows(overrideRows, periodDate);
     // Without a salary structure there is nothing to pay from: HRA and the like are calculated off Basic, so the row
     // would come out as a "calculated" payslip of zeros. Fail this employee with a reason instead.
@@ -1125,8 +1141,10 @@ export class PayrollService {
         await this.scopedPrisma.employeeTaxDeclaration.findFirst({
           where: { organizationId, employeeId, financialYear },
         });
-      // A DRAFT is work in progress and never drives TDS. With "require verification" on, only a VERIFIED
-      // declaration does; until then the employee is taxed under the default regime with no declared deductions.
+      // The regime the employee (or HR) chose drives TDS from the first run, whatever state the declaration is in:
+      // intimating the regime to the employer is separate from proving investments. The declared figures are another
+      // matter: a DRAFT is work in progress and never counts, and with "require verification" on only a VERIFIED
+      // declaration does - until then the employee is taxed under their regime with no declared deductions.
       const declaration =
         storedDeclaration &&
         (storedDeclaration.status === TaxDeclarationStatus.VERIFIED ||
@@ -1134,7 +1152,7 @@ export class PayrollService {
             !settingsRow.taxDeclarationRequiresVerification))
           ? storedDeclaration
           : null;
-      const regime = declaration?.regimeChosen ?? TaxRegime.NEW;
+      const regime = storedDeclaration?.regimeChosen ?? TaxRegime.NEW;
       let taxSlabConfig = await this.scopedPrisma.taxSlabConfig.findFirst({
         where: { organizationId, financialYear, regime, isActive: true },
       });
@@ -1605,7 +1623,9 @@ export class PayrollService {
 
   // Salary-structure builder: the same maths payroll runs, for a hypothetical package. Reads settings and the effective
   // statutory versions as of today, saves nothing.
-  async previewStructure(dto: StructurePreviewDto, organizationId: string) {
+  // Today's payroll settings with the statutory versions in force, and the active components: what a package is worked
+  // out on, whether it is being built or only read back.
+  private async packageContext(organizationId: string) {
     const settingsRow =
       await this.payrollSettingsService.getOrCreate(organizationId);
     const org = await this.scopedPrisma.organization.findFirst({
@@ -1632,6 +1652,255 @@ export class PayrollService {
       where: { organizationId, isActive: true },
       orderBy: { displayOrder: 'asc' },
     });
+    return { settings, components, today };
+  }
+
+  // What the employer pays on top of each employee's pay every month (PF, EDLI, admin charge, ESI, gratuity and bonus
+  // accrual, NPS), worked out from the structure saved for today - the part of the CTC that the pay lines do not show.
+  // Everyone on payroll when no id is given.
+  async employerCost(
+    organizationId: string,
+    employeeId?: string,
+  ): Promise<{ employeeId: string; employerMonthly: number }[]> {
+    const { settings, components, today } =
+      await this.packageContext(organizationId);
+    const users = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        ...(employeeId ? { id: employeeId } : {}),
+      },
+      select: {
+        id: true,
+        workLocation: { select: { cityClass: true } },
+        department: {
+          select: { workLocation: { select: { cityClass: true } } },
+        },
+      },
+    });
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
+      where: { organizationId, employeeId: { in: users.map((u) => u.id) } },
+    });
+    const byEmployee = new Map<string, typeof rows>();
+    for (const r of rows) {
+      byEmployee.set(r.employeeId, [
+        ...(byEmployee.get(r.employeeId) ?? []),
+        r,
+      ]);
+    }
+    return users.map((u) => {
+      const current = resolveCurrentRows(byEmployee.get(u.id) ?? [], today);
+      // HRA that has no line of its own follows the work location, the same as everywhere else.
+      const cityClass = effectiveWorkLocation(u)?.cityClass ?? 'NON_METRO';
+      return {
+        employeeId: u.id,
+        employerMonthly: employerMonthlyForStructure({
+          components: withCityHra(components, cityClass),
+          settings,
+          rows: current,
+        }),
+      };
+    });
+  }
+
+  // "Which regime saves more": the tax for the whole financial year under the Old and the New regime, worked out with the
+  // same tax engine, year-to-date figures and slabs payroll uses, from the employee's current salary structure and what they
+  // have declared so far (a draft included - this is a what-if, not what TDS uses). An estimate: it assumes the structure
+  // stays as it is for the rest of the year.
+  async compareRegimes(
+    employeeIdParam: string | undefined,
+    financialYearParam: string | undefined,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const isHr = actor.role === Role.ADMIN || actor.role === Role.HR;
+    const employeeId = isHr ? (employeeIdParam ?? actor.id) : actor.id;
+    const { settings, components, today } =
+      await this.packageContext(organizationId);
+    const settingsRow =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const todayMonth = Number(today.slice(5, 7));
+    const todayYear = Number(today.slice(0, 4));
+    const financialYear =
+      financialYearParam ??
+      getFinancialYear(
+        todayMonth,
+        todayYear,
+        settingsRow.financialYearStartMonth,
+      );
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: {
+        id: true,
+        personalData: true,
+        workLocation: { select: { cityClass: true } },
+        department: {
+          select: { workLocation: { select: { cityClass: true } } },
+        },
+      },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
+    const rows = resolveCurrentRows(
+      await this.scopedPrisma.employeeSalaryComponent.findMany({
+        where: { organizationId, employeeId },
+      }),
+      today,
+    );
+    const cityClass = effectiveWorkLocation(employee)?.cityClass ?? 'NON_METRO';
+    const figures = monthlyFiguresForStructure({
+      components: withCityHra(components, cityClass),
+      settings,
+      rows,
+    });
+    if (figures.gross <= 0) {
+      return {
+        available: false as const,
+        reason: 'No salary structure is set up yet.',
+      };
+    }
+    // Yearly variable pay (paid outside the monthly figures) counts once, as one more month's pay.
+    const variableAnnual = rows
+      .filter(
+        (r) =>
+          r.isEnabled !== false &&
+          r.valueType === 'MANUAL' &&
+          r.amountBasis === 'ANNUAL',
+      )
+      .reduce((sum, r) => sum + Number(r.fixedAmount ?? 0), 0);
+
+    const declaration =
+      await this.scopedPrisma.employeeTaxDeclaration.findFirst({
+        where: { organizationId, employeeId, financialYear },
+      });
+    const { ytdGross, ytdTDS, ytdMonths, ytdProfessionalTax } =
+      await this.getYtdFigures(
+        employeeId,
+        financialYear,
+        todayMonth,
+        todayYear,
+        organizationId,
+      );
+    const remaining = monthsRemainingInFY(
+      todayMonth,
+      todayYear,
+      settingsRow.financialYearStartMonth,
+    );
+    const employmentMonths = Math.min(12, ytdMonths + remaining);
+    const ageAtFYEnd = ageOnFYEnd(
+      (employee.personalData as Record<string, unknown> | null)?.dob,
+      financialYear,
+    );
+
+    // Professional tax for the months still to come: what the latest payslip of the year deducted.
+    const latestRun = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        financialYear,
+        isFinalSettlement: false,
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      select: { deductions: true },
+    });
+    const ptMonthly = Number(
+      (
+        (latestRun?.deductions ?? []) as { code: string; amount: number }[]
+      ).find((d) => d.code === 'PT')?.amount ?? 0,
+    );
+
+    const run = async (regime: TaxRegime) => {
+      const cfg = await this.scopedPrisma.taxSlabConfig.findFirst({
+        where: { organizationId, financialYear, regime, isActive: true },
+        orderBy: { financialYear: 'desc' },
+      });
+      const config =
+        cfg ??
+        (await this.scopedPrisma.taxSlabConfig.findFirst({
+          where: {
+            organizationId,
+            regime,
+            isActive: true,
+            financialYear: { lt: financialYear },
+          },
+          orderBy: { financialYear: 'desc' },
+        }));
+      if (!config) return null;
+      const t = calculateTax({
+        month: todayMonth,
+        year: todayYear,
+        currentMonthGross: figures.gross + variableAnnual,
+        recurringMonthlyGross: figures.gross,
+        ytdGross,
+        ytdTDS,
+        employmentMonthsInFY: employmentMonths,
+        professionalTaxAnnual: ytdProfessionalTax + ptMonthly * remaining,
+        ageAtFYEnd,
+        basicAnnual: figures.basic * employmentMonths,
+        basicPlusDaAnnual: (figures.basic + figures.da) * employmentMonths,
+        hraReceivedAnnual: figures.hra * employmentMonths,
+        ltaReceivedAnnual: figures.lta * employmentMonths,
+        declaration,
+        taxSlabConfig: {
+          regime: config.regime,
+          standardDeduction: config.standardDeduction,
+          slabs: config.slabs as unknown as TaxSlab[],
+          surchargeSlabs: config.surchargeSlabs as unknown as TaxSlab[],
+          cessRate: config.cessRate,
+          rebate87ALimit: config.rebate87ALimit,
+          rebate87AAmount: config.rebate87AAmount,
+        },
+        financialYearStartMonth: settingsRow.financialYearStartMonth,
+      });
+      const deductionsTotal =
+        Object.values(t.deductions).reduce((a, b) => a + b, 0) +
+        t.exemptions.hra +
+        t.exemptions.lta;
+      return {
+        annualTax: t.totalAnnualTax,
+        taxableIncome: Math.round(t.taxableIncome),
+        grossIncome: Math.round(t.grossAnnualIncome),
+        deductionsAndExemptions: Math.round(deductionsTotal),
+        rebate: Math.round(t.rebate),
+        monthlyTDS: t.monthlyTDS,
+      };
+    };
+    const [oldRegime, newRegime] = await Promise.all([
+      run(TaxRegime.OLD),
+      run(TaxRegime.NEW),
+    ]);
+    if (!oldRegime || !newRegime) {
+      return {
+        available: false as const,
+        reason: 'Income tax slabs are not set up for this year yet.',
+      };
+    }
+    const saving = Math.abs(oldRegime.annualTax - newRegime.annualTax);
+    const better =
+      oldRegime.annualTax === newRegime.annualTax
+        ? null
+        : oldRegime.annualTax < newRegime.annualTax
+          ? TaxRegime.OLD
+          : TaxRegime.NEW;
+    return {
+      available: true as const,
+      financialYear,
+      current: declaration?.regimeChosen ?? TaxRegime.NEW,
+      old: oldRegime,
+      new: newRegime,
+      better,
+      saving,
+      // The Old regime only has figures to work with once something has been declared.
+      hasDeclaration: !!declaration,
+      tdsSoFar: ytdTDS,
+    };
+  }
+
+  async previewStructure(dto: StructurePreviewDto, organizationId: string) {
+    const { settings, components, today } =
+      await this.packageContext(organizationId);
+    void today;
 
     // Where the employee is hired: their own work location, else the department's, else what was sent.
     let cityClass: CityClassName = dto.cityClass ?? 'NON_METRO';
@@ -1662,6 +1931,7 @@ export class PayrollService {
         annualCtc: dto.annualCtc,
         monthlyGross: dto.monthlyGross,
         variableAnnual: dto.variableAnnual,
+        variableIncludedInCtc: dto.variableIncludedInCtc,
         cityClass,
         employeeType: dto.employeeType,
         basicPercent: dto.basicPercent,
@@ -2909,7 +3179,7 @@ export class PayrollService {
       where.employeeId = query.employeeId;
     }
 
-    return paginate(
+    const page = await paginate(
       () =>
         this.scopedPrisma.payrollRun.findMany({
           where,
@@ -2935,6 +3205,11 @@ export class PayrollService {
       query.page,
       query.limit,
     );
+    // HR's reason for a hold is not for the employee's own payslip list.
+    if (actor.role === Role.EMPLOYEE || actor.role === Role.MANAGER) {
+      return { ...page, data: page.data.map(redactHoldForEmployee) };
+    }
+    return page;
   }
 
   async findOne(id: string, actor: Actor, organizationId: string) {
@@ -2965,6 +3240,9 @@ export class PayrollService {
       !EMPLOYEE_VISIBLE_STATUSES.includes(run.status)
     ) {
       throw new NotFoundException('Payslip not found.');
+    }
+    if (actor.role === Role.EMPLOYEE || actor.role === Role.MANAGER) {
+      return redactHoldForEmployee(run);
     }
     return run;
   }
@@ -3569,6 +3847,243 @@ export class PayrollService {
 
   // Reverts a Locked/Paid run back to Calculated so it can be corrected
   // and re-run through the workflow.
+  // Hold a salary: calculated and approved as usual, but not paid (and left out of the bank file) until released.
+  async holdSalary(
+    id: string,
+    dto: HoldPayrollDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotFinalSettlementRun(run);
+    assertNotOwnPayroll(actor, run.employeeId, 'hold');
+    if (run.status === PayrollRunStatus.PAID) {
+      throw new BadRequestException('This salary is already paid.');
+    }
+    if (run.heldAt) {
+      throw new BadRequestException('This salary is already on hold.');
+    }
+    const { count } = await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId, heldAt: null },
+      data: {
+        heldAt: new Date(),
+        heldById: actor.id,
+        holdReason: dto.reason.trim(),
+      },
+    });
+    if (count === 0) {
+      throw new BadRequestException('This salary is already on hold.');
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_SALARY_HELD',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        reason: dto.reason.trim(),
+      },
+    });
+    return this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+  }
+
+  async releaseHold(id: string, actor: Actor, organizationId: string) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    assertNotOwnPayroll(actor, run.employeeId, 'release the hold on');
+    if (!run.heldAt) {
+      throw new BadRequestException('This salary is not on hold.');
+    }
+    await this.scopedPrisma.payrollRun.updateMany({
+      where: { id, organizationId },
+      data: { heldAt: null, heldById: null, holdReason: null },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_SALARY_RELEASED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: run.employeeId,
+        month: run.month,
+        year: run.year,
+        heldReason: run.holdReason,
+      },
+    });
+    return this.scopedPrisma.payrollRun.findFirst({
+      where: { id, organizationId },
+    });
+  }
+
+  // The checklist before running a month's payroll: what will stop a clean run (no salary structure), what will stop
+  // someone being paid (no bank details), attendance not marked, and who joins or leaves in the month.
+  async getReadiness(month: number, year: number, organizationId: string) {
+    const employees = await this.targetEmployees(undefined, organizationId);
+    const monthEnd = lastDayOfMonth(month, year);
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const ids = employees.map((e) => e.id);
+
+    const payrollSettings =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const financialYear = getFinancialYear(
+      month,
+      year,
+      payrollSettings.financialYearStartMonth,
+    );
+    const [structureRows, exitCases, gaps, openingRows, priorRuns] =
+      await Promise.all([
+        this.scopedPrisma.employeeSalaryComponent.findMany({
+          where: { organizationId, employeeId: { in: ids } },
+          select: {
+            employeeId: true,
+            componentCode: true,
+            effectiveFrom: true,
+            effectiveTo: true,
+            isEnabled: true,
+          },
+        }),
+        this.scopedPrisma.offboardingCase.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: ids },
+            status: { in: ['INITIATED', 'IN_PROGRESS', 'COMPLETED'] },
+            lastWorkingDay: { gte: monthStart, lte: monthEnd },
+          },
+          select: { employeeId: true, lastWorkingDay: true },
+        }),
+        this.getAttendanceGaps(month, year, organizationId),
+        this.scopedPrisma.employeeOpeningBalance.findMany({
+          where: { organizationId, employeeId: { in: ids }, financialYear },
+          select: { employeeId: true },
+        }),
+        this.scopedPrisma.payrollRun.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: ids },
+            financialYear,
+            isFinalSettlement: false,
+            OR: [{ year: { lt: year } }, { year, month: { lt: month } }],
+          },
+          select: { employeeId: true },
+        }),
+      ]);
+    const statutoryOff = await this.statutoryConfigService.isStatutoryOff(
+      organizationId,
+      monthEnd,
+    );
+
+    const rowsByEmployee = new Map<string, typeof structureRows>();
+    for (const r of structureRows) {
+      rowsByEmployee.set(r.employeeId, [
+        ...(rowsByEmployee.get(r.employeeId) ?? []),
+        r,
+      ]);
+    }
+    // Same rule the calculation applies: the structure in force on the last day of the month, with something switched on.
+    const withStructure = new Set(
+      ids.filter((id) =>
+        resolveCurrentRows(rowsByEmployee.get(id) ?? [], monthEnd).some(
+          (r) => r.isEnabled,
+        ),
+      ),
+    );
+
+    const checks = buildReadiness({
+      month,
+      year,
+      employees: employees.map((e) => ({
+        id: e.id,
+        name: e.name,
+        code: e.employeeId ?? '',
+        joiningDate: e.joiningDate.toISOString().slice(0, 10),
+        personalData: e.personalData,
+      })),
+      withStructure,
+      fyStartMonth: payrollSettings.financialYearStartMonth,
+      hasYtd: new Set([
+        ...openingRows.map((r) => r.employeeId),
+        ...priorRuns.map((r) => r.employeeId),
+      ]),
+      exits: new Map(exitCases.map((c) => [c.employeeId, c.lastWorkingDay])),
+      statutoryOff,
+    });
+    if (gaps.length > 0) {
+      // Between "no salary structure" and "bank details": unmarked days are paid as unpaid leave.
+      checks.splice(
+        checks.findIndex((c) => c.level === 'info') === -1
+          ? checks.length
+          : checks.findIndex((c) => c.level === 'info'),
+        0,
+        {
+          key: 'attendance',
+          level: 'warning',
+          title: 'Attendance not marked (unmarked days are unpaid)',
+          people: gaps.map((g) => ({
+            id: g.employeeId,
+            name: g.name,
+            code: g.employeeCode ?? '',
+            detail: `${g.unmarkedDays} of ${g.daysSoFar} days`,
+          })),
+        },
+      );
+    }
+    return { month, year, employeeCount: employees.length, checks };
+  }
+
+  // What to send the bank for a month: every locked, un-held, regular payslip with its account details, plus the ones
+  // left out and why. Locked only - the file is made after sign-off and before "mark paid".
+  async bankAdvice(month: number, year: number, organizationId: string) {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        month,
+        year,
+        status: PayrollRunStatus.LOCKED,
+        isFinalSettlement: false,
+      },
+      orderBy: [{ runSequence: 'asc' }],
+    });
+    const users = runs.length
+      ? await this.scopedPrisma.user.findMany({
+          where: {
+            organizationId,
+            id: { in: [...new Set(runs.map((r) => r.employeeId))] },
+          },
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            personalData: true,
+          },
+        })
+      : [];
+    const advice = buildBankAdvice(
+      runs,
+      new Map(
+        users.map((u) => [
+          u.id,
+          {
+            employeeId: u.employeeId ?? '',
+            name: u.name,
+            personalData: u.personalData,
+          },
+        ]),
+      ),
+    );
+    return { month, year, ...advice };
+  }
+
   async unlock(
     id: string,
     dto: UnlockPayrollDto,
@@ -3899,6 +4414,15 @@ export class PayrollService {
           status: 'final_settlement',
           reason:
             'This is a final-settlement payslip - manage it from Settlements, not from Payroll.',
+        });
+        continue;
+      }
+      // A salary on hold is signed off like any other but is not paid until the hold is released.
+      if (config.toStatus === PayrollRunStatus.PAID && run.heldAt) {
+        skipped.push({
+          id: run.id,
+          status: 'on_hold',
+          reason: `Salary is on hold${run.holdReason ? ` (${run.holdReason})` : ''}. Release the hold before paying.`,
         });
         continue;
       }
@@ -4824,12 +5348,14 @@ export class PayrollService {
         .filter((d) => d.code === 'PT')
         .reduce((sum, d) => sum + d.amount, 0);
     }
-    return {
-      ytdGross,
-      ytdTDS,
-      ytdMonths: paidMonths.size,
-      ytdProfessionalTax,
-    };
+    // Months paid before this system took over payroll (company started mid-year).
+    const opening = await this.scopedPrisma.employeeOpeningBalance.findFirst({
+      where: { organizationId, employeeId, financialYear },
+    });
+    return withOpeningBalance(
+      { ytdGross, ytdTDS, ytdMonths: paidMonths.size, ytdProfessionalTax },
+      opening,
+    );
   }
 
   private runTaxableGross(run: PayrollRun): number {

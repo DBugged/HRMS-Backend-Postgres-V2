@@ -79,6 +79,8 @@ export function defaultSettings(over: Row = {}): Row {
     otNightRate: 1.75,
     companyPerformanceEnabled: false,
     taxDeclarationRequiresVerification: false,
+    taxRegimeEmployeeChange: true,
+    taxRegimeCutoffMonth: null,
     higherTdsWithoutPan: false,
     refundExcessTdsOnExit: true,
     perquisiteLoanBenchmarkRate: 0,
@@ -281,6 +283,10 @@ export function makeEngine(world: World, today: string) {
     employeeSalaryComponent: model(() => world.overrides),
     employeeTaxDeclaration: {
       findFirst: async () => world.declaration,
+    },
+    employeeOpeningBalance: {
+      findFirst: async () => null,
+      findMany: async () => [],
     },
     taxSlabConfig: {
       findFirst: async (a?: { where?: Row; orderBy?: Row }) => {
