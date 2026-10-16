@@ -67,7 +67,10 @@ import { redactHoldForEmployee } from './payroll-hold';
 import { buildReadiness } from './payroll-readiness';
 import { withOpeningBalance } from './opening-balances';
 import { HoldPayrollDto } from './dto/hold-payroll.dto';
-import { computeStructurePreview } from './structure-preview';
+import {
+  computeStructurePreview,
+  employerMonthlyForStructure,
+} from './structure-preview';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
 import type { CityClassName } from '../common/hra-cities';
 import {
@@ -1617,7 +1620,9 @@ export class PayrollService {
 
   // Salary-structure builder: the same maths payroll runs, for a hypothetical package. Reads settings and the effective
   // statutory versions as of today, saves nothing.
-  async previewStructure(dto: StructurePreviewDto, organizationId: string) {
+  // Today's payroll settings with the statutory versions in force, and the active components: what a package is worked
+  // out on, whether it is being built or only read back.
+  private async packageContext(organizationId: string) {
     const settingsRow =
       await this.payrollSettingsService.getOrCreate(organizationId);
     const org = await this.scopedPrisma.organization.findFirst({
@@ -1644,6 +1649,61 @@ export class PayrollService {
       where: { organizationId, isActive: true },
       orderBy: { displayOrder: 'asc' },
     });
+    return { settings, components, today };
+  }
+
+  // What the employer pays on top of each employee's pay every month (PF, EDLI, admin charge, ESI, gratuity and bonus
+  // accrual, NPS), worked out from the structure saved for today - the part of the CTC that the pay lines do not show.
+  // Everyone on payroll when no id is given.
+  async employerCost(
+    organizationId: string,
+    employeeId?: string,
+  ): Promise<{ employeeId: string; employerMonthly: number }[]> {
+    const { settings, components, today } =
+      await this.packageContext(organizationId);
+    const users = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        ...(employeeId ? { id: employeeId } : {}),
+      },
+      select: {
+        id: true,
+        workLocation: { select: { cityClass: true } },
+        department: {
+          select: { workLocation: { select: { cityClass: true } } },
+        },
+      },
+    });
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
+      where: { organizationId, employeeId: { in: users.map((u) => u.id) } },
+    });
+    const byEmployee = new Map<string, typeof rows>();
+    for (const r of rows) {
+      byEmployee.set(r.employeeId, [
+        ...(byEmployee.get(r.employeeId) ?? []),
+        r,
+      ]);
+    }
+    return users.map((u) => {
+      const current = resolveCurrentRows(byEmployee.get(u.id) ?? [], today);
+      // HRA that has no line of its own follows the work location, the same as everywhere else.
+      const cityClass = effectiveWorkLocation(u)?.cityClass ?? 'NON_METRO';
+      return {
+        employeeId: u.id,
+        employerMonthly: employerMonthlyForStructure({
+          components: withCityHra(components, cityClass),
+          settings,
+          rows: current,
+        }),
+      };
+    });
+  }
+
+  async previewStructure(dto: StructurePreviewDto, organizationId: string) {
+    const { settings, components, today } =
+      await this.packageContext(organizationId);
+    void today;
 
     // Where the employee is hired: their own work location, else the department's, else what was sent.
     let cityClass: CityClassName = dto.cityClass ?? 'NON_METRO';

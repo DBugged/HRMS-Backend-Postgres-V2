@@ -13,6 +13,7 @@ import {
 import { applyStatutoryOverrides } from './statutory-overlay';
 import {
   computeStructurePreview,
+  employerMonthlyForStructure,
   type StructureLineToSave,
   type StructurePreviewInput,
 } from './structure-preview';
@@ -421,5 +422,67 @@ describe('salary structure preview', () => {
         Math.abs(run.totalEmployerContributions - p.employerMonthly),
       ).toBeLessThanOrEqual(1);
     });
+  });
+});
+
+describe('employerMonthlyForStructure (the employer share of a saved structure)', () => {
+  const cases: [string, StructurePreviewInput][] = [
+    ['12L metro', { mode: 'CTC', annualCtc: 1200000, cityClass: 'METRO' }],
+    [
+      '9L non-metro',
+      { mode: 'CTC', annualCtc: 900000, cityClass: 'NON_METRO' },
+    ],
+    [
+      'low pay, ESI applies',
+      { mode: 'CTC', annualCtc: 220000, cityClass: 'NON_METRO' },
+    ],
+    [
+      'gross 55,000',
+      { mode: 'GROSS', monthlyGross: 55000, cityClass: 'METRO' },
+    ],
+  ];
+  it.each(cases)(
+    'reading back the saved lines gives what the builder said: %s',
+    (_n, input) => {
+      const p = preview(input);
+      const readBack = employerMonthlyForStructure({
+        components: components(),
+        settings: settings(),
+        rows: p.lines,
+      });
+      expect(readBack).toBe(p.employerMonthly);
+    },
+  );
+
+  it('is zero for a structure with nothing switched on', () => {
+    expect(
+      employerMonthlyForStructure({
+        components: components(),
+        settings: settings(),
+        rows: [],
+      }),
+    ).toBe(0);
+  });
+
+  it('is zero when the employee has the schemes switched off', () => {
+    const p = preview({
+      mode: 'CTC',
+      annualCtc: 1200000,
+      cityClass: 'METRO',
+      statutory: {
+        pf: false,
+        esi: false,
+        gratuity: false,
+        bonus: false,
+        nps: false,
+      },
+    });
+    expect(
+      employerMonthlyForStructure({
+        components: components(),
+        settings: settings(),
+        rows: p.lines,
+      }),
+    ).toBe(0);
   });
 });

@@ -90,6 +90,31 @@ export class PayrollController {
     );
   }
 
+  // What the employer pays on top of each employee's pay every month - the part of the CTC that the pay lines do not
+  // show. Registered before ':id' like the other fixed paths.
+  @Get('employer-cost')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  employerCost(
+    @Query('employeeId') employeeId: string | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.employerCost(
+      caller.organizationId,
+      employeeId || undefined,
+    );
+  }
+
+  // The same for the caller's own structure - any authenticated employee, since it is their own CTC.
+  @Get('employer-cost/me')
+  async employerCostMine(@CurrentUser() caller: Caller) {
+    const [mine] = await this.payrollService.employerCost(
+      caller.organizationId,
+      caller.id,
+    );
+    return { employerMonthly: mine?.employerMonthly ?? 0 };
+  }
+
   // The checklist before running a month: missing salary structures, bank details, unmarked attendance, joiners and
   // leavers. Registered before ':id' like the other fixed paths.
   @Get('readiness')
