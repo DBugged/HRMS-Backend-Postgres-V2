@@ -90,6 +90,22 @@ export class PayrollController {
     );
   }
 
+  // "Which regime saves more": the year's tax under both regimes. Own figures for anyone; HR/Admin may pass employeeId.
+  // Registered before ':id' like the other fixed paths.
+  @Get('regime-comparison')
+  regimeComparison(
+    @Query('financialYear') financialYear: string | undefined,
+    @Query('employeeId') employeeId: string | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.compareRegimes(
+      employeeId,
+      financialYear,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   // What the employer pays on top of each employee's pay every month - the part of the CTC that the pay lines do not
   // show. Registered before ':id' like the other fixed paths.
   @Get('employer-cost')

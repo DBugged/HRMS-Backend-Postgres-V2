@@ -14,6 +14,7 @@ import { applyStatutoryOverrides } from './statutory-overlay';
 import {
   computeStructurePreview,
   employerMonthlyForStructure,
+  monthlyFiguresForStructure,
   type StructureLineToSave,
   type StructurePreviewInput,
 } from './structure-preview';
@@ -484,5 +485,33 @@ describe('employerMonthlyForStructure (the employer share of a saved structure)'
         rows: p.lines,
       }),
     ).toBe(0);
+  });
+});
+
+describe('monthlyFiguresForStructure (the regular month, for tax estimates)', () => {
+  it('reads back the pay and the lines the tax workings need', () => {
+    const p = preview({ mode: 'CTC', annualCtc: 1200000, cityClass: 'METRO' });
+    const f = monthlyFiguresForStructure({
+      components: components(),
+      settings: settings(),
+      rows: p.lines,
+    });
+    // Payroll pays whole rupees, so the month is the nearest rupee of the pay the builder worked to.
+    expect(f.gross).toBe(Math.round(p.grossMonthly));
+    expect(f.basic).toBe(p.earnings.find((l) => l.code === 'BASIC')!.monthly);
+    expect(f.hra).toBe(
+      Math.round(p.earnings.find((l) => l.code === 'HRA')!.monthly),
+    );
+    expect(f.da).toBe(0);
+  });
+
+  it('is all zero for a structure with nothing switched on', () => {
+    expect(
+      monthlyFiguresForStructure({
+        components: components(),
+        settings: settings(),
+        rows: [],
+      }),
+    ).toEqual({ gross: 0, basic: 0, da: 0, hra: 0, lta: 0 });
   });
 });

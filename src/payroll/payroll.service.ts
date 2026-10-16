@@ -70,6 +70,7 @@ import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import {
   computeStructurePreview,
   employerMonthlyForStructure,
+  monthlyFiguresForStructure,
 } from './structure-preview';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
 import type { CityClassName } from '../common/hra-cities';
@@ -1700,6 +1701,200 @@ export class PayrollService {
         }),
       };
     });
+  }
+
+  // "Which regime saves more": the tax for the whole financial year under the Old and the New regime, worked out with the
+  // same tax engine, year-to-date figures and slabs payroll uses, from the employee's current salary structure and what they
+  // have declared so far (a draft included - this is a what-if, not what TDS uses). An estimate: it assumes the structure
+  // stays as it is for the rest of the year.
+  async compareRegimes(
+    employeeIdParam: string | undefined,
+    financialYearParam: string | undefined,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const isHr = actor.role === Role.ADMIN || actor.role === Role.HR;
+    const employeeId = isHr ? (employeeIdParam ?? actor.id) : actor.id;
+    const { settings, components, today } =
+      await this.packageContext(organizationId);
+    const settingsRow =
+      await this.payrollSettingsService.getOrCreate(organizationId);
+    const todayMonth = Number(today.slice(5, 7));
+    const todayYear = Number(today.slice(0, 4));
+    const financialYear =
+      financialYearParam ??
+      getFinancialYear(
+        todayMonth,
+        todayYear,
+        settingsRow.financialYearStartMonth,
+      );
+
+    const employee = await this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: {
+        id: true,
+        personalData: true,
+        workLocation: { select: { cityClass: true } },
+        department: {
+          select: { workLocation: { select: { cityClass: true } } },
+        },
+      },
+    });
+    if (!employee) throw new NotFoundException('Employee not found.');
+
+    const rows = resolveCurrentRows(
+      await this.scopedPrisma.employeeSalaryComponent.findMany({
+        where: { organizationId, employeeId },
+      }),
+      today,
+    );
+    const cityClass = effectiveWorkLocation(employee)?.cityClass ?? 'NON_METRO';
+    const figures = monthlyFiguresForStructure({
+      components: withCityHra(components, cityClass),
+      settings,
+      rows,
+    });
+    if (figures.gross <= 0) {
+      return {
+        available: false as const,
+        reason: 'No salary structure is set up yet.',
+      };
+    }
+    // Yearly variable pay (paid outside the monthly figures) counts once, as one more month's pay.
+    const variableAnnual = rows
+      .filter(
+        (r) =>
+          r.isEnabled !== false &&
+          r.valueType === 'MANUAL' &&
+          r.amountBasis === 'ANNUAL',
+      )
+      .reduce((sum, r) => sum + Number(r.fixedAmount ?? 0), 0);
+
+    const declaration =
+      await this.scopedPrisma.employeeTaxDeclaration.findFirst({
+        where: { organizationId, employeeId, financialYear },
+      });
+    const { ytdGross, ytdTDS, ytdMonths, ytdProfessionalTax } =
+      await this.getYtdFigures(
+        employeeId,
+        financialYear,
+        todayMonth,
+        todayYear,
+        organizationId,
+      );
+    const remaining = monthsRemainingInFY(
+      todayMonth,
+      todayYear,
+      settingsRow.financialYearStartMonth,
+    );
+    const employmentMonths = Math.min(12, ytdMonths + remaining);
+    const ageAtFYEnd = ageOnFYEnd(
+      (employee.personalData as Record<string, unknown> | null)?.dob,
+      financialYear,
+    );
+
+    // Professional tax for the months still to come: what the latest payslip of the year deducted.
+    const latestRun = await this.scopedPrisma.payrollRun.findFirst({
+      where: {
+        organizationId,
+        employeeId,
+        financialYear,
+        isFinalSettlement: false,
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      select: { deductions: true },
+    });
+    const ptMonthly = Number(
+      (
+        (latestRun?.deductions ?? []) as { code: string; amount: number }[]
+      ).find((d) => d.code === 'PT')?.amount ?? 0,
+    );
+
+    const run = async (regime: TaxRegime) => {
+      const cfg = await this.scopedPrisma.taxSlabConfig.findFirst({
+        where: { organizationId, financialYear, regime, isActive: true },
+        orderBy: { financialYear: 'desc' },
+      });
+      const config =
+        cfg ??
+        (await this.scopedPrisma.taxSlabConfig.findFirst({
+          where: {
+            organizationId,
+            regime,
+            isActive: true,
+            financialYear: { lt: financialYear },
+          },
+          orderBy: { financialYear: 'desc' },
+        }));
+      if (!config) return null;
+      const t = calculateTax({
+        month: todayMonth,
+        year: todayYear,
+        currentMonthGross: figures.gross + variableAnnual,
+        recurringMonthlyGross: figures.gross,
+        ytdGross,
+        ytdTDS,
+        employmentMonthsInFY: employmentMonths,
+        professionalTaxAnnual: ytdProfessionalTax + ptMonthly * remaining,
+        ageAtFYEnd,
+        basicAnnual: figures.basic * employmentMonths,
+        basicPlusDaAnnual: (figures.basic + figures.da) * employmentMonths,
+        hraReceivedAnnual: figures.hra * employmentMonths,
+        ltaReceivedAnnual: figures.lta * employmentMonths,
+        declaration,
+        taxSlabConfig: {
+          regime: config.regime,
+          standardDeduction: config.standardDeduction,
+          slabs: config.slabs as unknown as TaxSlab[],
+          surchargeSlabs: config.surchargeSlabs as unknown as TaxSlab[],
+          cessRate: config.cessRate,
+          rebate87ALimit: config.rebate87ALimit,
+          rebate87AAmount: config.rebate87AAmount,
+        },
+        financialYearStartMonth: settingsRow.financialYearStartMonth,
+      });
+      const deductionsTotal =
+        Object.values(t.deductions).reduce((a, b) => a + b, 0) +
+        t.exemptions.hra +
+        t.exemptions.lta;
+      return {
+        annualTax: t.totalAnnualTax,
+        taxableIncome: Math.round(t.taxableIncome),
+        grossIncome: Math.round(t.grossAnnualIncome),
+        deductionsAndExemptions: Math.round(deductionsTotal),
+        rebate: Math.round(t.rebate),
+        monthlyTDS: t.monthlyTDS,
+      };
+    };
+    const [oldRegime, newRegime] = await Promise.all([
+      run(TaxRegime.OLD),
+      run(TaxRegime.NEW),
+    ]);
+    if (!oldRegime || !newRegime) {
+      return {
+        available: false as const,
+        reason: 'Income tax slabs are not set up for this year yet.',
+      };
+    }
+    const saving = Math.abs(oldRegime.annualTax - newRegime.annualTax);
+    const better =
+      oldRegime.annualTax === newRegime.annualTax
+        ? null
+        : oldRegime.annualTax < newRegime.annualTax
+          ? TaxRegime.OLD
+          : TaxRegime.NEW;
+    return {
+      available: true as const,
+      financialYear,
+      current: declaration?.regimeChosen ?? TaxRegime.NEW,
+      old: oldRegime,
+      new: newRegime,
+      better,
+      saving,
+      // The Old regime only has figures to work with once something has been declared.
+      hasDeclaration: !!declaration,
+      tdsSoFar: ytdTDS,
+    };
   }
 
   async previewStructure(dto: StructurePreviewDto, organizationId: string) {

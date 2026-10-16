@@ -279,6 +279,49 @@ export function employerMonthlyForStructure(args: {
   ).employerTotal;
 }
 
+/**
+ * The regular month of a saved structure, as payroll would pay it with full attendance: the total and the lines the tax
+ * workings need (Basic, DA, HRA, LTA). Used for estimates (which tax regime saves more) where there is no payslip yet.
+ */
+export function monthlyFiguresForStructure(args: {
+  components: SalaryComponent[];
+  settings: OverlaidSettings;
+  rows: SavedStructureRow[];
+}): { gross: number; basic: number; da: number; hra: number; lta: number } {
+  const zero = { gross: 0, basic: 0, da: 0, hra: 0, lta: 0 };
+  if (!args.rows.some((r) => r.isEnabled !== false)) return zero;
+  const components = args.components.filter((c) => c.isActive);
+  const overrides = new Map<string, EmployeeSalaryComponent>();
+  for (const r of args.rows) {
+    overrides.set(
+      r.componentCode,
+      override(r.componentCode, {
+        valueType: r.valueType as CalcType,
+        fixedAmount: r.fixedAmount ?? null,
+        percentageValue: r.percentageValue ?? null,
+        percentageOf: r.percentageOf ?? null,
+        amountBasis: (r.amountBasis ?? 'MONTHLY') as 'MONTHLY' | 'ANNUAL',
+        isEnabled: r.isEnabled !== false,
+      }),
+    );
+  }
+  const { earnedLines, gross } = evaluateStructure(
+    components,
+    args.settings,
+    overrides,
+    fullMonthBase(args.settings),
+  );
+  const of = (code: string) =>
+    earnedLines.find((l) => l.code === code)?.amount ?? 0;
+  return {
+    gross,
+    basic: of('BASIC'),
+    da: of('DA'),
+    hra: of('HRA'),
+    lta: of('LTA'),
+  };
+}
+
 export function computeStructurePreview(args: {
   input: StructurePreviewInput;
   components: SalaryComponent[];
