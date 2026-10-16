@@ -26,6 +26,7 @@ import { QueryAttendanceDto } from './dto/query-attendance.dto';
 import { RequestRegularizationDto } from './dto/request-regularization.dto';
 import { ReviewRegularizationDto } from './dto/review-regularization.dto';
 import { PreviewWfhDaysQueryDto } from './dto/preview-wfh-days-query.dto';
+import { DecidedWfhQueryDto } from './dto/decided-wfh-query.dto';
 import { ReviewWfhDto } from './dto/review-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
@@ -125,6 +126,23 @@ export class AttendanceController {
     return this.attendanceService.listPendingWfhRequests(
       caller,
       caller.organizationId,
+    );
+  }
+
+  // Already-decided (approved / rejected) Work From Home days, with who decided them and any remarks.
+  // Literal path, registered before the ':id' routes.
+  @Get('work-arrangement/decided')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  listDecidedWfhRequests(
+    @Query() query: DecidedWfhQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.listDecidedWfhRequests(
+      caller,
+      caller.organizationId,
+      query,
     );
   }
 

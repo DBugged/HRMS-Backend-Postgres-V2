@@ -2168,6 +2168,60 @@ export class AttendanceService {
     });
   }
 
+  // Decided Work From Home days (same scoping as the pending queue), newest first, each with the reviewer's name.
+  async listDecidedWfhRequests(
+    actor: Actor,
+    organizationId: string,
+    query: { status?: 'approved' | 'rejected' | 'decided'; from?: string },
+  ) {
+    const statuses =
+      query.status === 'approved'
+        ? [WfhApprovalStatus.APPROVED]
+        : query.status === 'rejected'
+          ? [WfhApprovalStatus.REJECTED]
+          : [WfhApprovalStatus.APPROVED, WfhApprovalStatus.REJECTED];
+    const where: Prisma.AttendanceWhereInput = {
+      organizationId,
+      workArrangement: WorkArrangement.WFH,
+      workArrangementStatus: { in: statuses },
+    };
+    if (query.from) where.date = { gte: query.from };
+    if (actor.role === Role.MANAGER) {
+      where.employeeId = {
+        in: await deptScopedEmployeeIds(
+          this.scopedPrisma,
+          actor,
+          organizationId,
+        ),
+      };
+    }
+    const rows = await this.scopedPrisma.attendance.findMany({
+      where,
+      include: {
+        employee: { select: { id: true, name: true, employeeId: true } },
+      },
+      orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
+    });
+    const reviewerIds = [
+      ...new Set(
+        rows.map((r) => r.workArrangementReviewedById).filter(Boolean),
+      ),
+    ] as string[];
+    const reviewers = reviewerIds.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { id: { in: reviewerIds }, organizationId },
+          select: { id: true, name: true },
+        })
+      : [];
+    const nameById = new Map(reviewers.map((u) => [u.id, u.name]));
+    return rows.map((r) => ({
+      ...r,
+      workArrangementReviewedByName: r.workArrangementReviewedById
+        ? (nameById.get(r.workArrangementReviewedById) ?? null)
+        : null,
+    }));
+  }
+
   // `id` is the Attendance row's id, same convention as
   // reviewRegularization. MANAGER is restricted to their own department's
   // employees (unlike reviewRegularization) — see listPendingWfhRequests's
