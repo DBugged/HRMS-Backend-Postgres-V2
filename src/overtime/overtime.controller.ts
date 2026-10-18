@@ -41,6 +41,12 @@ export class OvertimeController {
     return this.overtimeService.status(caller.organizationId);
   }
 
+  // No @Roles() — the Admin's overtime policy plus the caller's own usage this month (for the log form's hints).
+  @Get('policy')
+  myPolicy(@CurrentUser() caller: Caller) {
+    return this.overtimeService.myPolicy(caller, caller.organizationId);
+  }
+
   // No @Roles() — the weekend/holiday compensation options an approver can choose from, and the default.
   @Get('compensation-options')
   compensationOptions(@CurrentUser() caller: Caller) {

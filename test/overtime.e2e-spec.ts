@@ -198,6 +198,39 @@ describe('Overtime (e2e)', () => {
     await app.close();
   });
 
+  it("the Admin's overtime policy is validated, exposed to the log form and enforced", async () => {
+    const setPolicy = (overtimePolicy: object) =>
+      request(app.getHttpServer())
+        .patch('/organizations/settings/policies')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ orgPayrollAttendancePrefs: { overtimePolicy } });
+    await setPolicy({ roundingMinutes: 7 }).expect(400);
+    await setPolicy({ creationMode: 'NEVER' }).expect(400);
+
+    await setPolicy({ maxHoursPerMonth: 1, capMode: 'BLOCK' }).expect(200);
+    const policy = await request(app.getHttpServer())
+      .get('/overtime/policy')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect(policy.body).toMatchObject({ eligible: true, maxHoursPerMonth: 1 });
+    const blocked = await request(app.getHttpServer())
+      .post('/overtime')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ date: '2026-06-01', hours: 3, type: 'REGULAR' })
+      .expect(400);
+    expect(JSON.stringify(blocked.body)).toMatch(/per month/);
+
+    await setPolicy({ creationMode: 'AUTO', maxHoursPerMonth: '' }).expect(200);
+    await request(app.getHttpServer())
+      .post('/overtime')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ date: '2026-06-02', hours: 1, type: 'REGULAR' })
+      .expect(400);
+
+    // Back to the default so the remaining tests log as before.
+    await setPolicy({ creationMode: 'BOTH' }).expect(200);
+  });
+
   it('rejects hours outside (0, 24]', async () => {
     await request(app.getHttpServer())
       .post('/overtime')

@@ -96,6 +96,8 @@ function build(
       }),
     },
     overtimeRecord: {
+      // The Admin's monthly-cap usage lookup: nothing is capped in these tests, so it only has to answer.
+      findMany: async () => [],
       findFirst: async (a: Row) => {
         const r = records.find((x) => match(x, a?.where));
         return r ? { ...r } : null;

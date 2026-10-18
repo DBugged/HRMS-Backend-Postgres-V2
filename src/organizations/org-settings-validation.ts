@@ -316,6 +316,57 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       bad(`${path('alternateWeeklyOffs')} lists the same day more than once.`);
     }
   }
+  if (p.overtimePolicy !== undefined) {
+    const o = p.overtimePolicy;
+    if (!isPlainObject(o)) {
+      bad(`${path('overtimePolicy')} must be an object.`);
+    } else {
+      const op = (k: string) => `${path('overtimePolicy')}.${k}`;
+      checkNumber(o, 'minMinutes', op('minMinutes'), {
+        min: 0,
+        max: 240,
+        integer: true,
+      });
+      checkNumber(o, 'maxHoursPerDay', op('maxHoursPerDay'), {
+        min: 0.25,
+        max: 24,
+        allowEmpty: true,
+      });
+      checkNumber(o, 'maxHoursPerMonth', op('maxHoursPerMonth'), {
+        min: 0.25,
+        max: 744,
+        allowEmpty: true,
+      });
+      checkNumber(o, 'claimWithinDays', op('claimWithinDays'), {
+        min: 1,
+        max: 90,
+        integer: true,
+        allowEmpty: true,
+      });
+      if (
+        o.roundingMinutes !== undefined &&
+        ![0, 15, 30, 60].includes(o.roundingMinutes as number)
+      ) {
+        bad(`${op('roundingMinutes')} must be 0, 15, 30 or 60.`);
+      }
+      const oneOf = (k: string, allowed: string[]) => {
+        if (o[k] !== undefined && !allowed.includes(o[k] as string)) {
+          bad(`${op(k)} must be one of ${allowed.join(', ')}.`);
+        }
+      };
+      oneOf('roundingMode', ['DOWN', 'NEAREST', 'UP']);
+      oneOf('capMode', ['BLOCK', 'WARN']);
+      oneOf('creationMode', ['BOTH', 'SELF', 'AUTO']);
+      for (const k of ['eligibleEmployeeTypes', 'eligibleDepartmentIds']) {
+        if (
+          o[k] !== undefined &&
+          !(Array.isArray(o[k]) && o[k].every((x) => typeof x === 'string'))
+        ) {
+          bad(`${op(k)} must be a list of text values.`);
+        }
+      }
+    }
+  }
   if (
     p.requireSelfieForPunch !== undefined &&
     typeof p.requireSelfieForPunch !== 'boolean'

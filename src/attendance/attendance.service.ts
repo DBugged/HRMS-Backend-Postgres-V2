@@ -105,6 +105,11 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { getOvertimeRates } from '../overtime/overtime.service';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
 import {
+  getOvertimePolicy,
+  isEligibleForOvertime,
+  roundOvertimeHours,
+} from '../overtime/overtime-policy';
+import {
   formatDateDisplay,
   formatDateTimeDisplay,
   resolveOrgDateTimeFormat,
@@ -998,6 +1003,15 @@ export class AttendanceService {
     // Overtime Pay is off: overtime could never be paid, so don't suggest any (existing suggestions are left as they
     // are for HR to review).
     if (!(await isOvertimePayEnabled(db, organizationId))) return;
+    // The Admin's overtime policy: no suggestions when overtime is entered by hand only, or for an employee type /
+    // department that is not eligible.
+    const policy = await getOvertimePolicy(db, organizationId);
+    if (policy.creationMode === 'SELF') return;
+    const emp = await db.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { employeeType: true, departmentId: true },
+    });
+    if (!isEligibleForOvertime(policy, emp ?? {})) return;
     // No real shift was worked — nothing to overshoot.
     if (
       status === AttendanceStatus.ABSENT ||
@@ -1044,7 +1058,7 @@ export class AttendanceService {
     const existingAuto =
       existing && existing.source !== OvertimeSource.SELF ? existing : null;
 
-    if (overshootMinutes < AttendanceService.AUTO_OVERTIME_MIN_MINUTES) {
+    if (overshootMinutes < policy.minMinutes) {
       // A correction (e.g. a regularization) can shrink a day's punch span
       // below the threshold after an auto-suggestion was already created —
       // only ever clean up our own not-yet-reviewed suggestion, never a
@@ -1069,7 +1083,8 @@ export class AttendanceService {
       : isOffDay
         ? OvertimeType.WEEKEND
         : OvertimeType.REGULAR;
-    const hours = Math.round((overshootMinutes / 60) * 100) / 100;
+    const hours = roundOvertimeHours(overshootMinutes / 60, policy);
+    if (hours <= 0) return;
     const rateMultiplier = (await getOvertimeRates(db, organizationId))[type];
 
     if (existingAuto) {

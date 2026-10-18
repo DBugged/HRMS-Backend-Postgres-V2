@@ -36,6 +36,14 @@ import {
   resolveWorkCompensation,
   selectableWorkCompensation,
 } from './work-compensation';
+import {
+  NOT_ELIGIBLE_MESSAGE,
+  daysSince,
+  getOvertimePolicy,
+  isEligibleForOvertime,
+  overtimeCapProblem,
+  roundOvertimeHours,
+} from './overtime-policy';
 import { overtimeDayProblem, type DayKind } from './overtime-day-rules';
 import {
   isWeeklyOff,
@@ -131,6 +139,48 @@ export class OvertimeService {
     }
     const type = dto.type ?? OvertimeType.REGULAR;
 
+    // The Admin's overtime policy (Org Settings > General Settings > Overtime): who may log, how late, how much.
+    const policy = await getOvertimePolicy(this.scopedPrisma, organizationId);
+    if (policy.creationMode === 'AUTO') {
+      throw new BadRequestException(
+        'Overtime is recorded automatically from your punches, so it cannot be logged by hand.',
+      );
+    }
+    const self = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { employeeType: true, departmentId: true },
+    });
+    if (!isEligibleForOvertime(policy, self ?? {})) {
+      throw new ForbiddenException(NOT_ELIGIBLE_MESSAGE);
+    }
+    if (policy.claimWithinDays !== null) {
+      const { timeZone } = await resolveOrgDateTimeFormat(
+        this.scopedPrisma,
+        organizationId,
+      );
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(
+        new Date(),
+      );
+      if (daysSince(dto.date, today) > policy.claimWithinDays) {
+        throw new BadRequestException(
+          `Overtime can be requested within ${policy.claimWithinDays} day(s) of the date. Please speak to HR.`,
+        );
+      }
+    }
+    const hours = roundOvertimeHours(dto.hours, policy);
+    if (hours * 60 < policy.minMinutes) {
+      throw new BadRequestException(
+        `Overtime under ${policy.minMinutes} minute(s) is not counted.`,
+      );
+    }
+    const { usedThisMonth } = await this.usageFor(
+      actor.id,
+      dto.date,
+      organizationId,
+    );
+    const capProblem = overtimeCapProblem(policy, hours, 0, usedThisMonth);
+    if (capProblem.block) throw new BadRequestException(capProblem.block);
+
     // REGULAR/NIGHT overtime means "extra hours on top of a normal working
     // day" — logging it for a day the employee was ABSENT, ON_LEAVE, or
     // INCOMPLETE (punch-out missing, so there's no confirmed base shift
@@ -195,7 +245,7 @@ export class OvertimeService {
         organizationId,
         employeeId: actor.id,
         date: dto.date,
-        hours: dto.hours,
+        hours,
         type,
         rateMultiplier: (
           await getOvertimeRates(this.scopedPrisma, organizationId)
@@ -209,7 +259,7 @@ export class OvertimeService {
       module: 'ATTENDANCE',
       organizationId,
       targetId: record.id,
-      details: { employeeId: actor.id, date: dto.date, hours: dto.hours, type },
+      details: { employeeId: actor.id, date: dto.date, hours, type },
     });
     const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
@@ -220,18 +270,73 @@ export class OvertimeService {
       employeeId: actor.id,
       eventKey: 'OVERTIME_LOGGED',
       performedById: actor.id,
-      description: `Logged ${dto.hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}.`,
+      description: `Logged ${hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}.`,
     });
     await this.notificationsService.notifyReviewers({
       organizationId,
       requester: actor,
       title: 'Overtime Requested',
-      message: `${actor.name} logged ${dto.hours} hour(s) of overtime for ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}, pending your approval.`,
+      message: `${actor.name} logged ${hours} hour(s) of overtime for ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}, pending your approval.`,
       category: NotificationCategory.ATTENDANCE,
       managerFirst: true,
     });
 
-    return record;
+    // WARN mode: saved, but the person is told the cap was passed.
+    return capProblem.warn ? { ...record, warning: capProblem.warn } : record;
+  }
+
+  // Overtime already logged (pending or approved) in the month of `date`, and on that day.
+  async usageFor(employeeId: string, date: string, organizationId: string) {
+    const [y, m] = date.split('-').map(Number);
+    const { from, to } = monthRange(m, y);
+    const rows = await this.scopedPrisma.overtimeRecord.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        date: { gte: from, lte: to },
+        status: { not: OvertimeStatus.REJECTED },
+      },
+      select: { date: true, hours: true },
+    });
+    return {
+      usedThisMonth: rows.reduce((a, r) => a + r.hours, 0),
+      usedToday: rows
+        .filter((r) => r.date === date)
+        .reduce((a, r) => a + r.hours, 0),
+    };
+  }
+
+  // The policy plus the caller's own usage this month, so the log form can show "x of y hours used" and hide itself
+  // for someone who is not eligible.
+  async myPolicy(actor: Actor, organizationId: string) {
+    const policy = await getOvertimePolicy(this.scopedPrisma, organizationId);
+    const me = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { employeeType: true, departmentId: true },
+    });
+    const { timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone }).format(
+      new Date(),
+    );
+    const { usedThisMonth } = await this.usageFor(
+      actor.id,
+      today,
+      organizationId,
+    );
+    return {
+      eligible: isEligibleForOvertime(policy, me ?? {}),
+      creationMode: policy.creationMode,
+      minMinutes: policy.minMinutes,
+      roundingMinutes: policy.roundingMinutes,
+      maxHoursPerDay: policy.maxHoursPerDay,
+      maxHoursPerMonth: policy.maxHoursPerMonth,
+      capMode: policy.capMode,
+      claimWithinDays: policy.claimWithinDays,
+      usedThisMonth: Math.round(usedThisMonth * 100) / 100,
+    };
   }
 
   // The type picks the pay rate, so it has to match the calendar (weekly off -> weekend, holiday -> holiday, else
