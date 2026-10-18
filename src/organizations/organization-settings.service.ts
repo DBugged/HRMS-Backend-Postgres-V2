@@ -154,7 +154,13 @@ const SECTION_FIELDS: Record<string, string[]> = {
   // Combined General Settings tab — org.policies and the shift-default
   // blob save together from one PATCH now (previously a separate
   // 'attendancePayroll' section/tab).
-  policies: ['policies', 'orgPayrollAttendancePrefs'],
+  // The two regularization caps live in General Settings too (blank = no limit).
+  policies: [
+    'policies',
+    'orgPayrollAttendancePrefs',
+    'regularizationMonthlyLimit',
+    'regularizationResubmitLimit',
+  ],
   documentNumbering: ['documentNumbering'],
   employeeTypes: ['customEmployeeTypes'],
   workArrangement: [
@@ -500,6 +506,13 @@ export class OrganizationSettingsService {
     const data: Record<string, unknown> = {};
     for (const field of allowedFields) {
       if (field in body) data[field] = body[field];
+    }
+    // A blank regularization cap means "no limit": stored as NULL, never ''.
+    for (const f of [
+      'regularizationMonthlyLimit',
+      'regularizationResubmitLimit',
+    ]) {
+      if (data[f] === '') data[f] = null;
     }
 
     // Type/shape/range guard — a wrong-typed value (e.g. companyName:

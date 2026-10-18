@@ -259,6 +259,22 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
     expect(body.pan).toBe('ABCDE1234F');
   });
 
+  it('General Settings saves the regularization caps; blank clears them to null', async () => {
+    const patch = (body: object) =>
+      request(app.getHttpServer())
+        .patch('/organizations/settings/policies')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(body);
+    const set = await patch({ regularizationMonthlyLimit: 4, regularizationResubmitLimit: 2 });
+    expect(set.status).toBe(200);
+    expect(set.body.regularizationMonthlyLimit).toBe(4);
+    expect(set.body.regularizationResubmitLimit).toBe(2);
+    const cleared = await patch({ regularizationMonthlyLimit: '', regularizationResubmitLimit: null });
+    expect(cleared.status).toBe(200);
+    expect(cleared.body.regularizationMonthlyLimit).toBeNull();
+    expect(cleared.body.regularizationResubmitLimit).toBeNull();
+  });
+
   it('deriving attendancePayrollPrefs: policies section write updates the narrower field AttendanceService actually reads', async () => {
     // The standalone 'attendancePayroll' section was folded into the
     // combined 'policies' section/tab — see SECTION_FIELDS's comment above
