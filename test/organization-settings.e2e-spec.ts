@@ -284,7 +284,6 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
         orgPayrollAttendancePrefs: {
-          attendanceMethod: ['manual'],
           defaultShiftStartTime: '10:00',
           defaultShiftEndTime: '19:00',
           defaultLateInThresholdMinutes: 20,
@@ -292,7 +291,6 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
           defaultMinHoursForPresent: 7,
           defaultMinHoursForHalfDay: 3.5,
           weekendDays: [0],
-          payrollCycle: 'monthly',
         },
       })
       .expect(200);
@@ -346,7 +344,7 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       .patch('/organizations/settings/policies')
       .set('Authorization', `Bearer ${adminToken}`)
       .send({
-        orgPayrollAttendancePrefs: { payrollCycle: 'weekly' },
+        orgPayrollAttendancePrefs: { notifySalaryRevision: false },
       })
       .expect(200);
 
@@ -444,11 +442,11 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       where: { id: organizationId },
     });
     const prefs = org.orgPayrollAttendancePrefs as Record<string, unknown>;
-    expect(prefs.payrollCycle).toBe('weekly');
+    expect(prefs.notifySalaryRevision).toBe(false);
     expect(prefs.defaultShiftStartTime).toBe('10:00');
     expect(prefs.weekendDays).toEqual([0]);
     // Keys never sent in any request survive from the column default.
-    expect(prefs.enableCompOff).toBe(true);
+    expect(prefs.defaultWorkWeek).toBe('monday-friday');
   });
 
   it('a partial policies PATCH preserves sibling keys in the policies JSON', async () => {
@@ -748,7 +746,7 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       where: { id: organizationId },
     });
     const prefs = org.orgPayrollAttendancePrefs as Record<string, unknown>;
-    expect(prefs.defaultWorkingHoursPerDay).toBe(8);
+    expect(prefs.defaultWorkWeek).toBe('monday-friday');
     expect(prefs.defaultBreakMinutes).toBe(60);
     // The unpaid break cannot be 0: it is taken off the worked time (and off weekend / holiday overtime).
     await send({ defaultBreakMinutes: 0, defaultMinHoursForPresent: 8 }).expect(

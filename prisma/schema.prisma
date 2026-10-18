@@ -228,7 +228,7 @@ model Organization {
 
   // Step 8 — Payroll & Attendance Preferences (admin-facing, much broader
   // than attendancePayrollPrefs above — see that field's comment).
-  orgPayrollAttendancePrefs Json @default("{\"attendanceMethod\":[\"manual\"],\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"defaultWorkWeek\":\"monday-friday\",\"weekendDays\":[0,6],\"defaultWorkingHoursPerDay\":8,\"enableAttendanceImport\":true,\"enableAttendanceRegularization\":true,\"enableOvertime\":false,\"enableCompOff\":true,\"payrollCycle\":\"monthly\",\"salaryPaymentDay\":1,\"payrollFreezeDay\":25,\"enableLeaveEncashment\":true,\"enableTaxRegimeSelection\":true,\"defaultTaxRegime\":\"new\",\"defaultLeavePolicy\":\"\",\"enableHalfDayLeave\":true,\"enableSandwichLeave\":false,\"enableNegativeLeaveBalance\":false,\"carryForwardLeave\":true,\"maxCarryForwardLimit\":15}")
+  orgPayrollAttendancePrefs Json @default("{\"defaultShiftStartTime\":\"09:30\",\"defaultShiftEndTime\":\"18:30\",\"defaultLateInThresholdMinutes\":15,\"defaultEarlyOutThresholdMinutes\":15,\"defaultMinHoursForPresent\":8,\"defaultMinHoursForHalfDay\":4,\"defaultWorkWeek\":\"monday-friday\",\"weekendDays\":[0,6],\"defaultWorkingHoursPerDay\":8}")
 
   // Step 9 — Document Numbering: { [type]: { label, format, resetRule,
   // counter, lastPeriodKey } }. employeeId here is descriptive only — the
