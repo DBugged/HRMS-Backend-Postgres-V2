@@ -273,6 +273,7 @@ model Organization {
   attendances                      Attendance[]
   attendanceImportBatches          AttendanceImportBatch[]
   overtimeRecords                  OvertimeRecord[]
+  scheduledReports                 ScheduledReport[]
   performanceRatings               PerformanceRating[]
   companyPerformance               CompanyPerformance[]
   tdsChallans                      TdsChallan[]
@@ -4014,4 +4015,44 @@ model PushDevice {
   @@unique([token])
   @@index([organizationId, userId])
   @@map("push_devices")
+}
+
+// A report the Admin/HR asked to have emailed on a schedule (Reports > Scheduled). The period each run covers follows the
+// frequency (yesterday / the last 7 days / last month), so nothing about dates is stored here.
+model ScheduledReport {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name      String
+  // One of the keys in reports/scheduled-report-catalog.ts.
+  reportKey String
+  // xlsx | csv | pdf
+  format    String   @default("xlsx")
+  // DAILY | WEEKLY | MONTHLY
+  frequency String
+  // WEEKLY: 0 (Sunday) - 6. MONTHLY: 1 - 28. Unused for DAILY.
+  dayOfWeek  Int?
+  dayOfMonth Int?
+  // Hour of the day (0-23) in the organization's own timezone the email goes out.
+  sendHour   Int      @default(8)
+  recipients String[]
+  // Optional department filter for the reports that take one.
+  departmentId String?
+  enabled      Boolean @default(true)
+
+  // Whoever created it: the reports run with their access, and the schedule stops if they are no longer an active Admin/HR.
+  createdById String
+
+  // The organization's own calendar day of the last run - what keeps a run from going out twice in one day.
+  lastRunDate   String?
+  lastRunAt     DateTime?
+  lastRunStatus String?
+  lastRunError  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId])
+  @@map("scheduled_reports")
 }
