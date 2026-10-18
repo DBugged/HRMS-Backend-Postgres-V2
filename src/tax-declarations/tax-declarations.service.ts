@@ -235,7 +235,10 @@ export class TaxDeclarationsService {
     // Investment figures (80C, HRA, regime, other income, ...) are the employee's own declaration: HR/Admin see them
     // read-only. What they may still do on someone else's record is the HR work - set the status (verify / reopen)
     // and Section 89 relief (from the Form 10E they computed).
-    if (!isOwnDeclaration) {
+    // An Admin answers to no HR: they may edit the figures of any declaration, their own included, without waiting
+    // for HR to reopen it or enter anything on their behalf.
+    const isAdmin = actor.role === Role.ADMIN;
+    if (!isOwnDeclaration && !isAdmin) {
       const HR_ONLY_KEYS = new Set([
         'employeeId',
         'financialYear',
@@ -289,7 +292,12 @@ export class TaxDeclarationsService {
       // final; further self-edits (including re-submitting) are rejected
       // outright. HR/Admin can still reopen it by setting status back to
       // DRAFT via their own (non-own-declaration) edit path below.
-      if (existing && existing.status !== TaxDeclarationStatus.DRAFT) {
+      // The lock does not apply to an Admin editing their own declaration (see isAdmin above).
+      if (
+        !isAdmin &&
+        existing &&
+        existing.status !== TaxDeclarationStatus.DRAFT
+      ) {
         // Once submitted only the regime may still be changed (within the rules below); every figure stays locked.
         const otherEdits = Object.entries(
           dto as unknown as Record<string, unknown>,
@@ -342,7 +350,8 @@ export class TaxDeclarationsService {
           organizationId,
         )),
         requested: dto.regimeChosen,
-        byHr: false,
+        // An Admin changes their own regime freely, like HR does for others.
+        byHr: isAdmin,
       });
       if (!decision.ok) throw new BadRequestException(decision.reason);
       usesRegimeChange = decision.usesChange;

@@ -169,6 +169,30 @@ describe('Tax Declarations (e2e)', () => {
     expect((res.body as DeclarationBody).section80C).toBe(50000); // untouched
   });
 
+  it("an Admin can edit their own declaration even after submitting it, and can edit an employee's figures, without HR", async () => {
+    const post = (body: object) =>
+      request(app.getHttpServer())
+        .post('/tax-declarations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(body);
+    await post({
+      financialYear: '2026-27',
+      section80C: 10000,
+      submit: true,
+    }).expect(201);
+    const edited = await post({
+      financialYear: '2026-27',
+      section80C: 20000,
+    }).expect(201);
+    expect((edited.body as DeclarationBody).section80C).toBe(20000);
+    const others = await post({
+      employeeId,
+      financialYear: '2026-27',
+      section80C: 60000,
+    }).expect(201);
+    expect((others.body as DeclarationBody).section80C).toBe(60000);
+  });
+
   it("a MANAGER cannot verify or set Section 89 relief on someone else's declaration", async () => {
     const create = await request(app.getHttpServer())
       .post('/employees')
