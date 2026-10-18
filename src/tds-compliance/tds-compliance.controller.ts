@@ -41,7 +41,7 @@ import {
   PERSONAL_EMAIL_REQUIRED_MESSAGE,
   personalEmailOf,
 } from '../common/personal-email';
-import { loadReportLogo } from '../reports/report-branding';
+import { loadReportBranding } from '../reports/report-branding';
 import {
   ChallanListQueryDto,
   CreateChallanDto,
@@ -209,8 +209,11 @@ export class TdsComplianceController {
       c,
       c.organizationId,
     );
-    const logo = await loadReportLogo(this.scopedPrisma, c.organizationId);
-    const pdf = await renderForm130(data, logo);
+    const { logo, watermarkEnabled } = await loadReportBranding(
+      this.scopedPrisma,
+      c.organizationId,
+    );
+    const pdf = await renderForm130(data, logo, watermarkEnabled);
     res.set({
       'Content-Type': 'application/pdf',
       'Content-Disposition': `attachment; filename="${data.formName.replace(' ', '')}_${data.employee.code}_${q.financialYear}.pdf"`,
@@ -252,15 +255,22 @@ export class TdsComplianceController {
       throw new BadRequestException(PERSONAL_EMAIL_REQUIRED_MESSAGE);
     }
     const to = personal ?? employee.email;
-    const logo = await loadReportLogo(this.scopedPrisma, c.organizationId);
-    const pdf = await renderForm130(data, logo);
+    const { logo, watermarkEnabled } = await loadReportBranding(
+      this.scopedPrisma,
+      c.organizationId,
+    );
+    const pdf = await renderForm130(data, logo, watermarkEnabled);
     const filename = `${data.formName.replace(' ', '')}_${data.employee.code}_${q.financialYear}.pdf`;
     const subject = `Your ${data.formName} for ${q.financialYear}`;
     // Through the shared email shell (organization header, footer, styled body) - it used to go out as bare paragraphs.
     const rendered = await this.emailTemplatesService.renderOccasion(
       c.organizationId,
       'TAX_CERTIFICATE_SENT',
-      { employeeName: employee.name, formName: data.formName, financialYear: q.financialYear },
+      {
+        employeeName: employee.name,
+        formName: data.formName,
+        financialYear: q.financialYear,
+      },
       {
         subject,
         html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Your ${escapeHtml(data.formName)} (tax certificate) for ${escapeHtml(q.financialYear)} is attached. Please keep it for your income-tax filing.</p>`,

@@ -5,7 +5,10 @@ jest.mock('./form130-pdf', () => ({
   renderForm130: jest.fn(async () => Buffer.from('pdf')),
 }));
 jest.mock('../reports/report-branding', () => ({
-  loadReportLogo: jest.fn(async () => null),
+  loadReportBranding: jest.fn(async () => ({
+    logo: null,
+    watermarkEnabled: false,
+  })),
   sendReportBranded: jest.fn(),
 }));
 

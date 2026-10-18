@@ -2,6 +2,7 @@
 // Important: This is the employer-prepared copy built from payroll records. The certificate that is legally valid
 //   is the one generated on TRACES from the filed quarterly statements — the footer says so on every page.
 import PDFDocument from 'pdfkit';
+import { attachWatermark } from '../common/pdf-watermark';
 import type { TdsComplianceService } from './tds-compliance.service';
 import { detectRasterExtension } from '../reports/report-export';
 
@@ -36,6 +37,7 @@ const dmy = (iso: string) => {
 export function renderForm130(
   data: Form130Data,
   logoBuffer?: Buffer | null,
+  watermarkEnabled = false,
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({
@@ -47,6 +49,8 @@ export function renderForm130(
     doc.on('data', (c: Buffer) => chunks.push(c));
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
+    // Organization Settings > Branding > watermark: faint logo behind every page, like payslips, letters and reports.
+    if (watermarkEnabled) attachWatermark(doc, logoBuffer);
 
     const ty = `Tax Year ${data.financialYear}`;
     let y = MARGIN;

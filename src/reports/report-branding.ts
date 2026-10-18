@@ -22,10 +22,13 @@ export async function sendReportBranded(
 ): Promise<void> {
   const org = await scopedPrisma.organization.findFirst({
     where: { id: organizationId },
-    select: { reportLogoUrl: true, watermarkLogo: true },
+    select: { reportLogoUrl: true, companyLogoUrl: true, watermarkLogo: true },
   });
-  const logoBuffer = org?.reportLogoUrl
-    ? await readStoredFile(org.reportLogoUrl).catch(() => null)
+  // The Report Logo when one was uploaded, otherwise the company logo - an org that only ever set the company logo
+  // (the common case) still gets a logo and, if enabled, the watermark on its reports, as payslips and letters do.
+  const logoKey = org?.reportLogoUrl || org?.companyLogoUrl;
+  const logoBuffer = logoKey
+    ? await readStoredFile(logoKey).catch(() => null)
     : null;
   return sendReport(res, {
     ...input,
@@ -34,16 +37,26 @@ export async function sendReportBranded(
   });
 }
 
-// The org's Report Logo bytes for single-document PDFs (e.g. Form 130) that are not routed through sendReport().
+// The org's Report Logo (company logo as the fallback) and whether the watermark is on, for single-document PDFs
+// (e.g. Form 130) that are not routed through sendReport().
+export async function loadReportBranding(
+  scopedPrisma: Pick<ExtendedPrismaClient, 'organization'>,
+  organizationId: string,
+): Promise<{ logo: Buffer | null; watermarkEnabled: boolean }> {
+  const org = await scopedPrisma.organization.findFirst({
+    where: { id: organizationId },
+    select: { reportLogoUrl: true, companyLogoUrl: true, watermarkLogo: true },
+  });
+  const key = org?.reportLogoUrl || org?.companyLogoUrl;
+  return {
+    logo: key ? await readStoredFile(key).catch(() => null) : null,
+    watermarkEnabled: org?.watermarkLogo ?? false,
+  };
+}
+
 export async function loadReportLogo(
   scopedPrisma: Pick<ExtendedPrismaClient, 'organization'>,
   organizationId: string,
 ): Promise<Buffer | null> {
-  const org = await scopedPrisma.organization.findFirst({
-    where: { id: organizationId },
-    select: { reportLogoUrl: true },
-  });
-  return org?.reportLogoUrl
-    ? await readStoredFile(org.reportLogoUrl).catch(() => null)
-    : null;
+  return (await loadReportBranding(scopedPrisma, organizationId)).logo;
 }
