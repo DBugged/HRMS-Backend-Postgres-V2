@@ -377,6 +377,30 @@ export class EmployeeProfileService {
         .catch(() => undefined);
     }
 
+    // Replacing the cancelled cheque: the superseded file is removed from storage (it used to be left behind forever),
+    // and a replacement made on someone else's record leaves a trace (who, when - never the file itself).
+    const chequeBefore = String(before.cancelledChequeUrl ?? '');
+    const chequeAfter = String(merged.cancelledChequeUrl ?? '');
+    if (chequeBefore !== chequeAfter) {
+      if (
+        chequeBefore &&
+        !/^https?:\/\//i.test(chequeBefore) &&
+        isKeyAllowedForOrg(organizationId, chequeBefore)
+      ) {
+        deleteStoredFile(chequeBefore);
+      }
+      if (actor.id !== id) {
+        await this.auditLogService.log({
+          actorId: actor.id,
+          action: 'CANCELLED_CHEQUE_REPLACED',
+          module: 'EMPLOYEE',
+          organizationId,
+          targetId: id,
+          details: { hadCheque: chequeBefore !== '', byRole: actor.role },
+        });
+      }
+    }
+
     // bankAccountNo/bankIFSC drive where Payroll actually sends this
     // employee's salary (see reports/payroll-reports.service.ts's bank
     // transfer file) — unlike every other write path in this codebase

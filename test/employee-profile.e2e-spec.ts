@@ -339,6 +339,32 @@ describe('Employee Rich Profile (e2e)', () => {
     });
   });
 
+  describe('cancelled cheque replacement', () => {
+    it("an Admin can replace an employee's cancelled cheque at any time, and it is logged", async () => {
+      const send = (key: string) =>
+        request(app.getHttpServer())
+          .patch(`/employees/${empId}/personal-data`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ personalData: { cancelledChequeUrl: key } });
+      const before = await prisma.auditLog.count({
+        where: { action: 'CANCELLED_CHEQUE_REPLACED', targetId: empId },
+      });
+      await send('cheque-e2e-one.pdf').expect(200);
+      await send('cheque-e2e-two.pdf').expect(200);
+      const after = await prisma.auditLog.count({
+        where: { action: 'CANCELLED_CHEQUE_REPLACED', targetId: empId },
+      });
+      expect(after).toBe(before + 2);
+      // Re-sending the same key is a no-op: not logged again.
+      await send('cheque-e2e-two.pdf').expect(200);
+      expect(
+        await prisma.auditLog.count({
+          where: { action: 'CANCELLED_CHEQUE_REPLACED', targetId: empId },
+        }),
+      ).toBe(after);
+    });
+  });
+
   describe('full-profile / role-history / employment-status-history (HR/Admin only)', () => {
     it('HR can view an employee full profile including documents/assets arrays', async () => {
       const res = await request(app.getHttpServer())
