@@ -357,14 +357,6 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       oneOf('roundingMode', ['DOWN', 'NEAREST', 'UP']);
       oneOf('capMode', ['BLOCK', 'WARN']);
       oneOf('creationMode', ['BOTH', 'SELF', 'AUTO']);
-      for (const k of ['eligibleEmployeeTypes', 'eligibleDepartmentIds']) {
-        if (
-          o[k] !== undefined &&
-          !(Array.isArray(o[k]) && o[k].every((x) => typeof x === 'string'))
-        ) {
-          bad(`${op(k)} must be a list of text values.`);
-        }
-      }
     }
   }
   if (

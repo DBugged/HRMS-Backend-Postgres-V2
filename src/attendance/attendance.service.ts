@@ -106,7 +106,6 @@ import { getOvertimeRates } from '../overtime/overtime.service';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
 import {
   getOvertimePolicy,
-  isEligibleForOvertime,
   roundOvertimeHours,
 } from '../overtime/overtime-policy';
 import {
@@ -1003,15 +1002,9 @@ export class AttendanceService {
     // Overtime Pay is off: overtime could never be paid, so don't suggest any (existing suggestions are left as they
     // are for HR to review).
     if (!(await isOvertimePayEnabled(db, organizationId))) return;
-    // The Admin's overtime policy: no suggestions when overtime is entered by hand only, or for an employee type /
-    // department that is not eligible.
+    // The Admin's overtime policy: no suggestions when overtime is entered by hand only.
     const policy = await getOvertimePolicy(db, organizationId);
     if (policy.creationMode === 'SELF') return;
-    const emp = await db.user.findFirst({
-      where: { id: employeeId, organizationId },
-      select: { employeeType: true, departmentId: true },
-    });
-    if (!isEligibleForOvertime(policy, emp ?? {})) return;
     // No real shift was worked — nothing to overshoot.
     if (
       status === AttendanceStatus.ABSENT ||

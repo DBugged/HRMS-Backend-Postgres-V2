@@ -1,7 +1,7 @@
 // Purpose: the Admin-set overtime policy (Org Settings > General Settings > Overtime) and the pure rules built on it.
 // Responsibilities: reads the policy from orgPayrollAttendancePrefs.overtimePolicy, rounds logged hours, and checks a
-//   request against eligibility, the claim window and the daily / monthly caps.
-// Important: every field is optional and a missing field means "no restriction" (caps, window, eligibility) or today's
+//   request against the claim window and the daily / monthly caps.
+// Important: every field is optional and a missing field means "no restriction" (caps, window) or today's
 //   behaviour (minimum 30 minutes, no rounding, employees may log and punches may suggest), so an org that never opens
 //   the card behaves exactly as before.
 import type { Prisma } from '@prisma/client';
@@ -22,9 +22,6 @@ export interface OvertimePolicy {
   // Days after the date within which overtime may still be requested; null = no limit.
   claimWithinDays: number | null;
   creationMode: OvertimeCreationMode;
-  // Empty = everyone.
-  eligibleEmployeeTypes: string[];
-  eligibleDepartmentIds: string[];
 }
 
 export const DEFAULT_OVERTIME_POLICY: OvertimePolicy = {
@@ -36,8 +33,6 @@ export const DEFAULT_OVERTIME_POLICY: OvertimePolicy = {
   capMode: 'BLOCK',
   claimWithinDays: null,
   creationMode: 'BOTH',
-  eligibleEmployeeTypes: [],
-  eligibleDepartmentIds: [],
 };
 
 const num = (v: unknown): number | null =>
@@ -48,8 +43,6 @@ export function resolveOvertimePolicy(prefs: unknown): OvertimePolicy {
     .overtimePolicy;
   const p = raw && typeof raw === 'object' ? raw : {};
   const d = DEFAULT_OVERTIME_POLICY;
-  const strings = (v: unknown) =>
-    Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
   return {
     minMinutes: num(p.minMinutes) ?? d.minMinutes,
     roundingMinutes: ([0, 15, 30, 60].includes(p.roundingMinutes as number)
@@ -65,8 +58,6 @@ export function resolveOvertimePolicy(prefs: unknown): OvertimePolicy {
     creationMode: (['BOTH', 'SELF', 'AUTO'].includes(p.creationMode as string)
       ? p.creationMode
       : d.creationMode) as OvertimeCreationMode,
-    eligibleEmployeeTypes: strings(p.eligibleEmployeeTypes),
-    eligibleDepartmentIds: strings(p.eligibleDepartmentIds),
   };
 }
 
@@ -97,22 +88,6 @@ export function roundOvertimeHours(
         : Math.floor(units + 1e-9);
   return Math.round(rounded * step * 100) / 100;
 }
-
-export function isEligibleForOvertime(
-  policy: OvertimePolicy,
-  employee: { employeeType?: string | null; departmentId?: string | null },
-): boolean {
-  const typeOk =
-    policy.eligibleEmployeeTypes.length === 0 ||
-    policy.eligibleEmployeeTypes.includes(employee.employeeType ?? '');
-  const deptOk =
-    policy.eligibleDepartmentIds.length === 0 ||
-    policy.eligibleDepartmentIds.includes(employee.departmentId ?? '');
-  return typeOk && deptOk;
-}
-
-export const NOT_ELIGIBLE_MESSAGE =
-  'Overtime is not enabled for your employee type or department. Please speak to HR.';
 
 // A request's problem against the Admin's caps, as { block } (rejected) or { warn } (allowed, tell the person).
 // `usedToday` / `usedThisMonth` are hours already logged (pending or approved) excluding this request.

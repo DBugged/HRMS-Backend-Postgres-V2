@@ -212,7 +212,7 @@ describe('Overtime (e2e)', () => {
       .get('/overtime/policy')
       .set('Authorization', `Bearer ${employeeToken}`)
       .expect(200);
-    expect(policy.body).toMatchObject({ eligible: true, maxHoursPerMonth: 1 });
+    expect(policy.body).toMatchObject({ maxHoursPerMonth: 1 });
     const blocked = await request(app.getHttpServer())
       .post('/overtime')
       .set('Authorization', `Bearer ${employeeToken}`)

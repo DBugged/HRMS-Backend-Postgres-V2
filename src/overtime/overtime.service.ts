@@ -37,10 +37,8 @@ import {
   selectableWorkCompensation,
 } from './work-compensation';
 import {
-  NOT_ELIGIBLE_MESSAGE,
   daysSince,
   getOvertimePolicy,
-  isEligibleForOvertime,
   overtimeCapProblem,
   roundOvertimeHours,
 } from './overtime-policy';
@@ -145,13 +143,6 @@ export class OvertimeService {
       throw new BadRequestException(
         'Overtime is recorded automatically from your punches, so it cannot be logged by hand.',
       );
-    }
-    const self = await this.scopedPrisma.user.findFirst({
-      where: { id: actor.id, organizationId },
-      select: { employeeType: true, departmentId: true },
-    });
-    if (!isEligibleForOvertime(policy, self ?? {})) {
-      throw new ForbiddenException(NOT_ELIGIBLE_MESSAGE);
     }
     if (policy.claimWithinDays !== null) {
       const { timeZone } = await resolveOrgDateTimeFormat(
@@ -310,10 +301,6 @@ export class OvertimeService {
   // for someone who is not eligible.
   async myPolicy(actor: Actor, organizationId: string) {
     const policy = await getOvertimePolicy(this.scopedPrisma, organizationId);
-    const me = await this.scopedPrisma.user.findFirst({
-      where: { id: actor.id, organizationId },
-      select: { employeeType: true, departmentId: true },
-    });
     const { timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
       organizationId,
@@ -327,7 +314,6 @@ export class OvertimeService {
       organizationId,
     );
     return {
-      eligible: isEligibleForOvertime(policy, me ?? {}),
       creationMode: policy.creationMode,
       minMinutes: policy.minMinutes,
       roundingMinutes: policy.roundingMinutes,
