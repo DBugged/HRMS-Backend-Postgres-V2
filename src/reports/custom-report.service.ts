@@ -38,9 +38,15 @@ const MANAGER_BLOCKED_SOURCES = new Set(['payroll']);
 // and fail as a 500, and for Employees any value other than 'active' silently meant inactive).
 const STATUS_VALUES: Record<string, readonly string[]> = {
   employees: ['active', 'inactive'],
-  attendance: Object.values(AttendanceStatus),
+  attendance: [
+    'LATE',
+    'EARLY_OUT',
+    'LATE_OR_EARLY',
+    ...Object.values(AttendanceStatus),
+  ],
   leaves: Object.values(LeaveStatus),
   payroll: Object.values(PayrollRunStatus),
+  probation: ['overdue', 'due_30', 'extended'],
 };
 
 @Injectable()
@@ -53,6 +59,7 @@ export class CustomReportService {
     return Object.entries(CUSTOM_REPORT_SOURCES).map(([key, s]) => ({
       key,
       label: s.label,
+      statuses: s.statuses ?? [],
       columns: Object.entries(s.columns).map(([ckey, c]) => ({
         key: ckey,
         label: c.header,

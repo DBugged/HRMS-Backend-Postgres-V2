@@ -119,7 +119,7 @@ describe('Custom Report Builder (e2e)', () => {
       .expect(403);
   });
 
-  it('ADMIN lists the 4 allow-listed sources with their columns', async () => {
+  it('ADMIN lists the 5 allow-listed sources with their columns', async () => {
     const res = await request(app.getHttpServer())
       .get('/reports/custom/sources')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -130,10 +130,107 @@ describe('Custom Report Builder (e2e)', () => {
       'employees',
       'leaves',
       'payroll',
+      'probation',
     ]);
     const employeesSource = sources.find((s) => s.key === 'employees');
     expect(employeesSource?.columns.some((c) => c.key === 'employeeId')).toBe(
       true,
+    );
+  });
+
+  it('attendance can be limited to late arrivals / early exits, and probation lists who is due for confirmation', async () => {
+    const emp = await prisma.user.findFirstOrThrow({
+      where: { email: 'cr-e2e-emp@example.test' },
+    });
+    const base = {
+      organizationId: emp.organizationId,
+      employeeId: emp.id,
+      status: 'PRESENT' as const,
+      source: 'FACE_API' as const,
+    };
+    await prisma.attendance.create({
+      data: { ...base, date: '2026-04-01', isLate: true },
+    });
+    await prisma.attendance.create({
+      data: { ...base, date: '2026-04-02', isEarlyOut: true },
+    });
+    await prisma.attendance.create({ data: { ...base, date: '2026-04-03' } });
+    const run = async (status: string) =>
+      (
+        await request(app.getHttpServer())
+          .get('/reports/custom')
+          .query({
+            source: 'attendance',
+            status,
+            from: '2026-04-01',
+            to: '2026-04-03',
+            format: 'json',
+          })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as CustomReportBody;
+    expect((await run('LATE')).rows.map((r) => r.date)).toHaveLength(1);
+    expect((await run('EARLY_OUT')).rows).toHaveLength(1);
+    expect((await run('LATE_OR_EARLY')).rows).toHaveLength(2);
+
+    const sources = (
+      await request(app.getHttpServer())
+        .get('/reports/custom/sources')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200)
+    ).body as { key: string; statuses: { value: string }[] }[];
+    expect(
+      sources.find((x) => x.key === 'attendance')?.statuses.map((x) => x.value),
+    ).toEqual(expect.arrayContaining(['LATE', 'EARLY_OUT', 'LATE_OR_EARLY']));
+
+    // Probation: one overdue, one due soon, one far off.
+    const ymd = (days: number) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    await prisma.user.update({
+      where: { id: emp.id },
+      data: { employmentStatus: 'PROBATION', probationEndDate: ymd(-3) },
+    });
+    const probation = async (status?: string) =>
+      (
+        await request(app.getHttpServer())
+          .get('/reports/custom')
+          .query({
+            source: 'probation',
+            ...(status && { status }),
+            format: 'json',
+          })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as CustomReportBody;
+    expect(
+      (await probation('overdue')).rows.map((r) => r.employeeId),
+    ).toContain(emp.employeeId);
+    expect(
+      (await probation('due_30')).rows.map((r) => r.employeeId),
+    ).not.toContain(emp.employeeId);
+    await prisma.user.update({
+      where: { id: emp.id },
+      data: { probationEndDate: ymd(10) },
+    });
+    expect((await probation('due_30')).rows.map((r) => r.employeeId)).toContain(
+      emp.employeeId,
+    );
+    expect(
+      (await probation('overdue')).rows.map((r) => r.employeeId),
+    ).not.toContain(emp.employeeId);
+    const row = (await probation()).rows.find(
+      (r) => r.employeeId === emp.employeeId,
+    );
+    expect(row?.due).toMatch(/Due in (9|10|11) day/);
+    await prisma.user.update({
+      where: { id: emp.id },
+      data: { employmentStatus: 'CONFIRMED', probationEndDate: null },
+    });
+    expect((await probation()).rows.map((r) => r.employeeId)).not.toContain(
+      emp.employeeId,
     );
   });
 

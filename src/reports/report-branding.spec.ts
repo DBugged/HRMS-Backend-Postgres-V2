@@ -1,7 +1,7 @@
 const readStoredFile = jest.fn(async (key: string) =>
   Buffer.from(`file:${key}`),
 );
-const sendReport = jest.fn(async () => undefined);
+const sendReport = jest.fn(async (..._args: unknown[]) => undefined);
 jest.mock('../files/file-storage.config', () => ({ readStoredFile }));
 jest.mock('./report-export', () => ({ sendReport }));
 
