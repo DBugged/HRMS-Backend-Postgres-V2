@@ -12,6 +12,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { AttendanceStatus } from '@prisma/client';
 import { ReportsService } from '../src/reports/reports.service';
+import { OpsReportsService } from '../src/reports/ops-reports.service';
 
 interface AuthBody {
   accessToken: string;
@@ -464,6 +465,99 @@ describe('Reports (e2e)', () => {
     const rows = report.rows.filter((r) => r.name !== 'Unassigned Person');
     const flags = rows.map((r) => `${r.late}/${r.earlyOut}`).sort();
     expect(flags).toEqual(['-/-', 'No/No', 'Yes/Yes']);
+  });
+
+  describe('operational reports (overtime, regularization, loans, reimbursements, tax status, payroll variance)', () => {
+    const all = [
+      'overtime',
+      'regularization',
+      'loans',
+      'reimbursements',
+      'tax-declaration-status',
+      'payroll-variance',
+    ];
+    const adminOnly = [
+      'loans',
+      'reimbursements',
+      'tax-declaration-status',
+      'payroll-variance',
+    ];
+
+    it.each(all)(
+      '%s exports for Admin and HR, and never for a plain employee',
+      async (name) => {
+        for (const token of [adminToken, hrToken]) {
+          const res = await request(app.getHttpServer())
+            .get(`/reports/${name}`)
+            .query({ format: 'csv' })
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200);
+          expect(res.headers['content-type']).toMatch(/csv/);
+        }
+        await request(app.getHttpServer())
+          .get(`/reports/${name}`)
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .expect(403);
+      },
+    );
+
+    it.each(all)(
+      '%s: a Manager is allowed only where the report is department-scoped',
+      async (name) => {
+        await request(app.getHttpServer())
+          .get(`/reports/${name}`)
+          .query({ format: 'csv' })
+          .set('Authorization', `Bearer ${managerToken}`)
+          .expect(adminOnly.includes(name) ? 403 : 200);
+      },
+    );
+
+    it('overtime and tax-declaration rows carry the data (including employees who have not started a declaration)', async () => {
+      await prisma.overtimeRecord.create({
+        data: {
+          organizationId,
+          employeeId,
+          date: todayStr(),
+          hours: 2,
+          type: 'REGULAR',
+          rateMultiplier: 1.5,
+          status: 'APPROVED',
+        },
+      });
+      const admin = await prisma.user.findFirstOrThrow({
+        where: { email: 'rpt-e2e-admin@example.test' },
+        omit: { password: true },
+      });
+      const ops = app.get(OpsReportsService);
+      const ot = await ops.overtimeReport(
+        { from: todayStr(), to: todayStr() } as never,
+        admin,
+        organizationId,
+      );
+      expect(ot.rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Plain Employee',
+            hours: 2,
+            weightedHours: 3,
+            status: 'Approved',
+          }),
+        ]),
+      );
+      const tax = await ops.taxDeclarationStatusReport(
+        {} as never,
+        admin,
+        organizationId,
+      );
+      expect(tax.rows).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            name: 'Plain Employee',
+            status: 'Not started',
+          }),
+        ]),
+      );
+    });
   });
 
   it('rejects an invalid format value', async () => {
