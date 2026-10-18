@@ -72,6 +72,7 @@ export type LeaveTrackerCellCode =
   | 'COMP_OFF'
   | 'WEEKLY_OFF'
   | 'HOLIDAY'
+  | 'IN_PROGRESS'
   | 'INCOMPLETE';
 
 // Same short codes as the frontend grid's own CELL_SHORT map
@@ -86,6 +87,7 @@ const CELL_SHORT: Record<LeaveTrackerCellCode, string> = {
   COMP_OFF: 'CO',
   WEEKLY_OFF: 'WO',
   HOLIDAY: 'H',
+  IN_PROGRESS: 'CI',
   INCOMPLETE: 'I',
 };
 
@@ -234,6 +236,14 @@ export class LeaveTrackerService {
           matching && isCompOffType(matching.leaveType)
             ? 'COMP_OFF'
             : row.status;
+      } else if (
+        row.status === AttendanceStatus.PRESENT &&
+        !!row.inTime &&
+        !row.outTime
+      ) {
+        // A punch-in with no punch-out yet (stored as PRESENT): shown as Checked in until the punch-out, as in the
+        // attendance calendar and the mobile app.
+        code = 'IN_PROGRESS';
       } else if (row.workArrangement === WorkArrangement.WFH) {
         code = 'WFH';
       } else {
