@@ -214,7 +214,7 @@ export class PayrollController {
     });
     res.set({
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename=${filename}`,
+      'Content-Disposition': `attachment; filename="${filename}"`,
     });
     res.send(buffer);
   }
@@ -260,7 +260,7 @@ export class PayrollController {
     });
     res.set({
       'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename=${filename}`,
+      'Content-Disposition': `attachment; filename="${filename}"`,
     });
     res.send(buffer);
   }
