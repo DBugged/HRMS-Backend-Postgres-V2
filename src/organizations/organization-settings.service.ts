@@ -164,6 +164,8 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'regularizationAutoApproveIfNoAction',
     'regularizationAutoApproveHours',
     'regularizationWindowDays',
+    'regularizationMonthlyLimit',
+    'regularizationResubmitLimit',
   ],
 };
 
@@ -304,6 +306,8 @@ export class OrganizationSettingsService {
         org.regularizationAutoApproveIfNoAction,
       regularizationAutoApproveHours: org.regularizationAutoApproveHours,
       regularizationWindowDays: org.regularizationWindowDays,
+      regularizationMonthlyLimit: org.regularizationMonthlyLimit,
+      regularizationResubmitLimit: org.regularizationResubmitLimit,
     };
   }
 
@@ -318,10 +322,21 @@ export class OrganizationSettingsService {
       'regularizationAutoApproveIfNoAction',
       'regularizationAutoApproveHours',
       'regularizationWindowDays',
+      'regularizationMonthlyLimit',
+      'regularizationResubmitLimit',
     ];
     const data: Record<string, unknown> = {};
     for (const field of allowedFields) {
       if (field in body) data[field] = body[field];
+    }
+    // A blank limit means "no limit": stored as NULL, never as an empty string.
+    for (const field of [
+      'regularizationMonthlyLimit',
+      'regularizationResubmitLimit',
+    ]) {
+      if (data[field] === '' || data[field] === undefined) {
+        if (field in data) data[field] = null;
+      }
     }
     validateSectionData(data);
 

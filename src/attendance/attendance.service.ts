@@ -3102,6 +3102,32 @@ export class AttendanceService {
       );
     }
 
+    // The Admin-set caps (blank = no limit). An Admin's own request is exempt: it is approved on the spot and there is
+    // no one above them to be asked twice.
+    if (actor.role !== Role.ADMIN) {
+      const usage = await this.getRegularizationUsage(
+        actor.id,
+        dto.date,
+        organizationId,
+      );
+      if (
+        usage.resubmitLimit !== null &&
+        usage.rejectedForDate > usage.resubmitLimit
+      ) {
+        throw new BadRequestException(
+          `This date was rejected ${usage.rejectedForDate} time${usage.rejectedForDate === 1 ? '' : 's'} and can be re-sent at most ${usage.resubmitLimit} time${usage.resubmitLimit === 1 ? '' : 's'}. Please speak to HR.`,
+        );
+      }
+      if (
+        usage.monthlyLimit !== null &&
+        usage.usedThisMonth >= usage.monthlyLimit
+      ) {
+        throw new BadRequestException(
+          `You have used all ${usage.monthlyLimit} regularization request${usage.monthlyLimit === 1 ? '' : 's'} allowed for ${usage.month}. Please speak to HR.`,
+        );
+      }
+    }
+
     // Admin is above HR/Manager in the review chain — reviewRegularization
     // is @Roles(HR, MANAGER) only, so an Admin's own request would otherwise
     // have no one left who could ever approve it and would sit stuck at
@@ -3254,8 +3280,79 @@ export class AttendanceService {
 
   // What the request form needs to know before the employee fills it in.
   async getRegularizationSettings(organizationId: string) {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        regularizationMonthlyLimit: true,
+        regularizationResubmitLimit: true,
+      },
+    });
     return {
       windowDays: await this.getRegularizationWindowDays(organizationId),
+      monthlyLimit: org?.regularizationMonthlyLimit ?? null,
+      resubmitLimit: org?.regularizationResubmitLimit ?? null,
+    };
+  }
+
+  // An employee's standing against the Admin-set caps for the month of `date` (and for that date itself): what the
+  // limits are (null = none), how many requests they have made for that month - every one submitted counts except a
+  // withdrawn one - and how many times this date was rejected. The request form shows it; requestRegularization enforces it.
+  async getRegularizationUsage(
+    employeeId: string,
+    date: string,
+    organizationId: string,
+  ) {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        regularizationMonthlyLimit: true,
+        regularizationResubmitLimit: true,
+      },
+    });
+    const monthKey = date.slice(0, 7);
+    const [usedThisMonth, rejectedForDate] = await Promise.all([
+      this.scopedPrisma.attendanceRegularizationRequest.count({
+        where: {
+          organizationId,
+          employeeId,
+          date: { startsWith: monthKey },
+          status: { not: RegularizationRequestStatus.CANCELLED },
+        },
+      }),
+      this.scopedPrisma.attendanceRegularizationRequest.count({
+        where: {
+          organizationId,
+          employeeId,
+          date,
+          status: RegularizationRequestStatus.REJECTED,
+        },
+      }),
+    ]);
+    const monthlyLimit = org?.regularizationMonthlyLimit ?? null;
+    const resubmitLimit = org?.regularizationResubmitLimit ?? null;
+    const monthDate = new Date(`${monthKey}-01T00:00:00Z`);
+    return {
+      date,
+      month: monthDate.toLocaleDateString('en-GB', {
+        month: 'long',
+        year: 'numeric',
+        timeZone: 'UTC',
+      }),
+      monthlyLimit,
+      usedThisMonth,
+      remainingThisMonth:
+        monthlyLimit === null
+          ? null
+          : Math.max(0, monthlyLimit - usedThisMonth),
+      resubmitLimit,
+      rejectedForDate,
+      // How many more times this date can be sent again after a rejection (null = unlimited).
+      remainingResubmits:
+        resubmitLimit === null
+          ? null
+          : rejectedForDate === 0
+            ? resubmitLimit
+            : Math.max(0, resubmitLimit - rejectedForDate + 1),
     };
   }
 

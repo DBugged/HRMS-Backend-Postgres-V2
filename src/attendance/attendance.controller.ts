@@ -13,6 +13,7 @@ import {
   Put,
   Query,
   UseGuards,
+  BadRequestException,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiHeader, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
@@ -213,6 +214,24 @@ export class AttendanceController {
   @ApiBearerAuth('access-token')
   regularizationSettings(@CurrentUser() caller: Caller) {
     return this.attendanceService.getRegularizationSettings(
+      caller.organizationId,
+    );
+  }
+
+  // No @Roles() - the caller's own standing against the Admin-set regularization caps for a date's month. Declared
+  // before the ':id' routes so "usage" is not read as an id.
+  @Get('regularization/usage')
+  @ApiBearerAuth('access-token')
+  regularizationUsage(
+    @Query('date') date: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date ?? '')) {
+      throw new BadRequestException('date must be YYYY-MM-DD.');
+    }
+    return this.attendanceService.getRegularizationUsage(
+      caller.id,
+      date,
       caller.organizationId,
     );
   }

@@ -2766,7 +2766,7 @@ describe('Attendance (e2e)', () => {
           .get('/attendance/regularization/settings')
           .set('Authorization', `Bearer ${reqToken}`)
           .expect(200);
-      expect((await read()).body).toEqual({ windowDays: 7 });
+      expect((await read()).body).toMatchObject({ windowDays: 7 });
 
       await request(app.getHttpServer())
         .patch('/organizations/settings/auto-approval')
@@ -2785,7 +2785,7 @@ describe('Attendance (e2e)', () => {
         .send({ regularizationWindowDays: 3 })
         .expect(200);
       try {
-        expect((await read()).body).toEqual({ windowDays: 3 });
+        expect((await read()).body).toMatchObject({ windowDays: 3 });
         const tooOld = await submit(reqToken, offsetDate(-4)).expect(400);
         expect(JSON.stringify(tooOld.body)).toContain('last 3 days');
         // Day 3 is inside, day 4 is not (the 7-day fixture days above are all outside now).
@@ -2806,7 +2806,7 @@ describe('Attendance (e2e)', () => {
           .send({ regularizationWindowDays: 7 })
           .expect(200);
       }
-      expect((await read()).body).toEqual({ windowDays: 7 });
+      expect((await read()).body).toMatchObject({ windowDays: 7 });
     });
   });
 
@@ -3534,6 +3534,167 @@ describe('Attendance (e2e)', () => {
         },
       });
       expect(notifs.length).toBe(0);
+    });
+  });
+
+  describe('Regularization caps set by the Admin (blank = no limit)', () => {
+    let capToken: string;
+    let capEmployeeId: string;
+
+    beforeAll(async () => {
+      const created = await request(app.getHttpServer())
+        .post('/employees')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          name: 'Reg Cap Employee',
+          email: 'att-e2e-reg-cap@example.test',
+          joiningDate: '2025-01-01',
+        });
+      const b = created.body as EmployeeCreateBody;
+      capEmployeeId = b.employee.id;
+      const login = await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({
+          email: 'att-e2e-reg-cap@example.test',
+          password: b.generatedPassword,
+        });
+      capToken = (login.body as AuthBody).accessToken;
+    });
+
+    afterAll(async () => {
+      await prisma.organization.update({
+        where: { id: organizationId },
+        data: {
+          regularizationMonthlyLimit: null,
+          regularizationResubmitLimit: null,
+        },
+      });
+    });
+
+    const setLimits = (monthly: number | null, resubmit: number | null) =>
+      prisma.organization.update({
+        where: { id: organizationId },
+        data: {
+          regularizationMonthlyLimit: monthly,
+          regularizationResubmitLimit: resubmit,
+        },
+      });
+    const send = (date: string) =>
+      request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${capToken}`)
+        .send({
+          date,
+          requestedInTime: istIso(date, '09:30'),
+          requestedOutTime: istIso(date, '18:30'),
+          reason: 'Biometric was down',
+        });
+    const rejectIt = async (attendanceId: string) =>
+      request(app.getHttpServer())
+        .patch(`/attendance/regularization/${attendanceId}`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'REJECTED', comments: 'Not convincing' })
+        .expect(200);
+    const usage = async (date: string) =>
+      (
+        await request(app.getHttpServer())
+          .get(`/attendance/regularization/usage?date=${date}`)
+          .set('Authorization', `Bearer ${capToken}`)
+          .expect(200)
+      ).body as {
+        monthlyLimit: number | null;
+        usedThisMonth: number;
+        remainingThisMonth: number | null;
+        resubmitLimit: number | null;
+        rejectedForDate: number;
+        remainingResubmits: number | null;
+      };
+
+    it('with no limits set, a rejected date can be sent again as often as the employee likes', async () => {
+      await setLimits(null, null);
+      const date = offsetDate(-3);
+      for (let i = 0; i < 3; i++) {
+        const res = await send(date).expect(201);
+        await rejectIt((res.body as { id: string }).id);
+      }
+      const u = await usage(date);
+      expect(u.monthlyLimit).toBeNull();
+      expect(u.resubmitLimit).toBeNull();
+      expect(u.rejectedForDate).toBe(3);
+    });
+
+    it('stops re-sending a rejected date once the resubmission limit is passed', async () => {
+      const date = offsetDate(-4);
+      await setLimits(null, 1);
+      // First send, rejected; one re-send allowed, rejected again; a further re-send is refused.
+      const first = await send(date).expect(201);
+      await rejectIt((first.body as { id: string }).id);
+      expect((await usage(date)).remainingResubmits).toBe(1);
+      const second = await send(date).expect(201);
+      await rejectIt((second.body as { id: string }).id);
+      const blocked = await send(date).expect(400);
+      expect((blocked.body as { message: string }).message).toMatch(
+        /rejected 2 times and can be re-sent at most 1 time/,
+      );
+    });
+
+    it('stops new requests once the month is used up, counting every request submitted', async () => {
+      const date = offsetDate(-5);
+      await setLimits(null, null);
+      const used = (await usage(date)).usedThisMonth;
+      await setLimits(used + 1, null);
+      await send(date).expect(201);
+      const u = await usage(date);
+      expect(u.remainingThisMonth).toBe(0);
+      const other = offsetDate(-6);
+      // Same month, so over the cap - unless the day is in the previous month (then it has its own count).
+      if (other.slice(0, 7) === date.slice(0, 7)) {
+        const blocked = await send(other).expect(400);
+        expect((blocked.body as { message: string }).message).toMatch(
+          /used all .* regularization request/,
+        );
+      }
+    });
+
+    it('an Admin is exempt from the caps (their request is approved at once)', async () => {
+      await setLimits(1, 1);
+      const date = offsetDate(-2);
+      const res = await request(app.getHttpServer())
+        .post('/attendance/regularization')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          date,
+          requestedInTime: istIso(date, '09:30'),
+          requestedOutTime: istIso(date, '18:30'),
+          reason: 'Admin correction',
+        });
+      // Whatever else the request runs into (the test Admin joined today), it is never stopped by a cap.
+      expect(JSON.stringify(res.body)).not.toMatch(/used all|re-sent at most/);
+    });
+
+    it('the Organization setting accepts a blank limit (= none) and rejects a nonsense one', async () => {
+      await request(app.getHttpServer())
+        .patch('/organizations/settings/auto-approval')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ regularizationMonthlyLimit: 5, regularizationResubmitLimit: 2 })
+        .expect(200);
+      const blank = await request(app.getHttpServer())
+        .patch('/organizations/settings/auto-approval')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          regularizationMonthlyLimit: '',
+          regularizationResubmitLimit: '',
+        })
+        .expect(200);
+      expect(blank.body).toMatchObject({
+        regularizationMonthlyLimit: null,
+        regularizationResubmitLimit: null,
+      });
+      await request(app.getHttpServer())
+        .patch('/organizations/settings/auto-approval')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ regularizationMonthlyLimit: 0 })
+        .expect(400);
     });
   });
 });

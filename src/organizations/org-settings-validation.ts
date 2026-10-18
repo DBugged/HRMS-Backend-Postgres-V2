@@ -73,6 +73,8 @@ export const FIELD_KINDS: Record<string, FieldKind> = {
   regularizationAutoApproveIfNoAction: 'boolean',
   regularizationAutoApproveHours: 'number',
   regularizationWindowDays: 'number',
+  regularizationMonthlyLimit: 'number',
+  regularizationResubmitLimit: 'number',
 };
 
 export function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -129,7 +131,11 @@ function checkNumber(
   const raw = obj[key];
   if (raw === undefined) return;
   if (raw === null || raw === '') {
-    if (rule.allowEmpty) return;
+    // A blank optional number is stored as NULL ("not set"), never as an empty string.
+    if (rule.allowEmpty) {
+      obj[key] = null;
+      return;
+    }
     bad(`${path} is required and must be a number.`);
   }
   const n =
@@ -526,6 +532,29 @@ export function validateSectionData(data: Record<string, unknown>) {
     max: 31,
     integer: true,
   });
+  // Blank = no limit. Requests per month per employee, and re-sends of a rejected date.
+  checkNumber(
+    data,
+    'regularizationMonthlyLimit',
+    'regularizationMonthlyLimit',
+    {
+      min: 1,
+      max: 31,
+      integer: true,
+      allowEmpty: true,
+    },
+  );
+  checkNumber(
+    data,
+    'regularizationResubmitLimit',
+    'regularizationResubmitLimit',
+    {
+      min: 1,
+      max: 20,
+      integer: true,
+      allowEmpty: true,
+    },
+  );
 
   for (const field of ['primaryColor', 'secondaryColor']) {
     const v = data[field];

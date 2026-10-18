@@ -105,6 +105,11 @@ model Organization {
   regularizationAutoApproveHours      Int     @default(24)
   // How many days back an employee may ask to regularize a day (1-31). Was a fixed 7.
   regularizationWindowDays            Int     @default(7)
+  // Caps an Admin/HR can set on regularization requests; null (blank) = no limit, the default. Per employee, per month of
+  // the date being regularized: every request submitted counts except a withdrawn one. And per date: how many times a
+  // rejected request may be sent again.
+  regularizationMonthlyLimit          Int?
+  regularizationResubmitLimit         Int?
   // The month the leave year starts (1 = January = the calendar year, the default). Changing it from January is a
   // one-off transition that EXTENDS the calendar year in progress; leaveYearAnchorYear is the first year that starts
   // in that month. See leave-balances/leave-year.ts.
