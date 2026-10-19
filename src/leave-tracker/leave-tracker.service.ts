@@ -157,6 +157,7 @@ export class LeaveTrackerService {
             name: true,
             employeeId: true,
             joiningDate: true,
+            departmentId: true,
           },
           orderBy: EMPLOYEE_ORDER_BY,
         }),
@@ -264,11 +265,21 @@ export class LeaveTrackerService {
       (cells[row.employeeId] ??= {})[day] = code;
     }
 
+    // The column header names a holiday only when it applies to everyone on the grid: company-wide, or - when the grid is
+    // narrowed to one department (or a Manager's own) - that department's. An optional holiday is the employee's own
+    // choice, so it never marks a day for the whole column. A department-only holiday is shown per employee below.
+    const columnHolidays = holidays.filter(
+      (h) =>
+        !h.isOptional &&
+        (h.departmentId === null ||
+          (!!effectiveDepartmentId &&
+            h.departmentId === effectiveDepartmentId)),
+    );
     const days = Array.from({ length: daysInMonth }, (_, i) => {
       const day = i + 1;
       const dateStr = `${query.year}-${pad(query.month)}-${pad(day)}`;
       const dow = new Date(`${dateStr}T00:00:00.000Z`).getUTCDay();
-      const holiday = holidays.find((h) => h.date === dateStr);
+      const holiday = columnHolidays.find((h) => h.date === dateStr);
       return {
         day,
         dow,
@@ -276,6 +287,26 @@ export class LeaveTrackerService {
         ...(holiday && { holidayName: holiday.name }),
       };
     });
+
+    // As per the holiday calendar: every employee gets a Holiday cell on a day the calendar marks as a holiday for them
+    // (company-wide, or their own department's; never an optional one), from their joining date, even when no
+    // attendance row exists yet - so the grid and its Excel/PDF export always follow the calendar, and a department-only
+    // holiday is not mistaken for a working day (or backfilled as Absent) below. A recorded row is never overridden here.
+    for (const employee of employees) {
+      const joined = joiningOf.get(employee.id) ?? '';
+      for (const day of days) {
+        if (day.dateStr < joined) continue;
+        if ((cells[employee.id] ?? {})[day.day]) continue;
+        const applies = holidays.some(
+          (h) =>
+            h.date === day.dateStr &&
+            !h.isOptional &&
+            (h.departmentId === null ||
+              h.departmentId === employee.departmentId),
+        );
+        if (applies) (cells[employee.id] ??= {})[day.day] = 'HOLIDAY';
+      }
+    }
 
     // A working day (not a weekend/holiday) strictly before today, on or
     // after the employee's own joining date, with no Attendance row at all

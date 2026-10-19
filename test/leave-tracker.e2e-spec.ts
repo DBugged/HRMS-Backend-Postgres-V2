@@ -610,6 +610,43 @@ describe('Leave Tracker (e2e)', () => {
     });
   });
 
+  describe('the grid follows the holiday calendar', () => {
+    it('marks company, department-only and (not) optional holidays per employee, with no attendance rows needed', async () => {
+      const emp = await prisma.user.findFirstOrThrow({ where: { id: empAId } });
+      const org = emp.organizationId;
+      const mk = (name: string, date: string, extra: object = {}) =>
+        prisma.holiday.create({
+          data: { organizationId: org, name, date, year: YEAR, ...extra },
+        });
+      await mk('Company Day', `${YEAR}-11-10`);
+      await mk('Eng Only Day', `${YEAR}-11-11`, { departmentId });
+      await mk('Optional Fest', `${YEAR}-11-12`, {
+        isOptional: true,
+        type: 'OPTIONAL',
+      });
+
+      const grid = (
+        await request(app.getHttpServer())
+          .get('/leave-tracker/grid')
+          .query({ month: 11, year: YEAR })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as GridResponse;
+      // Everyone on the company holiday; only Engineering on its own; nobody on the optional one.
+      expect(grid.cells[empAId]?.[10]).toBe('HOLIDAY');
+      expect(grid.cells[outsideEmployeeId]?.[10]).toBe('HOLIDAY');
+      expect(grid.cells[empAId]?.[11]).toBe('HOLIDAY');
+      expect(grid.cells[outsideEmployeeId]?.[11]).toBeUndefined();
+      expect(grid.cells[empAId]?.[12]).toBeUndefined();
+      // The column header names only what applies to everyone.
+      expect(grid.days.find((d) => d.day === 10)?.holidayName).toBe(
+        'Company Day',
+      );
+      expect(grid.days.find((d) => d.day === 11)?.holidayName).toBeUndefined();
+      expect(grid.days.find((d) => d.day === 12)?.holidayName).toBeUndefined();
+    });
+  });
+
   describe('GET /leave-tracker/balances', () => {
     it("matches GET /leaves/balance's numbers for the same employee", async () => {
       const trackerRes = await request(app.getHttpServer())
