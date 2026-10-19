@@ -4932,6 +4932,27 @@ export class AttendanceService {
     }
   }
 
+  // Nightly safety net for the reference-holiday repair: an attendance import (or any other write) that landed after a
+  // past-dated holiday was known leaves empty Absent rows on it, so every organization is swept once a night. Idempotent,
+  // quiet, and it never touches locked / paid payroll months (see applyReferenceHolidays).
+  @Cron('30 2 * * *')
+  async applyReferenceHolidaysNightly() {
+    const organizations = await this.scopedPrisma.organization.findMany({
+      where: { isActive: true },
+      select: { id: true },
+    });
+    for (const org of organizations) {
+      try {
+        await this.applyReferenceHolidays(org.id);
+      } catch (err) {
+        this.logger.error(
+          `applyReferenceHolidays failed for org ${org.id}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+    }
+  }
+
   // Tells employees about yesterday's absence at 08:00 in their organization's own timezone, instead of at 01:00 when the
   // mail would sit unread overnight. Runs hourly and acts only for orgs whose local hour is 8, so each org is handled
   // once a day. The day is recalculated first, so a night shift that ended after the 01:00 sweep, a late regularization
