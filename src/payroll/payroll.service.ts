@@ -9,6 +9,7 @@
 // afterLock() marks approved-unprocessed leave encashments PROCESSED so a future run can't double-count
 // them. afterPay()'s notification/email failures are swallowed deliberately — the payment transition has
 // already committed by that point and must not be rolled back by a PDF/email failure.
+import { holidayInEffect } from '../holidays/holiday-in-effect';
 import {
   EMPLOYEE_ORDER_BY,
   EMPLOYEE_RELATION_ORDER_BY,
@@ -631,7 +632,7 @@ export class PayrollService {
       this.scopedPrisma.holiday.findMany({
         where: {
           organizationId,
-          isActive: true,
+          AND: [holidayInEffect],
           isOptional: false,
           date: { startsWith: monthPrefix },
           OR: employee.departmentId
@@ -5442,7 +5443,7 @@ export class PayrollService {
       this.scopedPrisma.holiday.findMany({
         where: {
           organizationId,
-          isActive: true,
+          AND: [holidayInEffect],
           isOptional: false,
           date: { startsWith: monthPrefix },
         },

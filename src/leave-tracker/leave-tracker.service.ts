@@ -6,6 +6,7 @@
 // whole scoped list.
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
+import { holidayInEffect } from '../holidays/holiday-in-effect';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import {
   leaveYearBounds,
@@ -179,7 +180,7 @@ export class LeaveTrackerService {
         this.scopedPrisma.holiday.findMany({
           where: {
             organizationId,
-            isActive: true,
+            AND: [holidayInEffect],
             year: query.year,
             ...(effectiveDepartmentId
               ? {

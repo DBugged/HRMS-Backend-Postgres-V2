@@ -6,6 +6,7 @@
 // Important: departmentHeadDashboard() intentionally ports a quirk from the original release — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
+import { holidayInEffect } from '../holidays/holiday-in-effect';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { currentLeaveYear } from '../leave-balances/leave-year';
 import { Inject, Injectable } from '@nestjs/common';
@@ -1012,7 +1013,7 @@ export class DashboardService {
     const holidays = await this.scopedPrisma.holiday.findMany({
       where: {
         organizationId,
-        isActive: true,
+        AND: [holidayInEffect],
         date: { startsWith: monthPrefix },
         OR: employee?.departmentId
           ? [{ departmentId: null }, { departmentId: employee.departmentId }]

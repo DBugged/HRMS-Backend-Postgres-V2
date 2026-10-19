@@ -4,6 +4,7 @@
 // assertManagerDeptScope.
 // Important: rateMultiplier is fixed per type at creation and not recalculated later, so a later change to
 // RATE_MULTIPLIERS only affects new records, not historical ones.
+import { holidayInEffect } from '../holidays/holiday-in-effect';
 import {
   assertPayrollMonthsUnlocked,
   markPayrollInputsChanged,
@@ -355,7 +356,7 @@ export class OvertimeService {
     const holiday = await this.scopedPrisma.holiday.findFirst({
       where: {
         organizationId,
-        isActive: true,
+        AND: [holidayInEffect],
         date: dto.date,
         OR: employee?.departmentId
           ? [{ departmentId: null }, { departmentId: employee.departmentId }]

@@ -353,6 +353,18 @@ export class AttendanceController {
     return this.attendanceService.notifyAbsentees(dto, caller.organizationId);
   }
 
+  // Turns empty Absent rows on reference (past-dated) holidays into Holiday, in months whose payroll is still open.
+  @Post('apply-reference-holidays')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  applyReferenceHolidays(@CurrentUser() caller: Caller) {
+    return this.attendanceService.applyReferenceHolidays(
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
   // One-off repair of HR users' missing weekend/holiday/absent rows (see AttendanceService.backfillMissingAttendance).
   // Admin only: it writes attendance that payroll then pays against. Dry run unless dryRun is false.
   @Post('backfill-missing')

@@ -532,6 +532,84 @@ describe('Leave Tracker (e2e)', () => {
     });
   });
 
+  describe('reference (past-dated) holidays', () => {
+    it('count as holidays: the grid shows them, and Absent rows on them become Holiday - except where payroll is locked', async () => {
+      const emp = await prisma.user.findFirstOrThrow({ where: { id: empAId } });
+      const date = `${YEAR}-07-01`; // a Wednesday, and no fixture data in July
+      await prisma.holiday.create({
+        data: {
+          organizationId: emp.organizationId,
+          name: 'Reference Day',
+          date,
+          year: YEAR,
+          isActive: false,
+          isReference: true,
+        },
+      });
+      const row = (employeeId: string) => ({
+        organizationId: emp.organizationId,
+        employeeId,
+        date,
+        status: 'ABSENT' as const,
+        source: 'EXCEL_IMPORT' as const,
+      });
+      await prisma.attendance.create({ data: row(empAId) });
+      await prisma.attendance.create({ data: row(empBId) });
+      await prisma.payrollRun.create({
+        data: {
+          organizationId: emp.organizationId,
+          employeeId: empBId,
+          month: 7,
+          year: YEAR,
+          status: 'LOCKED',
+        },
+      });
+
+      const before = (
+        await request(app.getHttpServer())
+          .get('/leave-tracker/grid')
+          .query({ month: 7, year: YEAR })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as GridResponse;
+      // The holiday is on the grid's calendar even before any repair.
+      expect(before.days.find((d) => d.day === 1)?.holidayName).toBe(
+        'Reference Day',
+      );
+
+      const fixed = await request(app.getHttpServer())
+        .post('/attendance/apply-reference-holidays')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(201);
+      expect(fixed.body).toMatchObject({ updated: 1, skippedLocked: 1 });
+      const rows = await prisma.attendance.findMany({
+        where: { date, employeeId: { in: [empAId, empBId] } },
+      });
+      expect(rows.find((r) => r.employeeId === empAId)?.status).toBe('HOLIDAY');
+      expect(rows.find((r) => r.employeeId === empBId)?.status).toBe('ABSENT'); // locked month untouched
+
+      // A deactivated (non-reference) holiday still never counts.
+      await prisma.holiday.create({
+        data: {
+          organizationId: emp.organizationId,
+          name: 'Switched off',
+          date: `${YEAR}-07-02`,
+          year: YEAR,
+          isActive: false,
+        },
+      });
+      const after = (
+        await request(app.getHttpServer())
+          .get('/leave-tracker/grid')
+          .query({ month: 7, year: YEAR })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as GridResponse;
+      expect(after.days.find((d) => d.day === 2)?.holidayName).toBeUndefined();
+      expect(after.cells[empAId]?.[1]).toBe('HOLIDAY');
+    });
+  });
+
   describe('GET /leave-tracker/balances', () => {
     it("matches GET /leaves/balance's numbers for the same employee", async () => {
       const trackerRes = await request(app.getHttpServer())

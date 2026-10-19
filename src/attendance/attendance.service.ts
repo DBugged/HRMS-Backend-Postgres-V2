@@ -7,6 +7,7 @@
 // workArrangement/regularization fields owned by other write paths — see the inline comments throughout
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
+import { holidayInEffect } from '../holidays/holiday-in-effect';
 import * as crypto from 'crypto';
 import {
   EMPLOYEE_RELATION_ORDER_BY,
@@ -713,7 +714,7 @@ export class AttendanceService {
         : await db.holiday.findFirst({
             where: {
               organizationId,
-              isActive: true,
+              AND: [holidayInEffect],
               date: dateStr,
               OR: params.employeeDepartmentId
                 ? [
@@ -1928,7 +1929,7 @@ export class AttendanceService {
       this.scopedPrisma.holiday.findMany({
         where: {
           organizationId,
-          isActive: true,
+          AND: [holidayInEffect],
           isOptional: false,
           date: { gte: from, lte: to },
           OR: employee?.departmentId
@@ -2579,7 +2580,7 @@ export class AttendanceService {
         ? this.scopedPrisma.holiday.findMany({
             where: {
               organizationId,
-              isActive: true,
+              AND: [holidayInEffect],
               date: { in: holidayDates },
             },
           })
@@ -4305,7 +4306,7 @@ export class AttendanceService {
         ? await this.scopedPrisma.holiday.findMany({
             where: {
               organizationId,
-              isActive: true,
+              AND: [holidayInEffect],
               date: { in: importDates },
               OR: [
                 { departmentId: null },
@@ -4622,6 +4623,115 @@ export class AttendanceService {
   // Safety: it never touches a day that already has a row; skips dates before the person joined; only runs for past
   // days (up to yesterday); and is a dry run unless dryRun is explicitly false. It does NOT recalculate payroll —
   // recalculate the affected, still-open months afterwards. Inactive users are skipped (no exit date is stored).
+  // Reference holidays (a past-dated holiday calendar upload) are real holidays for attendance, so a day that is only
+  // an empty Absent row on one of them - typically from an attendance import done before the holiday was known - is
+  // turned into Holiday. Rows with any punch / time, rows on or before nothing special, rows before the person joined,
+  // and months whose payroll is locked or paid are left exactly as they are. Quiet: no notification or e-mail.
+  async applyReferenceHolidays(
+    organizationId: string,
+    actorId?: string,
+  ): Promise<{ updated: number; skippedLocked: number }> {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const holidays = await this.scopedPrisma.holiday.findMany({
+      where: {
+        organizationId,
+        isReference: true,
+        isOptional: false,
+        date: { lt: today },
+      },
+      select: { date: true },
+    });
+    const dates = [...new Set(holidays.map((h) => h.date))];
+    if (dates.length === 0) return { updated: 0, skippedLocked: 0 };
+
+    const rows = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        date: { in: dates },
+        status: AttendanceStatus.ABSENT,
+        inTime: null,
+        outTime: null,
+      },
+      take: 20000,
+    });
+    if (rows.length === 0) return { updated: 0, skippedLocked: 0 };
+
+    const org = await this.prisma.organization.findUnique({
+      where: { id: organizationId },
+    });
+    const employees = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        id: { in: [...new Set(rows.map((r) => r.employeeId))] },
+      },
+      include: { department: true },
+    });
+    const employeeById = new Map(employees.map((e) => [e.id, e]));
+
+    const lockedByMonth = new Map<string, Set<string>>();
+    for (const monthKey of new Set(rows.map((r) => r.date.slice(0, 7)))) {
+      const [y, m] = monthKey.split('-').map(Number);
+      lockedByMonth.set(
+        monthKey,
+        new Set(
+          await lockedEmployeeIdsForMonth(
+            this.scopedPrisma,
+            organizationId,
+            y,
+            m,
+          ),
+        ),
+      );
+    }
+
+    let updated = 0;
+    let skippedLocked = 0;
+    await mapWithConcurrency(rows, 8, async (row) => {
+      const employee = employeeById.get(row.employeeId);
+      if (!employee) return;
+      if (lockedByMonth.get(row.date.slice(0, 7))?.has(row.employeeId)) {
+        skippedLocked += 1;
+        return;
+      }
+      if (row.date < utcDateStrOf(employee.joiningDate)) return;
+      const shiftConfig = resolveShiftConfig(
+        employee.department,
+        org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+        org?.timezone ?? DEFAULT_ORG_TIMEZONE,
+      );
+      const outcome = await this.deriveDayOutcome(this.scopedPrisma, {
+        organizationId,
+        employeeId: row.employeeId,
+        employeeDepartmentId: employee.departmentId,
+        dateStr: row.date,
+        shiftConfig,
+        inTime: null,
+        outTime: null,
+      });
+      if (outcome.status === AttendanceStatus.ABSENT) return;
+      await this.scopedPrisma.attendance.updateMany({
+        where: { id: row.id, organizationId },
+        data: {
+          status: outcome.status,
+          workDurationMinutes: outcome.workDurationMinutes,
+          isLate: outcome.isLate,
+          isEarlyOut: outcome.isEarlyOut,
+        },
+      });
+      updated += 1;
+    });
+    if (updated > 0 && actorId) {
+      await this.auditLogService.log({
+        actorId,
+        action: 'ATTENDANCE_REFERENCE_HOLIDAYS_APPLIED',
+        module: 'ATTENDANCE',
+        organizationId,
+        details: { updated, skippedLocked },
+      });
+    }
+    return { updated, skippedLocked };
+  }
+
   async backfillMissingAttendance(
     dto: BackfillAttendanceDto,
     actor: Actor,
@@ -4662,7 +4772,7 @@ export class AttendanceService {
     const holidays = await this.scopedPrisma.holiday.findMany({
       where: {
         organizationId,
-        isActive: true,
+        AND: [holidayInEffect],
         date: { gte: dto.startDate, lte: dto.endDate },
       },
       select: { date: true, departmentId: true },
