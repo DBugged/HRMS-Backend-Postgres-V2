@@ -610,6 +610,45 @@ describe('Leave Tracker (e2e)', () => {
     });
   });
 
+  describe('the employee attendance list (what the mobile app and web calendar read)', () => {
+    it('shows a holiday still to come for one person, and only that - not other future days', async () => {
+      const emp = await prisma.user.findFirstOrThrow({ where: { id: empAId } });
+      const ymd = (days: number) => {
+        const d = new Date();
+        d.setUTCDate(d.getUTCDate() + days);
+        return d.toISOString().slice(0, 10);
+      };
+      await prisma.holiday.create({
+        data: {
+          organizationId: emp.organizationId,
+          name: 'Upcoming Test Day',
+          date: ymd(5),
+          year: Number(ymd(5).slice(0, 4)),
+        },
+      });
+      const list = async (employeeId?: string) =>
+        (
+          await request(app.getHttpServer())
+            .get('/attendance')
+            .query({
+              ...(employeeId && { employeeId }),
+              from: ymd(0),
+              to: ymd(10),
+              limit: 200,
+            })
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as {
+          data: { date: string; status: string; employeeId: string }[];
+        };
+      const one = (await list(empAId)).data.filter((r) => r.date >= ymd(0));
+      expect(one.map((r) => [r.date, r.status])).toEqual([[ymd(5), 'HOLIDAY']]);
+      // A table of many people is not filled with upcoming holiday rows.
+      const many = (await list()).data.filter((r) => r.date > ymd(0));
+      expect(many).toHaveLength(0);
+    });
+  });
+
   describe('the grid follows the holiday calendar', () => {
     it('marks company, department-only and (not) optional holidays per employee, with no attendance rows needed', async () => {
       const emp = await prisma.user.findFirstOrThrow({ where: { id: empAId } });

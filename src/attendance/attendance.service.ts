@@ -2501,6 +2501,7 @@ export class AttendanceService {
     const beforeJoining = await this.rowsBeforeJoining(
       where.employeeId as Prisma.UserWhereInput['id'] | undefined,
       query.from,
+      query.to,
       organizationId,
     );
     if (beforeJoining)
@@ -2713,6 +2714,40 @@ export class AttendanceService {
     };
   }
 
+  // A where-fragment that leaves out rows dated before the employee's own joining date (an import, a manual entry or
+  // an old row can carry one), or undefined when there are none. Found with one SQL join, so it is exact for any
+  // number of employees; such rows are anomalies, so the id list stays small (capped at 5,000, the most that can be
+  // excluded this way - the list is paged and the automatic rows already respect the joining date).
+  private async rowsBeforeJoining(
+    employeeIdFilter: Prisma.UserWhereInput['id'] | undefined,
+    from: string | undefined,
+    to: string | undefined,
+    organizationId: string,
+  ): Promise<Prisma.AttendanceWhereInput | undefined> {
+    const scopeIds =
+      typeof employeeIdFilter === 'string'
+        ? [employeeIdFilter]
+        : employeeIdFilter &&
+            typeof employeeIdFilter === 'object' &&
+            'in' in employeeIdFilter
+          ? (employeeIdFilter.in as string[] | undefined)
+          : undefined;
+    if (scopeIds && scopeIds.length === 0) return undefined;
+    const rows = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT a.id
+      FROM attendances a
+      JOIN users u ON u.id = a."employeeId"
+      WHERE a."organizationId" = ${organizationId}
+        AND a.date < to_char(u."joiningDate" AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+        ${from ? Prisma.sql`AND a.date >= ${from}` : Prisma.empty}
+        ${to ? Prisma.sql`AND a.date <= ${to}` : Prisma.empty}
+        ${scopeIds ? Prisma.sql`AND a."employeeId" = ANY(${scopeIds}::text[])` : Prisma.empty}
+      LIMIT 5000
+    `);
+    if (rows.length === 0) return undefined;
+    return { id: { notIn: rows.map((r) => r.id) } };
+  }
+
   // list()'s bounded-range path: fetches whatever real Attendance rows
   // exist, then fills in a synthetic row (via the same deriveDayOutcome()
   // recalculateAttendanceForDay itself uses — read-only here, nothing is
@@ -2720,40 +2755,6 @@ export class AttendanceService {
   // rows and the client-computed summary counts on the Attendance Records
   // page agree with the dashboard grid's own Absent/Holiday/Weekly Off/On
   // Leave backfill instead of silently showing fewer rows than it.
-  // A where-fragment that excludes each in-scope employee's rows dated before their own joining date, or undefined when
-  // nothing needs excluding. Only employees who joined after the range starts can have such rows (everyone else's
-  // rows in the range are already on or after joining). Skipped for a very large scope rather than building an
-  // enormous filter - the list is paged and the synthetic rows already respect the joining date.
-  private async rowsBeforeJoining(
-    employeeIdFilter: Prisma.UserWhereInput['id'] | undefined,
-    from: string | undefined,
-    organizationId: string,
-  ): Promise<Prisma.AttendanceWhereInput | undefined> {
-    const MAX_EMPLOYEES = 2000;
-    const employees = await this.scopedPrisma.user.findMany({
-      where: {
-        organizationId,
-        ...(employeeIdFilter ? { id: employeeIdFilter } : {}),
-        ...(from
-          ? { joiningDate: { gt: new Date(`${from}T00:00:00.000Z`) } }
-          : {}),
-      },
-      select: { id: true, joiningDate: true },
-      take: MAX_EMPLOYEES + 1,
-    });
-    if (employees.length === 0 || employees.length > MAX_EMPLOYEES) {
-      return undefined;
-    }
-    return {
-      NOT: {
-        OR: employees.map((e) => ({
-          employeeId: e.id,
-          date: { lt: e.joiningDate.toISOString().slice(0, 10) },
-        })),
-      },
-    };
-  }
-
   private async listWithSyntheticAbsences(
     where: Prisma.AttendanceWhereInput,
     rangeDays: string[],
@@ -2794,6 +2795,22 @@ export class AttendanceService {
     ]);
 
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    // One person's list (their own calendar) also shows the holidays still to come this period, taken from the holiday
+    // calendar, so an employee sees "Holiday" on the day before it arrives. A list of many people stays limited to days
+    // that have happened - upcoming holidays are not spread across every row of a table.
+    const upcomingDays = rangeDays.filter((d) => d >= today);
+    const upcomingHolidays =
+      employees.length === 1 && upcomingDays.length > 0
+        ? await this.scopedPrisma.holiday.findMany({
+            where: {
+              organizationId,
+              AND: [holidayInEffect],
+              isOptional: false,
+              date: { in: upcomingDays },
+            },
+            select: { date: true, departmentId: true },
+          })
+        : [];
     const orgPrefs = (org?.attendancePayrollPrefs ??
       null) as OrganizationAttendancePrefs | null;
     const existingKeys = new Set(
@@ -2829,9 +2846,19 @@ export class AttendanceService {
 
       for (const dateStr of rangeDays) {
         if (existingKeys.has(`${employee.id}|${dateStr}`)) continue;
-        if (dateStr >= today) continue; // today isn't over; future never touched
         if (dateStr < joiningDateStr) continue; // not yet an employee
-        if (dateStr < addedDateStr) continue; // added to the system later than this day
+        if (dateStr >= today) {
+          // Today and later: only a holiday from the calendar is shown (nothing else about those days is known yet).
+          const isHoliday = upcomingHolidays.some(
+            (h) =>
+              h.date === dateStr &&
+              (h.departmentId === null ||
+                h.departmentId === employee.departmentId),
+          );
+          if (!isHoliday) continue;
+        } else if (dateStr < addedDateStr) {
+          continue; // added to the system later than this day
+        }
 
         const { status, workDurationMinutes, isLate, isEarlyOut } =
           await this.deriveDayOutcome(this.scopedPrisma, {
