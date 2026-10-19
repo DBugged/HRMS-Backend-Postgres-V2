@@ -18,6 +18,7 @@ import { Role, User } from '@prisma/client';
 import { LeavesService } from './leaves.service';
 import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
+import { ImportLeavesDto } from './dto/import-leaves.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
@@ -33,6 +34,15 @@ type Caller = Omit<User, 'password'>;
 @Controller('leaves')
 export class LeavesController {
   constructor(private readonly leavesService: LeavesService) {}
+
+  // Migration of past, already-approved leave from a spreadsheet (Admin/HR). dryRun (the default) only checks every row.
+  // Declared before the parameterised routes.
+  @Post('import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  importLeaves(@Body() dto: ImportLeavesDto, @CurrentUser() caller: Caller) {
+    return this.leavesService.importLeaves(dto, caller, caller.organizationId);
+  }
 
   @Post()
   apply(@Body() dto: ApplyLeaveDto, @CurrentUser() caller: Caller) {

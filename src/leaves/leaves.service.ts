@@ -20,6 +20,7 @@ import {
 import { Cron } from '@nestjs/schedule';
 import {
   AllocationType,
+  HalfDaySession,
   Leave,
   LeaveStatus,
   LeaveType,
@@ -40,6 +41,8 @@ import { CompOffService } from '../comp-offs/comp-off.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
+import { ImportLeavesDto } from './dto/import-leaves.dto';
+import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
@@ -150,6 +153,61 @@ function monthsInRange(
     }
   }
   return months;
+}
+
+export interface ImportLeaveRowResult {
+  row: number;
+  employeeId: string;
+  employeeName?: string;
+  leaveType: string;
+  startDate: string;
+  endDate: string;
+  status: 'OK' | 'IMPORTED' | 'ERROR';
+  totalDays?: number;
+  message?: string;
+}
+
+export interface ImportLeavesResult {
+  dryRun: boolean;
+  total: number;
+  ok: number;
+  imported: number;
+  failed: number;
+  rows: ImportLeaveRowResult[];
+}
+
+// Options for recording past leave on an employee's behalf (the leave import).
+interface ImportOptions {
+  importing: true;
+  dryRun?: boolean;
+  extraRanges?: {
+    start: string;
+    end: string;
+    isHalfDay: boolean;
+    halfDaySession: HalfDaySession | null;
+  }[];
+  virtualDays?: Map<string, number>;
+}
+
+// The leave type's own rules about HOW and WHEN to apply (notice, backdating, duration limits, gaps, holiday
+// restrictions) govern an employee's application, not migrated history. What stays is what decides how many days a
+// leave costs (the type's sandwich rule and weekly offs / holidays) and the always-on checks (dates in order, no overlap,
+// a half day is a single day).
+function relaxedForImport(rules: LeaveRules): LeaveRules {
+  return {
+    ...rules,
+    minDurationDays: 0,
+    maxDurationDays: null,
+    noticePeriodDays: 0,
+    allowBackdated: true,
+    maxBackdateDays: 36500,
+    allowFutureDated: true,
+    maxAdvanceDays: null,
+    allowHalfDay: true,
+    restrictPrefixSuffixHoliday: false,
+    maxConsecutiveDays: null,
+    minGapBetweenRequestsDays: 0,
+  };
 }
 
 const NO_GRANT_MESSAGE =
@@ -775,6 +833,8 @@ export class LeavesService {
     comments: string,
     reviewedById: string | null,
     organizationId: string,
+    // The leave import records the decision without telling anyone.
+    quiet = false,
   ) {
     // Approving a leave rewrites attendance and balances for its dates: refuse when one of those months is already
     // locked/paid, and send a signed-off run back for recalculation (see payroll-period-guard.ts).
@@ -884,11 +944,13 @@ export class LeavesService {
       }
     });
 
-    await this.notifyLeaveDecision(
-      leave,
-      { decision, comments },
-      organizationId,
-    );
+    if (!quiet) {
+      await this.notifyLeaveDecision(
+        leave,
+        { decision, comments },
+        organizationId,
+      );
+    }
     return this.findByIdOrThrow(leave.id, organizationId);
   }
 
@@ -1368,7 +1430,10 @@ export class LeavesService {
       // Days in the range that are not charged (weekly offs / holidays); 0 for a half day or a calendar-day type.
       excludedDays: isHalfDay
         ? 0
-        : Math.max(0, Math.round((calendarDays - result.totalDays) * 100) / 100),
+        : Math.max(
+            0,
+            Math.round((calendarDays - result.totalDays) * 100) / 100,
+          ),
       messages,
     };
   }
@@ -1380,6 +1445,10 @@ export class LeavesService {
     // Set when this request replaces an existing PENDING one (an edit): that leave is left out of the overlap and gap
     // checks, and is cancelled - with its balance hold released - inside the same transaction that creates the new one.
     replacing?: Leave,
+    // Set by the leave import (migration of past leave): the leave is recorded on the employee's behalf, so the
+    // application-time rules (notice, backdating, limits, documents, eligibility, notice period) are not enforced,
+    // nobody is notified, and `dryRun` only checks without writing. See importLeaves().
+    opts?: ImportOptions,
   ) {
     const leaveType = await this.scopedPrisma.leaveType.findFirst({
       where: { id: dto.leaveType, organizationId, isActive: true },
@@ -1392,7 +1461,7 @@ export class LeavesService {
     // ineligible employee (e.g. wrong gender/department, or below
     // minServiceMonths) could apply directly by leaveType id and the
     // request would silently proceed.
-    if (!isEligible(leaveType, actor)) {
+    if (!opts?.importing && !isEligible(leaveType, actor)) {
       throw new ForbiddenException('You are not eligible for this leave type.');
     }
 
@@ -1419,7 +1488,11 @@ export class LeavesService {
         },
       },
     });
-    if (openOffboarding && dto.startDate <= openOffboarding.lastWorkingDay) {
+    if (
+      !opts?.importing &&
+      openOffboarding &&
+      dto.startDate <= openOffboarding.lastWorkingDay
+    ) {
       throw new BadRequestException(
         `You're serving notice with a last working day of ${formatDateDisplay(openOffboarding.lastWorkingDay)} — new leave can't be applied for during the notice period.`,
       );
@@ -1480,7 +1553,9 @@ export class LeavesService {
     const baseRules = leaveType.rules as unknown as LeaveRules;
     // Event-based leave drops the rules that do not apply to it and, in calendar days, charges every date in the range
     // (weekends/holidays included) - see effectiveLeaveRules.
-    const rules = effectiveLeaveRules(baseRules, leaveType);
+    const rules = opts?.importing
+      ? relaxedForImport(effectiveLeaveRules(baseRules, leaveType))
+      : effectiveLeaveRules(baseRules, leaveType);
     // Event-based leave: the document given with the grant request covers the application (see applicationDocumentRule).
     const grantHasDocument =
       leaveType.allocationType === AllocationType.EVENT_BASED &&
@@ -1508,13 +1583,20 @@ export class LeavesService {
         holidayDates: new Set(holidays.map((h) => h.date)),
         weeklyOffs,
         priorLeaveEndDate: priorLeaveOfType?.endDate ?? null,
-        existingRanges: otherLeaves.map((l) => ({
-          start: l.startDate,
-          end: l.endDate,
-          isHalfDay: l.isHalfDay,
-          halfDaySession: l.halfDaySession,
-        })),
-        ...applicationDocumentRule(leaveType, { grantHasDocument }),
+        existingRanges: [
+          ...otherLeaves.map((l) => ({
+            start: l.startDate,
+            end: l.endDate,
+            isHalfDay: l.isHalfDay,
+            halfDaySession: l.halfDaySession,
+          })),
+          // Earlier rows of the same import file (a check run writes nothing, so they are not in the database yet).
+          ...(opts?.extraRanges ?? []),
+        ],
+        // A document is not asked for when past leave is migrated.
+        ...(opts?.importing
+          ? { documentsRequired: false, documentRequiredAfterDays: null }
+          : applicationDocumentRule(leaveType, { grantHasDocument })),
       },
     );
     if (!ruleResult.ok) {
@@ -1535,6 +1617,64 @@ export class LeavesService {
       weeklyOffs,
       leaveYearCfg,
     );
+
+    // A check run (import preview): the same balance test as below, counting the days earlier rows of the file would
+    // use, but nothing is written.
+    if (opts?.dryRun) {
+      if (isCompOffType(leaveType)) {
+        throw new BadRequestException(
+          'Comp-off leave cannot be imported - it depends on comp-off the employee has earned.',
+        );
+      }
+      if (!isUnbalancedType(leaveType)) {
+        for (const part of yearParts) {
+          const key = `${actor.id}:${leaveType.id}:${part.year}`;
+          const verdict = await this.scopedPrisma.$transaction(async (tx) => {
+            const row = await this.leaveBalanceService.ensureBalanceRow(
+              tx,
+              actor.id,
+              leaveType.id,
+              part.year,
+              organizationId,
+            );
+            const forfeited = (
+              await this.leaveBalanceService.forfeitedCarryIn(
+                tx,
+                [row],
+                organizationId,
+                today,
+              )
+            ).get(row.id);
+            return checkAffordability(
+              row,
+              { allowed: false, maxNegativeDays: 0 },
+              part.days + (opts.virtualDays?.get(key) ?? 0),
+              today,
+              forfeited ?? 0,
+            );
+          });
+          if (!verdict.ok) {
+            throw new ForbiddenException(
+              leaveType.allocationType === AllocationType.EVENT_BASED
+                ? NO_GRANT_MESSAGE
+                : `Not enough ${leaveType.name} balance for ${part.days} day(s) (${Math.max(0, verdict.available)} available). Adjust the balance first, or import it as Leave Without Pay.`,
+            );
+          }
+        }
+        for (const part of yearParts) {
+          const key = `${actor.id}:${leaveType.id}:${part.year}`;
+          opts.virtualDays?.set(
+            key,
+            (opts.virtualDays.get(key) ?? 0) + part.days,
+          );
+        }
+      }
+      return {
+        dryRun: true,
+        totalDays,
+        leaveTypeName: leaveType.name,
+      } as never;
+    }
 
     const created = await this.scopedPrisma.$transaction(async (tx) => {
       // Row-lock the applicant's own User row so two concurrent apply()
@@ -1738,8 +1878,219 @@ export class LeavesService {
       });
     });
 
-    await this.notifyNewLeaveApplication(created, actor, organizationId);
+    if (!opts?.importing) {
+      await this.notifyNewLeaveApplication(created, actor, organizationId);
+    }
     return created;
+  }
+
+  // Leave import (migration): records leave that already happened - and was approved on the old system - for many
+  // employees at once. Each row goes through the same code as a real application and approval (balance deducted,
+  // attendance days turned into On Leave / Half Day, payroll inputs flagged), minus what only makes sense for a live
+  // request: no application-time rules, no notifications, no balance for comp-off. With dryRun (the default) nothing is
+  // saved and every row says what would happen; rows are checked in order, so two rows of one file for the same person
+  // overlap-check and balance-check against each other.
+  async importLeaves(
+    dto: ImportLeavesDto,
+    importer: Actor,
+    organizationId: string,
+  ): Promise<ImportLeavesResult> {
+    const dryRun = dto.dryRun !== false;
+    const str = (v: unknown) =>
+      v === undefined || v === null ? '' : String(v).trim();
+    const yes = (v: unknown) => /^(y|yes|true|1)$/i.test(str(v));
+
+    const codes = [
+      ...new Set(dto.rows.map((r) => str(r.employeeId).toLowerCase())),
+    ].filter(Boolean);
+    const employees = codes.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { organizationId },
+          omit: { password: true },
+        })
+      : [];
+    const byCode = new Map(
+      employees.map((e) => [e.employeeId.toLowerCase(), e]),
+    );
+    const leaveTypes = await this.scopedPrisma.leaveType.findMany({
+      where: { organizationId, isActive: true },
+    });
+    const typeByKey = new Map<string, LeaveType>();
+    for (const t of leaveTypes) {
+      typeByKey.set(t.code.toLowerCase(), t);
+      typeByKey.set(t.name.toLowerCase(), t);
+    }
+
+    const results: ImportLeaveRowResult[] = [];
+    const virtualDays = new Map<string, number>();
+    const rangesByEmployee = new Map<
+      string,
+      NonNullable<ImportOptions['extraRanges']>
+    >();
+
+    for (const [i, row] of dto.rows.entries()) {
+      const out: ImportLeaveRowResult = {
+        row: i + 1,
+        employeeId: str(row.employeeId),
+        leaveType: str(row.leaveType),
+        startDate: str(row.startDate),
+        endDate: str(row.endDate),
+        status: 'ERROR',
+      };
+      results.push(out);
+      try {
+        const employee = byCode.get(str(row.employeeId).toLowerCase());
+        if (!employee) throw new BadRequestException('Unknown employee ID.');
+        out.employeeName = employee.name;
+        // Same boundary as editing someone's personal data: only an Admin touches an HR or Admin employee's record.
+        if (
+          importer.role !== Role.ADMIN &&
+          (employee.role === Role.ADMIN || employee.role === Role.HR)
+        ) {
+          throw new ForbiddenException(
+            'Only an Admin can import leave for an HR or Admin employee.',
+          );
+        }
+        const leaveType = typeByKey.get(str(row.leaveType).toLowerCase());
+        if (!leaveType) {
+          throw new BadRequestException(
+            'Unknown leave type (use the leave type code or name).',
+          );
+        }
+        if (
+          !isValidCalendarDateString(out.startDate) ||
+          !isValidCalendarDateString(out.endDate)
+        ) {
+          throw new BadRequestException(
+            'Start and end dates must be real dates (YYYY-MM-DD).',
+          );
+        }
+        const isHalfDay = yes(row.halfDay);
+        let halfDaySession: HalfDaySession | undefined;
+        if (isHalfDay) {
+          if (out.startDate !== out.endDate) {
+            throw new BadRequestException(
+              'A half day must start and end on the same date.',
+            );
+          }
+          const sessionText = str(row.session).toLowerCase();
+          halfDaySession = sessionText.startsWith('s')
+            ? HalfDaySession.SECOND_HALF
+            : HalfDaySession.FIRST_HALF;
+        }
+        // The payroll month must still be open: approved leave rewrites that month's attendance and pay inputs.
+        await assertPayrollMonthsUnlocked(
+          this.scopedPrisma,
+          organizationId,
+          employee.id,
+          monthsBetween(out.startDate, out.endDate),
+          'leave',
+        );
+
+        const leaveDto: ApplyLeaveDto = {
+          leaveType: leaveType.id,
+          startDate: out.startDate,
+          endDate: out.endDate,
+          isHalfDay,
+          halfDaySession,
+          remarks: `Imported leave${str(row.reason) ? `: ${str(row.reason)}` : ''}`,
+        };
+        const extraRanges = rangesByEmployee.get(employee.id) ?? [];
+        if (dryRun) {
+          const checked = (await this.createLeaveInternal(
+            leaveDto,
+            employee,
+            organizationId,
+            undefined,
+            { importing: true, dryRun: true, extraRanges, virtualDays },
+          )) as unknown as { totalDays: number };
+          out.totalDays = checked.totalDays;
+          out.status = 'OK';
+          out.message = `Would record ${checked.totalDays} day(s) of ${leaveType.name}.`;
+          extraRanges.push({
+            start: out.startDate,
+            end: out.endDate,
+            isHalfDay,
+            halfDaySession: halfDaySession ?? null,
+          });
+          rangesByEmployee.set(employee.id, extraRanges);
+        } else {
+          const created = await this.createLeaveInternal(
+            leaveDto,
+            employee,
+            organizationId,
+            undefined,
+            { importing: true },
+          );
+          try {
+            await this.applyDecision(
+              created,
+              leaveType,
+              'APPROVED',
+              'Imported from the previous system.',
+              importer.id,
+              organizationId,
+              true,
+            );
+          } catch (err) {
+            // Approval failed after the request was saved: take the request (and its balance hold) back out so a
+            // half-imported row never lingers as a pending leave.
+            await this.scopedPrisma.$transaction(async (tx) => {
+              await tx.leave.updateMany({
+                where: { id: created.id, organizationId },
+                data: { status: LeaveStatus.CANCELLED },
+              });
+              await this.releaseHold(tx, created, organizationId);
+            });
+            throw err;
+          }
+          out.totalDays = created.totalDays;
+          out.status = 'IMPORTED';
+          out.message = `Recorded ${created.totalDays} day(s) of ${leaveType.name}.`;
+          await this.auditLogService.log({
+            actorId: importer.id,
+            action: 'LEAVE_IMPORTED',
+            module: 'LEAVE',
+            organizationId,
+            targetId: created.id,
+            details: {
+              employeeId: employee.id,
+              leaveType: leaveType.code,
+              startDate: out.startDate,
+              endDate: out.endDate,
+              totalDays: created.totalDays,
+            },
+          });
+        }
+      } catch (err) {
+        out.status = 'ERROR';
+        out.message =
+          err instanceof Error
+            ? err.message
+            : 'The row could not be processed.';
+      }
+    }
+
+    const imported = results.filter((r) => r.status === 'IMPORTED').length;
+    const ok = results.filter((r) => r.status === 'OK').length;
+    const failed = results.filter((r) => r.status === 'ERROR').length;
+    if (!dryRun) {
+      await this.auditLogService.log({
+        actorId: importer.id,
+        action: 'LEAVE_IMPORT_RUN',
+        module: 'LEAVE',
+        organizationId,
+        details: { rows: results.length, imported, failed },
+      });
+    }
+    return {
+      dryRun,
+      total: results.length,
+      ok,
+      imported,
+      failed,
+      rows: results,
+    };
   }
 
   // The original release notifies the employee's department head, or (if there is
