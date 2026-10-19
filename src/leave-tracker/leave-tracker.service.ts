@@ -196,6 +196,15 @@ export class LeaveTrackerService {
       ]);
     employees.sort(compareEmployees);
 
+    // Someone appears from their joining date on: not listed for a month that ended before they joined, and no day
+    // before it carries any data, whatever was recorded against it.
+    const joiningOf = new Map(
+      employees.map((e) => [e.id, e.joiningDate.toISOString().slice(0, 10)]),
+    );
+    for (let i = employees.length - 1; i >= 0; i--) {
+      if ((joiningOf.get(employees[i].id) ?? '') > end) employees.splice(i, 1);
+    }
+
     const leavesByEmployee = new Map<string, typeof leaves>();
     for (const leave of leaves) {
       const arr = leavesByEmployee.get(leave.employeeId) ?? [];
@@ -213,6 +222,8 @@ export class LeaveTrackerService {
     // give back the exact minute (8.33h -> 8h 20m vs the real 8h 19m).
     const minutes: Record<string, Record<number, number>> = {};
     for (const row of attendanceRows) {
+      const joined = joiningOf.get(row.employeeId);
+      if (joined === undefined || row.date < joined) continue;
       const day = Number(row.date.slice(8, 10));
       if (row.workDurationMinutes > 0) {
         (hours[row.employeeId] ??= {})[day] =

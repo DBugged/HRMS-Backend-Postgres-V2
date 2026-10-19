@@ -2495,6 +2495,16 @@ export class AttendanceService {
       };
     }
 
+    // No record is shown for a day before the employee joined (an import, a manual entry or an old row can carry
+    // one): rows dated before that person's joining date are left out of the list, the count and the summary.
+    const beforeJoining = await this.rowsBeforeJoining(
+      where.employeeId as Prisma.UserWhereInput['id'] | undefined,
+      query.from,
+      organizationId,
+    );
+    if (beforeJoining)
+      where.AND = [...((where.AND as []) ?? []), beforeJoining];
+
     // A bounded date range (≤31 days — the Attendance Records page's own
     // Month filter sends exactly this) gets the same "no row = Absent (or
     // Holiday/Weekly Off/On Leave)" backfill the Attendance & Leave Tracker
@@ -2709,6 +2719,40 @@ export class AttendanceService {
   // rows and the client-computed summary counts on the Attendance Records
   // page agree with the dashboard grid's own Absent/Holiday/Weekly Off/On
   // Leave backfill instead of silently showing fewer rows than it.
+  // A where-fragment that excludes each in-scope employee's rows dated before their own joining date, or undefined when
+  // nothing needs excluding. Only employees who joined after the range starts can have such rows (everyone else's
+  // rows in the range are already on or after joining). Skipped for a very large scope rather than building an
+  // enormous filter - the list is paged and the synthetic rows already respect the joining date.
+  private async rowsBeforeJoining(
+    employeeIdFilter: Prisma.UserWhereInput['id'] | undefined,
+    from: string | undefined,
+    organizationId: string,
+  ): Promise<Prisma.AttendanceWhereInput | undefined> {
+    const MAX_EMPLOYEES = 2000;
+    const employees = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        ...(employeeIdFilter ? { id: employeeIdFilter } : {}),
+        ...(from
+          ? { joiningDate: { gt: new Date(`${from}T00:00:00.000Z`) } }
+          : {}),
+      },
+      select: { id: true, joiningDate: true },
+      take: MAX_EMPLOYEES + 1,
+    });
+    if (employees.length === 0 || employees.length > MAX_EMPLOYEES) {
+      return undefined;
+    }
+    return {
+      NOT: {
+        OR: employees.map((e) => ({
+          employeeId: e.id,
+          date: { lt: e.joiningDate.toISOString().slice(0, 10) },
+        })),
+      },
+    };
+  }
+
   private async listWithSyntheticAbsences(
     where: Prisma.AttendanceWhereInput,
     rangeDays: string[],

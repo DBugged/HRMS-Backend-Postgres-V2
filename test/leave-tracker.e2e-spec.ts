@@ -146,6 +146,8 @@ describe('Leave Tracker (e2e)', () => {
       .send({
         name: 'Eng Manager',
         email: 'leavetracker-e2e-manager@example.test',
+        // Joined before the fixture month, so they are on the grid (people appear from their joining date).
+        joiningDate: '2020-01-01',
         role: 'MANAGER',
         departmentId,
       });
@@ -189,6 +191,8 @@ describe('Leave Tracker (e2e)', () => {
       .send({
         name: 'Employee B',
         email: 'leavetracker-e2e-empb@example.test',
+        // Joined before the fixture month, so they are on the grid (people appear from their joining date).
+        joiningDate: '2020-01-01',
         departmentId,
       });
     empBId = (empBCreate.body as EmployeeCreateBody).employee.id;
@@ -199,6 +203,8 @@ describe('Leave Tracker (e2e)', () => {
       .send({
         name: 'Outside Employee',
         email: 'leavetracker-e2e-outside@example.test',
+        // Joined before the fixture month, so they are on the grid (people appear from their joining date).
+        joiningDate: '2020-01-01',
         departmentId: otherDepartmentId,
       });
     outsideEmployeeId = (outsideCreate.body as EmployeeCreateBody).employee.id;
@@ -475,6 +481,54 @@ describe('Leave Tracker (e2e)', () => {
       // Attendance row backfills to ABSENT same as any other employee's.
       expect(cells[11]).toBeUndefined();
       expect(cells[13]).toBe('ABSENT');
+    });
+
+    it('shows an employee only from their joining date: not listed before it, and no data on days before it', async () => {
+      const lateJoiner = await prisma.user.findFirstOrThrow({
+        where: { id: lateJoinerId },
+      });
+      // A stray record dated before they joined (an import or manual entry).
+      await prisma.attendance.create({
+        data: {
+          organizationId: lateJoiner.organizationId,
+          employeeId: lateJoinerId,
+          date: `${YEAR}-08-05`,
+          status: 'PRESENT',
+          source: 'FACE_API',
+          workDurationMinutes: 480,
+        },
+      });
+      const grid = async (month: number) =>
+        (
+          await request(app.getHttpServer())
+            .get('/leave-tracker/grid')
+            .query({ month, year: YEAR })
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as GridResponse;
+      const july = await grid(MONTH - 1);
+      expect(july.employees.map((e) => e.id)).not.toContain(lateJoinerId);
+      const august = await grid(MONTH);
+      expect(august.employees.map((e) => e.id)).toContain(lateJoinerId);
+      expect(august.cells[lateJoinerId]?.[5]).toBeUndefined();
+      expect(august.hours[lateJoinerId]?.[5]).toBeUndefined();
+
+      // The Attendance Records list leaves the same stray row out.
+      const list = await request(app.getHttpServer())
+        .get('/attendance')
+        .query({
+          employeeId: lateJoinerId,
+          from: `${YEAR}-08-01`,
+          to: `${YEAR}-08-31`,
+          limit: 100,
+        })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const dates = (list.body as { data: { date: string }[] }).data.map(
+        (r) => r.date,
+      );
+      expect(dates).not.toContain(`${YEAR}-08-05`);
+      expect(dates.every((d) => d >= `${YEAR}-08-12`)).toBe(true);
     });
   });
 
