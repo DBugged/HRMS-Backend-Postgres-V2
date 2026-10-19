@@ -391,6 +391,17 @@ export class LeaveTrackerService {
     });
     employees.sort(compareEmployees);
 
+    // With a month chosen, an employee appears only from the month they joined: someone who joined after that month
+    // ended is not listed for it (the same rule as the attendance grid). With no month, the whole leave year is shown
+    // and everyone stays listed.
+    const joinedOn = (e: { joiningDate: Date }) =>
+      e.joiningDate.toISOString().slice(0, 10);
+    if (periodEnd) {
+      for (let i = employees.length - 1; i >= 0; i--) {
+        if (joinedOn(employees[i]) > periodEnd) employees.splice(i, 1);
+      }
+    }
+
     // Fetched once for the whole loop (was once per employee) — same
     // query/ordering as LeaveBalanceService.getEligibleLeaveTypes.
     const activeLeaveTypes = await this.scopedPrisma.leaveType.findMany({
@@ -493,6 +504,26 @@ export class LeaveTrackerService {
     const wfhDaysUsedByEmployee = new Map(
       wfhCounts.map((c) => [c.employeeId, c._count._all]),
     );
+    // WFH days count only from the joining date: for anyone who joined after the range starts, a record dated before
+    // they joined (an import or a manual entry) is not counted. Only those few are re-counted individually.
+    const wfhFrom = periodStart ?? yearStart;
+    const wfhTo = periodEnd ?? yearEnd;
+    if (!query.lite) {
+      const lateJoiners = employees.filter((e) => joinedOn(e) > wfhFrom);
+      await Promise.all(
+        lateJoiners.map(async (e) => {
+          const count = await this.scopedPrisma.attendance.count({
+            where: {
+              organizationId,
+              employeeId: e.id,
+              date: { gte: joinedOn(e), lte: wfhTo },
+              workArrangement: WorkArrangement.WFH,
+            },
+          });
+          wfhDaysUsedByEmployee.set(e.id, count);
+        }),
+      );
+    }
 
     // A small `for` loop of internal service calls across the scoped list
     // (never N HTTP-style round trips) — this mirrors, per employee,

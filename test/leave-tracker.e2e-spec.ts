@@ -686,6 +686,48 @@ describe('Leave Tracker (e2e)', () => {
     });
   });
 
+  describe('balances follow the joining date', () => {
+    it('lists an employee only from the month they joined, and counts WFH days only from the joining date', async () => {
+      const lj = await prisma.user.findFirstOrThrow({
+        where: { id: lateJoinerId },
+      });
+      const wfh = (date: string) =>
+        prisma.attendance.upsert({
+          where: {
+            organizationId_employeeId_date: {
+              organizationId: lj.organizationId,
+              employeeId: lateJoinerId,
+              date,
+            },
+          },
+          update: { workArrangement: 'WFH' },
+          create: {
+            organizationId: lj.organizationId,
+            employeeId: lateJoinerId,
+            date,
+            status: 'PRESENT',
+            source: 'FACE_API',
+            workArrangement: 'WFH',
+          },
+        });
+      await wfh(`${YEAR}-08-04`); // before the 12 Aug joining date
+      await wfh(`${YEAR}-08-13`); // after it
+      const get = async (period?: string) =>
+        (
+          await request(app.getHttpServer())
+            .get('/leave-tracker/balances')
+            .query({ year: YEAR, ...(period && { period }) })
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as { employeeId: string; name: string; wfhDaysUsed: number }[];
+      const find = (rows: { name: string; wfhDaysUsed: number }[]) =>
+        rows.find((r) => r.name === 'Late Joiner');
+      expect(find(await get(`${YEAR}-08`))?.wfhDaysUsed).toBe(1);
+      expect(find(await get(`${YEAR}-07`))).toBeUndefined(); // a month before they joined
+      expect(find(await get())).toBeDefined(); // the whole year keeps everyone listed
+    });
+  });
+
   describe('GET /leave-tracker/balances', () => {
     it("matches GET /leaves/balance's numbers for the same employee", async () => {
       const trackerRes = await request(app.getHttpServer())
