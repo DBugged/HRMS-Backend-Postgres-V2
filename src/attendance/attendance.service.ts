@@ -67,6 +67,9 @@ import {
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { ImportWfhDto } from './dto/import-wfh.dto';
+import { assertPayrollMonthsUnlocked } from '../payroll/payroll-period-guard';
+import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
 import { wfhDaysPerMonthOf } from '../organizations/org-wfh-policy';
 import { currentLeaveYear, leaveYearBounds } from '../leave-balances/leave-year';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
@@ -132,6 +135,26 @@ type Actor = Omit<User, 'password'>;
 // recalculateAttendanceForDay/the Leave-integration hooks run inside
 // whichever one the caller is already using.
 type Db = ExtendedPrismaClient | Prisma.TransactionClient;
+
+export interface ImportWfhRowResult {
+  row: number;
+  employeeId: string;
+  employeeName?: string;
+  fromDate: string;
+  toDate: string;
+  status: 'OK' | 'IMPORTED' | 'ERROR';
+  days?: number;
+  message?: string;
+}
+
+export interface ImportWfhResult {
+  dryRun: boolean;
+  total: number;
+  ok: number;
+  imported: number;
+  failed: number;
+  rows: ImportWfhRowResult[];
+}
 
 // Shared between list()'s two row sources (a real DB findMany, and
 // listWithSyntheticAbsences()'s synthetic rows) so both produce exactly the
@@ -1780,6 +1803,245 @@ export class AttendanceService {
       place,
       batteryPercent:
         typeof dto.batteryPercent === 'number' ? dto.batteryPercent : null,
+    });
+  }
+
+  // Migration of PAST Work From Home from a spreadsheet (Admin/HR): each row is a range of days one employee worked from
+  // home, recorded as already approved - by the importer, with no notification to the employee. The days count as
+  // Present (they were worked), so nobody loses pay for them; a day that already has real punches keeps them. Weekly
+  // offs, holidays and full-day leave inside a range are left out, like a normal request. dryRun (the default) only
+  // checks every row; a month whose payroll is already locked is refused, as for imported leave.
+  async importWfh(
+    dto: ImportWfhDto,
+    importer: Actor,
+    organizationId: string,
+  ): Promise<ImportWfhResult> {
+    const dryRun = dto.dryRun !== false;
+    const str = (v: unknown) =>
+      v === undefined || v === null ? '' : String(v).trim();
+    const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
+
+    const codes = new Set(
+      dto.rows.map((r) => str(r.employeeId).toLowerCase()).filter(Boolean),
+    );
+    const employees = codes.size
+      ? await this.scopedPrisma.user.findMany({
+          where: { organizationId },
+          omit: { password: true },
+        })
+      : [];
+    const byCode = new Map(
+      employees.map((e) => [e.employeeId.toLowerCase(), e]),
+    );
+    // Dates already given earlier in this same file, per employee: a repeated day is the same day, not a second request.
+    const seen = new Map<string, Set<string>>();
+
+    const results: ImportWfhRowResult[] = [];
+    for (const [i, row] of dto.rows.entries()) {
+      const from = str(row.fromDate);
+      const to = str(row.toDate) || from;
+      const out: ImportWfhRowResult = {
+        row: i + 1,
+        employeeId: str(row.employeeId),
+        fromDate: from,
+        toDate: to,
+        status: 'ERROR',
+      };
+      results.push(out);
+      try {
+        const employee = byCode.get(str(row.employeeId).toLowerCase());
+        if (!employee) throw new BadRequestException('Unknown employee ID.');
+        out.employeeName = employee.name;
+        // Same boundary as editing someone's personal data: only an Admin touches an HR or Admin employee's record.
+        if (
+          importer.role !== Role.ADMIN &&
+          (employee.role === Role.ADMIN || employee.role === Role.HR)
+        ) {
+          throw new ForbiddenException(
+            'Only an Admin can import Work From Home for an HR or Admin employee.',
+          );
+        }
+        if (
+          !isValidCalendarDateString(from) ||
+          !isValidCalendarDateString(to)
+        ) {
+          throw new BadRequestException(
+            'From and To must be real dates (YYYY-MM-DD).',
+          );
+        }
+        if (to < from) {
+          throw new BadRequestException('To cannot be before From.');
+        }
+        if (to > todayStr) {
+          throw new BadRequestException(
+            'Only past days can be imported - the To date cannot be after today. Employees request upcoming days themselves.',
+          );
+        }
+        if (from < utcDateStrOf(employee.joiningDate)) {
+          throw new BadRequestException(
+            `The date is before the employee's joining date (${utcDateStrOf(employee.joiningDate)}).`,
+          );
+        }
+        if (calendarSpan(from, to) > MAX_WFH_RANGE_DAYS) {
+          throw new BadRequestException(
+            `A row can cover at most ${MAX_WFH_RANGE_DAYS} days - split a longer period over several rows.`,
+          );
+        }
+        const { days: candidates, skipped } = await this.wfhDaysFor(
+          employee,
+          organizationId,
+          from,
+          to,
+        );
+        const taken = seen.get(employee.id) ?? new Set<string>();
+        const days = candidates.filter((d) => !taken.has(d));
+        const repeated = candidates.length - days.length;
+        if (days.length === 0) {
+          throw new BadRequestException(
+            candidates.length > 0
+              ? 'Every day of this row is already given by an earlier row of the file.'
+              : 'There is no working day to record in that range (weekly offs, holidays, leave and days that already have Work From Home are not included).',
+          );
+        }
+        // The payroll month must still be open: the day becomes Present and the month's attendance changes.
+        await assertPayrollMonthsUnlocked(
+          this.scopedPrisma,
+          organizationId,
+          employee.id,
+          [
+            ...new Map(
+              days.map((d) => [
+                d.slice(0, 7),
+                { month: Number(d.slice(5, 7)), year: Number(d.slice(0, 4)) },
+              ]),
+            ).values(),
+          ],
+          'Work From Home',
+        );
+        out.days = days.length;
+        const left = skipped.length + repeated;
+        const note = left > 0 ? ` (${left} other day(s) in the range left out)` : '';
+        if (dryRun) {
+          out.status = 'OK';
+          out.message = `Would record ${days.length} day(s)${note}.`;
+        } else {
+          await this.recordImportedWfh(
+            employee,
+            importer,
+            organizationId,
+            days,
+            str(row.reason),
+          );
+          out.status = 'IMPORTED';
+          out.message = `Recorded ${days.length} day(s)${note}.`;
+        }
+        days.forEach((d) => taken.add(d));
+        seen.set(employee.id, taken);
+      } catch (err) {
+        out.status = 'ERROR';
+        out.message =
+          err instanceof Error
+            ? err.message
+            : 'The row could not be processed.';
+      }
+    }
+
+    const imported = results.filter((r) => r.status === 'IMPORTED').length;
+    const ok = results.filter((r) => r.status === 'OK').length;
+    const failed = results.filter((r) => r.status === 'ERROR').length;
+    if (!dryRun) {
+      await this.auditLogService.log({
+        actorId: importer.id,
+        action: 'WFH_IMPORT_RUN',
+        module: 'ATTENDANCE',
+        organizationId,
+        details: { rows: results.length, imported, failed },
+      });
+    }
+    return { dryRun, total: results.length, ok, imported, failed, rows: results };
+  }
+
+  // Writes one imported row: every day becomes an approved Work From Home day (approved by the importer, one request id
+  // for a multi-day row) and a Present day, in one transaction so a row is all or nothing.
+  private async recordImportedWfh(
+    employee: { id: string; name: string; employeeId: string },
+    importer: Actor,
+    organizationId: string,
+    days: string[],
+    reason: string,
+  ) {
+    const requestId = days.length > 1 ? crypto.randomUUID() : null;
+    await this.scopedPrisma.$transaction(async (tx) => {
+      for (const day of days) {
+        // Marks a payroll run already calculated for the month as outdated (it is recalculated before it can be approved).
+        await assertPayrollPeriodUnlocked(
+          tx,
+          organizationId,
+          employee.id,
+          day,
+        );
+        const fields = {
+          workArrangement: WorkArrangement.WFH,
+          workArrangementStatus: WfhApprovalStatus.APPROVED,
+          workArrangementReviewedById: importer.id,
+          workArrangementReviewedAt: new Date(),
+          workArrangementReviewComments: `Imported${reason ? `: ${reason}` : ''}`,
+          wfhRequestId: requestId,
+        };
+        const existing = await tx.attendance.findFirst({
+          where: { organizationId, employeeId: employee.id, date: day },
+        });
+        if (existing) {
+          // The day was worked: an Absent / Incomplete day becomes Present; one with real punches, a half day or leave
+          // keeps what it is.
+          const becomesPresent =
+            existing.status === AttendanceStatus.ABSENT ||
+            existing.status === AttendanceStatus.INCOMPLETE;
+          await tx.attendance.updateMany({
+            where: { id: existing.id, organizationId },
+            data: {
+              ...fields,
+              ...(becomesPresent
+                ? {
+                    status: AttendanceStatus.PRESENT,
+                    source: AttendanceSource.EXCEL_IMPORT,
+                  }
+                : {}),
+            },
+          });
+        } else {
+          await tx.attendance.create({
+            data: {
+              organizationId,
+              employeeId: employee.id,
+              date: day,
+              status: AttendanceStatus.PRESENT,
+              source: AttendanceSource.EXCEL_IMPORT,
+              ...fields,
+            },
+          });
+        }
+      }
+    });
+    const label =
+      days.length === 1
+        ? days[0]
+        : `${days[0]} to ${days[days.length - 1]} (${days.length} days)`;
+    await this.timelineService.logEvent({
+      organizationId,
+      employeeId: employee.id,
+      eventKey: 'WFH_APPROVED',
+      performedById: importer.id,
+      description: `Imported Work From Home for ${label}${reason ? `: ${reason}` : ''}.`,
+      metadata: { wfhRequestId: requestId, days, imported: true },
+    });
+    await this.auditLogService.log({
+      actorId: importer.id,
+      action: 'WFH_IMPORTED',
+      module: 'ATTENDANCE',
+      organizationId,
+      targetId: employee.id,
+      details: { employeeCode: employee.employeeId, days, requestId },
     });
   }
 

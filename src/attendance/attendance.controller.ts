@@ -29,6 +29,7 @@ import { ReviewRegularizationDto } from './dto/review-regularization.dto';
 import { PreviewWfhDaysQueryDto } from './dto/preview-wfh-days-query.dto';
 import { DecidedWfhQueryDto } from './dto/decided-wfh-query.dto';
 import { ReviewWfhDto } from './dto/review-wfh.dto';
+import { ImportWfhDto } from './dto/import-wfh.dto';
 import { UploadImportBatchDto } from './dto/upload-import-batch.dto';
 import { NotifyAbsenteesDto } from './dto/notify-absentees.dto';
 import { BackfillAttendanceDto } from './dto/backfill-attendance.dto';
@@ -118,6 +119,16 @@ export class AttendanceController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // Migration of past, already-approved Work From Home from a spreadsheet (Admin/HR). dryRun (the default) only checks
+  // every row. POST, so it never meets the :id review routes.
+  @Post('work-arrangement/import')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  importWfh(@Body() dto: ImportWfhDto, @CurrentUser() caller: Caller) {
+    return this.attendanceService.importWfh(dto, caller, caller.organizationId);
   }
 
   // What a multi-day request would cover (nothing is written). Literal path, registered before the :id routes.
