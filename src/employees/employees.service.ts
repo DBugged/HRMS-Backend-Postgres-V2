@@ -560,7 +560,7 @@ export class EmployeesService {
       if (joiningDate && !isDateString(joiningDate)) {
         failed.push({
           row,
-          error: 'Joining date must be a valid date (YYYY-MM-DD).',
+          error: 'Joining date must be a valid date (DD-MM-YYYY).',
         });
         return;
       }

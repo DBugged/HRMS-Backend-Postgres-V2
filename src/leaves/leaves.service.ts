@@ -2145,7 +2145,7 @@ export class LeavesService {
           !isValidCalendarDateString(out.endDate)
         ) {
           throw new BadRequestException(
-            'Start and end dates must be real dates (YYYY-MM-DD).',
+            'Start and end dates must be real dates (DD-MM-YYYY).',
           );
         }
         const isHalfDay = yes(row.halfDay);

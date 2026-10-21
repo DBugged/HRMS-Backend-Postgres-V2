@@ -159,10 +159,10 @@ describe('WFH import: checking', () => {
     );
     expect(r.rows.map((x) => x.message)).toEqual([
       'Unknown employee ID.',
-      'From and To must be real dates (YYYY-MM-DD).',
+      'From and To must be real dates (DD-MM-YYYY).',
       'To cannot be before From.',
       expect.stringMatching(/Only past days/),
-      expect.stringMatching(/before the employee's joining date/),
+      expect.stringMatching(/before the employee's joining date \(01-01-2026\)/),
       expect.stringMatching(/at most 31 days/),
     ]);
     expect(r.failed).toBe(6);

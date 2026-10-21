@@ -1,4 +1,5 @@
 import {
+  dmyText,
   formatDateDisplay,
   formatDateTimeDisplay,
   resolveOrgDateTimeFormat,
@@ -217,5 +218,19 @@ describe('timestamps are read in the organisation timezone', () => {
 
   it('returns the fallback for an impossible calendar date', () => {
     expect(formatDateDisplay('2026-02-31', 'n/a')).toBe('n/a');
+  });
+});
+
+describe('dmyText (dates inside a sentence a person reads)', () => {
+  it('writes a real date as DD-MM-YYYY', () => {
+    expect(dmyText('2026-10-08')).toBe('08-10-2026');
+    expect(dmyText('2026-01-31')).toBe('31-01-2026');
+  });
+
+  it('keeps what was typed when it is not a real date, so a message never goes blank', () => {
+    expect(dmyText('2026-02-31')).toBe('2026-02-31');
+    expect(dmyText('not a date')).toBe('not a date');
+    expect(dmyText(null)).toBe('');
+    expect(dmyText(undefined)).toBe('');
   });
 });

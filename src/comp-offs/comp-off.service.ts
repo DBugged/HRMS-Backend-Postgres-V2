@@ -49,6 +49,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
+  dmyText,
 } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
@@ -109,7 +110,7 @@ export class CompOffService {
     const joinedOn = targetEmployee.joiningDate.toISOString().slice(0, 10);
     if (dto.earnedForDate < joinedOn) {
       throw new BadRequestException(
-        `Comp-off cannot be earned for a date before the joining date (${joinedOn}).`,
+        `Comp-off cannot be earned for a date before the joining date (${dmyText(joinedOn)}).`,
       );
     }
 

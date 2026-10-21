@@ -432,7 +432,7 @@ export class AssetsService {
         }
         if (!isValidCalendarDateString(purchaseDate)) {
           return Promise.reject(
-            new Error('Purchase Date is required and must be YYYY-MM-DD.'),
+            new Error('Purchase Date is required and must be DD-MM-YYYY.'),
           );
         }
         const categoryName = row.category?.trim();

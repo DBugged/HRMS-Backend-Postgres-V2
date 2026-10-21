@@ -42,6 +42,7 @@ import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { SalaryStructurePdfService } from './salary-structure-pdf.service';
 
+import { dmyText } from '../payroll/format-date';
 // A stored effective date as YYYY-MM-DD, whether the column hands back a string or a Date.
 const dateOnly = (v: Date | string): string =>
   typeof v === 'string' ? v.slice(0, 10) : v.toISOString().slice(0, 10);
@@ -602,7 +603,7 @@ export class EmployeeSalaryComponentsService {
         dto.effectiveFrom > (monthEnd as string))
     ) {
       throw new BadRequestException(
-        `effectiveFrom ${dto.effectiveFrom} is outside ${onlyMonth}; leave it out for a one-month entry.`,
+        `effectiveFrom ${dmyText(dto.effectiveFrom)} is outside ${onlyMonth}; leave it out for a one-month entry.`,
       );
     }
     const from =
@@ -699,7 +700,7 @@ export class EmployeeSalaryComponentsService {
     // that is refused. Either way a month that is already paid is never touched.
     if (current && from < current.effectiveFrom) {
       throw new BadRequestException(
-        `The new salary cannot start before the current one (${current.effectiveFrom}) for ${component.code}. Use ${current.effectiveFrom} to correct it, or a later date to revise it.`,
+        `The new salary cannot start before the current one (${dmyText(current.effectiveFrom)}) for ${component.code}. Use ${dmyText(current.effectiveFrom)} to correct it, or a later date to revise it.`,
       );
     }
     // A deliberate backdated revision (to be paid as arrears) is allowed to start inside paid months; the locked
@@ -846,7 +847,7 @@ export class EmployeeSalaryComponentsService {
     });
     if (finalized) {
       throw new BadRequestException(
-        `Cannot apply a salary revision effective ${effectiveFrom}: this employee's ${finalized.month}/${finalized.year} payroll is already ${finalized.status.toLowerCase()}. Unlock that payroll run first, or choose an effective date after it and pay any difference as arrears, or send backdateForArrears to record a backdated revision and pay the difference through Arrears.`,
+        `Cannot apply a salary revision effective ${dmyText(effectiveFrom)}: this employee's ${finalized.month}/${finalized.year} payroll is already ${finalized.status.toLowerCase()}. Unlock that payroll run first, or choose an effective date after it and pay any difference as arrears, or send backdateForArrears to record a backdated revision and pay the difference through Arrears.`,
       );
     }
   }

@@ -274,7 +274,7 @@ export function assertValidDates(patch: Record<string, unknown>): void {
     if (typeof value === 'string' && value.trim() !== '') {
       if (!isValidCalendarDateString(value)) {
         throw new BadRequestException(
-          'Invalid date of birth — must be a real calendar date (YYYY-MM-DD).',
+          'Invalid date of birth — must be a real calendar date (DD-MM-YYYY).',
         );
       }
       if (value > new Date().toISOString().slice(0, 10)) {
@@ -297,7 +297,7 @@ export function assertValidDates(patch: Record<string, unknown>): void {
           !isValidCalendarDateString(value)
         ) {
           throw new BadRequestException(
-            `Invalid previous employment ${key === 'startDate' ? 'start' : 'end'} date — must be a real calendar date (YYYY-MM-DD).`,
+            `Invalid previous employment ${key === 'startDate' ? 'start' : 'end'} date — must be a real calendar date (DD-MM-YYYY).`,
           );
         }
       }

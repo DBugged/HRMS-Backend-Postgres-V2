@@ -52,6 +52,7 @@ import { EmailTemplatesService } from '../email-templates/email-templates.servic
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
+  dmyText,
 } from '../payroll/format-date';
 
 type Actor = Omit<User, 'password'>;
@@ -427,7 +428,7 @@ export class OffboardingService {
     const joined = joiningDate.toISOString().slice(0, 10);
     if (lastWorkingDay < joined) {
       throw new BadRequestException(
-        `The last working day (${lastWorkingDay}) cannot be before the joining date (${joined}).`,
+        `The last working day (${dmyText(lastWorkingDay)}) cannot be before the joining date (${dmyText(joined)}).`,
       );
     }
     const org = await this.scopedPrisma.organization.findFirst({
@@ -540,7 +541,7 @@ export class OffboardingService {
       record.lastWorkingDay.slice(0, 10)
     ) {
       throw new BadRequestException(
-        `This settlement is for last working day ${settlement.lastWorkingDay.slice(0, 10)}, but the exit's is ${record.lastWorkingDay.slice(0, 10)} - recalculate the settlement for the exit's date.`,
+        `This settlement is for last working day ${dmyText(settlement.lastWorkingDay.slice(0, 10))}, but the exit's is ${dmyText(record.lastWorkingDay.slice(0, 10))} - recalculate the settlement for the exit's date.`,
       );
     }
     await this.scopedPrisma.offboardingCase.updateMany({

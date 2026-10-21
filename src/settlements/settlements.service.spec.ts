@@ -215,7 +215,7 @@ describe('final settlement: the exit it belongs to', () => {
   it('is refused for a last working day other than the open offboarding case', async () => {
     const { service } = build({ openCase: { lastWorkingDay: '2026-10-08' } });
     await expect(service.calculate(dto(), admin, 'org')).rejects.toThrow(
-      /offboarding case has last working day 2026-10-08/,
+      /offboarding case has last working day 08-10-2026/,
     );
   });
 });

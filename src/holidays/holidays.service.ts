@@ -338,7 +338,7 @@ export class HolidaysService {
           row: rowNum,
           name,
           date: row.date,
-          error: 'Invalid or missing Holiday Date (expected YYYY-MM-DD)',
+          error: 'Invalid or missing Holiday Date (expected DD-MM-YYYY)',
         });
         return;
       }

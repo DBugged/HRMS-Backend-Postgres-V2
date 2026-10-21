@@ -39,6 +39,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { todayInOrgTz } from '../common/org-date';
 
+import { dmyText } from '../payroll/format-date';
 type Actor = Omit<User, 'password'>;
 
 const EXTERNAL_URL_RE = /^https?:\/\//i;
@@ -170,7 +171,7 @@ export class ReimbursementsService {
     const joinedOn = actor.joiningDate.toISOString().slice(0, 10);
     if (dto.claimDate < joinedOn) {
       throw new BadRequestException(
-        `The claim date cannot be before your joining date (${joinedOn}).`,
+        `The claim date cannot be before your joining date (${dmyText(joinedOn)}).`,
       );
     }
     // A missing (or null) category is "Other", not an error.

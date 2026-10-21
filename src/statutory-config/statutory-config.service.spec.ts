@@ -219,7 +219,7 @@ describe('statutory config: adding a version', () => {
         'u1',
         'org',
       ),
-    ).rejects.toThrow(/already starts on 2026-11-01/);
+    ).rejects.toThrow(/already starts on 01-11-2026/);
   });
 
   it('a version cannot be back-dated before the latest one (it would leave an inverted date range)', async () => {

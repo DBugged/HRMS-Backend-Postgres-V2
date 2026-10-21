@@ -42,6 +42,7 @@ import {
   suggestedAnswers,
 } from './statutory-setup';
 
+import { dmyText } from '../payroll/format-date';
 // The deduction/contribution modules - "statutory not set up" means none of these is on.
 const SETUP_MODULES: StatutoryModule[] = [
   StatutoryModule.PF,
@@ -165,7 +166,7 @@ export class StatutoryConfigService {
     });
     if (finalized) {
       throw new BadRequestException(
-        `Cannot add a ${module} version effective ${effectiveFrom}: payroll for ${finalized.month}/${finalized.year} is already locked or paid. Choose an effective date after the last finalized payroll month, or unlock those payroll runs first.`,
+        `Cannot add a ${module} version effective ${dmyText(effectiveFrom)}: payroll for ${finalized.month}/${finalized.year} is already locked or paid. Choose an effective date after the last finalized payroll month, or unlock those payroll runs first.`,
       );
     }
   }
@@ -187,7 +188,7 @@ export class StatutoryConfigService {
     });
     if (duplicate) {
       throw new ConflictException(
-        `A version for ${module} already starts on ${dto.effectiveFrom} — edit or delete it instead.`,
+        `A version for ${module} already starts on ${dmyText(dto.effectiveFrom)} — edit or delete it instead.`,
       );
     }
 
@@ -204,7 +205,7 @@ export class StatutoryConfigService {
     });
     if (latest && dto.effectiveFrom < latest.effectiveFrom) {
       throw new BadRequestException(
-        `New version must start after the most recent version's effective date (${latest.effectiveFrom}). Versions must be created in chronological order — backdating before the latest version is not supported.`,
+        `New version must start after the most recent version's effective date (${dmyText(latest.effectiveFrom)}). Versions must be created in chronological order — backdating before the latest version is not supported.`,
       );
     }
 

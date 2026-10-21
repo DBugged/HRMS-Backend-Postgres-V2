@@ -120,6 +120,7 @@ import {
   formatDateDisplay,
   formatDateTimeDisplay,
   resolveOrgDateTimeFormat,
+  dmyText,
 } from '../payroll/format-date';
 import {
   todayInOrgTz,
@@ -381,7 +382,7 @@ async function assertPayrollPeriodUnlocked(
   });
   if (lockedRun) {
     throw new BadRequestException(
-      `This attendance date (${dateStr}) falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before changing this attendance.`,
+      `This attendance date (${dmyText(dateStr)}) falls within the ${lockedRun.month}/${lockedRun.year} payroll period, which is already ${lockedRun.status.toLowerCase()}. Ask an Admin to unlock that payroll run before changing this attendance.`,
     );
   }
   // Any calculated run was built on the old attendance: mark it outdated (and send a signed-off one back to
@@ -1321,7 +1322,7 @@ export class AttendanceService {
     );
     if (attendanceDate < utcDateStrOf(user.joiningDate)) {
       throw new BadRequestException(
-        `The date ${attendanceDate} is before this employee's joining date (${utcDateStrOf(user.joiningDate)}).`,
+        `The date ${dmyText(attendanceDate)} is before this employee's joining date (${dmyText(utcDateStrOf(user.joiningDate))}).`,
       );
     }
     await assertPayrollPeriodUnlocked(
@@ -1467,7 +1468,7 @@ export class AttendanceService {
     }
     if (attendanceDate < utcDateStrOf(user.joiningDate)) {
       throw new BadRequestException(
-        `The date ${attendanceDate} is before this employee's joining date (${utcDateStrOf(user.joiningDate)}).`,
+        `The date ${dmyText(attendanceDate)} is before this employee's joining date (${dmyText(utcDateStrOf(user.joiningDate))}).`,
       );
     }
     await assertPayrollPeriodUnlocked(
@@ -1866,7 +1867,7 @@ export class AttendanceService {
           !isValidCalendarDateString(to)
         ) {
           throw new BadRequestException(
-            'From and To must be real dates (YYYY-MM-DD).',
+            'From and To must be real dates (DD-MM-YYYY).',
           );
         }
         if (to < from) {
@@ -1879,7 +1880,7 @@ export class AttendanceService {
         }
         if (from < utcDateStrOf(employee.joiningDate)) {
           throw new BadRequestException(
-            `The date is before the employee's joining date (${utcDateStrOf(employee.joiningDate)}).`,
+            `The date is before the employee's joining date (${dmyText(utcDateStrOf(employee.joiningDate))}).`,
           );
         }
         if (calendarSpan(from, to) > MAX_WFH_RANGE_DAYS) {
@@ -2218,7 +2219,7 @@ export class AttendanceService {
       });
       if (me && dateStr < utcDateStrOf(me.joiningDate)) {
         throw new BadRequestException(
-          `The date is before your joining date (${utcDateStrOf(me.joiningDate)}).`,
+          `The date is before your joining date (${dmyText(utcDateStrOf(me.joiningDate))}).`,
         );
       }
       await assertPayrollPeriodUnlocked(
@@ -2423,7 +2424,7 @@ export class AttendanceService {
     });
     if (me && from < utcDateStrOf(me.joiningDate)) {
       throw new BadRequestException(
-        `The date is before your joining date (${utcDateStrOf(me.joiningDate)}).`,
+        `The date is before your joining date (${dmyText(utcDateStrOf(me.joiningDate))}).`,
       );
     }
     const { days, skipped } = await this.wfhDaysFor(
@@ -3467,7 +3468,7 @@ export class AttendanceService {
     }
     if (requester && dto.date < utcDateStrOf(requester.joiningDate)) {
       throw new BadRequestException(
-        `The date ${dto.date} is before your joining date (${utcDateStrOf(requester.joiningDate)}).`,
+        `The date ${dmyText(dto.date)} is before your joining date (${dmyText(utcDateStrOf(requester.joiningDate))}).`,
       );
     }
     if (dto.evidenceUrl !== undefined && dto.evidenceUrl !== '') {
@@ -4350,7 +4351,7 @@ export class AttendanceService {
       ) {
         failed.push({
           row: rowNum,
-          error: 'Invalid or missing date (expected YYYY-MM-DD)',
+          error: 'Invalid or missing date (expected DD-MM-YYYY)',
         });
         return;
       }
@@ -4397,7 +4398,7 @@ export class AttendanceService {
       if (badTime) {
         failed.push({
           row: rowNum,
-          error: `Invalid ${badTime} (expected YYYY-MM-DD HH:mm:ss, read as ${importZone ?? 'UTC'} time)`,
+          error: `Invalid ${badTime} (expected DD-MM-YYYY HH:mm:ss, read as ${importZone ?? 'UTC'} time)`,
         });
         return;
       }
@@ -4951,7 +4952,7 @@ export class AttendanceService {
     const date = dto.date ?? yesterday;
     if (date > yesterday) {
       throw new BadRequestException(
-        `Absence alerts can only be sent for a day that has finished. The latest date allowed is yesterday (${yesterday}).`,
+        `Absence alerts can only be sent for a day that has finished. The latest date allowed is yesterday (${dmyText(yesterday)}).`,
       );
     }
 
@@ -5139,7 +5140,7 @@ export class AttendanceService {
     }
     if (dto.endDate > yesterday) {
       throw new BadRequestException(
-        `endDate cannot be later than yesterday (${yesterday}).`,
+        `endDate cannot be later than yesterday (${dmyText(yesterday)}).`,
       );
     }
     const dates = enumerateDateStrings(dto.startDate, dto.endDate);

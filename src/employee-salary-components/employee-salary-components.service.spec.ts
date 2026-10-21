@@ -265,7 +265,7 @@ describe('salary structure: setting a value', () => {
         'org',
       ),
     ).rejects.toThrow(
-      /cannot start before the current one \(2026-10-01\) for BASIC/,
+      /cannot start before the current one \(01-10-2026\) for BASIC/,
     );
     expect(rows).toHaveLength(1);
   });

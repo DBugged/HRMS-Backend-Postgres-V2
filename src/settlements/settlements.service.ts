@@ -93,6 +93,7 @@ import {
   isFixedTermEmployeeType,
 } from './gratuity-math';
 
+import { dmyText } from '../payroll/format-date';
 type Actor = Omit<User, 'password'>;
 
 interface EncashmentRule {
@@ -264,7 +265,7 @@ export class SettlementsService {
       openCase.lastWorkingDay.slice(0, 10) !== dto.lastWorkingDay.slice(0, 10)
     ) {
       throw new BadRequestException(
-        `The offboarding case has last working day ${openCase.lastWorkingDay.slice(0, 10)} - change it there first (early release / extension), then calculate the settlement.`,
+        `The offboarding case has last working day ${dmyText(openCase.lastWorkingDay.slice(0, 10))} - change it there first (early release / extension), then calculate the settlement.`,
       );
     }
 
@@ -278,7 +279,7 @@ export class SettlementsService {
     const joinedOn = employee.joiningDate.toISOString().slice(0, 10);
     if (lwdDate < joinedOn) {
       throw new BadRequestException(
-        `The last working day (${lwdDate}) cannot be before the joining date (${joinedOn}).`,
+        `The last working day (${dmyText(lwdDate)}) cannot be before the joining date (${dmyText(joinedOn)}).`,
       );
     }
     const org = await this.scopedPrisma.organization.findFirst({
@@ -288,7 +289,7 @@ export class SettlementsService {
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     if (lwdDate > today) {
       throw new BadRequestException(
-        `The last working day (${lwdDate}) has not come yet. Calculate the final settlement on or after the last working day.`,
+        `The last working day (${dmyText(lwdDate)}) has not come yet. Calculate the final settlement on or after the last working day.`,
       );
     }
     // Read from the date string, not lwd's local-time getters: the string parses as UTC midnight, which is the

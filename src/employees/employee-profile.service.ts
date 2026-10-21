@@ -53,6 +53,7 @@ import {
 } from './personal-data';
 import { assertNotSelfApproval } from '../common/dept-scope';
 
+import { dmyText } from '../payroll/format-date';
 type Actor = Omit<User, 'password'>;
 
 const HR_ROLES: Role[] = [Role.ADMIN, Role.HR];
@@ -683,7 +684,7 @@ export class EmployeeProfileService {
       const newEnd = dto.newProbationEndDate as string;
       if (employee.probationEndDate && newEnd <= employee.probationEndDate) {
         throw new BadRequestException(
-          `The new probation end date must be after the current one (${employee.probationEndDate}).`,
+          `The new probation end date must be after the current one (${dmyText(employee.probationEndDate)}).`,
         );
       }
       if (newEnd <= joined) {

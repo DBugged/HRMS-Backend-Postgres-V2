@@ -110,6 +110,11 @@ const dmy = (p: { y: number; mo: number; d: number }) =>
 // `timeZone` (the organisation's; defaults to the platform zone, never the server's), so the same punch shows the
 // same day wherever the backend runs. A Date stored at exactly 00:00:00 UTC is a date-only column (joining date and
 // the like), so it keeps its UTC day rather than being moved by a negative-offset zone.
+// A date for a sentence a person reads (an error, a hint): DD-MM-YYYY, or the text as it came when it is not a real
+// date (so a message never loses what was typed).
+export const dmyText = (value: unknown): string =>
+  formatDateDisplay(value, value == null ? '' : String(value));
+
 export function formatDateDisplay(
   value: unknown,
   fallback = '',
