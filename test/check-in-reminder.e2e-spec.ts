@@ -198,6 +198,92 @@ describe('Check-in reminder before the shift (e2e)', () => {
     expect(await remindersFor(plainId)).toBe(2);
   });
 
+  it('reminds people who checked in and have not checked out 15 minutes before the shift ends, once', async () => {
+    const out = (userId: string) =>
+      prisma.notification.count({
+        where: { userId, title: { startsWith: 'Remember to check out' } },
+      });
+    // plain never punched in, punched checked in at 09:05 and has no check-out.
+    await service.remindCheckOutForOrg(
+      organizationId,
+      at('2026-11-04', '18:15'),
+    );
+    expect(await out(punchedId)).toBe(1);
+    const note = await prisma.notification.findFirstOrThrow({
+      where: {
+        userId: punchedId,
+        title: { startsWith: 'Remember to check out' },
+      },
+    });
+    expect(note.title).toMatch(/shift ends at 18:30/);
+    expect(note.category).toBe('ATTENDANCE');
+    expect(await out(plainId)).toBe(0); // never checked in
+
+    await service.remindCheckOutForOrg(
+      organizationId,
+      at('2026-11-04', '18:15'),
+    ); // same window again
+    expect(await out(punchedId)).toBe(1);
+    await service.remindCheckOutForOrg(
+      organizationId,
+      at('2026-11-04', '17:00'),
+    ); // not the moment
+    expect(await out(punchedId)).toBe(1);
+
+    // Once they have checked out there is nothing to remind.
+    await prisma.attendance.updateMany({
+      where: { employeeId: punchedId, date: '2026-11-04' },
+      data: { outTime: at('2026-11-04', '18:10') },
+    });
+    await prisma.notification.deleteMany({
+      where: {
+        userId: punchedId,
+        title: { startsWith: 'Remember to check out' },
+      },
+    });
+    await service.remindCheckOutForOrg(
+      organizationId,
+      at('2026-11-04', '18:15'),
+    );
+    expect(await out(punchedId)).toBe(0);
+  });
+
+  it('the check-out reminder can be switched off on its own, and is validated', async () => {
+    await prisma.attendance.updateMany({
+      where: { employeeId: punchedId, date: '2026-11-04' },
+      data: { outTime: null },
+    });
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: {
+        orgPayrollAttendancePrefs: {
+          checkInReminder: { enabled: true, minutesBefore: 15 },
+          checkOutReminder: { enabled: false, minutesBefore: 15 },
+        },
+      },
+    });
+    await service.remindCheckOutForOrg(
+      organizationId,
+      at('2026-11-04', '18:15'),
+    );
+    expect(
+      await prisma.notification.count({
+        where: {
+          userId: punchedId,
+          title: { startsWith: 'Remember to check out' },
+        },
+      }),
+    ).toBe(0);
+    const patch = (checkOutReminder: object) =>
+      request(app.getHttpServer())
+        .patch('/organizations/settings/policies')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ orgPayrollAttendancePrefs: { checkOutReminder } });
+    await patch({ minutesBefore: 1 }).expect(400);
+    await patch({ enabled: 'no' }).expect(400);
+    await patch({ enabled: true, minutesBefore: 10 }).expect(200);
+  });
+
   it('the Admin setting is validated', async () => {
     const patch = (checkInReminder: object) =>
       request(app.getHttpServer())

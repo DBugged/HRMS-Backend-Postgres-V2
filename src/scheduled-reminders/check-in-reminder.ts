@@ -1,5 +1,5 @@
-// Purpose: the pure rules of the "mark your attendance" reminder sent shortly before an employee's shift starts.
-// Responsibilities: reads the Admin's setting (orgPayrollAttendancePrefs.checkInReminder), and decides from clock times
+// Purpose: the pure rules of the pre-shift "mark your attendance" reminder and the pre-end "remember to check out" one.
+// Responsibilities: reads the Admin's settings (orgPayrollAttendancePrefs.checkInReminder / checkOutReminder), and decides from clock times
 //   whether a shift is at its reminder moment.
 // Important: the job runs every STEP_MINUTES, so a reminder "N minutes before" fires on the run where the shift is
 //   between N-STEP (exclusive) and N (inclusive) minutes away - exactly one run per shift, with no clock-second luck.
@@ -15,11 +15,13 @@ export const DEFAULT_CHECK_IN_REMINDER: CheckInReminderSettings = {
   minutesBefore: 15,
 };
 
-export function resolveCheckInReminder(
+function resolveReminder(
   prefs: unknown,
+  key: 'checkInReminder' | 'checkOutReminder',
 ): CheckInReminderSettings {
-  const raw = (prefs as { checkInReminder?: Record<string, unknown> } | null)
-    ?.checkInReminder;
+  const raw = (
+    prefs as Record<string, Record<string, unknown> | undefined> | null
+  )?.[key];
   const minutes =
     typeof raw?.minutesBefore === 'number' && Number.isFinite(raw.minutesBefore)
       ? Math.round(raw.minutesBefore)
@@ -32,6 +34,14 @@ export function resolveCheckInReminder(
     minutesBefore: Math.min(120, Math.max(5, minutes)),
   };
 }
+
+// Before the shift starts: "mark your attendance".
+export const resolveCheckInReminder = (prefs: unknown) =>
+  resolveReminder(prefs, 'checkInReminder');
+
+// Before the shift ends: "remember to check out". Same shape and defaults as the check-in reminder.
+export const resolveCheckOutReminder = (prefs: unknown) =>
+  resolveReminder(prefs, 'checkOutReminder');
 
 // 'HH:mm' -> minutes after midnight, or null when it is not a time.
 export function minutesOfDay(hhmm: string | null | undefined): number | null {

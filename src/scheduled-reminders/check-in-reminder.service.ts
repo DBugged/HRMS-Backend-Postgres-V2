@@ -12,7 +12,7 @@ import { LeaveStatus, NotificationCategory } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { NotificationsService } from '../notifications/notifications.service';
-import { dateStrInOrgTz } from '../common/org-date';
+import { dateStrInOrgTz, yesterdayInOrgTz } from '../common/org-date';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import {
   isWeeklyOff,
@@ -23,6 +23,7 @@ import {
   isReminderMoment,
   minutesOfDay,
   resolveCheckInReminder,
+  resolveCheckOutReminder,
   shiftTimeLabel,
 } from './check-in-reminder';
 
@@ -45,6 +46,7 @@ export class CheckInReminderService {
     for (const org of organizations) {
       try {
         sent += await this.remindForOrg(org.id);
+        sent += await this.remindCheckOutForOrg(org.id);
       } catch (err) {
         this.logger.error(
           `Check-in reminders failed for org ${org.id}: ${(err as Error).message}`,
@@ -183,6 +185,98 @@ export class CheckInReminderService {
         userId: e.id,
         title,
         message: `Your shift starts at ${at}. Remember to check in when you arrive.`,
+        category: NotificationCategory.ATTENDANCE,
+      });
+      sent += 1;
+    }
+    return sent;
+  }
+
+  // "Remember to check out": N minutes before the shift ends, for people who checked in and have not checked out yet.
+  // Unlike the check-in reminder, the day type does not matter - someone who punched in (even on a weekly off or a
+  // holiday) is working and gets it. A shift that crosses midnight is looked up on the day it started.
+  async remindCheckOutForOrg(
+    organizationId: string,
+    now = new Date(),
+  ): Promise<number> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        timezone: true,
+        policies: true,
+        attendancePayrollPrefs: true,
+        orgPayrollAttendancePrefs: true,
+      },
+    });
+    if (!org) return 0;
+    const settings = resolveCheckOutReminder(org.orgPayrollAttendancePrefs);
+    if (!settings.enabled) return 0;
+
+    const timezone = org.timezone || 'Asia/Kolkata';
+    const today = dateStrInOrgTz(timezone, now);
+    const yesterday = yesterdayInOrgTz(timezone, now);
+    const clock = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(now);
+    const nowMinutes = minutesOfDay(clock);
+    if (nowMinutes === null) return 0;
+    const hour12 =
+      (org.policies as { timeFormat?: string } | null)?.timeFormat === '12';
+    const orgPrefs =
+      org.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
+
+    const open = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        date: { in: [today, yesterday] },
+        inTime: { not: null },
+        outTime: null,
+        employee: { isActive: true },
+      },
+      select: {
+        employeeId: true,
+        date: true,
+        employee: { select: { department: true } },
+      },
+    });
+
+    let sent = 0;
+    for (const row of open) {
+      const shift = resolveShiftConfig(
+        row.employee.department,
+        orgPrefs,
+        timezone,
+      );
+      // The shift's own day: today normally, the day before for a shift that ends after midnight.
+      const shiftDate = shift.crossesMidnight ? yesterday : today;
+      if (row.date !== shiftDate) continue;
+      const end = minutesOfDay(shift.shiftEndTime);
+      if (
+        end === null ||
+        !isReminderMoment(end, nowMinutes, settings.minutesBefore)
+      ) {
+        continue;
+      }
+      const at = shiftTimeLabel(shift.shiftEndTime, hour12);
+      const title = `Remember to check out - shift ends at ${at} (${row.date})`;
+      const already = await this.scopedPrisma.notification.findFirst({
+        where: {
+          organizationId,
+          userId: row.employeeId,
+          title,
+          createdAt: { gt: new Date(Date.now() - 20 * 3600_000) },
+        },
+        select: { id: true },
+      });
+      if (already) continue;
+      await this.notificationsService.create({
+        organizationId,
+        userId: row.employeeId,
+        title,
+        message: `Your shift ends at ${at}. Remember to check out when you leave.`,
         category: NotificationCategory.ATTENDANCE,
       });
       sent += 1;

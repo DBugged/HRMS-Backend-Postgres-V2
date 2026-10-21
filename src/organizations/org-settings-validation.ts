@@ -316,24 +316,20 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       bad(`${path('alternateWeeklyOffs')} lists the same day more than once.`);
     }
   }
-  if (p.checkInReminder !== undefined) {
-    const c = p.checkInReminder;
+  for (const key of ['checkInReminder', 'checkOutReminder'] as const) {
+    if (p[key] === undefined) continue;
+    const c = p[key];
     if (!isPlainObject(c)) {
-      bad(`${path('checkInReminder')} must be an object.`);
+      bad(`${path(key)} must be an object.`);
     } else {
       if (c.enabled !== undefined && typeof c.enabled !== 'boolean') {
-        bad(`${path('checkInReminder')}.enabled must be true or false.`);
+        bad(`${path(key)}.enabled must be true or false.`);
       }
-      checkNumber(
-        c,
-        'minutesBefore',
-        `${path('checkInReminder')}.minutesBefore`,
-        {
-          min: 5,
-          max: 120,
-          integer: true,
-        },
-      );
+      checkNumber(c, 'minutesBefore', `${path(key)}.minutesBefore`, {
+        min: 5,
+        max: 120,
+        integer: true,
+      });
     }
   }
   if (p.overtimePolicy !== undefined) {

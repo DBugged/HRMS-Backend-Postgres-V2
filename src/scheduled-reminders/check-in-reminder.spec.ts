@@ -3,6 +3,7 @@ import {
   isReminderMoment,
   minutesOfDay,
   resolveCheckInReminder,
+  resolveCheckOutReminder,
   shiftTimeLabel,
 } from './check-in-reminder';
 
@@ -59,5 +60,28 @@ describe('check-in reminder rules', () => {
     expect(shiftTimeLabel('00:15', true)).toBe('12:15 AM');
     expect(shiftTimeLabel('13:05', true)).toBe('1:05 PM');
     expect(shiftTimeLabel('09:30', false)).toBe('09:30');
+  });
+
+  it('the check-out reminder has its own switch and minutes, with the same defaults', () => {
+    expect(resolveCheckOutReminder({})).toEqual({
+      enabled: true,
+      minutesBefore: 15,
+    });
+    const prefs = {
+      checkInReminder: { enabled: false, minutesBefore: 10 },
+      checkOutReminder: { enabled: true, minutesBefore: 30 },
+    };
+    expect(resolveCheckInReminder(prefs)).toEqual({
+      enabled: false,
+      minutesBefore: 10,
+    });
+    expect(resolveCheckOutReminder(prefs)).toEqual({
+      enabled: true,
+      minutesBefore: 30,
+    });
+    // Fires 15 minutes before an 18:30 end, on one 5-minute run.
+    const end = minutesOfDay('18:30')!;
+    expect(isReminderMoment(end, 18 * 60 + 15, 15)).toBe(true);
+    expect(isReminderMoment(end, 18 * 60 + 20, 15)).toBe(false);
   });
 });
