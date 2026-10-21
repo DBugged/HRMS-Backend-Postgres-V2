@@ -6,6 +6,10 @@
 // Important: departmentHeadDashboard() intentionally ports a quirk from the original release — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
+import {
+  formatTimeInZone,
+  resolveOrgTimeContext,
+} from '../payroll/format-date';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { currentLeaveYear } from '../leave-balances/leave-year';
@@ -828,6 +832,10 @@ export class DashboardService {
         }),
       ]);
     const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+    const timeCtx = await resolveOrgTimeContext(
+      this.scopedPrisma,
+      organizationId,
+    );
     const reimbursements = includeHrQueues
       ? await this.scopedPrisma.reimbursement.findMany({
           where: where.reimbursements,
@@ -932,16 +940,37 @@ export class DashboardService {
         // for HR/Admin's final decision, so the list can say so instead of offering the manager Approve again.
         levelOneApprovedAt: l.level1ApprovedAt,
       })),
-      ...regularizations.map((a) => ({
-        type: 'REGULARIZATION' as const,
-        id: a.id,
-        employee: a.employee.name,
-        employeeId: a.employee.employeeId,
-        summary: 'Attendance regularization',
-        date: a.date,
-        endDate: null,
-        requestedAt: a.updatedAt,
-      })),
+      ...regularizations.map((a) => {
+        // What was actually punched and what is being asked for, in the organization's own clock, so the reviewer sees
+        // both without opening the request (the Approvals dialog and the mobile card both show this line).
+        const reg = a.regularization as unknown as {
+          requestedInTime?: string | null;
+          requestedOutTime?: string | null;
+        } | null;
+        const clock = (v: Date | string | null | undefined, none: string) =>
+          v
+            ? formatTimeInZone(
+                new Date(v),
+                timeCtx.timezone,
+                timeCtx.timeFormat,
+              )
+            : none;
+        const actual =
+          a.inTime || a.outTime
+            ? `${clock(a.inTime, 'no check-in')} - ${clock(a.outTime, 'no check-out')}`
+            : 'no punch';
+        const asked = `${clock(reg?.requestedInTime, '-')} - ${clock(reg?.requestedOutTime, '-')}`;
+        return {
+          type: 'REGULARIZATION' as const,
+          id: a.id,
+          employee: a.employee.name,
+          employeeId: a.employee.employeeId,
+          summary: `Attendance regularization (actual ${actual}; requested ${asked})`,
+          date: a.date,
+          endDate: null,
+          requestedAt: a.updatedAt,
+        };
+      }),
       ...this.groupWfhRows(wfh).map((g) => ({
         type: 'WFH' as const,
         // A multi-day request is decided as one, through its request id (groupId); a single day by its row id.

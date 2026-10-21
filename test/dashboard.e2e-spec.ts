@@ -671,6 +671,45 @@ describe('Dashboard (e2e)', () => {
     expect(body.taxDeclaration.status).toBe('DRAFT');
   });
 
+  it('a pending regularization in the approvals list shows the actual punch and the requested times', async () => {
+    await prisma.attendance.create({
+      data: {
+        organizationId,
+        employeeId,
+        date: '2026-06-02',
+        status: 'PRESENT',
+        source: 'FACE_API',
+        inTime: new Date('2026-06-02T05:30:00.000Z'),
+        outTime: new Date('2026-06-02T13:00:00.000Z'),
+        regularization: {
+          requested: true,
+          reason: 'Forgot to punch',
+          requestedInTime: '2026-06-02T04:30:00.000Z',
+          requestedOutTime: '2026-06-02T13:30:00.000Z',
+          status: 'pending',
+          reviewedBy: null,
+          reviewedAt: null,
+          reviewComments: '',
+        },
+      },
+    });
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/hr')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .expect(200);
+    const item = (
+      res.body as {
+        pendingItems: { type: string; date: string; summary: string }[];
+      }
+    ).pendingItems.find(
+      (i) => i.type === 'REGULARIZATION' && i.date === '2026-06-02',
+    );
+    expect(item?.summary).toMatch(
+      /^Attendance regularization \(actual .+ - .+; requested .+ - .+\)$/,
+    );
+    expect(item?.summary).not.toMatch(/no punch/);
+  });
+
   it('ADMIN sees the executive dashboard with headcount + the seeded work anniversary + birthday', async () => {
     const res = await request(app.getHttpServer())
       .get('/dashboard/executive')
