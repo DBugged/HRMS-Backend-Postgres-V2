@@ -435,6 +435,11 @@ describe('Leaves (e2e)', () => {
       d.setUTCDate(d.getUTCDate() - (day || 7));
       return d.toISOString().slice(0, 10);
     })();
+    // Joined before the day the comp-off is earned for (nothing is accepted for a day before joining).
+    await prisma.user.update({
+      where: { id: employeeId },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
     const compOff = await request(app.getHttpServer())
       .post('/comp-offs')
       .set('Authorization', `Bearer ${employeeToken}`)

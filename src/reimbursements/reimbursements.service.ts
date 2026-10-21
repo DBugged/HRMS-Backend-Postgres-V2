@@ -166,6 +166,13 @@ export class ReimbursementsService {
         `A claim cannot be older than ${MAX_CLAIM_AGE_DAYS} days. Raise it with HR if it is genuinely older.`,
       );
     }
+    // ...and not one from before the person joined (the same rule as punches, regularization, WFH, leave and comp-off).
+    const joinedOn = actor.joiningDate.toISOString().slice(0, 10);
+    if (dto.claimDate < joinedOn) {
+      throw new BadRequestException(
+        `The claim date cannot be before your joining date (${joinedOn}).`,
+      );
+    }
     // A missing (or null) category is "Other", not an error.
     const category = dto.category ?? ReimbursementCategory.OTHER;
     // Application-level duplicate-submission guard — this had none at all

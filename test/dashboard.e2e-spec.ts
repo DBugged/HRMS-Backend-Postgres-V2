@@ -144,6 +144,13 @@ describe('Dashboard (e2e)', () => {
       });
     const empBody = empCreate.body as EmployeeCreateBody;
     employeeId = empBody.employee.id;
+
+    // Joined before the sample dates used below: a claim / comp-off / record is not accepted for a day before the
+    // person joined.
+    await prisma.user.updateMany({
+      where: { email: { startsWith: 'dash-e2e-emp' } },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
     const empLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({

@@ -74,7 +74,12 @@ function build(
   return { service, store, audit, notes };
 }
 
-const emp = { id: 'e1', role: Role.EMPLOYEE, name: 'Asha' } as never;
+const emp = {
+  id: 'e1',
+  role: Role.EMPLOYEE,
+  name: 'Asha',
+  joiningDate: new Date('2020-01-01T00:00:00.000Z'),
+} as never;
 const hr = {
   id: 'hr1',
   role: Role.HR,

@@ -144,6 +144,11 @@ describe('Payroll Settings (e2e)', () => {
       return d.toISOString().slice(0, 10);
     })();
 
+    // The founder must have joined before the day the comp-off is earned for.
+    await prisma.user.updateMany({
+      where: { email: 'payrollsettings-e2e-admin@example.test' },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
     const compOff = await request(app.getHttpServer())
       .post('/comp-offs')
       .set('Authorization', `Bearer ${adminToken}`)

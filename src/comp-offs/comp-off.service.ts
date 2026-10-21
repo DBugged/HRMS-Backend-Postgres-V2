@@ -105,6 +105,13 @@ export class CompOffService {
       where: { id: targetEmployeeId, organizationId },
     });
     if (!targetEmployee) throw new NotFoundException('Employee not found.');
+    // Nobody earns comp-off before they have joined (the same rule as punches, regularization, WFH and leave).
+    const joinedOn = targetEmployee.joiningDate.toISOString().slice(0, 10);
+    if (dto.earnedForDate < joinedOn) {
+      throw new BadRequestException(
+        `Comp-off cannot be earned for a date before the joining date (${joinedOn}).`,
+      );
+    }
 
     // Duplicate-claim guard: block a new earn request when this employee
     // already has a non-REJECTED CompOff for the same earnedForDate

@@ -162,6 +162,13 @@ describe('Reimbursements (e2e)', () => {
         password: deptEmpBody.generatedPassword,
       });
     deptEmployeeToken = (deptEmpLogin.body as AuthBody).accessToken;
+
+    // Joined before the sample dates used below: a claim / comp-off / record is not accepted for a day before the
+    // person joined.
+    await prisma.user.updateMany({
+      where: { email: { startsWith: 'reimb-e2e-' } },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
   });
 
   afterAll(async () => {
@@ -256,6 +263,40 @@ describe('Reimbursements (e2e)', () => {
       (c) => c.id === body.id,
     );
     expect(same?.receiptUrl).toMatch(/^\/files\//);
+  });
+
+  it('a claim dated before the employee joined is refused', async () => {
+    const other = await prisma.user.findFirstOrThrow({
+      where: { email: 'reimb-e2e-other@example.test' },
+    });
+    await prisma.user.update({
+      where: { id: other.id },
+      data: { joiningDate: new Date('2026-06-20T00:00:00.000Z') },
+    });
+    const res = await request(app.getHttpServer())
+      .post('/reimbursements')
+      .set('Authorization', `Bearer ${otherEmployeeToken}`)
+      .send({
+        amount: 300,
+        claimDate: '2026-06-10',
+        description: 'Before joining',
+      })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toMatch(/before your joining date/);
+    // The joining day itself is fine.
+    await request(app.getHttpServer())
+      .post('/reimbursements')
+      .set('Authorization', `Bearer ${otherEmployeeToken}`)
+      .send({
+        amount: 301,
+        claimDate: '2026-06-20',
+        description: 'On joining day',
+      })
+      .expect(201);
+    await prisma.user.update({
+      where: { id: other.id },
+      data: { joiningDate: new Date('2020-01-01T00:00:00.000Z') },
+    });
   });
 
   it('rejects a duplicate claim (same employee/category/amount/date)', async () => {
