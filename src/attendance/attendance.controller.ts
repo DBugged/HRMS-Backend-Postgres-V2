@@ -92,6 +92,21 @@ export class AttendanceController {
     );
   }
 
+  // Work From Home usage for the employee profile (days used / upcoming / awaiting approval). Own by default;
+  // Admin/HR/Manager can pass an employeeId. Literal path, before any :id route.
+  @Get('wfh-summary')
+  @ApiBearerAuth('access-token')
+  wfhSummary(
+    @Query('employeeId') employeeId: string | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.attendanceService.getWfhSummary(
+      employeeId,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   @Put('work-arrangement')
   @ApiBearerAuth('access-token')
   setWorkArrangement(

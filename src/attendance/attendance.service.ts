@@ -62,9 +62,12 @@ import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
+  assertManagerDeptScope,
   assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
+import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { currentLeaveYear, leaveYearBounds } from '../leave-balances/leave-year';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import {
   enumerateDateStrings,
@@ -1777,6 +1780,101 @@ export class AttendanceService {
       batteryPercent:
         typeof dto.batteryPercent === 'number' ? dto.batteryPercent : null,
     });
+  }
+
+  // WFH "balance" for the employee profile. Work From Home has no quota in this system (no allowance to count down
+  // from), so this is the usage side: approved WFH days in the leave year so far and in this month, approved days still
+  // to come, and days awaiting approval. An employee sees their own; Admin/HR anyone; a Manager their department.
+  async getWfhSummary(
+    employeeIdParam: string | undefined,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    let employeeId = actor.id;
+    if (employeeIdParam && employeeIdParam !== actor.id) {
+      if (
+        actor.role !== Role.ADMIN &&
+        actor.role !== Role.HR &&
+        actor.role !== Role.MANAGER
+      ) {
+        throw new ForbiddenException(
+          "You cannot view another employee's Work From Home balance.",
+        );
+      }
+      const exists = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeIdParam, organizationId },
+        select: { id: true },
+      });
+      if (!exists) throw new NotFoundException('Employee not found.');
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        employeeIdParam,
+      );
+      employeeId = employeeIdParam;
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true, enableWFH: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
+    const year = leaveYearBounds(currentLeaveYear(today, cfg), cfg);
+    const monthStart = `${today.slice(0, 7)}-01`;
+    const monthEnd = `${today.slice(0, 7)}-${String(
+      new Date(
+        Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)), 0),
+      ).getUTCDate(),
+    ).padStart(2, '0')}`;
+    const wfh = {
+      organizationId,
+      employeeId,
+      workArrangement: WorkArrangement.WFH,
+    };
+    const count = (
+      status: WfhApprovalStatus,
+      date: { gte?: string; lte?: string },
+    ) =>
+      this.scopedPrisma.attendance.count({
+        where: { ...wfh, workArrangementStatus: status, date },
+      });
+    const [usedThisYear, usedThisMonth, upcoming, pending] = await Promise.all(
+      [
+        count(WfhApprovalStatus.APPROVED, {
+          gte: year.start,
+          lte: today < year.end ? today : year.end,
+        }),
+        count(WfhApprovalStatus.APPROVED, {
+          gte: monthStart,
+          lte: today < monthEnd ? today : monthEnd,
+        }),
+        // Approved days after today (a request is approved before its day arrives).
+        this.scopedPrisma.attendance.count({
+          where: {
+            ...wfh,
+            workArrangementStatus: WfhApprovalStatus.APPROVED,
+            date: { gt: today },
+          },
+        }),
+        this.scopedPrisma.attendance.count({
+          where: {
+            ...wfh,
+            workArrangementStatus: WfhApprovalStatus.PENDING,
+            date: { gte: year.start },
+          },
+        }),
+      ],
+    );
+    return {
+      enabled: org?.enableWFH !== false,
+      yearStart: year.start,
+      yearEnd: year.end,
+      usedThisYear,
+      usedThisMonth,
+      upcoming,
+      pending,
+    };
   }
 
   async getTodayPunchCount(actor: Actor, organizationId: string) {
