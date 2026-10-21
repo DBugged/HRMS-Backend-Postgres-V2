@@ -6,6 +6,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { DashboardService } from './dashboard.service';
 import { DashboardRange } from './dashboard-date-math';
+import { PendingItemsQueryDto } from './dto/pending-items-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -34,6 +35,21 @@ export class DashboardController {
   @Get('pending-counts')
   pendingCounts(@CurrentUser() caller: Caller) {
     return this.dashboardService.pendingCounts(caller, caller.organizationId);
+  }
+
+  // Waiting requests of one type (mobile Approvals tabs); role-scoped in the service like the dashboards.
+  @Get('pending-items')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  pendingItems(
+    @Query() query: PendingItemsQueryDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.dashboardService.pendingItemsByType(
+      caller,
+      caller.organizationId,
+      query.type,
+    );
   }
 
   @Get('hr')

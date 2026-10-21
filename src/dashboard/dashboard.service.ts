@@ -783,13 +783,48 @@ export class DashboardService {
   // review. Each row carries what the dashboard needs to show it and link to the page where it is actioned.
   // employeeIds = null means the whole organisation (HR/Admin); includeHrQueues adds the request types only HR/Admin
   // review (reimbursement, loan/advance, leave encashment, resignation).
+  // The waiting requests of ONE type for the caller (a manager: their department; HR/Admin: everyone), newest first, up to
+  // 50 - the mobile Approvals screen's per-type tabs, where the 10-newest mixed list would hide older ones.
+  async pendingItemsByType(
+    actor: Actor,
+    organizationId: string,
+    type: string,
+  ) {
+    const viewer = { id: actor.id, role: actor.role };
+    const options = { type, limit: 50 };
+    if (actor.role === Role.MANAGER) {
+      // Same team as the department-head dashboard: a department-less manager has no team.
+      const team =
+        actor.departmentId === null
+          ? []
+          : await this.scopedPrisma.user.findMany({
+              where: {
+                organizationId,
+                departmentId: actor.departmentId,
+                isActive: true,
+              },
+              select: { id: true },
+            });
+      return this.pendingItems(
+        organizationId,
+        team.map((e) => e.id),
+        false,
+        viewer,
+        options,
+      );
+    }
+    return this.pendingItems(organizationId, null, true, viewer, options);
+  }
+
   private async pendingItems(
     organizationId: string,
     employeeIds: string[] | null,
     includeHrQueues: boolean,
     viewer?: { id: string; role: Role },
+    // `type`: only that kind of request, up to `limit` of them (default: all kinds mixed, the 10 newest).
+    options?: { type?: string; limit?: number },
   ) {
-    const LIMIT = 10;
+    const LIMIT = options?.limit ?? 10;
     const scope = this.pendingScope(organizationId, employeeIds);
     const where = this.pendingWhere(scope, viewer);
     const employeeSelect = { select: { name: true, employeeId: true } };
@@ -1011,6 +1046,7 @@ export class DashboardService {
     // type was also read newest first), and the counts beside it come from pending-counts, so nothing is hidden
     // silently.
     return items
+      .filter((i) => !options?.type || i.type === options.type)
       .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
       .slice(0, LIMIT);
   }
