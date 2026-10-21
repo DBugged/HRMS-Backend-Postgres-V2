@@ -192,6 +192,18 @@ export class TdsComplianceController {
     return this.service.setStatement(dto, c, c.organizationId);
   }
 
+  // HR's pre-flight for the Form 130 / Form 16 screen: whether the certificate can be issued, and what to look at first.
+  @Get('form130/:id/check')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  form130Check(
+    @Param('id') id: string,
+    @Query() q: Form130QueryDto,
+    @CurrentUser() c: Caller,
+  ) {
+    return this.service.form130Readiness(id, q.financialYear, c.organizationId);
+  }
+
   @Get('form130/:id')
   @SelfOrRoles('id', Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

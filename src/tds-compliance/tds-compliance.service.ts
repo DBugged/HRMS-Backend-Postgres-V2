@@ -32,6 +32,7 @@ import {
   UpdateChallanDto,
 } from './dto/tds.dto';
 import {
+  form130Issues,
   PAN_PATTERN,
   TdsQuarter,
   challanDueDate,
@@ -932,6 +933,35 @@ export class TdsComplianceService {
 
   // ── Form 130 ────────────────────────────────────────────────────────────
 
+  // For HR before issuing: can this employee's certificate be produced, and is there anything to look at first. The
+  // same checks form130Data() enforces, without building the certificate.
+  async form130Readiness(
+    employeeId: string,
+    taxYear: string,
+    organizationId: string,
+  ) {
+    this.assertTaxYear(taxYear);
+    const runs = await this.annualRuns(organizationId, taxYear, employeeId);
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { tan: true, pan: true },
+    });
+    const pd =
+      (await this.personalDataById(organizationId, [employeeId])).get(
+        employeeId,
+      ) ?? {};
+    const { blockers, warnings } = form130Issues(
+      org,
+      typeof pd.panNumber === 'string' ? pd.panNumber : '',
+    );
+    if (runs.length === 0) {
+      blockers.push(
+        `No finalized payroll found for this employee in FY ${taxYear}.`,
+      );
+    }
+    return { ready: blockers.length === 0, blockers, warnings };
+  }
+
   async form130Data(
     employeeId: string,
     taxYear: string,
@@ -969,13 +999,24 @@ export class TdsComplianceService {
         phone: true,
       },
     });
-    const challans = await this.scopedPrisma.tdsChallan.findMany({
-      where: { organizationId, financialYear: taxYear },
-    });
     const pd =
       (await this.personalDataById(organizationId, [employeeId])).get(
         employeeId,
       ) ?? {};
+    const formName =
+      Number(taxYear.slice(0, 4)) >= 2026 ? 'Form 130' : 'Form 16';
+    const issues = form130Issues(
+      org,
+      typeof pd.panNumber === 'string' ? pd.panNumber : '',
+    );
+    if (issues.blockers.length > 0) {
+      throw new BadRequestException(
+        `${formName} cannot be issued yet. ${issues.blockers.join(' ')}`,
+      );
+    }
+    const challans = await this.scopedPrisma.tdsChallan.findMany({
+      where: { organizationId, financialYear: taxYear },
+    });
     const startYear = Number(taxYear.slice(0, 4));
     const orgRuns = await this.scopedPrisma.payrollRun.findMany({
       where: {
@@ -1035,7 +1076,9 @@ export class TdsComplianceService {
     );
     return {
       financialYear: taxYear,
-      formName: Number(taxYear.slice(0, 4)) >= 2026 ? 'Form 130' : 'Form 16',
+      formName,
+      // Things worth a look that do not stop the certificate (e.g. the employee's PAN is not on their profile).
+      warnings: issues.warnings,
       employer: {
         name: org?.legalName || org?.companyName || '-',
         address: org?.registeredAddress || org?.corporateAddress || '-',

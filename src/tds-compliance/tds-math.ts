@@ -58,6 +58,7 @@ export function statementDueDate(taxYear: string, quarter: TdsQuarter): string {
 }
 
 export const PAN_PATTERN = /^[A-Z]{5}[0-9]{4}[A-Z]$/;
+export const TAN_PATTERN = /^[A-Z]{4}[0-9]{5}[A-Z]$/;
 
 // Splits one month's TDS into base tax / surcharge / cess in the proportions of the employee's annual
 // computation, so the three always add back to the amount actually deducted.
@@ -74,4 +75,44 @@ export function splitMonthlyTds(
   const surcharge = Math.round((tdsDeducted * annual.surcharge) / total);
   const cess = Math.round((tdsDeducted * annual.cess) / total);
   return { tax: tdsDeducted - surcharge - cess, surcharge, cess };
+}
+
+// What stands in the way of issuing Form 130 / Form 16 (blockers: the certificate would be unusable) and what only
+// deserves a look (warnings: it can still be issued). The employer's TAN and PAN identify the deductor on the
+// certificate; without them it cannot be matched to the return. The employee's PAN missing is a warning - the
+// certificate is still the employee's record of tax deducted - and it is worth fixing because tax is deducted at the
+// higher rate for someone without a PAN.
+export function form130Issues(
+  employer: { tan?: string | null; pan?: string | null } | null,
+  employeePan: string | null | undefined,
+): { blockers: string[]; warnings: string[] } {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+  const tan = (employer?.tan ?? '').trim().toUpperCase();
+  const pan = (employer?.pan ?? '').trim().toUpperCase();
+  if (!tan) {
+    blockers.push(
+      "The company's TAN is not set. Add it in Organization Settings > Registration Details before issuing the certificate.",
+    );
+  } else if (!TAN_PATTERN.test(tan)) {
+    warnings.push(`The company's TAN (${tan}) does not look like a valid TAN.`);
+  }
+  if (!pan) {
+    blockers.push(
+      "The company's PAN is not set. Add it in Organization Settings > Registration Details before issuing the certificate.",
+    );
+  } else if (!PAN_PATTERN.test(pan)) {
+    warnings.push(`The company's PAN (${pan}) does not look like a valid PAN.`);
+  }
+  const empPan = (employeePan ?? '').trim().toUpperCase();
+  if (!empPan) {
+    warnings.push(
+      "The employee's PAN is not on their profile, so the certificate shows '-' for it. Add it to their profile and issue the certificate again.",
+    );
+  } else if (!PAN_PATTERN.test(empPan)) {
+    warnings.push(
+      `The employee's PAN (${empPan}) does not look like a valid PAN.`,
+    );
+  }
+  return { blockers, warnings };
 }

@@ -3,7 +3,15 @@ import { TdsComplianceService } from './tds-compliance.service';
 type Row = Record<string, any>;
 
 // An in-memory challan table and statement table behind the same calls the service makes.
-function build(o: { challans?: Row[]; statements?: Row[] } = {}) {
+function build(
+  o: {
+    challans?: Row[];
+    statements?: Row[];
+    org?: Row;
+    runs?: Row[];
+    employeePan?: string;
+  } = {},
+) {
   const challans: Row[] = (o.challans ?? []).map((c) => ({
     organizationId: 'org',
     ...c,
@@ -17,7 +25,15 @@ function build(o: { challans?: Row[]; statements?: Row[] } = {}) {
     );
   const audit: Row[] = [];
   const prisma: Row = {
-    organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
+    organization: {
+      findFirst: async () => ({ timezone: 'Asia/Kolkata', ...o.org }),
+    },
+    payrollRun: { findMany: async () => o.runs ?? [] },
+    user: {
+      findMany: async () => [
+        { id: 'e1', personalData: { panNumber: o.employeePan ?? '' } },
+      ],
+    },
     tdsStatement: {
       findFirst: async (a: { where: Row }) =>
         statements.find((s) => match(s, a.where)) ?? null,
@@ -234,5 +250,41 @@ describe('TDS challans: removing', () => {
       /already filed.*removed/,
     );
     expect(challans).toHaveLength(1);
+  });
+});
+
+describe('Form 130 readiness', () => {
+  const run = { employeeId: 'e1', month: 10, year: 2026 };
+  const org = { tan: 'BLRA12345B', pan: 'AABCD1234E' };
+
+  it('is ready when the company TAN and PAN are set and the employee has payroll', async () => {
+    const { service } = build({ org, runs: [run], employeePan: 'ABCDE1234F' });
+    expect(await service.form130Readiness('e1', '2026-27', 'org')).toEqual({
+      ready: true,
+      blockers: [],
+      warnings: [],
+    });
+  });
+
+  it('a missing employee PAN is a warning, still ready', async () => {
+    const { service } = build({ org, runs: [run], employeePan: '' });
+    const r = await service.form130Readiness('e1', '2026-27', 'org');
+    expect(r.ready).toBe(true);
+    expect(r.warnings.join(' ')).toMatch(/employee's PAN/);
+  });
+
+  it('a missing company TAN or no payroll for the year blocks it', async () => {
+    const noTan = build({
+      org: { ...org, tan: '' },
+      runs: [run],
+      employeePan: 'ABCDE1234F',
+    });
+    const a = await noTan.service.form130Readiness('e1', '2026-27', 'org');
+    expect(a.ready).toBe(false);
+    expect(a.blockers.join(' ')).toMatch(/TAN is not set/);
+    const noPayroll = build({ org, runs: [], employeePan: 'ABCDE1234F' });
+    const b = await noPayroll.service.form130Readiness('e1', '2026-27', 'org');
+    expect(b.ready).toBe(false);
+    expect(b.blockers.join(' ')).toMatch(/No finalized payroll/);
   });
 });
