@@ -316,6 +316,26 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       bad(`${path('alternateWeeklyOffs')} lists the same day more than once.`);
     }
   }
+  if (p.checkInReminder !== undefined) {
+    const c = p.checkInReminder;
+    if (!isPlainObject(c)) {
+      bad(`${path('checkInReminder')} must be an object.`);
+    } else {
+      if (c.enabled !== undefined && typeof c.enabled !== 'boolean') {
+        bad(`${path('checkInReminder')}.enabled must be true or false.`);
+      }
+      checkNumber(
+        c,
+        'minutesBefore',
+        `${path('checkInReminder')}.minutesBefore`,
+        {
+          min: 5,
+          max: 120,
+          integer: true,
+        },
+      );
+    }
+  }
   if (p.overtimePolicy !== undefined) {
     const o = p.overtimePolicy;
     if (!isPlainObject(o)) {

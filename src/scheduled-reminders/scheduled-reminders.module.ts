@@ -1,5 +1,5 @@
 // Purpose: Wires the scheduled reminder jobs (probation, payroll cut-off, statutory due dates, missed punch-out,
-// approval escalation, leave expiry, missing documents, tax declaration, exit clearance) — see each service's header for the schedule and rules.
+// approval escalation, leave expiry, missing documents, tax declaration, exit clearance, pre-shift check-in reminder) — see each service's header for the schedule and rules.
 import { Module } from '@nestjs/common';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
@@ -14,6 +14,7 @@ import { LeaveExpiryReminderService } from './leave-expiry-reminder.service';
 import { MissingDocumentsReminderService } from './missing-documents-reminder.service';
 import { TaxDeclarationReminderService } from './tax-declaration-reminder.service';
 import { ExitClearanceReminderService } from './exit-clearance-reminder.service';
+import { CheckInReminderService } from './check-in-reminder.service';
 
 @Module({
   imports: [NotificationsModule, EmailTemplatesModule, PayrollSettingsModule],
@@ -28,6 +29,7 @@ import { ExitClearanceReminderService } from './exit-clearance-reminder.service'
     MissingDocumentsReminderService,
     TaxDeclarationReminderService,
     ExitClearanceReminderService,
+    CheckInReminderService,
   ],
   exports: [
     ProbationReminderService,
@@ -39,6 +41,7 @@ import { ExitClearanceReminderService } from './exit-clearance-reminder.service'
     MissingDocumentsReminderService,
     TaxDeclarationReminderService,
     ExitClearanceReminderService,
+    CheckInReminderService,
   ],
 })
 export class ScheduledRemindersModule {}
