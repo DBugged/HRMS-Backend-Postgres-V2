@@ -18,6 +18,7 @@ interface Opts {
   openCase?: Row | null;
   resignation?: Row | null;
   defaultNotice?: number;
+  policies?: Row;
   bonusOn?: boolean;
   gratuityConfig?: Row;
   headcount?: number;
@@ -73,7 +74,7 @@ function build(o: Opts = {}) {
     organization: {
       findFirst: async () => ({
         timezone: 'Asia/Kolkata',
-        policies: { defaultNoticeDays: o.defaultNotice ?? 0 },
+        policies: { defaultNoticeDays: o.defaultNotice ?? 0, ...o.policies },
       }),
     },
     leave: { count: async () => 0 },
@@ -190,7 +191,20 @@ function build(o: Opts = {}) {
 const admin = { id: 'admin', role: Role.ADMIN } as never;
 const dto = (over: Row = {}) =>
   ({ employeeId: 'e1', lastWorkingDay: '2026-10-06', ...over }) as never;
-const encashable = [{ id: 'lt1', encashment: { allowed: true } }];
+// A leave type as the settlement sees it: active, with a real allocation and no eligibility restriction.
+const leaveType = (over: Row = {}) => ({
+  isActive: true,
+  code: 'EL',
+  allocationType: 'FIXED_ANNUAL',
+  minServiceMonths: 0,
+  maxServiceMonths: null,
+  applicableDepartments: [],
+  applicableEmployeeTypes: [],
+  applicableGenders: [],
+  encashment: { allowed: true },
+  ...over,
+});
+const encashable = [leaveType({ id: 'lt1' })];
 
 beforeEach(() =>
   jest.useFakeTimers().setSystemTime(new Date('2026-10-10T08:00:00Z')),
@@ -338,13 +352,54 @@ describe('final settlement: the amounts', () => {
       basic: 30000,
       leaveTypes: [
         ...encashable,
-        { id: 'lt2', encashment: { allowed: true } },
-        { id: 'lt3', encashment: { allowed: false } },
+        leaveType({ id: 'lt2' }),
+        leaveType({ id: 'lt3', encashment: { allowed: false } }),
       ],
       leaveClosing: 3,
     });
     const s = await service.calculate(dto(), admin, 'org');
     expect(s.leaveEncashmentAmount).toBe(2 * 3 * 1000); // two encashable types x 3 days x 1,000
+  });
+
+  it('leave types the employee has no claim to are not paid: inactive, no allocation, or not eligible on the last working day', async () => {
+    const { service } = build({
+      basic: 30000,
+      leaveTypes: [
+        leaveType({ id: 'paid' }),
+        leaveType({ id: 'inactive', isActive: false }),
+        leaveType({ id: 'comp', code: 'COMPOFF' }),
+        leaveType({ id: 'unlimited', allocationType: 'UNLIMITED' }),
+        // Joined 7 Oct 2020; 6 years of service on the last working day, so a 100-month minimum is not met.
+        leaveType({ id: 'newcomers', minServiceMonths: 100 }),
+        leaveType({ id: 'women', applicableGenders: ['FEMALE'] }),
+      ],
+      leaveClosing: 3,
+      employee: {
+        id: 'e1',
+        name: 'Asha',
+        isActive: true,
+        joiningDate: JOINED,
+        employeeType: 'FULL_TIME',
+        gender: 'MALE',
+        departmentId: null,
+      },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.leaveEncashmentAmount).toBe(3 * 1000); // only the one type they qualify for
+  });
+
+  it('pays no leave while the company switch is off, and says how many days it left unpaid', async () => {
+    const { service } = build({
+      basic: 30000,
+      leaveTypes: encashable,
+      leaveClosing: 3,
+      policies: { allowLeaveEncashment: false },
+    });
+    const s = await service.calculate(dto(), admin, 'org');
+    expect(s.leaveEncashmentAmount).toBe(0);
+    // No per-type days are recorded, so processing never takes days off a balance.
+    expect(Array.isArray(s.leaveEncashmentDetail)).toBe(false);
+    expect(s.warnings.join(' ')).toMatch(/turned off.*3 unused leave day/);
   });
 
   it('the bonus is taxed with the last month; leave encashment only beyond its s.10(10AA) exemption', async () => {
@@ -461,6 +516,25 @@ describe('final settlement: processing', () => {
     await expect(
       build().service.process('ghost', admin, 'org'),
     ).rejects.toThrow(/Settlement not found/);
+  });
+
+  it('a draft that still pays leave out is refused once the company switch has been turned off', async () => {
+    const { service } = build({
+      policies: { allowLeaveEncashment: false },
+      settlements: [
+        {
+          id: 's1',
+          employeeId: 'e1',
+          status: 'DRAFT',
+          netSettlementAmount: 5000,
+          leaveEncashmentAmount: 3000,
+          lastWorkingDay: '2026-10-06',
+        },
+      ],
+    });
+    await expect(service.process('s1', admin, 'org')).rejects.toThrow(
+      /Leave encashment has been turned off.*Rs 3,000.*Recalculate/,
+    );
   });
 
   it('only one final settlement can ever exist for a person', async () => {

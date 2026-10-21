@@ -30,6 +30,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  AllocationType,
   LeaveEncashmentStatus,
   LeaveStatus,
   LoanStatus,
@@ -65,6 +66,8 @@ import {
 } from './final-bonus';
 import { leaveEncashmentExemption } from './leave-encashment-tax';
 import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
+import { isEligible } from '../leave-balances/leave-eligibility';
+import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { noticeRecoveryAmount, noticeShortfallDays } from './notice-shortfall';
 import { PayslipPdfService } from '../payroll/payslip-pdf.service';
 import { escapeHtml } from '../email-templates/email-layout';
@@ -363,6 +366,19 @@ export class SettlementsService {
       for (const leaveType of encashableTypes) {
         const rule = (leaveType.encashment ?? {}) as EncashmentRule;
         if (!rule.allowed) continue;
+        // Only leave the employee actually has: an inactive type, one with no balance to speak of (comp-off, no
+        // allocation, unlimited), or one whose eligibility rules (gender, employee type, department, months of service
+        // on the last working day) they do not meet is not paid - and no balance row is built for it, which would
+        // otherwise credit a full-year quota that was never theirs.
+        if (
+          !leaveType.isActive ||
+          leaveType.code === LEAVE_TYPE_CODES.COMPOFF ||
+          leaveType.allocationType === AllocationType.NONE ||
+          leaveType.allocationType === AllocationType.UNLIMITED ||
+          !isEligible(leaveType, employee, new Date(`${lwdDate}T00:00:00Z`))
+        ) {
+          continue;
+        }
         const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
           tx,
           dto.employeeId,
@@ -1301,6 +1317,17 @@ export class SettlementsService {
     if (pendingLeaves > 0 || openEncashments > 0) {
       throw new BadRequestException(
         `This employee still has ${pendingLeaves} pending leave application(s) and ${openEncashments} leave encashment request(s) not yet paid. Decide or pay them first, then recalculate the settlement.`,
+      );
+    }
+    // The figures were worked out under the leave policy of that day. If leave encashment has been switched off for the
+    // company since, a draft that still pays leave out must be recalculated (it then pays none) rather than paid.
+    const { allowLeaveEncashment } = await getOrgLeaveSwitches(
+      this.scopedPrisma,
+      organizationId,
+    );
+    if (!allowLeaveEncashment && settlement.leaveEncashmentAmount > 0) {
+      throw new BadRequestException(
+        `Leave encashment has been turned off for the organization since this settlement was calculated, but it still includes a leave encashment payout of Rs ${Math.round(settlement.leaveEncashmentAmount).toLocaleString('en-IN')}. Recalculate the settlement (it will then pay no leave) before processing it.`,
       );
     }
     // Maker-checker: whoever calculated the figures cannot also approve them for payment, unless they are an Admin
