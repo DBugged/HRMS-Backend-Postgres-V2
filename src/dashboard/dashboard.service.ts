@@ -29,6 +29,7 @@ import {
   ResignationStatus,
   WithdrawalRequestStatus,
   Role,
+  StatutoryModule,
   User,
   WfhApprovalStatus,
 } from '@prisma/client';
@@ -38,6 +39,12 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { CompOffService } from '../comp-offs/comp-off.service';
+import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
+import {
+  applyStatutoryOverrides,
+  type EffectiveConfigsByModule,
+} from '../payroll/statutory-overlay';
+import { lastDayOfMonth } from '../payroll/payroll-date-math';
 import { SALARY_COMPONENT_CODES } from '../common/reserved-codes';
 import { getFinancialYear } from '../payroll-settings/financial-year';
 import {
@@ -76,7 +83,42 @@ export class DashboardService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly payrollSettingsService: PayrollSettingsService,
     private readonly compOffService: CompOffService,
+    private readonly statutoryConfigService: StatutoryConfigService,
   ) {}
+
+  // Which statutory deductions apply in a month, resolved the way payroll resolves them: the dated version in force on
+  // the month's last day (Statutory Configuration) wins over the plain on/off flag in Payroll Settings. Reading only
+  // the flag left the dashboard blank for PF/ESI/PT/LWF when a company had enabled them through Statutory
+  // Configuration while payroll was already deducting them.
+  private async statutoryEnabledIn(
+    settings: Parameters<typeof applyStatutoryOverrides>[0],
+    organizationId: string,
+    month: number,
+    year: number,
+  ) {
+    const periodDate = lastDayOfMonth(month, year);
+    const effectiveConfigs: EffectiveConfigsByModule = {};
+    for (const statutoryModule of Object.values(StatutoryModule)) {
+      const { version } = await this.statutoryConfigService.getEffective(
+        statutoryModule,
+        periodDate,
+        organizationId,
+      );
+      if (version) {
+        effectiveConfigs[statutoryModule] = {
+          config: version.config,
+          isEnabled: version.isEnabled,
+        };
+      }
+    }
+    const resolved = applyStatutoryOverrides(settings, effectiveConfigs);
+    return {
+      pf: resolved.pfEnabled,
+      esi: resolved.esiEnabled,
+      pt: resolved.ptEnabled,
+      lwf: resolved.lwfEnabled,
+    };
+  }
 
   // The leave year now in progress (the key leave balance rows are filed under) - the calendar year unless the
   // organisation's leave year starts in another month.
@@ -410,21 +452,27 @@ export class DashboardService {
         0,
       );
 
+    const statutoryOn = await this.statutoryEnabledIn(
+      settings,
+      organizationId,
+      currentMonth,
+      currentYear,
+    );
     const taxCompliance = {
       totalTDS: sumDeductionCode(
         currentMonthRuns,
         SALARY_COMPONENT_CODES.INCOME_TAX,
       ),
-      totalPF: settings.pfEnabled
+      totalPF: statutoryOn.pf
         ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.PF)
         : null,
-      totalESI: settings.esiEnabled
+      totalESI: statutoryOn.esi
         ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.ESI)
         : null,
-      totalPT: settings.ptEnabled
+      totalPT: statutoryOn.pt
         ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.PT)
         : null,
-      totalLWF: settings.lwfEnabled
+      totalLWF: statutoryOn.lwf
         ? sumDeductionCode(currentMonthRuns, SALARY_COMPONENT_CODES.LWF)
         : null,
     };
@@ -785,11 +833,7 @@ export class DashboardService {
   // review (reimbursement, loan/advance, leave encashment, resignation).
   // The waiting requests of ONE type for the caller (a manager: their department; HR/Admin: everyone), newest first, up to
   // 50 - the mobile Approvals screen's per-type tabs, where the 10-newest mixed list would hide older ones.
-  async pendingItemsByType(
-    actor: Actor,
-    organizationId: string,
-    type: string,
-  ) {
+  async pendingItemsByType(actor: Actor, organizationId: string, type: string) {
     const viewer = { id: actor.id, role: actor.role };
     const options = { type, limit: 50 };
     if (actor.role === Role.MANAGER) {
