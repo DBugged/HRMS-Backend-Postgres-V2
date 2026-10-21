@@ -64,6 +64,7 @@ import {
   finalStatutoryBonus,
 } from './final-bonus';
 import { leaveEncashmentExemption } from './leave-encashment-tax';
+import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 import { noticeRecoveryAmount, noticeShortfallDays } from './notice-shortfall';
 import { PayslipPdfService } from '../payroll/payslip-pdf.service';
 import { escapeHtml } from '../email-templates/email-layout';
@@ -335,6 +336,14 @@ export class SettlementsService {
       where: { organizationId },
     });
     let leaveDaysEncashed = 0;
+    // Company-wide "Allow Leave Encashment" switch (Organization Settings -> Policies). While it is off, no leave is paid
+    // out here - it overrides every leave type's own setting, the same as for encashment requests. The unused days are
+    // still counted (`leaveDaysNotPaid`) so a heads-up can tell HR what is not being paid.
+    const { allowLeaveEncashment } = await getOrgLeaveSwitches(
+      this.scopedPrisma,
+      organizationId,
+    );
+    let leaveDaysNotPaid = 0;
     const leaveEncashmentDetail: {
       leaveTypeId: string;
       year: number;
@@ -378,7 +387,9 @@ export class SettlementsService {
           0,
           balanceRow.closing - lapsed - (balanceRow.pending ?? 0),
         );
-        if (days > 0) {
+        if (days > 0 && !allowLeaveEncashment) {
+          leaveDaysNotPaid += days;
+        } else if (days > 0) {
           leaveDaysEncashed += days;
           leaveEncashmentDetail.push({
             leaveTypeId: leaveType.id,
@@ -624,6 +635,12 @@ export class SettlementsService {
 
     // Heads-up (never blocks): things HR should look at before processing.
     const warnings: string[] = [];
+    if (leaveDaysNotPaid > 0) {
+      const days = Math.round(leaveDaysNotPaid * 100) / 100;
+      warnings.push(
+        `Leave encashment is turned off for the organization, so ${days} unused leave day(s) (about Rs ${Math.round(leaveDaysNotPaid * ratePerDay).toLocaleString('en-IN')}) are not paid in this settlement. Turn it on in Organization Settings > Policies and recalculate if they should be paid.`,
+      );
+    }
     const [pendingLeaveCount, pendingClaimCount] = await Promise.all([
       this.scopedPrisma.leave.count({
         where: {
