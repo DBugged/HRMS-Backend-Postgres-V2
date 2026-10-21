@@ -111,13 +111,22 @@ export class ReportsService {
       where.employee = { departmentId: query.department };
     }
 
-    const records = await this.scopedPrisma.attendance.findMany({
+    const fetched = await this.scopedPrisma.attendance.findMany({
       where,
-      include: { employee: { select: { name: true, employeeId: true } } },
+      include: {
+        employee: {
+          select: { name: true, employeeId: true, joiningDate: true },
+        },
+      },
       take: REPORT_ROW_LIMIT + 1,
       orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'asc' }],
     });
-    assertWithinReportLimit(records);
+    assertWithinReportLimit(fetched);
+    // Nothing is reported for a day before the employee joined (an import or manual entry can carry one), the same
+    // rule as the attendance tracker and the Attendance Records list.
+    const records = fetched.filter(
+      (r) => r.date >= r.employee.joiningDate.toISOString().slice(0, 10),
+    );
 
     // Punch times are instants: print them as clock times in the ORG's timezone (the Date column already says which
     // day), not the server's. A check-out on a later calendar day than the check-in (night shift) keeps its date.

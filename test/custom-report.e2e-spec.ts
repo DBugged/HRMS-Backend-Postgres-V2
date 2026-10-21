@@ -142,6 +142,11 @@ describe('Custom Report Builder (e2e)', () => {
     const emp = await prisma.user.findFirstOrThrow({
       where: { email: 'cr-e2e-emp@example.test' },
     });
+    // Joined before the April rows below, so they are shown (nothing is shown before the joining date).
+    await prisma.user.update({
+      where: { id: emp.id },
+      data: { joiningDate: new Date('2026-01-01T00:00:00.000Z') },
+    });
     const base = {
       organizationId: emp.organizationId,
       employeeId: emp.id,

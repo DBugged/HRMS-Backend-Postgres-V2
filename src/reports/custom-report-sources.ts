@@ -102,7 +102,11 @@ const employeesSource: CustomReportSource<
 
 const attendanceSource: CustomReportSource<
   Prisma.AttendanceGetPayload<{
-    include: { employee: { select: { name: true; employeeId: true } } };
+    include: {
+      employee: {
+        select: { name: true; employeeId: true; joiningDate: true };
+      };
+    };
   }>
 > = {
   label: 'Attendance',
@@ -159,12 +163,19 @@ const attendanceSource: CustomReportSource<
       where.employee = { departmentId: filters.department };
     const rows = await prisma.attendance.findMany({
       where,
-      include: { employee: { select: { name: true, employeeId: true } } },
+      include: {
+        employee: {
+          select: { name: true, employeeId: true, joiningDate: true },
+        },
+      },
       orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { date: 'desc' }],
       take: FETCH_LIMIT,
     });
     assertWithinReportLimit(rows);
-    return rows;
+    // Nothing for a day before the employee joined (same rule as the tracker and the attendance report).
+    return rows.filter(
+      (r) => r.date >= r.employee.joiningDate.toISOString().slice(0, 10),
+    );
   },
 };
 

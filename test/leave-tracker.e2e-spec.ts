@@ -529,6 +529,33 @@ describe('Leave Tracker (e2e)', () => {
       );
       expect(dates).not.toContain(`${YEAR}-08-05`);
       expect(dates.every((d) => d >= `${YEAR}-08-12`)).toBe(true);
+
+      // The Attendance report export and the custom report builder follow the same rule.
+      const report = await request(app.getHttpServer())
+        .get('/reports/attendance')
+        .query({ format: 'csv', from: `${YEAR}-08-01`, to: `${YEAR}-08-31` })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const lateJoinerLines = (report.text as string)
+        .split('\n')
+        .filter((l) => l.includes('Late Joiner'));
+      expect(lateJoinerLines.some((l) => l.includes('05-08-2026'))).toBe(false);
+      const custom = await request(app.getHttpServer())
+        .get('/reports/custom')
+        .query({
+          source: 'attendance',
+          format: 'json',
+          from: `${YEAR}-08-01`,
+          to: `${YEAR}-08-31`,
+        })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const customDates = (
+        custom.body as { rows: { employeeName: string; date: string }[] }
+      ).rows
+        .filter((r) => r.employeeName === 'Late Joiner')
+        .map((r) => r.date);
+      expect(customDates).not.toContain('05-08-2026');
     });
   });
 
