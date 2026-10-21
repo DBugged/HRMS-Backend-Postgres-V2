@@ -514,12 +514,20 @@ export class PayrollService {
         status: { not: PayrollRunStatus.DRAFT },
         OR: earlier,
       },
-      select: { deductions: true },
+      select: { deductions: true, employerContributions: true },
     });
-    return runs.some((r) =>
-      ((r.deductions ?? []) as { code: string; amount: number }[]).some(
-        (d) => d.code === 'ESI' && d.amount > 0,
-      ),
+    // Covered means ESI was charged on this employee's wages - their own share OR the employer's. An employee whose
+    // average daily wage is Rs 176 or less pays no share (so no ESI deduction line) but is covered all the same and
+    // the employer's share is still due; looking only at the deduction lost that coverage when wages later crossed
+    // the ceiling inside the same period.
+    const charged = (lines: unknown, code: string) =>
+      ((lines ?? []) as { code: string; amount: number }[]).some(
+        (l) => l.code === code && l.amount > 0,
+      );
+    return runs.some(
+      (r) =>
+        charged(r.deductions, 'ESI') ||
+        charged(r.employerContributions, 'ESI_EMPLOYER'),
     );
   }
 

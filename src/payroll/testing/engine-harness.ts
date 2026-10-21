@@ -240,7 +240,13 @@ export function makeWorld(over: Partial<World> = {}): World {
 function matches(row: Row, where: Row | undefined): boolean {
   if (!where) return true;
   for (const [k, v] of Object.entries(where)) {
-    if (k === 'organizationId' || k === 'OR' || k === 'AND') continue;
+    if (k === 'organizationId' || k === 'AND') continue;
+    // OR: at least one alternative must match (the ESI contribution-period lookup is an OR of month/year pairs).
+    if (k === 'OR') {
+      if (Array.isArray(v) && v.length > 0 && !v.some((w) => matches(row, w)))
+        return false;
+      continue;
+    }
     if (v && typeof v === 'object' && !(v instanceof Date)) {
       if ('lt' in v && !(row[k] < (v as Row).lt)) return false;
       continue;
