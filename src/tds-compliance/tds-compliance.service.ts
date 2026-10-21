@@ -43,6 +43,7 @@ import {
   taxYearOf,
 } from './tds-math';
 import { formatDateDisplay } from '../payroll/format-date';
+import { todayInOrgTz } from '../common/org-date';
 
 interface Actor {
   id: string;
@@ -69,7 +70,8 @@ interface TaxDetailsShape {
   ytdTDS?: number;
   previousEmployerTDS?: number;
   employerNps?: number;
-  employerFundPerquisite?: number;}
+  employerFundPerquisite?: number;
+}
 
 // A run counts for TDS once payroll has approved it (settlements go straight to APPROVED).
 const PAID_OUT: PayrollRunStatus[] = [
@@ -649,6 +651,66 @@ export class TdsComplianceService {
     });
   }
 
+  // A challan reports tax already deposited, so its deposit date cannot be a day that has not come yet: it would count
+  // as deposited today and hide a real shortfall. "Today" is the organization's own calendar day.
+  private async assertNotFutureDeposit(
+    depositDate: string,
+    organizationId: string,
+  ) {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    if (depositDate > todayInOrgTz(org?.timezone ?? 'Asia/Kolkata')) {
+      throw new BadRequestException(
+        'The deposit date cannot be in the future. Record the challan once the tax has been deposited.',
+      );
+    }
+  }
+
+  // Once a quarter's statement is on record (filed) the challans it reports are part of that return: adding one,
+  // changing one or removing one would make the books disagree with what was filed.
+  private async assertQuarterNotFiled(
+    financialYear: string,
+    quarter: number,
+    organizationId: string,
+    verb: string,
+  ) {
+    const filed = await this.scopedPrisma.tdsStatement.findFirst({
+      where: { organizationId, financialYear, quarter },
+    });
+    if (filed) {
+      throw new BadRequestException(
+        `The Q${quarter} statement for FY ${financialYear} is already filed (receipt ${filed.receiptNumber}) — a challan it reports can no longer be ${verb}.`,
+      );
+    }
+  }
+
+  // The same BSR code, serial number and deposit date is the same bank challan; `exceptId` leaves out the challan being
+  // edited so it does not clash with itself.
+  private async assertChallanNotDuplicate(
+    organizationId: string,
+    bsrCode: string,
+    challanSerialNo: string,
+    depositDate: string,
+    exceptId?: string,
+  ) {
+    const dup = await this.scopedPrisma.tdsChallan.findFirst({
+      where: {
+        organizationId,
+        bsrCode,
+        challanSerialNo,
+        depositDate,
+        ...(exceptId ? { id: { not: exceptId } } : {}),
+      },
+    });
+    if (dup) {
+      throw new BadRequestException(
+        'A challan with this BSR code, serial number and deposit date is already recorded.',
+      );
+    }
+  }
+
   async createChallan(
     dto: CreateChallanDto,
     actor: Actor,
@@ -659,19 +721,19 @@ export class TdsComplianceService {
         'The deposit date cannot be before the month the tax was deducted in.',
       );
     }
-    const dup = await this.scopedPrisma.tdsChallan.findFirst({
-      where: {
-        organizationId,
-        bsrCode: dto.bsrCode,
-        challanSerialNo: dto.challanSerialNo,
-        depositDate: dto.depositDate,
-      },
-    });
-    if (dup) {
-      throw new BadRequestException(
-        'A challan with this BSR code, serial number and deposit date is already recorded.',
-      );
-    }
+    await this.assertNotFutureDeposit(dto.depositDate, organizationId);
+    await this.assertQuarterNotFiled(
+      taxYearOf(dto.month, dto.year),
+      quarterOf(dto.month),
+      organizationId,
+      'added',
+    );
+    await this.assertChallanNotDuplicate(
+      organizationId,
+      dto.bsrCode,
+      dto.challanSerialNo,
+      dto.depositDate,
+    );
     const created = await this.scopedPrisma.tdsChallan.create({
       data: {
         organizationId,
@@ -724,6 +786,22 @@ export class TdsComplianceService {
         'The deposit date cannot be before the month the tax was deducted in.',
       );
     }
+    if (dto.depositDate) {
+      await this.assertNotFutureDeposit(dto.depositDate, organizationId);
+    }
+    await this.assertQuarterNotFiled(
+      before.financialYear,
+      before.quarter,
+      organizationId,
+      'changed',
+    );
+    await this.assertChallanNotDuplicate(
+      organizationId,
+      dto.bsrCode ?? before.bsrCode,
+      dto.challanSerialNo ?? before.challanSerialNo,
+      dto.depositDate ?? before.depositDate,
+      id,
+    );
     await this.scopedPrisma.tdsChallan.updateMany({
       where: { id, organizationId },
       data: { ...dto },
@@ -760,18 +838,12 @@ export class TdsComplianceService {
       where: { id, organizationId },
     });
     if (!row) throw new NotFoundException('Challan not found.');
-    const filed = await this.scopedPrisma.tdsStatement.findFirst({
-      where: {
-        organizationId,
-        financialYear: row.financialYear,
-        quarter: row.quarter,
-      },
-    });
-    if (filed) {
-      throw new BadRequestException(
-        `The Q${row.quarter} statement for FY ${row.financialYear} is already filed (receipt ${filed.receiptNumber}) — a challan it reports can no longer be removed.`,
-      );
-    }
+    await this.assertQuarterNotFiled(
+      row.financialYear,
+      row.quarter,
+      organizationId,
+      'removed',
+    );
     await this.scopedPrisma.tdsChallan.deleteMany({
       where: { id, organizationId },
     });
