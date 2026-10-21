@@ -140,14 +140,14 @@ function daysBetween(fromStr: string, toStr: string): number {
   );
 }
 
-function countDaysInclusive(startStr: string, endStr: string): number {
+export function countDaysInclusive(startStr: string, endStr: string): number {
   return daysBetween(startStr, endStr) + 1;
 }
 
 // Working (non-weekly-off, non-holiday) days in [startStr, endStr],
 // inclusive. Used when sandwichLeaveApplies is false so weekends/holidays
 // falling inside a leave range aren't charged against the balance.
-function countWorkingDaysInclusive(
+export function countWorkingDaysInclusive(
   startStr: string,
   endStr: string,
   holidayDates: Set<string>,
@@ -162,7 +162,7 @@ function countWorkingDaysInclusive(
   return working;
 }
 
-function addDaysStr(dateStr: string, days: number): string {
+export function addDaysStr(dateStr: string, days: number): string {
   const date = toUTCDate(dateStr);
   date.setUTCDate(date.getUTCDate() + days);
   return date.toISOString().slice(0, 10);

@@ -50,11 +50,21 @@ import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import {
   checkLeaveRules,
   applicationDocumentRule,
+  countDaysInclusive,
+  countWorkingDaysInclusive,
   effectiveLeaveRules,
   rangesOverlap,
   splitDaysByYear,
   LeaveRules,
 } from './leave-rules';
+import {
+  negativeBalanceRuleFor,
+  splitForLossOfPay,
+} from './negative-leave-balance';
+import {
+  getOrgLeaveSwitches,
+  readOrgLeaveSwitches,
+} from '../organizations/org-leave-switches';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import {
   currentLeaveYear,
@@ -261,7 +271,180 @@ export class LeavesService {
         'leave',
       );
     }
-    return this.createLeaveInternal(dto, actor, organizationId);
+    const lossOfPay = await this.planLossOfPaySplit(dto, actor, organizationId);
+    if (!lossOfPay) return this.createLeaveInternal(dto, actor, organizationId);
+    return this.applyWithLossOfPay(dto, actor, organizationId, lossOfPay);
+  }
+
+  // Company switch Allow Negative Leave Balance, mode "Mark as Loss of Pay": when the request needs more days than the
+  // balance has, the part the balance covers stays on the leave type and the days beyond it become a Loss of Pay leave
+  // (pay deducted by payroll like any other Leave Without Pay). Returns null when none of that applies - the switch is
+  // off or in another mode, the type has no balance, the request fits, spans two leave years, or the organization has no
+  // active Leave Without Pay type - and the request then goes through the normal path (and the normal balance message).
+  private async planLossOfPaySplit(
+    dto: ApplyLeaveDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    if (!dto.startDate || !dto.endDate || dto.endDate < dto.startDate) {
+      return null;
+    }
+    const switches = await getOrgLeaveSwitches(
+      this.scopedPrisma,
+      organizationId,
+    );
+    if (
+      !switches.allowNegativeLeaveBalance ||
+      switches.negativeLeaveBalanceMode !== 'MARK_AS_LOP'
+    ) {
+      return null;
+    }
+    const leaveType = await this.scopedPrisma.leaveType.findFirst({
+      where: { id: dto.leaveType, organizationId, isActive: true },
+    });
+    if (
+      !leaveType ||
+      isCompOffType(leaveType) ||
+      isUnbalancedType(leaveType) ||
+      leaveType.allocationType === AllocationType.EVENT_BASED
+    ) {
+      return null;
+    }
+    const lwpType = await this.scopedPrisma.leaveType.findFirst({
+      where: {
+        organizationId,
+        code: 'LWP',
+        isActive: true,
+        id: { not: leaveType.id },
+      },
+    });
+    if (!lwpType) return null;
+    const [holidays, org, dept] = await Promise.all([
+      this.holidaysFor(actor, organizationId),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+      }),
+      actor.departmentId
+        ? this.scopedPrisma.department.findFirst({
+            where: { id: actor.departmentId, organizationId },
+          })
+        : Promise.resolve(null),
+    ]);
+    const leaveYearCfg: LeaveYearConfig = {
+      startMonth: org?.leaveYearStartMonth ?? 1,
+      anchorYear: org?.leaveYearAnchorYear ?? null,
+    };
+    const year = leaveYearOf(dto.startDate, leaveYearCfg);
+    if (leaveYearOf(dto.endDate, leaveYearCfg) !== year) return null;
+    const { weeklyOffs } = resolveShiftConfig(
+      dept,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
+    const rules = effectiveLeaveRules(
+      leaveType.rules as unknown as LeaveRules,
+      leaveType,
+    );
+    const holidayDates = new Set(holidays.map((h) => h.date));
+    const calendarDays = !!(
+      rules.sandwichLeaveApplies || rules.countCalendarDays
+    );
+    const isHalfDay = dto.isHalfDay ?? false;
+    const totalDays = isHalfDay
+      ? 0.5
+      : calendarDays
+        ? countDaysInclusive(dto.startDate, dto.endDate)
+        : countWorkingDaysInclusive(
+            dto.startDate,
+            dto.endDate,
+            holidayDates,
+            weeklyOffs,
+          );
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const available = await this.scopedPrisma.$transaction(async (tx) => {
+      const row = await this.leaveBalanceService.ensureBalanceRow(
+        tx,
+        actor.id,
+        leaveType.id,
+        year,
+        organizationId,
+      );
+      const forfeited = (
+        await this.leaveBalanceService.forfeitedCarryIn(
+          tx,
+          [row],
+          organizationId,
+          today,
+        )
+      ).get(row.id);
+      return checkAffordability(
+        row,
+        { allowed: false, maxNegativeDays: 0 },
+        0,
+        today,
+        forfeited ?? 0,
+      ).available;
+    });
+    const split = splitForLossOfPay({
+      startDate: dto.startDate,
+      endDate: dto.endDate,
+      isHalfDay,
+      totalDays,
+      available,
+      calendarDays,
+      holidayDates,
+      weeklyOffs,
+    });
+    if (split.lopDays <= 0 || !split.lopStart) return null;
+    return { leaveType, lwpType, split };
+  }
+
+  private async applyWithLossOfPay(
+    dto: ApplyLeaveDto,
+    actor: Actor,
+    organizationId: string,
+    plan: NonNullable<Awaited<ReturnType<LeavesService['planLossOfPaySplit']>>>,
+  ) {
+    const { leaveType, lwpType, split } = plan;
+    const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
+    const note = `Loss of Pay: ${days(split.lopDays)} over the ${leaveType.name} balance, applied together with the same request.`;
+    // The part the balance covers is created first, as an ordinary application.
+    const covered = split.coveredEnd
+      ? await this.createLeaveInternal(
+          { ...dto, endDate: split.coveredEnd },
+          actor,
+          organizationId,
+        )
+      : null;
+    let lossOfPay: Leave;
+    try {
+      lossOfPay = await this.createLeaveInternal(
+        {
+          ...dto,
+          leaveType: lwpType.id,
+          startDate: split.lopStart as string,
+          remarks: dto.remarks ? `${note} ${dto.remarks}` : note,
+        },
+        actor,
+        organizationId,
+      );
+    } catch (err) {
+      // Never leave half a request behind.
+      if (covered) {
+        await this.cancel(covered.id, actor, organizationId).catch(
+          () => undefined,
+        );
+      }
+      throw err;
+    }
+    return {
+      ...(covered ?? lossOfPay),
+      lossOfPayLeave: covered ? lossOfPay : null,
+      convertedToLossOfPay: !covered,
+      lossOfPayDays: split.lopDays,
+      lossOfPayNotice: covered
+        ? `${days(split.coveredDays)} applied as ${leaveType.name}; the other ${days(split.lopDays)} as Loss of Pay (pay is deducted for those).`
+        : `You have no ${leaveType.name} balance left, so ${days(split.lopDays)} applied as Loss of Pay (pay is deducted for those).`,
+    };
   }
 
   // History of periodic accrual/carry-forward runs, visible to whoever can
@@ -1771,12 +1954,12 @@ export class LeavesService {
       }
 
       if (!isCompOffType(leaveType) && !isUnbalancedType(leaveType)) {
-        // Leave never goes negative: once the quota is used up the employee applies Leave Without Pay for the extra
-        // days (pay is deducted for those). Any Allow Negative Balance setting on the leave type is ignored.
-        const negativeBalance: NegativeBalanceRule = {
-          allowed: false,
-          maxNegativeDays: 0,
-        };
+        // By default leave never goes negative: once the quota is used up the employee applies Leave Without Pay for
+        // the extra days (pay is deducted for those). The company-wide Allow Negative Leave Balance switch changes
+        // that - see negativeBalanceRuleFor: below zero without limit, or up to what the type still credits this year.
+        // (Under "Mark as Loss of Pay" apply() has already cut the request, so what reaches here always fits.) A
+        // setting on the leave type itself is ignored.
+        const orgSwitches = readOrgLeaveSwitches(org?.policies);
         // A leave spanning New Year takes each year's days from that year's balance.
         for (const part of yearParts) {
           const row = await this.leaveBalanceService.ensureBalanceRow(
@@ -1802,7 +1985,7 @@ export class LeavesService {
           ).get(row.id);
           const preflight = checkAffordability(
             row,
-            negativeBalance,
+            negativeBalanceRuleFor(orgSwitches, leaveType, row),
             part.days,
             today,
             forfeited ?? 0,
@@ -1840,7 +2023,7 @@ export class LeavesService {
           });
           const affordability = checkAffordability(
             rowAfterHold,
-            negativeBalance,
+            negativeBalanceRuleFor(orgSwitches, leaveType, rowAfterHold),
             0,
             today,
             forfeited ?? 0,

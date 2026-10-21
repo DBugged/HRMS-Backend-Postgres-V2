@@ -9,6 +9,7 @@ import { isValidIndianMobile } from '../common/indian-mobile';
 import { BadRequestException } from '@nestjs/common';
 import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
 import { SUPPORTED_STATES, isSupportedState } from '../common/indian-states';
+import { NEGATIVE_BALANCE_MODES } from './org-leave-switches';
 
 // Number of Setup Wizard steps (frontend/src/components/organization/
 // steps.js ORG_STEPS) — setupStep is 1-based and the wizard clamps it to
@@ -249,6 +250,16 @@ function validatePolicies(p: Record<string, unknown>) {
     if (p[key] !== undefined && typeof p[key] !== 'boolean') {
       bad(`policies.${key} must be true or false.`);
     }
+  }
+  if (
+    p.negativeLeaveBalanceMode !== undefined &&
+    !(NEGATIVE_BALANCE_MODES as readonly unknown[]).includes(
+      p.negativeLeaveBalanceMode,
+    )
+  ) {
+    bad(
+      `policies.negativeLeaveBalanceMode must be one of ${NEGATIVE_BALANCE_MODES.join(', ')}.`,
+    );
   }
 }
 
