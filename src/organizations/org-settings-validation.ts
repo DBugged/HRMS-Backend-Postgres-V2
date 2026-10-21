@@ -200,6 +200,13 @@ function validatePolicies(p: Record<string, unknown>) {
     max: 365,
     integer: true,
   });
+  // Work From Home days an employee may have per month - shown on the profile as "used / allowed". Blank = no limit.
+  checkNumber(p, 'wfhDaysPerMonth', 'policies.wfhDaysPerMonth', {
+    min: 0,
+    max: 31,
+    integer: true,
+    allowEmpty: true,
+  });
   const ALLOWED_DATE_FORMATS = ['DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD'];
   if (
     typeof p.dateFormat === 'string' &&

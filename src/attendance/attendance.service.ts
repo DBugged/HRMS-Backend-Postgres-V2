@@ -67,6 +67,7 @@ import {
   deptScopedEmployeeIds,
 } from '../common/dept-scope';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
+import { wfhDaysPerMonthOf } from '../organizations/org-wfh-policy';
 import { currentLeaveYear, leaveYearBounds } from '../leave-balances/leave-year';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import {
@@ -1816,7 +1817,7 @@ export class AttendanceService {
     }
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
-      select: { timezone: true, enableWFH: true },
+      select: { timezone: true, enableWFH: true, policies: true },
     });
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     const cfg = await getLeaveYearConfig(this.scopedPrisma, organizationId);
@@ -1868,6 +1869,10 @@ export class AttendanceService {
     );
     return {
       enabled: org?.enableWFH !== false,
+      // The company's WFH days allowed per month (null = no limit): what usedThisMonth is shown "out of".
+      allowedPerMonth: wfhDaysPerMonthOf(
+        (org?.policies as { wfhDaysPerMonth?: unknown } | null)?.wfhDaysPerMonth,
+      ),
       yearStart: year.start,
       yearEnd: year.end,
       usedThisYear,

@@ -6,6 +6,7 @@
 // Important: regenerateFaceApiKey() replaces the old single process-wide FACE_API_KEY that let anyone
 // holding it forge attendance webhooks for ANY organization; the generated key is shown once and never
 // exposed again on a read path, same as a generated employee password.
+import { wfhDaysPerMonthOf } from './org-wfh-policy';
 import {
   netWorkingHours,
   shiftConsistencyError,
@@ -410,6 +411,7 @@ export class OrganizationSettingsService {
       dateFormat?: string;
       timeFormat?: string;
       autoCarryForwardEnabled?: boolean;
+      wfhDaysPerMonth?: number | null;
     };
     const attendancePayrollPrefs = (org.orgPayrollAttendancePrefs ?? {}) as {
       enableTaxDeclaration?: boolean;
@@ -431,6 +433,8 @@ export class OrganizationSettingsService {
       primaryColor: org.primaryColor,
       secondaryColor: org.secondaryColor,
       enableWFH: org.enableWFH,
+      // Work From Home days allowed per month (null = no limit): the denominator of the profile's WFH balance.
+      wfhDaysPerMonth: wfhDaysPerMonthOf(policies.wfhDaysPerMonth),
       // Drives every hardcoded-₹ display across the app (see
       // frontend/src/utils/currency.ts) — read from Policies' currency
       // symbol so switching it in Setup/Organization Settings changes the

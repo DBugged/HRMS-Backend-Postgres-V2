@@ -73,6 +73,7 @@ describe('WFH summary', () => {
     const r = await build(rows).getWfhSummary(undefined, employee, 'org');
     expect(r).toEqual({
       enabled: true,
+      allowedPerMonth: null,
       yearStart: '2026-01-01',
       yearEnd: '2026-12-31',
       usedThisYear: 3,
@@ -100,5 +101,21 @@ describe('WFH summary', () => {
     await expect(svc.getWfhSummary('nobody', hr, 'org')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+});
+
+describe('WFH summary: the company allowance', () => {
+  const rows = [wfh('e1', '2026-10-05', 'APPROVED')];
+  const allowed = async (policies: unknown) =>
+    (await build(rows, { policies }).getWfhSummary(undefined, employee, 'org'))
+      .allowedPerMonth;
+
+  it('reads the days allowed per month from the policies; blank or invalid means no limit', async () => {
+    expect(await allowed({ wfhDaysPerMonth: 4 })).toBe(4);
+    expect(await allowed({ wfhDaysPerMonth: 0 })).toBe(0);
+    expect(await allowed({})).toBeNull();
+    expect(await allowed({ wfhDaysPerMonth: '' })).toBeNull();
+    expect(await allowed({ wfhDaysPerMonth: 99 })).toBeNull();
+    expect(await allowed(null)).toBeNull();
   });
 });

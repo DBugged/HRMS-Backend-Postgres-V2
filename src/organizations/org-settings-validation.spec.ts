@@ -134,3 +134,30 @@ describe('document numbering {EMPID}', () => {
     ).toThrow(/only one counter/);
   });
 });
+
+describe('Policies: Work From Home days per month and negative balance mode', () => {
+  const policies = (p: Record<string, unknown>) => () =>
+    validateSectionData({ policies: p });
+
+  it('accepts a whole number of days from 0 to 31, or blank for no limit', () => {
+    expect(policies({ wfhDaysPerMonth: 4 })).not.toThrow();
+    expect(policies({ wfhDaysPerMonth: 0 })).not.toThrow();
+    expect(policies({ wfhDaysPerMonth: 31 })).not.toThrow();
+    expect(policies({ wfhDaysPerMonth: '' })).not.toThrow();
+    expect(policies({ wfhDaysPerMonth: null })).not.toThrow();
+  });
+
+  it('refuses a negative, fractional or too large allowance', () => {
+    expect(policies({ wfhDaysPerMonth: -1 })).toThrow(/wfhDaysPerMonth/);
+    expect(policies({ wfhDaysPerMonth: 2.5 })).toThrow(/wfhDaysPerMonth/);
+    expect(policies({ wfhDaysPerMonth: 32 })).toThrow(/wfhDaysPerMonth/);
+  });
+
+  it('the negative leave balance mode must be one of the three choices', () => {
+    expect(policies({ negativeLeaveBalanceMode: 'MARK_AS_LOP' })).not.toThrow();
+    expect(policies({ negativeLeaveBalanceMode: 'UNLIMITED' })).not.toThrow();
+    expect(policies({ negativeLeaveBalanceMode: 'FOREVER' })).toThrow(
+      /negativeLeaveBalanceMode must be one of/,
+    );
+  });
+});
