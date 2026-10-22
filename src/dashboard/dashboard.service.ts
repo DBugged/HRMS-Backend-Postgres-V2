@@ -702,7 +702,18 @@ export class DashboardService {
       };
     };
     return {
-      leaves: { ...withoutOwn(true), status: LeaveStatus.PENDING },
+      // Pending leave requests, plus approved leaves the employee has asked to have cancelled (the approver decides
+      // those too, from the same list).
+      leaves: {
+        ...withoutOwn(true),
+        OR: [
+          { status: LeaveStatus.PENDING },
+          {
+            status: LeaveStatus.APPROVED,
+            cancelRequestedAt: { not: null },
+          },
+        ],
+      },
       regularizations: {
         ...withoutOwn(false),
         regularization: { path: ['status'], equals: 'pending' },
@@ -1011,10 +1022,17 @@ export class DashboardService {
         id: l.id,
         employee: l.employee.name,
         employeeId: l.employee.employeeId,
-        summary: `${l.leaveType.name} (${days(l.totalDays)})`,
+        // An approved leave in this list is a cancellation request: it is decided on its own endpoint.
+        cancellation: l.status === LeaveStatus.APPROVED,
+        cancelReason:
+          l.status === LeaveStatus.APPROVED ? l.cancelRequestReason : null,
+        summary: `${l.status === LeaveStatus.APPROVED ? 'Cancel request: ' : ''}${l.leaveType.name} (${days(l.totalDays)})`,
         date: l.startDate,
         endDate: l.endDate === l.startDate ? null : l.endDate,
-        requestedAt: l.createdAt,
+        requestedAt:
+          l.status === LeaveStatus.APPROVED
+            ? (l.cancelRequestedAt ?? l.createdAt)
+            : l.createdAt,
         // Set once the reporting manager has signed off level 1 of a two-level leave type; the request then waits
         // for HR/Admin's final decision, so the list can say so instead of offering the manager Approve again.
         levelOneApprovedAt: l.level1ApprovedAt,
