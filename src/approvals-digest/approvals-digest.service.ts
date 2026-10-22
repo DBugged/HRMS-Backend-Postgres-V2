@@ -6,6 +6,8 @@
 //   reports sees only those reports' requests, and only the request types a manager can decide (not finance/loan
 //   types). An approver never counts their own requests. Respects the recipient's "email notifications" preference
 //   and an org that has disabled the template (no email at all, unlike the generic fallback behaviour elsewhere).
+import { NotificationCategory } from '@prisma/client';
+import { channelAllowed } from '../notifications/notification-preferences';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { Role } from '@prisma/client';
@@ -55,7 +57,7 @@ const emptyCounts = (): Counts => ({
 });
 
 function emailEnabled(prefs: unknown): boolean {
-  return (prefs as { emailEnabled?: boolean } | null)?.emailEnabled !== false;
+  return channelAllowed(prefs, NotificationCategory.GENERAL, 'email');
 }
 
 @Injectable()

@@ -5,6 +5,7 @@
 // Important: notify() NEVER throws — a push problem must not fail the business action that created the
 //   notification. Payroll pushes carry no text (see push-messages.ts). Sending is skipped when no devices exist, in
 //   tests, or when PUSH_ENABLED=false.
+import { channelAllowed } from './notification-preferences';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { NotificationCategory, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -26,10 +27,6 @@ export interface PushTarget extends PushInput {
   userId: string;
 }
 
-interface PrefsShape {
-  mutedCategories?: NotificationCategory[];
-  pushEnabled?: boolean;
-}
 
 const EXPO_URL =
   process.env.EXPO_PUSH_URL ?? 'https://exp.host/--/api/v2/push/send';
@@ -126,14 +123,15 @@ export class PushService {
       }),
     ]);
     const withDevice = new Set(devices.map((d) => d.userId));
-    return users.filter((u) => {
-      const p = (u.notificationPreferences ?? {}) as PrefsShape;
-      return (
+    return users.filter(
+      (u) =>
         withDevice.has(u.id) &&
-        p.pushEnabled !== false &&
-        !(p.mutedCategories ?? []).includes(NotificationCategory.GENERAL)
-      );
-    }).length;
+        channelAllowed(
+          u.notificationPreferences,
+          NotificationCategory.GENERAL,
+          'push',
+        ),
+    ).length;
   }
 
   // Fire-and-forget entry point used by NotificationsService after it writes the in-app rows.
@@ -172,18 +170,16 @@ export class PushService {
       const unreadByUser = new Map(
         unread.map((u) => [u.userId, u._count._all]),
       );
-      const prefs = new Map(
-        users.map((u) => [
-          u.id,
-          (u.notificationPreferences ?? {}) as PrefsShape,
-        ]),
-      );
+      const prefs = new Map(users.map((u) => [u.id, u.notificationPreferences]));
       const messages = list.flatMap((t) => {
-        const p = prefs.get(t.userId);
-        if (!p) return []; // inactive / unknown user
-        if (p.pushEnabled === false) return [];
+        if (!prefs.has(t.userId)) return []; // inactive / unknown user
+        // The master push switch, the muted kinds, and this kind's own push choice.
         if (
-          (p.mutedCategories ?? []).includes(t.category as NotificationCategory)
+          !channelAllowed(
+            prefs.get(t.userId),
+            t.category as NotificationCategory,
+            'push',
+          )
         )
           return [];
         const tokens = devices

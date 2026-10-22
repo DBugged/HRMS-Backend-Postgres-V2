@@ -19,6 +19,14 @@ import {
   Role,
   User,
 } from '@prisma/client';
+import {
+  channelAllowed,
+  hiddenInAppCategories,
+  mergeChannels,
+  readPreferences,
+  unknownChannelKeys,
+  type NotificationPreferences,
+} from './notification-preferences';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -33,18 +41,6 @@ import { companyLogoImgTag } from '../email-templates/company-logo';
 
 type Actor = Omit<User, 'password'>;
 
-export interface NotificationPreferences {
-  mutedCategories: NotificationCategory[];
-  emailEnabled: boolean;
-  // Push notifications to the user's phone(s).
-  pushEnabled: boolean;
-}
-
-const DEFAULT_PREFERENCES: NotificationPreferences = {
-  mutedCategories: [],
-  emailEnabled: true,
-  pushEnabled: true,
-};
 
 // Every other module in the app calls this to create a Notification row —
 // the closest backend-v2 equivalent to the original release's inline
@@ -58,16 +54,6 @@ export interface CreateNotificationInput {
   category: NotificationCategory;
   // Marks a notification that asks the recipient to decide on something (see push-messages.ts).
   pushKind?: 'APPROVAL';
-}
-
-function readPreferences(raw: unknown): NotificationPreferences {
-  const prefs = raw as Partial<NotificationPreferences> | null | undefined;
-  return {
-    mutedCategories:
-      prefs?.mutedCategories ?? DEFAULT_PREFERENCES.mutedCategories,
-    emailEnabled: prefs?.emailEnabled ?? DEFAULT_PREFERENCES.emailEnabled,
-    pushEnabled: prefs?.pushEnabled ?? DEFAULT_PREFERENCES.pushEnabled,
-  };
 }
 
 @Injectable()
@@ -180,13 +166,12 @@ export class NotificationsService {
     actor: Actor,
     organizationId: string,
   ) {
-    const prefs = readPreferences(actor.notificationPreferences);
+    // Kinds the person muted, or has the in-app channel switched off for, stay out of their inbox.
+    const hidden = hiddenInAppCategories(actor.notificationPreferences);
     const where: Prisma.NotificationWhereInput = {
       organizationId,
       userId: actor.id,
-      ...(prefs.mutedCategories.length > 0 && {
-        category: { notIn: prefs.mutedCategories },
-      }),
+      ...(hidden.length > 0 && { category: { notIn: hidden } }),
     };
 
     const [result, unreadCount] = await Promise.all([
@@ -213,15 +198,13 @@ export class NotificationsService {
   // Lightweight badge count — same muted-category filtering as findMine's
   // unreadCount, without loading/paginating the list.
   async unreadCount(actor: Actor, organizationId: string) {
-    const prefs = readPreferences(actor.notificationPreferences);
+    const hidden = hiddenInAppCategories(actor.notificationPreferences);
     const unreadCount = await this.scopedPrisma.notification.count({
       where: {
         organizationId,
         userId: actor.id,
         isRead: false,
-        ...(prefs.mutedCategories.length > 0 && {
-          category: { notIn: prefs.mutedCategories },
-        }),
+        ...(hidden.length > 0 && { category: { notIn: hidden } }),
       },
     });
     return { unreadCount };
@@ -237,10 +220,21 @@ export class NotificationsService {
     organizationId: string,
   ) {
     const current = readPreferences(actor.notificationPreferences);
+    if (dto.channels) {
+      const bad = unknownChannelKeys(dto.channels);
+      if (bad.length > 0) {
+        throw new BadRequestException(
+          `Unknown notification setting: ${bad.join(', ')}.`,
+        );
+      }
+    }
     const merged: NotificationPreferences = {
       mutedCategories: dto.mutedCategories ?? current.mutedCategories,
       emailEnabled: dto.emailEnabled ?? current.emailEnabled,
       pushEnabled: dto.pushEnabled ?? current.pushEnabled,
+      channels: dto.channels
+        ? mergeChannels(current.channels, dto.channels)
+        : current.channels,
     };
 
     await this.scopedPrisma.user.updateMany({
@@ -365,8 +359,12 @@ export class NotificationsService {
       );
       await Promise.all(
         recipients
-          .filter(
-            (r) => readPreferences(r.notificationPreferences).emailEnabled,
+          .filter((r) =>
+            channelAllowed(
+              r.notificationPreferences,
+              NotificationCategory.GENERAL,
+              'email',
+            ),
           )
           .map((r) =>
             this.emailService.send({

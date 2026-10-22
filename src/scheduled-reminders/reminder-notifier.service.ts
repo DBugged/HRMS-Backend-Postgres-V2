@@ -3,6 +3,7 @@
 // Important: dedupes on (user, title) within a window so a job that runs again (restart, manual trigger) never
 // double-notifies; respects the recipient's "email notifications" preference; and, unlike the generic fallback
 // elsewhere, sends NO email when the org has switched the template off (the in-app notice still goes out).
+import { channelAllowed } from '../notifications/notification-preferences';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { NotificationCategory, Role } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -34,8 +35,6 @@ export interface ReminderInput {
   inAppOnly?: boolean;
 }
 
-const emailEnabled = (prefs: unknown): boolean =>
-  (prefs as { emailEnabled?: boolean } | null)?.emailEnabled !== false;
 
 @Injectable()
 export class ReminderNotifier {
@@ -90,7 +89,8 @@ export class ReminderNotifier {
 
     if (input.inAppOnly) return true;
     try {
-      if (!emailEnabled(user.notificationPreferences)) return true;
+      // The person's own choice for email, for this kind of notification.
+      if (!channelAllowed(user.notificationPreferences, input.category, 'email')) return true;
       const template = await this.scopedPrisma.emailTemplate.findFirst({
         where: { organizationId, occasionKey },
         select: { isActive: true },
