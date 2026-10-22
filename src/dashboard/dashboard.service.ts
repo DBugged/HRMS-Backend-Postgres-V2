@@ -7,6 +7,12 @@
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
 import {
+  pageRequest,
+  slicePage,
+  wanted,
+  type PageRequest,
+} from './pending-page';
+import {
   formatTimeInZone,
   resolveOrgTimeContext,
 } from '../payroll/format-date';
@@ -844,9 +850,19 @@ export class DashboardService {
   // review (reimbursement, loan/advance, leave encashment, resignation).
   // The waiting requests of ONE type for the caller (a manager: their department; HR/Admin: everyone), newest first, up to
   // 50 - the mobile Approvals screen's per-type tabs, where the 10-newest mixed list would hide older ones.
-  async pendingItemsByType(actor: Actor, organizationId: string, type: string) {
+  //
+  // Without `paging` the answer is the plain list of the newest 50 (what every existing client reads). With it, the answer
+  // is { items, hasMore, offset, limit }: one page of that newest-first list and whether more follow, so a backlog longer
+  // than 50 can be read to the end ("Load more") instead of being cut off.
+  async pendingItemsByType(
+    actor: Actor,
+    organizationId: string,
+    type: string,
+    paging?: { offset?: number; limit?: number },
+  ) {
     const viewer = { id: actor.id, role: actor.role };
-    const options = { type, limit: 50 };
+    const page = pageRequest(paging?.offset, paging?.limit);
+    const options = { type, limit: 50, page: paging ? page : undefined };
     if (actor.role === Role.MANAGER) {
       // Same team as the department-head dashboard: a department-less manager has no team.
       const team =
@@ -871,18 +887,54 @@ export class DashboardService {
     return this.pendingItems(organizationId, null, true, viewer, options);
   }
 
+  // The Work From Home rows of the waiting requests, newest request first: single days one row each, and a multi-day
+  // request all of its rows together (so it is never cut in the middle). Reads `want` requests of each kind.
+  private async wfhRowsForPending(
+    where: Prisma.AttendanceWhereInput,
+    include: { employee: { select: { name: true; employeeId: true } } },
+    want: number,
+  ) {
+    const [singles, groups] = await Promise.all([
+      this.scopedPrisma.attendance.findMany({
+        where: { ...where, wfhRequestId: null },
+        include,
+        orderBy: { updatedAt: 'desc' },
+        take: want,
+      }),
+      this.scopedPrisma.attendance.groupBy({
+        by: ['wfhRequestId'],
+        where: { ...where, wfhRequestId: { not: null } },
+        _max: { updatedAt: true },
+        orderBy: { _max: { updatedAt: 'desc' } },
+        take: want,
+      }),
+    ]);
+    const ids = groups.map((g) => g.wfhRequestId as string);
+    const grouped = ids.length
+      ? await this.scopedPrisma.attendance.findMany({
+          where: { ...where, wfhRequestId: { in: ids } },
+          include,
+          orderBy: { updatedAt: 'desc' },
+        })
+      : [];
+    return [...singles, ...grouped];
+  }
+
   private async pendingItems(
     organizationId: string,
     employeeIds: string[] | null,
     includeHrQueues: boolean,
     viewer?: { id: string; role: Role },
-    // `type`: only that kind of request, up to `limit` of them (default: all kinds mixed, the 10 newest).
-    options?: { type?: string; limit?: number },
+    // `type`: only that kind of request, up to `limit` of them (default: all kinds mixed, the 10 newest). `page`: one
+    // page of that list with a "more follow" flag instead of just the first `limit`.
+    options?: { type?: string; limit?: number; page?: PageRequest },
   ) {
     const LIMIT = options?.limit ?? 10;
+    // Rows read from each source: enough for the first LIMIT, or for the requested page plus one to know if more follow.
+    const WANT = options?.page ? wanted(options.page) : LIMIT;
     const scope = this.pendingScope(organizationId, employeeIds);
     const where = this.pendingWhere(scope, viewer);
-    const employeeSelect = { select: { name: true, employeeId: true } };
+    const employeeSelect = { select: { name: true, employeeId: true } } as const;
     const [leaves, regularizations, wfh, overtime, compOffs] =
       await Promise.all([
         this.scopedPrisma.leave.findMany({
@@ -892,33 +944,27 @@ export class DashboardService {
             leaveType: { select: { name: true } },
           },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         }),
         this.scopedPrisma.attendance.findMany({
           where: where.regularizations,
           include: { employee: employeeSelect },
           orderBy: { updatedAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         }),
-        this.scopedPrisma.attendance.findMany({
-          where: where.wfh,
-          include: { employee: employeeSelect },
-          orderBy: { updatedAt: 'desc' },
-          // More than LIMIT rows: a multi-day request is several rows that are shown as ONE item below, so the cap
-          // is applied to requests, not to days.
-          take: 200,
-        }),
+        // A multi-day request is several rows shown as ONE item below, so the cap counts requests, not days.
+        this.wfhRowsForPending(where.wfh, { employee: employeeSelect }, WANT),
         this.scopedPrisma.overtimeRecord.findMany({
           where: where.overtime,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         }),
         this.scopedPrisma.compOff.findMany({
           where: where.compOffs,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         }),
       ]);
     const days = (n: number) => `${n} day${n === 1 ? '' : 's'}`;
@@ -931,7 +977,7 @@ export class DashboardService {
           where: where.reimbursements,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         })
       : [];
     const loans = includeHrQueues
@@ -939,7 +985,7 @@ export class DashboardService {
           where: where.loans,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         })
       : [];
     const encashments = includeHrQueues
@@ -947,15 +993,27 @@ export class DashboardService {
           where: where.encashments,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         })
       : [];
     const resignations = includeHrQueues
       ? await this.scopedPrisma.resignation.findMany({
-          where: where.resignations,
+          // For one kind only, so the page is not filled by the other kind: a pending resignation, or an approved one
+          // whose employee asked to withdraw it.
+          where:
+            options?.type === 'RESIGNATION'
+              ? { ...where.resignations, OR: undefined, status: ResignationStatus.PENDING }
+              : options?.type === 'RESIGNATION_WITHDRAWAL'
+                ? {
+                    ...where.resignations,
+                    OR: undefined,
+                    status: ResignationStatus.APPROVED,
+                    withdrawalStatus: WithdrawalRequestStatus.REQUESTED,
+                  }
+                : where.resignations,
           include: { employee: employeeSelect },
           orderBy: { createdAt: 'desc' },
-          take: LIMIT,
+          take: WANT,
         })
       : [];
     const hrItems = [
@@ -1107,10 +1165,13 @@ export class DashboardService {
     // Newest first: the latest request is on top. With more than LIMIT waiting the list is the LIMIT newest (each
     // type was also read newest first), and the counts beside it come from pending-counts, so nothing is hidden
     // silently.
-    return items
+    const sorted = items
       .filter((i) => !options?.type || i.type === options.type)
-      .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime())
-      .slice(0, LIMIT);
+      .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime());
+    if (options?.page) {
+      return { ...slicePage(sorted, options.page), ...options.page };
+    }
+    return sorted.slice(0, LIMIT);
   }
 
   // Working days = every date of the month that is neither one of the employee's weekly offs (department schedule,

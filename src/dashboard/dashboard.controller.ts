@@ -49,6 +49,9 @@ export class DashboardController {
       caller,
       caller.organizationId,
       query.type,
+      query.offset !== undefined || query.limit !== undefined
+        ? { offset: query.offset, limit: query.limit }
+        : undefined,
     );
   }
 
