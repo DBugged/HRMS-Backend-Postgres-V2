@@ -50,6 +50,15 @@ export function monthLabel(date: string): string {
 /** Probation reminders go out this many days before the probation end date. */
 export const PROBATION_REMINDER_DAYS: readonly number[] = [15, 7];
 
+/**
+ * Probation reminders that are not the 15/7-day email: on the end date itself, and then - while nobody has confirmed or
+ * extended it - the day after and every 7 days from then (so a lapsed probation keeps being chased, not forgotten).
+ * `daysLeft` is end date minus today, so it is 0 on the end date and negative afterwards.
+ */
+export function isProbationEndOrOverdueReminderDay(daysLeft: number): boolean {
+  return daysLeft === 0 || (daysLeft < 0 && (-daysLeft - 1) % 7 === 0);
+}
+
 /** Payroll cut-off reminders go out this many days before the processing date. */
 export const PAYROLL_CUTOFF_REMINDER_DAYS: readonly number[] = [3, 1];
 

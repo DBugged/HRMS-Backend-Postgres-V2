@@ -81,6 +81,17 @@ export class EmployeesController {
     return this.employeesService.findAll(query, caller, caller.organizationId);
   }
 
+  // Who is on probation and when it ends, most urgent first. ADMIN/HR: everyone; MANAGER: their department.
+  @Get('probation-tracker')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  probationTracker(@CurrentUser() caller: Caller) {
+    return this.employeesService.probationTracker(
+      caller,
+      caller.organizationId,
+    );
+  }
+
   // The reporting tree for the Org Chart. Open to every role (name, designation, department only); declared before the
   // :id routes so "org-chart" is not read as an id.
   @Get('org-chart')

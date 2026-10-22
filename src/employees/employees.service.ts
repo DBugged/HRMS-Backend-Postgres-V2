@@ -9,6 +9,11 @@
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
 import { buildOrgChart } from './org-chart';
+import {
+  compareProbation,
+  probationBucket,
+  probationDaysLeft,
+} from './probation-tracker';
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PayrollService } from '../payroll/payroll.service';
@@ -734,6 +739,56 @@ export class EmployeesService {
       personalData: { profileCompleted: completed },
       contactNumber: null,
     } as unknown as T;
+  }
+
+  // Everyone currently on probation (or an extended one), with days left to the end date and how urgent the decision
+  // is, most urgent first - the Probation Tracker. ADMIN/HR see the whole organization; a MANAGER only their department.
+  async probationTracker(actor: Actor, organizationId: string) {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const departmentId = resolveDepartmentFilter(actor);
+    const noDeptScope = noDepartmentManagerScope(actor);
+    const rows = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        employmentStatus: { in: ['PROBATION', 'EXTENDED_PROBATION'] },
+        ...(departmentId && { departmentId }),
+        ...(noDeptScope && { AND: [noDeptScope] }),
+      },
+      select: {
+        id: true,
+        employeeId: true,
+        name: true,
+        designation: true,
+        joiningDate: true,
+        probationEndDate: true,
+        employmentStatus: true,
+        department: { select: { name: true } },
+        reportingManager: { select: { id: true, name: true } },
+      },
+    });
+    return rows
+      .map((r) => {
+        const daysLeft = probationDaysLeft(today, r.probationEndDate);
+        return {
+          id: r.id,
+          employeeId: r.employeeId,
+          name: r.name,
+          designation: r.designation,
+          department: r.department?.name ?? '',
+          joiningDate: r.joiningDate.toISOString().slice(0, 10),
+          probationEndDate: r.probationEndDate,
+          extended: r.employmentStatus === 'EXTENDED_PROBATION',
+          reportingManager: r.reportingManager?.name ?? null,
+          daysLeft,
+          bucket: probationBucket(daysLeft),
+        };
+      })
+      .sort(compareProbation);
   }
 
   // The company's reporting tree for the Org Chart: current employees only (no one who has left), with just the

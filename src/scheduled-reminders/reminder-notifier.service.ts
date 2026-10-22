@@ -30,6 +30,8 @@ export interface ReminderInput {
   category: NotificationCategory;
   // Skip when this user already has a notification with the same title newer than this. Default: 60 days.
   dedupeWithinHours?: number;
+  // Only the in-app notification, no email (for a reminder the email template's wording does not fit).
+  inAppOnly?: boolean;
 }
 
 const emailEnabled = (prefs: unknown): boolean =>
@@ -86,6 +88,7 @@ export class ReminderNotifier {
       category: input.category,
     });
 
+    if (input.inAppOnly) return true;
     try {
       if (!emailEnabled(user.notificationPreferences)) return true;
       const template = await this.scopedPrisma.emailTemplate.findFirst({
