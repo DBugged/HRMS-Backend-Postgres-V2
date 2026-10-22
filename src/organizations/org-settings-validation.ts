@@ -207,6 +207,13 @@ function validatePolicies(p: Record<string, unknown>) {
     integer: true,
     allowEmpty: true,
   });
+  // Days after a leave starts that the employee can still cancel it themselves (0 = only before it starts).
+  checkNumber(p, 'leaveCancelWindowDays', 'policies.leaveCancelWindowDays', {
+    min: 0,
+    max: 90,
+    integer: true,
+    allowEmpty: true,
+  });
   const ALLOWED_DATE_FORMATS = ['DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD'];
   if (
     typeof p.dateFormat === 'string' &&

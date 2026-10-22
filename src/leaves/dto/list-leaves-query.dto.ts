@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
+import { IsBoolean, IsEnum, IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator';
 import { LeaveStatus } from '@prisma/client';
 
 export class ListLeavesQueryDto {
@@ -16,6 +16,12 @@ export class ListLeavesQueryDto {
   @IsOptional()
   @IsEnum(LeaveStatus)
   status?: LeaveStatus;
+
+  @ApiPropertyOptional({ description: 'Only approved leaves with a cancellation request waiting' })
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  cancelRequested?: boolean;
 
   // Real server-side pagination — see QueryAttendanceDto's comment for the
   // full rationale (frontend still requests one large page today, but

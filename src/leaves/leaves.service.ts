@@ -95,6 +95,15 @@ import {
 } from '../payroll/format-date';
 import { todayInOrgTz } from '../common/org-date';
 import {
+  leaveCancelWindowDaysOf,
+  ownerCancelOptions,
+  ownerCanCancel,
+} from './leave-cancel-rules';
+import {
+  DecideLeaveCancelDto,
+  RequestLeaveCancelDto,
+} from './dto/leave-cancel-request.dto';
+import {
   assertPayrollMonthsUnlocked,
   monthsBetween,
   markPayrollInputsChanged,
@@ -501,10 +510,27 @@ export class LeavesService {
       where.employeeId = query.employeeId;
     }
     if (query.status) where.status = query.status;
+    // Approved leaves an employee has asked to have cancelled (the approver's "Cancellation requests" list).
+    if (query.cancelRequested) {
+      where.status = LeaveStatus.APPROVED;
+      where.cancelRequestedAt = { not: null };
+    }
+
+    // What the caller may do with each of their own leaves today (see leave-cancel-rules.ts).
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true, policies: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const windowDays = leaveCancelWindowDaysOf(
+      (org?.policies as { leaveCancelWindowDays?: unknown } | null)
+        ?.leaveCancelWindowDays,
+    );
 
     return paginate(
-      () =>
-        this.scopedPrisma.leave.findMany({
+      async () =>
+        (
+          await this.scopedPrisma.leave.findMany({
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
@@ -520,7 +546,13 @@ export class LeavesService {
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
           take: query.limit,
-        }),
+        })
+        ).map((l) => ({
+          ...l,
+          ...(l.employeeId === actor.id
+            ? ownerCancelOptions(l, today, windowDays)
+            : { canCancel: false, canRequestCancel: false }),
+        })),
       () => this.scopedPrisma.leave.count({ where }),
       query.page,
       query.limit,
@@ -1360,6 +1392,41 @@ export class LeavesService {
       );
     }
 
+    // The owner cancels an approved leave directly only until it starts (plus the company's grace days); after that
+    // they send a cancellation request instead. HR/Admin can cancel at any time.
+    if (isSelf && !isOverride && leave.status === LeaveStatus.APPROVED) {
+      const org = await this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { timezone: true, policies: true },
+      });
+      const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+      const windowDays = leaveCancelWindowDaysOf(
+        (org?.policies as { leaveCancelWindowDays?: unknown } | null)
+          ?.leaveCancelWindowDays,
+      );
+      if (!ownerCanCancel(leave, today, windowDays)) {
+        throw new BadRequestException(
+          'This leave has already started, so it can no longer be cancelled directly. Send a cancellation request to your manager or HR instead.',
+        );
+      }
+    }
+    return this.performCancel(id, leave, actor, organizationId, !isSelf);
+  }
+
+  // The cancellation itself, after whoever asked has been checked: reverses balance/attendance, writes the audit entry.
+  // `onBehalf` is true when someone other than the owner cancels (HR/Admin, or an approver deciding a request).
+  private async performCancel(
+    id: string,
+    leave: Leave,
+    actor: Actor,
+    organizationId: string,
+    onBehalf: boolean,
+  ) {
+    const cancellableStatuses: LeaveStatus[] = [
+      LeaveStatus.PENDING,
+      LeaveStatus.RETURNED,
+      LeaveStatus.APPROVED,
+    ];
     // An APPROVED leave has already been folded into attendance (and
     // possibly a since-locked/paid payroll run's LOP calculation) —
     // cancelling it out from under an already-LOCKED/PAID run would
@@ -1400,6 +1467,8 @@ export class LeavesService {
           status: LeaveStatus.CANCELLED,
           cancelledById: actor.id,
           cancelledAt: new Date(),
+          // Any waiting cancellation request is settled by the cancellation itself.
+          cancelRequestedAt: null,
         },
       });
       if (count === 0) {
@@ -1435,7 +1504,7 @@ export class LeavesService {
         startDate: leave.startDate,
         endDate: leave.endDate,
         totalDays: leave.totalDays,
-        onBehalf: !isSelf,
+        onBehalf,
       },
     });
     return this.findByIdOrThrow(id, organizationId);
@@ -2281,6 +2350,189 @@ export class LeavesService {
   // against reportingManagerId rather than Department.departmentHeadId,
   // since that's the field the review() approval check actually uses in
   // this system.
+  // The employee asks for an approved leave that has already started to be cancelled. Nothing changes until an
+  // approver decides (decideCancelRequest); the leave stays approved and keeps counting until then.
+  async requestCancel(
+    id: string,
+    dto: RequestLeaveCancelDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const leave = await this.findByIdOrThrow(id, organizationId);
+    if (leave.employeeId !== actor.id) {
+      throw new ForbiddenException(
+        "You cannot ask to cancel another employee's leave.",
+      );
+    }
+    if (leave.status !== LeaveStatus.APPROVED) {
+      throw new BadRequestException(
+        'Only an approved leave needs a cancellation request.',
+      );
+    }
+    if (leave.cancelRequestedAt) {
+      throw new BadRequestException(
+        'A cancellation request for this leave is already waiting for a decision.',
+      );
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true, policies: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const windowDays = leaveCancelWindowDaysOf(
+      (org?.policies as { leaveCancelWindowDays?: unknown } | null)
+        ?.leaveCancelWindowDays,
+    );
+    if (ownerCanCancel(leave, today, windowDays)) {
+      throw new BadRequestException(
+        'This leave has not started yet - cancel it directly instead of sending a request.',
+      );
+    }
+    const reason = dto.reason.trim();
+    if (!reason) {
+      throw new BadRequestException('Tell your approver why this leave should be cancelled.');
+    }
+    const { count } = await this.scopedPrisma.leave.updateMany({
+      where: { id, organizationId, status: LeaveStatus.APPROVED, cancelRequestedAt: null },
+      data: {
+        cancelRequestedAt: new Date(),
+        cancelRequestReason: reason,
+        cancelRequestDeclinedComments: '',
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException('This leave changed - refresh and try again.');
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LEAVE_CANCEL_REQUESTED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: leave.employeeId,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        reason,
+      },
+    });
+    await this.notifyCancelRequested(leave, actor, reason, organizationId);
+    return this.findByIdOrThrow(id, organizationId);
+  }
+
+  // A manager (their department), HR or Admin approves or declines a cancellation request. Approving cancels the leave
+  // exactly as a direct cancellation would (balance returned, attendance reverted, locked payroll months refuse).
+  async decideCancelRequest(
+    id: string,
+    dto: DecideLeaveCancelDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const leave = await this.findByIdOrThrow(id, organizationId);
+    if (leave.status !== LeaveStatus.APPROVED || !leave.cancelRequestedAt) {
+      throw new BadRequestException(
+        'There is no cancellation request waiting on this leave.',
+      );
+    }
+    const comments = dto.comments?.trim() ?? '';
+    if (dto.decision === 'REJECTED' && !comments) {
+      throw new BadRequestException(
+        'A comment is required when declining a cancellation request.',
+      );
+    }
+    await assertManagerScopeOrDelegate(
+      this.scopedPrisma,
+      this.delegationService,
+      actor,
+      organizationId,
+      leave.employeeId,
+    );
+    if (dto.decision === 'APPROVED') {
+      const cancelled = await this.performCancel(
+        id,
+        leave,
+        actor,
+        organizationId,
+        true,
+      );
+      await this.notifyCancelDecision(leave, 'APPROVED', comments, organizationId);
+      return cancelled;
+    }
+    await this.scopedPrisma.leave.updateMany({
+      where: { id, organizationId, status: LeaveStatus.APPROVED },
+      data: { cancelRequestedAt: null, cancelRequestDeclinedComments: comments },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'LEAVE_CANCEL_DECLINED',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: {
+        employeeId: leave.employeeId,
+        startDate: leave.startDate,
+        endDate: leave.endDate,
+        comments,
+      },
+    });
+    await this.notifyCancelDecision(leave, 'REJECTED', comments, organizationId);
+    return this.findByIdOrThrow(id, organizationId);
+  }
+
+  // Tells whoever approves this employee's leave (their reporting manager, else HR/Admin) that a cancellation is asked.
+  private async notifyCancelRequested(
+    leave: Leave,
+    actor: Actor,
+    reason: string,
+    organizationId: string,
+  ) {
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const title = 'Leave Cancellation Request';
+    const message = `${actor.name} asked to cancel the approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}. Reason: ${reason}`;
+    const toManager =
+      actor.reportingManagerId && actor.reportingManagerId !== actor.id;
+    const recipients = toManager
+      ? [actor.reportingManagerId as string]
+      : (
+          await this.scopedPrisma.user.findMany({
+            where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
+            select: { id: true },
+          })
+        ).map((u) => u.id);
+    await this.notificationsService.createMany(
+      recipients.map((userId) => ({
+        organizationId,
+        userId,
+        title,
+        message,
+        category: NotificationCategory.LEAVE,
+        pushKind: 'APPROVAL' as const,
+      })),
+    );
+  }
+
+  private async notifyCancelDecision(
+    leave: Leave,
+    decision: 'APPROVED' | 'REJECTED',
+    comments: string,
+    organizationId: string,
+  ) {
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    await this.notificationsService.create({
+      organizationId,
+      userId: leave.employeeId,
+      title: `Leave Cancellation ${decision === 'APPROVED' ? 'Approved' : 'Declined'}`,
+      message: `Your request to cancel the leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)} was ${decision === 'APPROVED' ? 'approved - the leave is cancelled' : 'declined'}.${comments ? ` Comments: ${comments}` : ''}`,
+      category: NotificationCategory.LEAVE,
+    });
+  }
+
   private async notifyNewLeaveApplication(
     leave: Leave,
     actor: Actor,

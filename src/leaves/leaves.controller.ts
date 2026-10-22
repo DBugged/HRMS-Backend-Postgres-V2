@@ -23,6 +23,10 @@ import { UpdateLeaveDto } from './dto/update-leave.dto';
 import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
+import {
+  DecideLeaveCancelDto,
+  RequestLeaveCancelDto,
+} from './dto/leave-cancel-request.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -173,5 +177,27 @@ export class LeavesController {
   @Patch(':id/cancel')
   cancel(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.leavesService.cancel(id, caller, caller.organizationId);
+  }
+
+  // The owner asks for an approved, already-started leave to be cancelled.
+  @Post(':id/cancel-request')
+  requestCancel(
+    @Param('id') id: string,
+    @Body() dto: RequestLeaveCancelDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.leavesService.requestCancel(id, dto, caller, caller.organizationId);
+  }
+
+  // A manager / HR / Admin approves or declines that request.
+  @Patch(':id/cancel-request')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
+  decideCancelRequest(
+    @Param('id') id: string,
+    @Body() dto: DecideLeaveCancelDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.leavesService.decideCancelRequest(id, dto, caller, caller.organizationId);
   }
 }

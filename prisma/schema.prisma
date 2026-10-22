@@ -1304,6 +1304,13 @@ model Leave {
   level1ApprovedAt   DateTime?
   level1Comments     String    @default("")
 
+  // An approved leave that has already started cannot be cancelled by the employee directly; they ask instead, and a
+  // manager / HR / Admin decides. cancelRequestedAt is set while a request is waiting; a declined one is cleared and
+  // the approver's reason is kept in cancelRequestDeclinedComments so the employee can see it.
+  cancelRequestedAt             DateTime?
+  cancelRequestReason           String    @default("")
+  cancelRequestDeclinedComments String    @default("")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
