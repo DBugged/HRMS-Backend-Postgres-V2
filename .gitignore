@@ -37,3 +37,4 @@ prisma/generated
 ## DB backups
 /backups
 .env.production
+.cc-super-admin.local

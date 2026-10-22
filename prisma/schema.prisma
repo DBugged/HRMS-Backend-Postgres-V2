@@ -4107,3 +4107,65 @@ model CustomFieldDefinition {
   @@index([organizationId])
   @@map("custom_field_definitions")
 }
+
+// -- Control Center (platform) Super Admins ---------------------------------------------------------------------------
+// Accounts for the vendor's Control Panel. They belong to no company (no organizationId), have their own login, token
+// secret and session table, and can never be used on the HRMS itself - and an HRMS user can never be one of these.
+enum SuperAdminRole {
+  OWNER
+  ADMIN
+  SUPPORT
+  BILLING
+  READ_ONLY
+}
+
+enum SuperAdminStatus {
+  ACTIVE
+  INVITED
+  DEACTIVATED
+}
+
+model SuperAdmin {
+  id           String           @id @default(uuid())
+  // Stored lower-case.
+  email        String           @unique
+  name         String
+  // Null until an invited admin sets a password.
+  passwordHash String?
+  role         SuperAdminRole   @default(READ_ONLY)
+  status       SuperAdminStatus @default(ACTIVE)
+  // Two-factor sign-in is not built yet; the flag is carried so the panel's account screen has something to show.
+  mfaEnabled   Boolean          @default(false)
+  lastLoginAt  DateTime?
+
+  failedLoginAttempts Int       @default(0)
+  lockedUntil         DateTime?
+
+  // SHA-256 of the emailed reset token (never the token itself) and when it stops working.
+  passwordResetTokenHash String?
+  passwordResetExpires   DateTime?
+
+  sessions SuperAdminSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("super_admins")
+}
+
+model SuperAdminSession {
+  id           String     @id @default(uuid())
+  superAdminId String
+  superAdmin   SuperAdmin @relation(fields: [superAdminId], references: [id], onDelete: Cascade)
+
+  // SHA-256 of the refresh token held in the browser's httpOnly cookie.
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  ip        String?
+  createdAt DateTime  @default(now())
+
+  @@index([superAdminId])
+  @@map("super_admin_sessions")
+}
