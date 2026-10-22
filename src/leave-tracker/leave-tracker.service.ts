@@ -32,7 +32,10 @@ import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { todayInOrgTz } from '../common/org-date';
-import { clampLeaveDaysToMonth } from '../payroll/payroll-date-math';
+import {
+  clampLeaveDaysToMonth,
+  clampLeaveDaysToRange,
+} from '../payroll/payroll-date-math';
 import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
 import { QueryLeaveTrackerBalancesDto } from './dto/query-leave-tracker-balances.dto';
 import { ExportLeaveTrackerGridDto } from './dto/export-leave-tracker-grid.dto';
@@ -60,6 +63,10 @@ function monthBounds(
   };
 }
 
+// Leave Without Pay: the unlimited, unpaid leave type (code LWP). It has no balance row, so it is counted from the
+// approved leaves themselves.
+const LWP_CODE = 'LWP';
+
 function isCompOffType(leaveType: Pick<LeaveType, 'code'>): boolean {
   return leaveType.code === LEAVE_TYPE_CODES.COMPOFF;
 }
@@ -71,6 +78,7 @@ export type LeaveTrackerCellCode =
   | 'WFH'
   | 'ON_LEAVE'
   | 'COMP_OFF'
+  | 'LWP'
   | 'WEEKLY_OFF'
   | 'HOLIDAY'
   | 'IN_PROGRESS'
@@ -86,6 +94,7 @@ const CELL_SHORT: Record<LeaveTrackerCellCode, string> = {
   WFH: 'WFH',
   ON_LEAVE: 'L',
   COMP_OFF: 'CO',
+  LWP: 'LWP',
   WEEKLY_OFF: 'WO',
   HOLIDAY: 'H',
   IN_PROGRESS: 'CI',
@@ -245,10 +254,14 @@ export class LeaveTrackerService {
         const matching = employeeLeaves.find(
           (l) => l.startDate <= row.date && l.endDate >= row.date,
         );
+        // A day on Leave Without Pay is its own code, so the unpaid days stand out from paid leave (a half day on
+        // LWP is also shown as LWP, since the half is what is unpaid).
         code =
           matching && isCompOffType(matching.leaveType)
             ? 'COMP_OFF'
-            : row.status;
+            : matching?.leaveType.code === LWP_CODE
+              ? 'LWP'
+              : row.status;
       } else if (
         row.status === AttendanceStatus.PRESENT &&
         !!row.inTime &&
@@ -435,7 +448,7 @@ export class LeaveTrackerService {
     // availableForEmployees() sweeps once and fetches every employee's comp-off
     // rows in a single findMany; the attendance groupBy replaces N separate
     // counts with one grouped query — same final per-employee numbers either way.
-    const [compOffAvailableByEmployee, wfhCounts, monthLeaves] =
+    const [compOffAvailableByEmployee, wfhCounts, monthLeaves, lwpLeaves] =
       await Promise.all([
         query.lite
           ? Promise.resolve(new Map<string, number>())
@@ -479,7 +492,34 @@ export class LeaveTrackerService {
               },
             })
           : Promise.resolve([]),
+        // Approved Leave Without Pay overlapping the leave year (the type has no balance, so it is summed here).
+        query.lite
+          ? Promise.resolve([])
+          : this.scopedPrisma.leave.findMany({
+              where: {
+                organizationId,
+                employeeId: { in: balanceEmployeeIds },
+                status: LeaveStatus.APPROVED,
+                leaveType: { code: LWP_CODE },
+                startDate: { lte: yearEnd },
+                endDate: { gte: yearStart },
+              },
+              select: {
+                employeeId: true,
+                startDate: true,
+                endDate: true,
+                isHalfDay: true,
+              },
+            }),
       ]);
+    const lwpDaysByEmployee = new Map<string, number>();
+    for (const l of lwpLeaves) {
+      lwpDaysByEmployee.set(
+        l.employeeId,
+        (lwpDaysByEmployee.get(l.employeeId) ?? 0) +
+          clampLeaveDaysToRange(l, yearStart, yearEnd),
+      );
+    }
     // employeeId -> leaveTypeCode -> { name, days } for the chosen month.
     const takenInPeriod = new Map<
       string,
@@ -552,6 +592,8 @@ export class LeaveTrackerService {
       }[];
       compOffAvailable: number;
       wfhDaysUsed: number;
+      // Days of approved Leave Without Pay in the leave year (not in the lite response).
+      leaveWithoutPayDays: number;
       // Only when a month was asked for: leave taken in that month, by type.
       leaveTakenInPeriod?: {
         leaveTypeCode: string;
@@ -652,6 +694,8 @@ export class LeaveTrackerService {
         leaveBalances,
         compOffAvailable,
         wfhDaysUsed,
+        leaveWithoutPayDays:
+          Math.round((lwpDaysByEmployee.get(employee.id) ?? 0) * 100) / 100,
         ...(periodStart && {
           leaveTakenInPeriod: [
             ...(takenInPeriod.get(employee.id) ?? new Map()).entries(),
@@ -766,6 +810,7 @@ export class LeaveTrackerService {
           ]
         : []),
       { header: 'Comp-Off Available', key: 'compOffAvailable', width: 16 },
+      { header: 'Leave Without Pay', key: 'leaveWithoutPayDays', width: 16 },
       {
         header: query.period ? `WFH Days (${query.period})` : 'WFH Days Used',
         key: 'wfhDaysUsed',
@@ -778,6 +823,7 @@ export class LeaveTrackerService {
         employeeId: codeByUserId.get(entry.employeeId) ?? '',
         name: entry.name,
         compOffAvailable: entry.compOffAvailable,
+        leaveWithoutPayDays: entry.leaveWithoutPayDays,
         wfhDaysUsed: entry.wfhDaysUsed,
         leaveTakenInPeriod: (entry.leaveTakenInPeriod ?? [])
           .map((t) => `${t.leaveTypeCode} ${t.days}`)
