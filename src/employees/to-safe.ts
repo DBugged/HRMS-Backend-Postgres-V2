@@ -24,6 +24,8 @@ const MASKED_INTERNAL_FIELDS = [
   'epsExcluded',
   'epsExcludedUntil',
   'notificationPreferences',
+  // The company's own extra profile fields are for HR/Admin and the employee themself.
+  'customFields',
 ] as const;
 
 export function toSafe(user: User, mask = false) {

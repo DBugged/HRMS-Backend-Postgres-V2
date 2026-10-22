@@ -63,6 +63,7 @@ import { ScheduledRemindersModule } from './scheduled-reminders/scheduled-remind
 import { HrEventsModule } from './hr-events/hr-events.module';
 import { EmailTemplatesModule } from './email-templates/email-templates.module';
 import { OrgListItemsModule } from './org-list-items/org-list-items.module';
+import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 import { WorkSchedulesModule } from './work-schedules/work-schedules.module';
 import { LettersModule } from './letters/letters.module';
 import { LetterTemplatesModule } from './letter-templates/letter-templates.module';
@@ -157,6 +158,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     ScheduledRemindersModule,
     EmailTemplatesModule,
     OrgListItemsModule,
+    CustomFieldsModule,
     WorkSchedulesModule,
     LettersModule,
     LetterTemplatesModule,

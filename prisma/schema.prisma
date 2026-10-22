@@ -274,6 +274,7 @@ model Organization {
   attendanceImportBatches          AttendanceImportBatch[]
   overtimeRecords                  OvertimeRecord[]
   scheduledReports                 ScheduledReport[]
+  customFieldDefinitions           CustomFieldDefinition[]
   performanceRatings               PerformanceRating[]
   companyPerformance               CompanyPerformance[]
   tdsChallans                      TdsChallan[]
@@ -545,6 +546,9 @@ model User {
   // emails (leave/attendance/payroll decisions) always fire regardless,
   // same as the old system.
   notificationPreferences Json @default("{\"mutedCategories\":[],\"emailEnabled\":true}")
+
+  // Values of the company's own extra profile fields (CustomFieldDefinition), keyed by the field's key.
+  customFields Json @default("{}")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4062,4 +4066,44 @@ model ScheduledReport {
 
   @@index([organizationId])
   @@map("scheduled_reports")
+}
+
+enum CustomFieldType {
+  TEXT
+  LONG_TEXT
+  NUMBER
+  DATE
+  DROPDOWN
+  CHECKBOX
+}
+
+// An extra field a company adds to every employee profile (Organization > Custom Fields) - blood group, vehicle number,
+// T-shirt size - so the data does not need a code change per company. The values live on User.customFields keyed by
+// `key`. A field is switched off (isActive false) rather than deleted, so values already entered are kept.
+model CustomFieldDefinition {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // Stable id of the field, made from the label when it is created and never changed (the values are stored under it).
+  key      String
+  label    String
+  type     CustomFieldType
+  // The choices of a DROPDOWN, as a list of strings.
+  options  Json?
+  required Boolean         @default(false)
+  helpText String          @default("")
+  // The heading it is shown under on the profile.
+  section  String          @default("Additional information")
+  // Whether the employee may fill in / change their own value (otherwise only HR and Admin).
+  employeeEditable Boolean @default(false)
+  isActive         Boolean @default(true)
+  displayOrder     Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, key])
+  @@index([organizationId])
+  @@map("custom_field_definitions")
 }

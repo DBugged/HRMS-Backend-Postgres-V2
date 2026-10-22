@@ -237,6 +237,11 @@ export function defaultCategories(): DataCategory[] {
           'Employment timeline and role history',
           'employee_timelines',
         ),
+        f(
+          'customFields',
+          'Extra profile fields your company has added',
+          'users.customFields',
+        ),
       ],
     },
     {
