@@ -190,6 +190,12 @@ export class StatutoryReturnsService {
       ready: errors.length === 0 && built.rows.length > 0,
       totals: built.totals,
       employeeContribution: members.reduce((s, m) => s + m.contribution, 0),
+      // The employer's share (3.25% of ESI wages), so the challan total can be shown: both shares are paid together.
+      employerContribution: esiRuns.reduce(
+        (s, r) =>
+          s + amountOf(r.employerContributions, SALARY_COMPONENT_CODES.ESI_EMPLOYER),
+        0,
+      ),
     };
   }
 

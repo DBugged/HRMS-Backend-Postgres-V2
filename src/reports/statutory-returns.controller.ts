@@ -1,6 +1,8 @@
 // Purpose: ESIC monthly contribution upload sheet and Professional Tax return working papers for a month.
 // Important: ADMIN/HR only, export-audited and throttled. The ESIC sheet is refused while members have blocking
 //   problems (e.g. no ESIC number) unless the caller explicitly leaves them out.
+import { EcrService } from './ecr.service';
+import { buildStatutoryDues } from './statutory-dues';
 import {
   BadRequestException,
   Controller,
@@ -83,8 +85,30 @@ export class BonusQueryDto {
 export class StatutoryReturnsController {
   constructor(
     private readonly service: StatutoryReturnsService,
+    private readonly ecr: EcrService,
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
+
+  // What to pay and by when for the month's PF, ESI, Professional Tax and LWF, on one page.
+  @Get('statutory-dues')
+  async statutoryDues(@Query() q: ReturnQueryDto, @CurrentUser() c: Caller) {
+    const [pf, esi, pt, lwf] = await Promise.all([
+      this.ecr.build(q.month, q.year, c.organizationId, { skipInvalid: true }),
+      this.service.esic(q.month, q.year, c.organizationId),
+      this.service.pt(q.month, q.year, c.organizationId),
+      this.service.lwf(q.month, q.year, c.organizationId),
+    ]);
+    return {
+      month: q.month,
+      year: q.year,
+      ...buildStatutoryDues({
+        pf: { members: pf.members, ready: pf.ready, challan: pf.challan },
+        esi,
+        pt,
+        lwf,
+      }),
+    };
+  }
 
   @Get('esic-return/preview')
   esicPreview(@Query() q: ReturnQueryDto, @CurrentUser() c: Caller) {
