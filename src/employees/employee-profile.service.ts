@@ -522,8 +522,11 @@ export class EmployeeProfileService {
         });
       }
     }
+    const safe = toSafe(employee) as Record<string, unknown>;
+    // The company's own extra profile fields are for HR/Admin and the employee themself, not a department manager.
+    if (actor.role === Role.MANAGER && actor.id !== id) delete safe.customFields;
     return {
-      ...toSafe(employee),
+      ...(safe as ReturnType<typeof toSafe>),
       documents: documents.map(withSignedFileUrl),
       assets,
     };
