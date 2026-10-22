@@ -116,4 +116,26 @@ describe('buildBankAdvice', () => {
     const a = buildBankAdvice([run()], new Map());
     expect(a.leftOut[0]).toMatchObject({ name: 'Unknown employee' });
   });
+
+  it('splits the payments by the beneficiary bank, largest first', () => {
+    const runs = [run({ id: 'a', employeeId: 'e1', netPay: 30000 }), run({ id: 'b', employeeId: 'e2', netPay: 80000 }), run({ id: 'c', employeeId: 'e3', netPay: 20000 })];
+    const people = new Map([
+      ['e1', emp()],
+      ['e2', emp({ bankIFSC: 'ICIC0000007', bankName: 'ICICI Bank', bankAccountNo: '123456789012' })],
+      ['e3', emp({ bankAccountNo: '999988887777' })],
+    ]);
+    const a = buildBankAdvice(runs, people);
+    expect(a.banks).toEqual([
+      { code: 'ICIC', name: 'ICICI Bank', count: 1, total: 80000 },
+      { code: 'HDFC', name: 'HDFC Bank', count: 2, total: 50000 },
+    ]);
+  });
+
+  it('marks a payment IFT inside the paying bank, otherwise NEFT, or RTGS from 2 lakh', () => {
+    const people = new Map([['e1', emp()]]);
+    expect(buildBankAdvice([run({ netPay: 50000 })], people, 'HDFC0000001').rows[0].transferMode).toBe('IFT');
+    expect(buildBankAdvice([run({ netPay: 50000 })], people, 'ICIC0000001').rows[0].transferMode).toBe('NEFT');
+    expect(buildBankAdvice([run({ netPay: 250000 })], people, 'ICIC0000001').rows[0].transferMode).toBe('RTGS');
+    expect(buildBankAdvice([run({ netPay: 250000 })], people).rows[0].transferMode).toBe('RTGS');
+  });
 });

@@ -4077,6 +4077,23 @@ export class PayrollService {
           },
         })
       : [];
+    // The account the salary is paid from, if the company has saved it (Organization Settings > Policies).
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { policies: true },
+    });
+    const policies = (org?.policies ?? {}) as {
+      salaryDebitAccountNumber?: unknown;
+      salaryDebitAccountIfsc?: unknown;
+    };
+    const payerAccount =
+      typeof policies.salaryDebitAccountNumber === 'string'
+        ? policies.salaryDebitAccountNumber.trim()
+        : '';
+    const payerIfsc =
+      typeof policies.salaryDebitAccountIfsc === 'string'
+        ? policies.salaryDebitAccountIfsc.trim().toUpperCase()
+        : '';
     const advice = buildBankAdvice(
       runs,
       new Map(
@@ -4089,8 +4106,14 @@ export class PayrollService {
           },
         ]),
       ),
+      payerIfsc || null,
     );
-    return { month, year, ...advice };
+    return {
+      month,
+      year,
+      ...advice,
+      payer: payerAccount ? { accountNumber: payerAccount, ifsc: payerIfsc } : null,
+    };
   }
 
   async unlock(

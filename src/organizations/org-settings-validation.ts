@@ -255,6 +255,26 @@ function validatePolicies(p: Record<string, unknown>) {
       bad(`policies.${key} must be a string.`);
     }
   }
+  // The company account salaries are paid from (goes into the bank file as the debit account; same-bank payments become
+  // IFT). Both optional.
+  const debitAccount = p.salaryDebitAccountNumber;
+  if (
+    debitAccount !== undefined &&
+    debitAccount !== null &&
+    debitAccount !== '' &&
+    !(typeof debitAccount === 'string' && /^\d{9,18}$/.test(debitAccount.trim()))
+  ) {
+    bad('policies.salaryDebitAccountNumber must be 9 to 18 digits.');
+  }
+  const debitIfsc = p.salaryDebitAccountIfsc;
+  if (
+    debitIfsc !== undefined &&
+    debitIfsc !== null &&
+    debitIfsc !== '' &&
+    !(typeof debitIfsc === 'string' && /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(debitIfsc.trim()))
+  ) {
+    bad('policies.salaryDebitAccountIfsc must look like HDFC0001234.');
+  }
   for (const key of [
     'autoCarryForwardEnabled',
     'allowCarryForward',

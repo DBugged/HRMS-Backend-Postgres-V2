@@ -47,6 +47,23 @@ export interface BankAdviceRow {
   amount: number;
   narration: string;
   payslipNumber: string;
+  /** First four letters of the IFSC - the beneficiary's bank, which the file can be split by. */
+  bankCode: string;
+  /** How the money moves: IFT inside the company's own bank, otherwise NEFT, or RTGS from 2 lakh up. */
+  transferMode: TransferMode;
+}
+
+export type TransferMode = 'IFT' | 'NEFT' | 'RTGS';
+
+/** RTGS is for large transfers: the usual cut-over is 2 lakh, below which NEFT is used. */
+export const RTGS_MINIMUM = 200000;
+
+export interface BankAdviceBank {
+  code: string;
+  /** The bank's name as typed on the employees' records (the most common one for this code). */
+  name: string;
+  count: number;
+  total: number;
 }
 
 export interface BankAdviceLeftOut {
@@ -60,6 +77,8 @@ export interface BankAdviceLeftOut {
 export interface BankAdvice {
   rows: BankAdviceRow[];
   total: number;
+  /** The same payments grouped by the beneficiary's bank, largest first - for one file per bank. */
+  banks: BankAdviceBank[];
   /** Not in the file, and what to do about it. */
   leftOut: BankAdviceLeftOut[];
 }
@@ -71,9 +90,20 @@ const ACCOUNT = /^\d{9,18}$/;
 const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : '');
 const rupees = (n: number) => Math.round(n * 100) / 100;
 
+export function transferModeFor(
+  amount: number,
+  ifsc: string,
+  payerIfsc?: string | null,
+): TransferMode {
+  if (payerIfsc && payerIfsc.slice(0, 4) === ifsc.slice(0, 4)) return 'IFT';
+  return amount >= RTGS_MINIMUM ? 'RTGS' : 'NEFT';
+}
+
 export function buildBankAdvice(
   runs: AdviceRun[],
   employees: Map<string, AdviceEmployee>,
+  // The IFSC of the account the salary is paid from (Organization Settings): payments to the same bank are IFT.
+  payerIfsc?: string | null,
 ): BankAdvice {
   const rows: BankAdviceRow[] = [];
   const leftOut: BankAdviceLeftOut[] = [];
@@ -128,12 +158,36 @@ export function buildBankAdvice(
         ? run.runLabel
         : `Salary ${MONTHS[run.month - 1]} ${run.year}`,
       payslipNumber: run.payslipNumber ?? '',
+      bankCode: ifsc.slice(0, 4),
+      transferMode: transferModeFor(base.amount, ifsc, payerIfsc),
     });
   }
+
+  const byBank = new Map<string, BankAdviceBank & { names: Map<string, number> }>();
+  for (const r of rows) {
+    const entry = byBank.get(r.bankCode) ?? {
+      code: r.bankCode,
+      name: '',
+      count: 0,
+      total: 0,
+      names: new Map<string, number>(),
+    };
+    entry.count += 1;
+    entry.total = rupees(entry.total + r.amount);
+    if (r.bankName) entry.names.set(r.bankName, (entry.names.get(r.bankName) ?? 0) + 1);
+    byBank.set(r.bankCode, entry);
+  }
+  const banks: BankAdviceBank[] = [...byBank.values()]
+    .map(({ names, ...b }) => ({
+      ...b,
+      name: [...names.entries()].sort((a, b2) => b2[1] - a[1])[0]?.[0] ?? b.code,
+    }))
+    .sort((a, b) => b.total - a.total || a.code.localeCompare(b.code));
 
   return {
     rows,
     total: rupees(rows.reduce((s, r) => s + r.amount, 0)),
+    banks,
     leftOut,
   };
 }
