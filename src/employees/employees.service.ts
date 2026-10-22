@@ -8,6 +8,7 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { buildOrgChart } from './org-chart';
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PayrollService } from '../payroll/payroll.service';
@@ -733,6 +734,37 @@ export class EmployeesService {
       personalData: { profileCompleted: completed },
       contactNumber: null,
     } as unknown as T;
+  }
+
+  // The company's reporting tree for the Org Chart: current employees only (no one who has left), with just the
+  // fields a chart needs - name, designation, department and who they report to. Open to every role, like the
+  // employee list behind Reporting Structure; nothing personal is included.
+  async orgChart(organizationId: string) {
+    const rows = await this.scopedPrisma.user.findMany({
+      where: {
+        organizationId,
+        isActive: true,
+        employmentStatus: { notIn: EXIT_STATUSES },
+      },
+      select: {
+        id: true,
+        employeeId: true,
+        name: true,
+        designation: true,
+        reportingManagerId: true,
+        department: { select: { name: true } },
+      },
+    });
+    return buildOrgChart(
+      rows.map((r) => ({
+        id: r.id,
+        employeeId: r.employeeId,
+        name: r.name,
+        designation: r.designation,
+        department: r.department?.name ?? '',
+        reportingManagerId: r.reportingManagerId,
+      })),
+    );
   }
 
   async findAll(

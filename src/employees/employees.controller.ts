@@ -81,6 +81,15 @@ export class EmployeesController {
     return this.employeesService.findAll(query, caller, caller.organizationId);
   }
 
+  // The reporting tree for the Org Chart. Open to every role (name, designation, department only); declared before the
+  // :id routes so "org-chart" is not read as an id.
+  @Get('org-chart')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER, Role.EMPLOYEE)
+  @UseGuards(RolesGuard)
+  orgChart(@CurrentUser() caller: Caller) {
+    return this.employeesService.orgChart(caller.organizationId);
+  }
+
   // Mandatory-document progress for everyone still onboarding - feeds the Pending Onboarding list. Declared before
   // the :id routes so "onboarding-documents" is not read as an id.
   @Get('onboarding-documents')
