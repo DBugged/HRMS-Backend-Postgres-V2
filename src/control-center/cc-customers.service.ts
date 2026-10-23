@@ -278,6 +278,8 @@ export class CcCustomersService {
 
   private async purge(org: OrgRow, actorEmail: string) {
     const id = org.id;
+    // Deleting is the second step: archive first (reversible), so one wrong click can only archive.
+    if (org.platformStatus !== 'ARCHIVED') throw new ConflictException('Archive this organization first. Only archived organizations can be deleted.');
     const tables = (
       await this.prisma.$queryRaw<{ table_name: string }[]>`
         SELECT table_name FROM information_schema.columns
