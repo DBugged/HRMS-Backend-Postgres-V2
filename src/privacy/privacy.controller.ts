@@ -66,6 +66,16 @@ export class PrivacyController {
     private readonly audit: PrivacyAuditService,
   ) {}
 
+  // The numbers on the page's tabs: open requests for HR and Admin; open breaches and the processor count for Admin only.
+  @Get('summary')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  async summary(@CurrentUser() caller: Caller) {
+    const openRequests = await this.requests.countOpen(caller.organizationId);
+    if (caller.role !== Role.ADMIN) return { openRequests };
+    return { openRequests, ...(await this.privacy.summaryCounts(caller.organizationId)) };
+  }
+
   // -- settings (ADMIN) --
 
   @Get('settings')

@@ -14,7 +14,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, PrivacySettings } from '@prisma/client';
+import { BreachStatus, Prisma, PrivacySettings } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
@@ -479,6 +479,17 @@ export class PrivacyService {
         isSystemDetected: true,
       })),
     });
+  }
+
+  /** The numbers on the Data Privacy tabs for an Admin: breaches still open and the processors on the register. */
+  async summaryCounts(organizationId: string) {
+    // The register seeds itself on first read; seed first so the count matches what the Processors tab will list.
+    await this.ensureProcessorsSeeded(organizationId);
+    const [openBreaches, processors] = await Promise.all([
+      this.scopedPrisma.breachIncident.count({ where: { organizationId, status: BreachStatus.OPEN } }),
+      this.scopedPrisma.dataProcessor.count({ where: { organizationId } }),
+    ]);
+    return { openBreaches, processors };
   }
 
   async listProcessors(organizationId: string) {

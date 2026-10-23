@@ -433,6 +433,13 @@ export class PrivacyRequestsService {
 
   // -- HR / admin side --
 
+  /** Requests still being handled (submitted, under review, needing action or approved but not yet completed). */
+  countOpen(organizationId: string): Promise<number> {
+    return this.scopedPrisma.dataRequest.count({
+      where: { organizationId, status: { in: ['SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED', 'APPROVED'] } },
+    });
+  }
+
   async listAll(query: ListDataRequestsQueryDto, organizationId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
