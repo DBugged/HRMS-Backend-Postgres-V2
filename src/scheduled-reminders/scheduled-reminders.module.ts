@@ -15,6 +15,7 @@ import { MissingDocumentsReminderService } from './missing-documents-reminder.se
 import { TaxDeclarationReminderService } from './tax-declaration-reminder.service';
 import { ExitClearanceReminderService } from './exit-clearance-reminder.service';
 import { CheckInReminderService } from './check-in-reminder.service';
+import { HolidayCalendarReminderService } from './holiday-calendar-reminder.service';
 
 @Module({
   imports: [NotificationsModule, EmailTemplatesModule, PayrollSettingsModule],
@@ -30,6 +31,7 @@ import { CheckInReminderService } from './check-in-reminder.service';
     TaxDeclarationReminderService,
     ExitClearanceReminderService,
     CheckInReminderService,
+    HolidayCalendarReminderService,
   ],
   exports: [
     ProbationReminderService,

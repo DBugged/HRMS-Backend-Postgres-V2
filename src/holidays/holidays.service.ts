@@ -6,6 +6,7 @@
 // Important: bulkImport() mirrors the old bulkImportHolidays' behavior exactly — invalid or duplicate rows
 // are collected into `failed` rather than aborting the whole batch, and duplicates are checked both against
 // existing DB rows and within the same batch.
+import { calendarStatus } from './holiday-calendar-status';
 import {
   BadRequestException,
   ConflictException,
@@ -89,6 +90,27 @@ export class HolidaysService {
         },
       });
     }
+  }
+
+  /**
+   * Next year's holiday count against this year's, so HR can be asked to add the coming year's calendar (see
+   * holiday-calendar-status.ts). Counts what attendance would actually honour: active holidays and reference holidays.
+   */
+  async calendarStatus(organizationId: string) {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const year = Number(today.slice(0, 4));
+    const count = (y: number) =>
+      this.scopedPrisma.holiday.count({ where: { organizationId, year: y, OR: [{ isActive: true }, { isReference: true }] } });
+    const [thisYear, nextYear] = await Promise.all([count(year), count(year + 1)]);
+    return calendarStatus(today, nextYear, thisYear);
+  }
+
+  /** Every year that has at least one holiday, plus this year and next, oldest first: the Holiday Calendar's year picker. */
+  async years(organizationId: string): Promise<number[]> {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const year = Number(today.slice(0, 4));
+    const rows = await this.scopedPrisma.holiday.groupBy({ by: ['year'], where: { organizationId }, _count: { _all: true } });
+    return [...new Set([...rows.map((r) => r.year), year, year + 1])].sort((a, b) => a - b);
   }
 
   async create(

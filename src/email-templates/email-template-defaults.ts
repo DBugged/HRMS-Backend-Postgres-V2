@@ -114,6 +114,8 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
     '{{missingCount}} required document(s) are still missing from your record.',
   MISSING_DOCUMENTS_SUMMARY:
     '{{employeeCount}} employee(s) have not uploaded all mandatory documents.',
+  HOLIDAY_CALENDAR_REMINDER:
+    "{{nextYear}}'s holiday calendar has {{holidayCount}} holiday(s) so far.",
   TAX_DECLARATION_REMINDER:
     'Submit your FY {{financialYear}} tax declaration by {{deadline}}.',
   EXIT_HANDOVER_REMINDER:
@@ -997,6 +999,30 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     }),
     ccAllActive: false,
     category: 'Documents',
+  },
+  {
+    // Fires from HolidayCalendarReminderService on 1 Nov, 1 Dec and 20 Dec to every active HR/Admin while next year's calendar
+    // is empty or has fewer holidays than this year.
+    occasionKey: 'HOLIDAY_CALENDAR_REMINDER',
+    name: 'Holiday Calendar Reminder (HR)',
+    subject: "Add {{nextYear}}'s holidays: {{holidayCount}} so far",
+    bodyHtml: emailBody({
+      category: 'Attendance',
+      title: 'Next year\'s holiday calendar',
+      blocks: [
+        hello,
+        paragraph(
+          "The {{nextYear}} holiday calendar has {{holidayCount}} holiday(s) so far. Until a holiday is added, attendance, leave and payroll treat that day as a working day, so please add {{nextYear}}'s holidays before the year starts.",
+        ),
+        infoCard([
+          row('Year', '{{nextYear}}'),
+          row('Holidays added', '{{holidayCount}}'),
+        ]),
+        button('{{reviewUrl}}', 'Open holiday calendar'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Attendance',
   },
   {
     // Fires from TaxDeclarationReminderService on the day the declaration window opens and weekly until the

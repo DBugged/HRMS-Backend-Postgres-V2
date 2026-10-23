@@ -132,6 +132,19 @@ export class CcAutomationService {
         }
       }
 
+      // 5b. In November and December: active customers whose next-year holiday calendar is still empty (they are also
+      //     reminded inside HRMS; this tells you who may need a nudge or help uploading it).
+      if (now.getMonth() >= 10) {
+        const nextYear = now.getFullYear() + 1;
+        const [active, withHolidays] = await Promise.all([
+          this.prisma.organization.findMany({ where: { platformStatus: 'ACTIVE' }, select: { id: true, name: true, companyName: true } }),
+          this.prisma.$queryRaw<{ org: string }[]>`SELECT DISTINCT "organizationId" AS org FROM holidays WHERE year = ${nextYear} AND ("isActive" OR "isReference")`,
+        ]);
+        const have = new Set(withHolidays.map((r) => r.org));
+        for (const o of active.filter((x) => !have.has(x.id)))
+          await this.alert('HOLIDAYS_MISSING', `No ${nextYear} holidays yet: ${orgName(o)}`, `Their ${nextYear} holiday calendar is empty, so attendance, leave and payroll will treat every festival as a working day.`, o.id, `holidays:${o.id}:${nextYear}`, fresh);
+      }
+
       // 6. Tell the Super Admins about anything new.
       report.alerts = fresh.length;
       if (fresh.length && (await this.setting<boolean>('platform.email_alerts', true))) {

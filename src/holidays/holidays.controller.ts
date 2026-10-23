@@ -41,6 +41,19 @@ export class HolidaysController {
     return this.holidaysService.findAll(query, caller.organizationId);
   }
 
+  // Years that have holidays (the calendar's year picker) and whether next year's calendar still needs filling in.
+  @Get('years')
+  years(@CurrentUser() caller: Caller) {
+    return this.holidaysService.years(caller.organizationId);
+  }
+
+  @Get('calendar-status')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  calendarStatus(@CurrentUser() caller: Caller) {
+    return this.holidaysService.calendarStatus(caller.organizationId);
+  }
+
   @Post()
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
