@@ -22,12 +22,23 @@ export function monthlyCharge(
   plan: { perEmployeeRate: unknown; perExtraEmployeeRate: unknown; includedEmployees: number | null; limits: unknown },
   term: string,
   employees: number,
+  customRate?: unknown,
 ): number | null {
   const limits = (plan.limits ?? {}) as { annualRate?: number };
-  const rate = term === 'YEARLY' && limits.annualRate ? limits.annualRate : num(plan.perEmployeeRate as never);
+  // A negotiated rate on the subscription beats the plan's own (it also covers employees above the cap).
+  const custom = num(customRate as never);
+  const rate = custom ?? (term === 'YEARLY' && limits.annualRate ? limits.annualRate : num(plan.perEmployeeRate as never));
   if (rate == null) return null;
   const cap = plan.includedEmployees ?? employees;
-  const extraRate = num(plan.perExtraEmployeeRate as never) ?? rate;
+  const extraRate = custom ?? num(plan.perExtraEmployeeRate as never) ?? rate;
   const base = Math.min(employees, cap) * rate;
   return Math.round((base + Math.max(0, employees - cap) * extraRate) * 100) / 100;
+}
+
+/** How an organization's employee count sits against its plan's band, for the "over the plan's limit" warning. */
+export function employeeLimit(plan: { includedEmployees: number | null; perExtraEmployeeRate: unknown }, employees: number, maxEmployees: number | null = null) {
+  if (plan.includedEmployees == null && maxEmployees == null) return null;
+  const included = plan.includedEmployees ?? maxEmployees!;
+  // blockAt: the hard limit the Super Admin set on the subscription (HRMS refuses new employees beyond it); null = none.
+  return { used: employees, included, overBy: Math.max(0, employees - included), hasOverageRate: plan.perExtraEmployeeRate != null, blockAt: maxEmployees };
 }

@@ -28,6 +28,7 @@ export class CcBillingController {
   }
   @Post('billing/invoices') @CcPermission('billing:write') createInvoice(@Body() b: Parameters<CcBillingService['createInvoice']>[0]) { return this.svc.createInvoice(b); }
   @Post('billing/invoices/generate') @HttpCode(200) @CcPermission('billing:write') generate(@Body() b: { organizationId: string }) { return this.svc.generateInvoice(b.organizationId); }
+  @Post('billing/invoices/:id/send') @HttpCode(200) @CcPermission('billing:write') send(@Param('id') id: string, @Body() b: { to?: string }) { return this.svc.sendInvoice(id, b?.to); }
   @Post('billing/invoices/:id/void') @HttpCode(200) @CcPermission('billing:write') voidInvoice(@Param('id') id: string) { return this.svc.voidInvoice(id); }
   @Post('billing/invoices/:id/mark-paid') @HttpCode(200) @CcPermission('billing:write') markPaid(@Param('id') id: string, @Body() b: { paymentRef?: string }) { return this.svc.markPaid(id, b?.paymentRef ?? ''); }
 

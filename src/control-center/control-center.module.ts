@@ -8,6 +8,10 @@ import { CcAuthService } from './cc-auth.service';
 import { CcCustomersController } from './cc-customers.controller';
 import { CcCustomersService } from './cc-customers.service';
 import { CcAnnouncementsFeedController } from './cc-announcements-feed.controller';
+import { CcAutomationService } from './cc-automation.service';
+import { CcInsightsService } from './cc-insights.service';
+import { CcReportsController } from './cc-reports.controller';
+import { CcReportsService } from './cc-reports.service';
 import { CcBillingController } from './cc-billing.controller';
 import { CcBillingService } from './cc-billing.service';
 import { APP_INTERCEPTOR } from '@nestjs/core';
@@ -22,8 +26,8 @@ import { CcPermissionGuard } from './cc-permission.guard';
 // JwtModule is registered without a secret on purpose - the Control Center signs with CC_JWT_SECRET, passed per call.
 @Module({
   imports: [JwtModule.register({}), NotificationsModule, AuthModule],
-  controllers: [CcAuthController, CcCustomersController, CcPlansController, CcBillingController, CcSupportController, CcAnnouncementsFeedController],
-  providers: [CcAuthService, CcAuthGuard, CcCustomersService, CcPlansService, CcBillingService, CcSupportService, CcPermissionGuard, { provide: APP_INTERCEPTOR, useClass: CcAuditInterceptor }],
+  controllers: [CcAuthController, CcCustomersController, CcPlansController, CcBillingController, CcSupportController, CcAnnouncementsFeedController, CcReportsController],
+  providers: [CcAuthService, CcAuthGuard, CcCustomersService, CcPlansService, CcBillingService, CcSupportService, CcAutomationService, CcInsightsService, CcReportsService, CcPermissionGuard, { provide: APP_INTERCEPTOR, useClass: CcAuditInterceptor }],
   exports: [CcAuthService, CcAuthGuard],
 })
 export class ControlCenterModule {}

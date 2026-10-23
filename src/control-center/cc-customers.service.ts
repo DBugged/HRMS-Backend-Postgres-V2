@@ -10,7 +10,8 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuthService } from '../auth/auth.service';
 import type { RegisterDto } from '../auth/dto/register.dto';
 import { CcPlansService } from './cc-plans.service';
-import { monthlyCharge } from './cc-util';
+import { removeAllFiles } from './cc-storage';
+import { employeeLimit, monthlyCharge } from './cc-util';
 import { planOut } from './cc-plans.service';
 
 export interface UsageSnapshot {
@@ -39,7 +40,7 @@ export class CcCustomersService {
   ) {}
 
   /** Shape the panel's Organization type expects. The slug gets an id suffix so two companies with one name stay distinct. */
-  private toOrganization(o: OrgRow, extra: { counts?: { active: number; total: number }; sub?: SubRow | null } = {}) {
+  private toOrganization(o: OrgRow, extra: { counts?: { active: number; total: number }; sub?: SubRow | null; unverified?: boolean } = {}) {
     const sub = extra.sub ?? null;
     const active = extra.counts?.active ?? 0;
     const name = o.companyName || o.name;
@@ -56,13 +57,15 @@ export class CcCustomersService {
       country: o.country,
       gstin: o.gstin,
       setupComplete: o.isInitialized,
+      emailVerified: !extra.unverified,
       externalHrmsOrgId: null,
       // Employees = HRMS users: "active" is what you bill on, "created" is every record ever made.
       employeeCount: active,
       employeesCreated: extra.counts?.total ?? 0,
       accessEnabled: o.isActive,
-      estimatedMonthlyBill: sub ? monthlyCharge(sub.plan, sub.term, active) : null,
-      currentSubscription: sub ? { id: sub.id, organizationId: o.id, planId: sub.planId, plan: planOut(sub.plan), term: sub.term, termMonths: sub.termMonths, includedEmployeesSnap: sub.includedEmployeesSnap, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: sub.cancelAtPeriodEnd, createdAt: sub.createdAt.toISOString() } : null,
+      employeeLimit: sub ? employeeLimit(sub.plan, active, sub.maxEmployees) : null,
+      estimatedMonthlyBill: sub ? monthlyCharge(sub.plan, sub.term, active, sub.customPerEmployeeRate) : null,
+      currentSubscription: sub ? { id: sub.id, organizationId: o.id, planId: sub.planId, plan: planOut(sub.plan), term: sub.term, termMonths: sub.termMonths, includedEmployeesSnap: sub.includedEmployeesSnap, customPerEmployeeRate: sub.customPerEmployeeRate == null ? null : Number(sub.customPerEmployeeRate), maxEmployees: sub.maxEmployees, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: sub.cancelAtPeriodEnd, createdAt: sub.createdAt.toISOString() } : null,
       createdAt: o.createdAt.toISOString(),
       updatedAt: o.updatedAt.toISOString(),
     };
@@ -90,28 +93,33 @@ export class CcCustomersService {
       this.prisma.organization.count({ where }),
     ]);
     const ctx = await this.context(rows.map((o) => o.id));
-    return { data: rows.map((o) => this.toOrganization(o, { counts: ctx.counts.get(o.id), sub: ctx.subs.get(o.id) })), page, pageSize, total };
+    return { data: rows.map((o) => this.toOrganization(o, { counts: ctx.counts.get(o.id), sub: ctx.subs.get(o.id), unverified: ctx.unverified.has(o.id) })), page, pageSize, total };
   }
 
   /** Employee counts and the live subscription for a set of organizations, in two queries. */
   private async context(ids: string[]) {
+    const unverified = new Set<string>();
     const counts = new Map<string, { active: number; total: number }>();
     const subs = new Map<string, SubRow>();
-    if (!ids.length) return { counts, subs };
+    if (!ids.length) return { counts, subs, unverified };
     const rows = await this.prisma.$queryRaw<{ org: string; active: bigint; total: bigint }[]>`
       SELECT "organizationId" AS org, COUNT(*) FILTER (WHERE "isActive") AS active, COUNT(*) AS total
       FROM users WHERE "organizationId" = ANY(${ids}::text[]) GROUP BY 1`;
     for (const r of rows) counts.set(r.org, { active: Number(r.active), total: Number(r.total) });
+    // A company whose founder never confirmed their email: possibly a fake or abandoned sign-up.
+    const unv = await this.prisma.$queryRaw<{ org: string }[]>`SELECT DISTINCT "organizationId" AS org FROM users WHERE "organizationId" = ANY(${ids}::text[]) AND "isFounder" AND NOT "emailVerified"`;
+    for (const r of unv) unverified.add(r.org);
     const live = await this.prisma.ccSubscription.findMany({ where: { organizationId: { in: ids }, status: { in: ['TRIALING', 'ACTIVE', 'PAST_DUE'] } }, include: { plan: true }, orderBy: { createdAt: 'desc' } });
     for (const s of live) if (!subs.has(s.organizationId)) subs.set(s.organizationId, s);
-    return { counts, subs };
+    return { counts, subs, unverified };
   }
 
   async get(id: string) {
     const org = await this.prisma.organization.findFirst({ where: { id } });
     if (!org) throw new NotFoundException('Organization not found.');
     const ctx = await this.context([id]);
-    return { ...this.toOrganization(org, { counts: ctx.counts.get(id), sub: ctx.subs.get(id) }), usageSnapshot: await this.usage(id), employeeLimit: null };
+    const sub = ctx.subs.get(id);
+    return { ...this.toOrganization(org, { counts: ctx.counts.get(id), sub, unverified: ctx.unverified.has(id) }), profile: await this.profile(id), usageSnapshot: await this.usage(id), employeeLimit: sub ? employeeLimit(sub.plan, ctx.counts.get(id)?.active ?? 0, sub.maxEmployees) : null };
   }
 
   /** Users of one organization (or all when id is omitted). Storage and API calls are not tracked yet, so they read 0. */
@@ -147,7 +155,7 @@ export class CcCustomersService {
     for (const s of live) {
       if (seen.has(s.organizationId)) continue;
       seen.add(s.organizationId);
-      const charge = monthlyCharge(s.plan, s.term, ctx.counts.get(s.organizationId)?.active ?? 0);
+      const charge = monthlyCharge(s.plan, s.term, ctx.counts.get(s.organizationId)?.active ?? 0, s.customPerEmployeeRate);
       if (s.status === 'ACTIVE' && charge) mrr += charge;
       if (s.status === 'TRIALING' && s.trialEndsAt) {
         const daysLeft = Math.ceil((s.trialEndsAt.getTime() - now.getTime()) / 86400000);
@@ -163,7 +171,7 @@ export class CcCustomersService {
       openInvoices: await this.prisma.ccInvoice.count({ where: { status: 'OPEN' } }), overdueInvoices: overdue._count, overdueAmount: Number(overdue._sum.total ?? 0),
       openTickets: await this.prisma.ccTicket.count({ where: { status: { in: ['OPEN', 'PENDING'] } } }),
       trialsEnding: trialsEnding.sort((a, b) => a.daysLeft - b.daysLeft).slice(0, 5),
-      recentSignups: recent.map((o) => this.toOrganization(o, { counts: ctx.counts.get(o.id) })),
+      recentSignups: recent.map((o) => this.toOrganization(o, { counts: ctx.counts.get(o.id), unverified: ctx.unverified.has(o.id) })),
       series: [],
     };
   }
@@ -182,6 +190,25 @@ export class CcCustomersService {
     if (b.planId) await this.plans.createSubscription({ organizationId: founder.org, planId: b.planId });
     await this.auth.forgotPassword({ email } as never).catch((e) => this.logger.warn(`Could not email the set-password link to ${email}: ${e?.message}`));
     return this.get(founder.org);
+  }
+
+  /** What the platform team knows about this customer: account manager, contact, tags, notes. */
+  async profile(organizationId: string) {
+    const p = await this.prisma.ccOrgProfile.findUnique({ where: { organizationId } });
+    return { accountManager: p?.accountManager ?? null, contactName: p?.contactName ?? null, contactPhone: p?.contactPhone ?? null, tags: (p?.tags as string[]) ?? [], notes: p?.notes ?? '', churnReason: p?.churnReason ?? null, updatedAt: p?.updatedAt.toISOString() ?? null };
+  }
+
+  async saveProfile(organizationId: string, b: { accountManager?: string; contactName?: string; contactPhone?: string; tags?: string[]; notes?: string; churnReason?: string }) {
+    if (!(await this.prisma.organization.findFirst({ where: { id: organizationId }, select: { id: true } }))) throw new NotFoundException('Organization not found.');
+    const clean = (v?: string) => (v?.trim() ? v.trim() : null);
+    const data = {
+      ...('accountManager' in b ? { accountManager: clean(b.accountManager) } : {}), ...('contactName' in b ? { contactName: clean(b.contactName) } : {}),
+      ...('contactPhone' in b ? { contactPhone: clean(b.contactPhone) } : {}), ...('churnReason' in b ? { churnReason: clean(b.churnReason) } : {}),
+      ...('notes' in b ? { notes: (b.notes ?? '').slice(0, 5000) } : {}),
+      ...('tags' in b ? { tags: [...new Set((b.tags ?? []).map((t) => t.trim()).filter(Boolean))].slice(0, 20) } : {}),
+    };
+    await this.prisma.ccOrgProfile.upsert({ where: { organizationId }, create: { organizationId, ...data }, update: data });
+    return this.profile(organizationId);
   }
 
   /** Company profile fields a Super Admin may correct. */
@@ -232,6 +259,8 @@ export class CcCustomersService {
     const org = await this.prisma.organization.findFirst({ where: { id } });
     if (!org) throw new NotFoundException('Organization not found.');
     await this.prisma.organization.updateMany({ where: { id }, data: { platformStatus: status, isActive: status === 'ACTIVE' } });
+    // The reason given when archiving is kept as the churn reason, so it can be found later.
+    if (status === 'ARCHIVED' && reason) await this.prisma.ccOrgProfile.upsert({ where: { organizationId: id }, create: { organizationId: id, churnReason: reason }, update: { churnReason: reason } });
     this.logger.warn(`Organization ${id} (${org.name}) ${org.platformStatus} -> ${status} by ${actorEmail}${reason ? `: ${reason}` : ''}`);
     return this.get(id);
   }
@@ -313,7 +342,9 @@ export class CcCustomersService {
       },
       { timeout: 120_000, maxWait: 10_000 },
     );
-    this.logger.warn(`Organization ${id} (${org.name}) PERMANENTLY DELETED by ${actorEmail}`);
+    // The database rows are gone for good; now remove the company's uploaded files too (best effort).
+    const files = await removeAllFiles(id);
+    this.logger.warn(`Organization ${id} (${org.name}) PERMANENTLY DELETED by ${actorEmail} (stored files removed: ${files})`);
     return { deleted: true, id };
   }
 }

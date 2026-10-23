@@ -5,6 +5,7 @@ import type { Prisma, SuperAdmin } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcAuthService } from './cc-auth.service';
+import { EmailService } from '../notifications/email.service';
 import { normalizeEmail } from './cc-auth-rules';
 import { paging, type PageQuery } from './cc-util';
 
@@ -13,7 +14,7 @@ const pick = (b: Record<string, unknown>, keys: string[]) => Object.fromEntries(
 
 @Injectable()
 export class CcSupportService {
-  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly auth: CcAuthService) {}
+  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly auth: CcAuthService, private readonly email: EmailService) {}
 
   // ---------------- tickets ----------------
   private async ticketOut(t: Prisma.CcTicketGetPayload<{ include: { organization: true; comments: true } }>, withComments: boolean) {
@@ -98,6 +99,27 @@ export class CcSupportService {
     await this.getAnnouncement(id);
     await this.prisma.ccAnnouncement.delete({ where: { id } });
   }
+  /** Email a published announcement to the admins of the companies it targets (active companies only; capped at 500 people). */
+  async emailAnnouncement(id: string) {
+    const a = await this.prisma.ccAnnouncement.findUnique({ where: { id } });
+    if (!a) throw new NotFoundException('Announcement not found.');
+    if (!a.published) throw new BadRequestException('Publish the announcement before emailing it.');
+    let orgIds: string[];
+    if (a.audience === 'ORG' && a.audienceRef) orgIds = [a.audienceRef];
+    else if (a.audience === 'PLAN' && a.audienceRef)
+      orgIds = (await this.prisma.ccSubscription.findMany({ where: { planId: a.audienceRef, status: { in: ['TRIALING', 'ACTIVE', 'PAST_DUE'] } }, select: { organizationId: true } })).map((s) => s.organizationId);
+    else orgIds = (await this.prisma.organization.findMany({ where: { platformStatus: 'ACTIVE' }, select: { id: true } })).map((o) => o.id);
+    if (!orgIds.length) return { sent: 0, failed: 0, companies: 0 };
+    const people = await this.prisma.$queryRaw<{ email: string; name: string }[]>`SELECT DISTINCT email, name FROM users WHERE "organizationId" = ANY(${orgIds}::text[]) AND role = 'ADMIN' AND "isActive" LIMIT 500`;
+    const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+    let sent = 0;
+    let failed = 0;
+    for (const p of people) {
+      await this.email.send({ to: p.email, subject: a.title, html: `<p>Hello ${esc(p.name)},</p><p><b>${esc(a.title)}</b></p><p>${esc(a.body).replace(/\n/g, '<br>')}</p><p>D'Bugged Programmers</p>` }).then(() => sent++).catch(() => failed++);
+    }
+    return { sent, failed, companies: orgIds.length };
+  }
+
   async setPublished(id: string, published: boolean) {
     await this.getAnnouncement(id);
     return this.annOut(await this.prisma.ccAnnouncement.update({ where: { id }, data: { published } }));

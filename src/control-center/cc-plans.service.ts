@@ -71,7 +71,7 @@ export class CcPlansService {
       id: s.id, organizationId: s.organizationId,
       organization: { id: org.id, name: org.companyName || org.name, slug: orgSlug(org.companyName || org.name, org.id) },
       planId: s.planId, plan: planOut(s.plan), term: s.term, termMonths: s.termMonths,
-      includedEmployeesSnap: s.includedEmployeesSnap, status: s.status,
+      includedEmployeesSnap: s.includedEmployeesSnap, customPerEmployeeRate: num(s.customPerEmployeeRate), maxEmployees: s.maxEmployees, status: s.status,
       trialEndsAt: s.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: s.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: s.cancelAtPeriodEnd, createdAt: s.createdAt.toISOString(),
     };
@@ -94,31 +94,62 @@ export class CcPlansService {
     return this.subOut(s);
   }
 
-  async createSubscription(b: { organizationId: string; planId: string; trialDaysOverride?: number }) {
+  /** The terms a plan offers (Starter: monthly/yearly, Professional: yearly, Business: 5 years). Defaults to the first. */
+  private pickTerm(plan: CcPlan, wanted?: string) {
+    const terms = (plan.limits as { allowedTerms?: string[] })?.allowedTerms ?? ['MONTHLY'];
+    if (wanted && !terms.includes(wanted)) throw new BadRequestException(`${plan.name} is only offered as: ${terms.join(', ')}.`);
+    const term = wanted ?? terms[0];
+    return { term, termMonths: TERM_MONTHS[term] ?? 1 };
+  }
+  /** A plan with no per-employee rate (Enterprise) needs a negotiated one before it can be billed. */
+  /** A hard employee limit must be a whole number of at least 1 (null clears it). */
+  private pickMax(v?: number | null) {
+    if (v == null) return null;
+    if (!Number.isInteger(Number(v)) || Number(v) < 1) throw new BadRequestException('The employee limit must be a whole number of at least 1.');
+    return Number(v);
+  }
+  private pickRate(plan: CcPlan, rate?: number | null) {
+    if (rate != null && !(Number(rate) > 0)) throw new BadRequestException('The rate must be more than zero.');
+    if (rate == null && plan.perEmployeeRate == null) throw new BadRequestException(`${plan.name} has custom pricing: enter the agreed per-employee rate.`);
+    return rate ?? null;
+  }
+
+  async createSubscription(b: { organizationId: string; planId: string; trialDaysOverride?: number; term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) {
     const [org, plan] = await Promise.all([this.prisma.organization.findFirst({ where: { id: b.organizationId } }), this.prisma.ccPlan.findUnique({ where: { id: b.planId } })]);
     if (!org) throw new NotFoundException('Organization not found.');
     if (!plan) throw new NotFoundException('Plan not found.');
     if (await this.prisma.ccSubscription.count({ where: { organizationId: org.id, status: { in: ['TRIALING', 'ACTIVE', 'PAST_DUE'] } } }))
       throw new ConflictException('This organization already has a live subscription. Change its plan instead.');
-    const terms = ((plan.limits as { allowedTerms?: string[] })?.allowedTerms ?? ['MONTHLY']);
-    const term = terms[0];
-    const termMonths = TERM_MONTHS[term] ?? 1;
+    const { term, termMonths } = this.pickTerm(plan, b.term);
+    const customRate = this.pickRate(plan, b.customPerEmployeeRate);
     const trialDays = b.trialDaysOverride ?? plan.trialDays;
     const now = new Date();
     const trialEndsAt = trialDays > 0 ? new Date(now.getTime() + trialDays * 86400000) : null;
     const s = await this.prisma.ccSubscription.create({
-      data: { organizationId: org.id, planId: plan.id, term, termMonths, includedEmployeesSnap: plan.includedEmployees, status: trialEndsAt ? 'TRIALING' : 'ACTIVE', trialEndsAt, currentPeriodEnd: trialEndsAt ?? addMonths(now, termMonths) },
+      data: { organizationId: org.id, planId: plan.id, term, termMonths, customPerEmployeeRate: customRate, maxEmployees: this.pickMax(b.maxEmployees), includedEmployeesSnap: plan.includedEmployees, status: trialEndsAt ? 'TRIALING' : 'ACTIVE', trialEndsAt, currentPeriodEnd: trialEndsAt ?? addMonths(now, termMonths) },
       include: this.incl,
     });
     return this.subOut(s);
   }
 
-  async changePlan(id: string, b: { planId: string; prorate?: boolean }) {
+  async changePlan(id: string, b: { planId: string; prorate?: boolean; term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) {
     const plan = await this.prisma.ccPlan.findUnique({ where: { id: b.planId } });
     if (!plan) throw new NotFoundException('Plan not found.');
     await this.getSubscription(id);
-    const term = ((plan.limits as { allowedTerms?: string[] })?.allowedTerms ?? ['MONTHLY'])[0];
-    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: { planId: plan.id, term, termMonths: TERM_MONTHS[term] ?? 1, includedEmployeesSnap: plan.includedEmployees }, include: this.incl }));
+    const { term, termMonths } = this.pickTerm(plan, b.term);
+    const customRate = this.pickRate(plan, b.customPerEmployeeRate);
+    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: { planId: plan.id, term, termMonths, customPerEmployeeRate: customRate, ...('maxEmployees' in b ? { maxEmployees: this.pickMax(b.maxEmployees) } : {}), includedEmployeesSnap: plan.includedEmployees }, include: this.incl }));
+  }
+
+  /** Change only the billing term or the agreed rate on the current plan. */
+  async updateSubscription(id: string, b: { term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) {
+    const s = await this.prisma.ccSubscription.findUnique({ where: { id }, include: { plan: true } });
+    if (!s) throw new NotFoundException('Subscription not found.');
+    const data: Prisma.CcSubscriptionUpdateInput = {};
+    if (b.term) { const t = this.pickTerm(s.plan, b.term); data.term = t.term; data.termMonths = t.termMonths; }
+    if ('customPerEmployeeRate' in b) data.customPerEmployeeRate = this.pickRate(s.plan, b.customPerEmployeeRate);
+    if ('maxEmployees' in b) data.maxEmployees = this.pickMax(b.maxEmployees);
+    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data, include: this.incl }));
   }
 
   async cancel(id: string, atPeriodEnd: boolean) {

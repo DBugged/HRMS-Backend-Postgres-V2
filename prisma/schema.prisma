@@ -64,6 +64,8 @@ model Organization {
   ccPayments      CcPayment[]
   ccFlagOverrides CcFlagOverride[]
   ccTickets       CcTicket[]
+  ccOrgProfile    CcOrgProfile?
+  ccAlerts        CcAlert[]
 
   id             String   @id @default(uuid())
   name           String
@@ -4216,6 +4218,11 @@ model CcSubscription {
   term                  String       @default("MONTHLY") // MONTHLY | YEARLY | FIVE_YEAR | TEN_YEAR
   termMonths            Int          @default(1)
   includedEmployeesSnap Int?
+  // Negotiated per-employee monthly rate (Enterprise, or any special deal). Null = use the plan's own rate.
+  customPerEmployeeRate Decimal?     @db.Decimal(12, 2)
+  // Hard limit: HRMS refuses to add or reactivate an employee once this many are active. Null = no limit (billing still
+  // charges for extra employees at the plan's extra rate, and the panel raises an over-limit alert).
+  maxEmployees          Int?
   status                String       @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | CANCELED | EXPIRED
   trialEndsAt           DateTime?
   currentPeriodEnd      DateTime?
@@ -4243,6 +4250,11 @@ model CcInvoice {
   couponCode     String?
   paidAt         DateTime?
   paymentRef     String?
+  // The subscription period this invoice pays for, so paying it can extend the subscription.
+  subscriptionId String?
+  periodMonths   Int?
+  source         String       @default("MANUAL") // MANUAL | GENERATED | AUTO
+  lastReminderAt DateTime?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   payments       CcPayment[]
@@ -4396,4 +4408,37 @@ model CcSetting {
   updatedAt   DateTime @updatedAt
 
   @@map("cc_settings")
+}
+
+// ---- Control Center: account notes and alerts ----
+// What the platform team knows about a customer (not the customer's own data): who looks after them, how to reach them, notes.
+model CcOrgProfile {
+  organizationId String       @id
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  accountManager String?
+  contactName    String?
+  contactPhone   String?
+  tags           Json         @default("[]")
+  notes          String       @default("")
+  churnReason    String?
+  updatedAt      DateTime     @updatedAt
+
+  @@map("cc_org_profiles")
+}
+
+// Things a Super Admin should know (new sign-up, overdue invoice, pilot ended, over the plan's employee limit).
+// dedupeKey makes each event raise one alert, however often the daily job looks.
+model CcAlert {
+  id             String        @id @default(uuid())
+  kind           String // SIGNUP | OVERDUE | PILOT_ENDED | OVER_LIMIT | TICKET | AUTO_SUSPENDED
+  title          String
+  body           String        @default("")
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  dedupeKey      String        @unique
+  readAt         DateTime?
+  createdAt      DateTime      @default(now())
+
+  @@index([createdAt])
+  @@map("cc_alerts")
 }

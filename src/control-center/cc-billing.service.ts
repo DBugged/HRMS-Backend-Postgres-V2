@@ -9,14 +9,15 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcSupportService } from './cc-support.service';
 import { ModuleAccessService } from '../module-access/module-access.service';
-import { monthlyCharge, num, paging, type PageQuery } from './cc-util';
+import { EmailService } from '../notifications/email.service';
+import { addMonths, monthlyCharge, num, paging, type PageQuery } from './cc-util';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 type Line = { description: string; quantity: number; unitAmount: number };
 
 @Injectable()
 export class CcBillingService {
-  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly settings: CcSupportService, private readonly modules: ModuleAccessService) {}
+  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly settings: CcSupportService, private readonly modules: ModuleAccessService, private readonly email: EmailService) {}
 
   // ---------------- invoices ----------------
   private async invOut(i: Prisma.CcInvoiceGetPayload<{ include: { organization: true } }>) {
@@ -50,7 +51,7 @@ export class CcBillingService {
     return `${prefix}${String(n + 1).padStart(4, '0')}`;
   }
 
-  async createInvoice(b: { organizationId: string; lineItems: Line[]; dueDate?: string; couponCode?: string }) {
+  async createInvoice(b: { organizationId: string; lineItems: Line[]; dueDate?: string; couponCode?: string }, extra: { subscriptionId?: string; periodMonths?: number; source?: string } = {}) {
     const org = await this.prisma.organization.findFirst({ where: { id: b.organizationId } });
     if (!org) throw new NotFoundException('Organization not found.');
     if (!b.lineItems?.length) throw new BadRequestException('Add at least one line item.');
@@ -72,7 +73,7 @@ export class CcBillingService {
         const inv = await this.prisma.$transaction(async (tx) => {
           if (couponCode) await tx.ccCoupon.update({ where: { code: couponCode }, data: { redeemedCount: { increment: 1 } } });
           return tx.ccInvoice.create({
-            data: { number: await this.nextNumber(), organizationId: org.id, status: 'OPEN', subtotal, discount, tax, total: r2(subtotal - discount + tax), dueDate: b.dueDate ? new Date(b.dueDate) : new Date(Date.now() + dueDays * 86400000), lineItems: b.lineItems as never, couponCode },
+            data: { number: await this.nextNumber(), organizationId: org.id, status: 'OPEN', subtotal, discount, tax, total: r2(subtotal - discount + tax), dueDate: b.dueDate ? new Date(b.dueDate) : new Date(Date.now() + dueDays * 86400000), lineItems: b.lineItems as never, couponCode, subscriptionId: extra.subscriptionId ?? null, periodMonths: extra.periodMonths ?? null, source: extra.source ?? 'MANUAL' },
             include: { organization: true },
           });
         });
@@ -84,15 +85,15 @@ export class CcBillingService {
   }
 
   /** One-click invoice from the live subscription: active employees x plan rate for the term, GST extra. */
-  async generateInvoice(organizationId: string) {
+  async generateInvoice(organizationId: string, source: 'GENERATED' | 'AUTO' = 'GENERATED') {
     const sub = await this.prisma.ccSubscription.findFirst({ where: { organizationId, status: { in: ['TRIALING', 'ACTIVE', 'PAST_DUE'] } }, include: { plan: true }, orderBy: { createdAt: 'desc' } });
     if (!sub) throw new BadRequestException('This organization has no live subscription. Subscribe it to a plan first.');
     const [row] = await this.prisma.$queryRaw<{ n: bigint }[]>`SELECT COUNT(*) AS n FROM users WHERE "organizationId" = ${organizationId} AND "isActive"`;
     const employees = Number(row?.n ?? 0);
-    const monthly = monthlyCharge(sub.plan, sub.term, employees);
-    if (monthly == null) throw new BadRequestException('This plan has custom pricing. Create the invoice manually.');
+    const monthly = monthlyCharge(sub.plan, sub.term, employees, sub.customPerEmployeeRate);
+    if (monthly == null) throw new BadRequestException('This plan has custom pricing and no agreed rate yet. Set the per-employee rate on the subscription.');
     const months = sub.termMonths || 1;
-    return this.createInvoice({ organizationId, lineItems: [{ description: `${sub.plan.name} - ${employees} active employees, ${months} month${months > 1 ? 's' : ''}`, quantity: months, unitAmount: monthly }] });
+    return this.createInvoice({ organizationId, lineItems: [{ description: `${sub.plan.name} - ${employees} active employees, ${months} month${months > 1 ? 's' : ''}`, quantity: months, unitAmount: monthly }] }, { subscriptionId: sub.id, periodMonths: months, source });
   }
 
   /** A one-page A4 invoice, built on demand from the stored invoice. */
@@ -134,6 +135,48 @@ export class CcBillingService {
     return done;
   }
 
+  /**
+   * An invoice that pays for a subscription period starts or extends that period: a pilot becomes ACTIVE, an active
+   * subscription runs on from its current end. A company this system switched off for non-payment comes back once
+   * nothing is overdue any more (one a Super Admin switched off by hand stays off).
+   */
+  async applyPaid(invoiceId: string) {
+    const inv = await this.prisma.ccInvoice.findUnique({ where: { id: invoiceId } });
+    if (!inv || inv.status !== 'PAID') return;
+    if (inv.subscriptionId && inv.periodMonths) {
+      const sub = await this.prisma.ccSubscription.findUnique({ where: { id: inv.subscriptionId } });
+      if (sub && !['CANCELED', 'EXPIRED'].includes(sub.status)) {
+        const from = sub.status === 'ACTIVE' && sub.currentPeriodEnd && sub.currentPeriodEnd > new Date() ? sub.currentPeriodEnd : new Date();
+        await this.prisma.ccSubscription.update({ where: { id: sub.id }, data: { status: 'ACTIVE', currentPeriodEnd: addMonths(from, inv.periodMonths) } });
+      }
+    }
+    const org = await this.prisma.organization.findFirst({ where: { id: inv.organizationId } });
+    if (org?.platformStatus === 'SUSPENDED') {
+      const [overdue, auto] = await Promise.all([
+        this.prisma.ccInvoice.count({ where: { organizationId: org.id, status: 'OPEN', dueDate: { lt: new Date() } } }),
+        this.prisma.ccAlert.count({ where: { organizationId: org.id, kind: 'AUTO_SUSPENDED' } }),
+      ]);
+      if (!overdue && auto) await this.prisma.organization.updateMany({ where: { id: org.id }, data: { platformStatus: 'ACTIVE', isActive: true } });
+    }
+  }
+
+  /** Email an invoice (PDF attached) to the company's billing email. */
+  async sendInvoice(id: string, to?: string) {
+    const inv = await this.getInvoice(id);
+    const org = await this.prisma.organization.findFirst({ where: { id: inv.organizationId } });
+    const address = (to ?? org?.contactEmail ?? '').trim();
+    if (!address) throw new BadRequestException('This company has no billing email. Add one on its profile first.');
+    const pdf = await this.invoicePdf(id);
+    await this.email.send({
+      to: address,
+      subject: `Invoice ${inv.number} from D'Core HR`,
+      html: `<p>Hello,</p><p>Please find invoice <b>${inv.number}</b> attached: <b>${inv.currency} ${(inv.total ?? 0).toFixed(2)}</b>${inv.dueDate ? `, due ${new Date(inv.dueDate).toLocaleDateString('en-IN')}` : ''}.</p><p>Reply to this email if you have any questions.</p><p>D'Bugged Programmers</p>`,
+      attachments: [{ filename: `${inv.number}.pdf`, content: pdf }],
+    });
+    await this.prisma.ccInvoice.update({ where: { id }, data: { lastReminderAt: new Date() } });
+    return { sent: true, to: address };
+  }
+
   async voidInvoice(id: string) {
     const inv = await this.getInvoice(id);
     if (!['DRAFT', 'OPEN'].includes(inv.status)) throw new ConflictException('Only an unpaid invoice can be voided.');
@@ -149,6 +192,7 @@ export class CcBillingService {
       this.prisma.ccInvoice.update({ where: { id }, data: { status: 'PAID', paidAt: new Date(), paymentRef } }),
       this.prisma.ccPayment.create({ data: { invoiceId: id, organizationId: inv.organizationId, amount: inv.total!, currency: inv.currency, provider: 'MANUAL', providerRef: paymentRef || 'manual', status: 'SUCCEEDED' } }),
     ]);
+    await this.applyPaid(id);
     return this.getInvoice(id);
   }
 
@@ -176,7 +220,10 @@ export class CcBillingService {
     if (!(b.amount > 0)) throw new BadRequestException('Amount must be more than zero.');
     const p = await this.prisma.ccPayment.create({ data: { invoiceId: inv.id, organizationId: inv.organizationId, amount: b.amount, currency: b.currency ?? inv.currency, provider: b.provider, providerRef: b.providerRef, last4: b.last4 ?? null, status: 'SUCCEEDED' } });
     const paid = await this.prisma.ccPayment.aggregate({ where: { invoiceId: inv.id, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } }, _sum: { amount: true } });
-    if (inv.status === 'OPEN' && Number(paid._sum.amount ?? 0) >= Number(inv.total)) await this.prisma.ccInvoice.update({ where: { id: inv.id }, data: { status: 'PAID', paidAt: new Date(), paymentRef: b.providerRef } });
+    if (inv.status === 'OPEN' && Number(paid._sum.amount ?? 0) >= Number(inv.total)) {
+      await this.prisma.ccInvoice.update({ where: { id: inv.id }, data: { status: 'PAID', paidAt: new Date(), paymentRef: b.providerRef } });
+      await this.applyPaid(inv.id);
+    }
     return this.payOut(p);
   }
 

@@ -1,19 +1,20 @@
 // Purpose: Dashboard and organization endpoints for the Control Panel (read-only for now), at /api/v1/*.
 // Important: @Public() only switches off the HRMS token guard; CcAuthGuard + CcPermissionGuard protect every route here.
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Public } from '../common/decorators/public.decorator';
 import type { SuperAdmin } from '@prisma/client';
 import { CcAuthGuard, CurrentSuperAdmin } from './cc-auth.guard';
 import { CcPermission, CcPermissionGuard } from './cc-permission.guard';
 import { CcCustomersService } from './cc-customers.service';
+import { CcInsightsService } from './cc-insights.service';
 
 @ApiTags('control-center')
 @Public()
 @UseGuards(CcAuthGuard, CcPermissionGuard)
 @Controller('api/v1')
 export class CcCustomersController {
-  constructor(private readonly customers: CcCustomersService) {}
+  constructor(private readonly customers: CcCustomersService, private readonly insights: CcInsightsService) {}
 
   @Get('usage/overview')
   @CcPermission('usage:read')
@@ -43,6 +44,24 @@ export class CcCustomersController {
   @CcPermission('organizations:write')
   update(@Param('id') id: string, @Body() b: Record<string, string>) {
     return this.customers.update(id, b);
+  }
+
+  @Put('organizations/:id/profile')
+  @CcPermission('organizations:write')
+  saveProfile(@Param('id') id: string, @Body() b: Record<string, never>) {
+    return this.customers.saveProfile(id, b);
+  }
+
+  @Get('organizations/:id/setup')
+  @CcPermission('organizations:read')
+  setup(@Param('id') id: string) {
+    return this.insights.setup(id);
+  }
+
+  @Get('organizations/:id/activity')
+  @CcPermission('usage:read')
+  activity(@Param('id') id: string) {
+    return this.insights.activity(id);
   }
 
   @Get('organizations/:id/feature-flags')

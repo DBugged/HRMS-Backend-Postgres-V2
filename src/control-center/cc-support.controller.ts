@@ -1,5 +1,5 @@
 // Purpose: /api/v1 tickets, announcements, audit-log, settings and super-admins for the Control Panel.
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import type { SuperAdmin } from '@prisma/client';
@@ -7,6 +7,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { CcAuthGuard, CurrentSuperAdmin } from './cc-auth.guard';
 import { CcPermission, CcPermissionGuard } from './cc-permission.guard';
 import { CcSupportService } from './cc-support.service';
+import { CcAutomationService } from './cc-automation.service';
 import type { PageQuery } from './cc-util';
 
 type B = Record<string, unknown>;
@@ -17,7 +18,17 @@ type Q = PageQuery & Record<string, string | undefined>;
 @UseGuards(CcAuthGuard, CcPermissionGuard)
 @Controller('api/v1')
 export class CcSupportController {
-  constructor(private readonly svc: CcSupportService) {}
+  constructor(private readonly svc: CcSupportService, private readonly auto: CcAutomationService) {}
+
+  @Get('alerts') @CcPermission('organizations:read') alerts(@Query() q: Q) { return this.auto.listAlerts(q); }
+  @Post('alerts/read-all') @HttpCode(204) @CcPermission('organizations:read') async readAll() { await this.auto.markRead(); }
+  @Post('alerts/:id/read') @HttpCode(204) @CcPermission('organizations:read') async readOne(@Param('id') id: string) { await this.auto.markRead(id); }
+  /** Runs the daily billing checks now (the same job that runs at 06:30). Owner only: it can create invoices and switch companies off. */
+  @Post('automation/run') @HttpCode(200) @CcPermission('settings:write')
+  runAutomation(@CurrentSuperAdmin() a: SuperAdmin) {
+    if (a.role !== 'OWNER') throw new ForbiddenException('Only an Owner can run the billing automation.');
+    return this.auto.run();
+  }
 
   @Get('tickets') @CcPermission('tickets:read') tickets(@Query() q: Q) { return this.svc.listTickets(q); }
   @Get('tickets/:id') @CcPermission('tickets:read') ticket(@Param('id') id: string) { return this.svc.getTicket(id); }
@@ -31,6 +42,7 @@ export class CcSupportController {
   @Patch('announcements/:id') @CcPermission('announcements:write') updateAnn(@Param('id') id: string, @Body() b: B) { return this.svc.updateAnnouncement(id, b); }
   @Delete('announcements/:id') @HttpCode(204) @CcPermission('announcements:write') async removeAnn(@Param('id') id: string) { await this.svc.removeAnnouncement(id); }
   @Post('announcements/:id/publish') @HttpCode(200) @CcPermission('announcements:write') publish(@Param('id') id: string) { return this.svc.setPublished(id, true); }
+  @Post('announcements/:id/email') @HttpCode(200) @CcPermission('announcements:write') emailAnn(@Param('id') id: string) { return this.svc.emailAnnouncement(id); }
   @Post('announcements/:id/unpublish') @HttpCode(200) @CcPermission('announcements:write') unpublish(@Param('id') id: string) { return this.svc.setPublished(id, false); }
 
   @Get('audit-log') @CcPermission('audit-log:read') audit(@Query() q: Q) { return this.svc.listAudit(q); }
