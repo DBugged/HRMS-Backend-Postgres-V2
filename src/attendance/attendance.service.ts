@@ -7,6 +7,7 @@
 // workArrangement/regularization fields owned by other write paths — see the inline comments throughout
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import * as crypto from 'crypto';
 import {
@@ -5303,10 +5304,12 @@ export class AttendanceService {
   @Cron('0 1 * * *')
   async markYesterdayAbsences() {
     const now = new Date();
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     for (const org of organizations) {
       try {
         // Each org's own "yesterday", not one UTC-derived date shared
@@ -5330,10 +5333,12 @@ export class AttendanceService {
   // quiet, and it never touches locked / paid payroll months (see applyReferenceHolidays).
   @Cron('30 2 * * *')
   async applyReferenceHolidaysNightly() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     for (const org of organizations) {
       try {
         await this.applyReferenceHolidays(org.id);
@@ -5354,10 +5359,12 @@ export class AttendanceService {
   @Cron('0 * * * *')
   async sendMorningAbsenceNotices() {
     const now = new Date();
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     for (const org of organizations) {
       try {
         const localHour = Number(
@@ -5397,10 +5404,12 @@ export class AttendanceService {
   @Cron('*/5 * * * *')
   async remindUpcomingPunchOuts() {
     const now = new Date();
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     for (const org of organizations) {
       try {
         await this.remindUpcomingPunchOutsForOrg(org.id, now);
@@ -5491,7 +5500,7 @@ export class AttendanceService {
   // the leave sweep.
   @Cron('*/15 * * * *')
   async autoApprovePendingWorkArrangementsAndRegularizations() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: {
         isActive: true,
         OR: [
@@ -5507,6 +5516,8 @@ export class AttendanceService {
         regularizationAutoApproveHours: true,
       },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     for (const org of organizations) {
       try {
         if (org.wfhAutoApproveIfNoAction) {

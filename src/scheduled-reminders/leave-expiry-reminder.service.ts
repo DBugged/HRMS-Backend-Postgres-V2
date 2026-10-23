@@ -6,6 +6,7 @@
 // 30 days (LeaveBalance.carriedInExpiresOn). Leave years are calendar years, so year-end is 31 December.
 // Important: respects the org-wide carry-forward/encashment switches; unlimited, no-allocation and comp-off types
 // never lapse; the title carries the date so a re-run the same day is a no-op.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import {
   currentLeaveYear,
@@ -47,10 +48,12 @@ export class LeaveExpiryReminderService {
 
   @Cron('15 9 * * *')
   async sendReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.leave');
     for (const org of organizations) {
       try {
         await this.remindForOrg(org.id, todayInOrgTz(org.timezone));

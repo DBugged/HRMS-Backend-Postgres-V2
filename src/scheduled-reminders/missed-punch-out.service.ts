@@ -4,6 +4,7 @@
 // regularization already requested, and notifies the employee in-app and by the MISSED_PUNCH_OUT template.
 // Important: at most one nudge per employee per date (notification title carries the date). Runs after the 01:00
 // absence job and the 09:00 digests, at 10:00, when people are at their desks.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory } from '@prisma/client';
@@ -25,10 +26,12 @@ export class MissedPunchOutService {
 
   @Cron('0 10 * * *')
   async sendDailyReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     const now = new Date();
     for (const org of organizations) {
       try {

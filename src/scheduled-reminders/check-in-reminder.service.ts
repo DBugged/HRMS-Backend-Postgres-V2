@@ -6,6 +6,7 @@
 //   default). Nobody is nudged on a weekly off, a holiday (company-wide or their department's), a full day of approved
 //   leave, before they have joined, or once they have already punched in. One reminder per person per day (the
 //   notification title carries the date), even if the job re-runs.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { LeaveStatus, NotificationCategory } from '@prisma/client';
@@ -38,10 +39,12 @@ export class CheckInReminderService {
 
   @Cron('*/5 * * * *')
   async sendReminders(): Promise<number> {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
     let sent = 0;
     for (const org of organizations) {
       try {

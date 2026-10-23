@@ -6,6 +6,7 @@
 // leave encashment, resignation) escalate to Admin, falling back to HR. One digest per recipient per day.
 // Important: re-escalates every threshold-days after the first time (3, 6, 9 days...) by deriving it from the
 // request's age, so no escalation marker is stored. Nobody is ever escalated their own request.
+import { REQUEST_TYPE_MODULE, disabledModulesOf } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
@@ -101,7 +102,9 @@ export class ApprovalEscalationService {
     thresholdDays: number,
     now: Date = new Date(),
   ): Promise<number> {
-    const due = (await this.pendingRequests(organizationId)).filter((r) =>
+    // Requests of a module the Super Admin switched off for this company are not chased.
+    const off = await disabledModulesOf(organizationId);
+    const due = (await this.pendingRequests(organizationId)).filter((r) => !off.has(REQUEST_TYPE_MODULE[r.kind] ?? '')).filter((r) =>
       isEscalationDue(
         Math.floor((now.getTime() - r.requestedAt.getTime()) / DAY_MS),
         thresholdDays,

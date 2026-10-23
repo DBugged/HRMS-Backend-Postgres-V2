@@ -7,6 +7,7 @@
 //     (assets not returned, exit interview, F&F settlement, system access) — only when something is open.
 // Important: the date in each title keeps one reminder per milestone per person; a cancelled or completed case is
 // never reminded.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
@@ -34,10 +35,12 @@ export class ExitClearanceReminderService {
 
   @Cron('45 9 * * *')
   async sendDailyReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.offboarding');
     for (const org of organizations) {
       try {
         await this.remindForOrg(org.id, todayInOrgTz(org.timezone));

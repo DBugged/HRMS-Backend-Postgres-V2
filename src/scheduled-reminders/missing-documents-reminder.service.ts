@@ -5,6 +5,7 @@
 // every active HR/Admin of how many employees are outstanding (MISSING_DOCUMENTS_SUMMARY).
 // Important: documents carry no expiry date in the data model, so expiry reminders are not possible yet; this job
 // covers missing and rejected documents only. Founder/Admin accounts are included like anyone else.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
@@ -30,10 +31,12 @@ export class MissingDocumentsReminderService {
 
   @Cron('0 9 * * 1')
   async sendWeeklyReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.documents_letters');
     for (const org of organizations) {
       try {
         await this.remindForOrg(org.id, todayInOrgTz(org.timezone));

@@ -4,6 +4,7 @@
 // Admin — in-app and by the STATUTORY_DUE_REMINDER email template.
 // Important: payment reminders (PF/ESI/PT/LWF) are sent only for statutory modules the org has switched on; TDS
 // always applies once payroll runs. The dates are the standard ones — the message asks HR to verify them.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory, Role } from '@prisma/client';
@@ -26,10 +27,12 @@ export class StatutoryDueReminderService {
 
   @Cron('0 9 * * *')
   async sendDailyReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.statutory');
     for (const org of organizations) {
       try {
         await this.remindForOrg(org.id, todayInOrgTz(org.timezone));

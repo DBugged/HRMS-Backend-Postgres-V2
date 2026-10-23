@@ -4,6 +4,7 @@
 // Important: a run uses its creator's access (Admin/HR) and stops, saying why, once they are no longer an active
 //   Admin/HR; each schedule runs at most once per organization-calendar day, and one failing schedule never stops the
 //   others. Only table reports from the catalog can be scheduled.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import {
   BadRequestException,
   Inject,
@@ -224,10 +225,12 @@ export class ScheduledReportsService {
   // Hourly, on the hour: every enabled schedule that is due in its organization's own day / hour.
   @Cron('0 * * * *')
   async runDue(): Promise<number> {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.reports');
     let sent = 0;
     for (const org of organizations) {
       try {

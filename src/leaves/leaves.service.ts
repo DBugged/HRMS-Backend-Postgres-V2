@@ -7,6 +7,7 @@
 // Important: review() implements a two-level workflow where a MANAGER's approval on a 2-level leave type
 // only records level-1 sign-off (status stays PENDING); only ADMIN/HR can give final approval. releaseHold()
 // is the single place that reverses whatever a leave's current status implied, shared by update() and cancel().
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -1178,10 +1179,12 @@ export class LeavesService {
   // a double-decision either way.
   @Cron('*/15 * * * *')
   async autoApprovePendingLeaves() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.leave');
     for (const org of organizations) {
       try {
         await this.autoApprovePendingLeavesForOrg(org.id);

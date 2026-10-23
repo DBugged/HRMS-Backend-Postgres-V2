@@ -5,6 +5,7 @@
 // via TAX_DECLARATION_REMINDER. See taxDeclarationWindow for the window rule.
 // Important: nothing is sent for an org that switched tax declarations off (Organization Settings), and employees
 // who already submitted (or were verified) are left alone. The window dates are a convention, not configurable yet.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory, TaxDeclarationStatus } from '@prisma/client';
@@ -32,10 +33,12 @@ export class TaxDeclarationReminderService {
 
   @Cron('30 9 * * *')
   async sendReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.statutory');
     for (const org of organizations) {
       try {
         await this.remindForOrg(org.id, todayInOrgTz(org.timezone));

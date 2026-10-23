@@ -35,5 +35,7 @@ const BY_SEGMENT = new Map(Object.entries(SEGMENTS).flatMap(([mod, segs]) => seg
 export function moduleForPath(path: string): string | null {
   const parts = path.split('?')[0].split('/').filter(Boolean);
   if (parts[0] === 'employees' && parts[2] === 'letters') return 'module.documents_letters';
+  // Dashboard routes are core, except the payroll cost figures, which are Payroll data.
+  if (parts[0] === 'dashboard' && parts[1] === 'hr' && parts[2] === 'payroll-cost-summary') return 'module.payroll';
   return BY_SEGMENT.get(parts[0]) ?? null;
 }

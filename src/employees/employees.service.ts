@@ -8,6 +8,7 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { assertEmployeeRoom } from '../module-access/module-gate';
 import { buildOrgChart } from './org-chart';
 import {
   compareProbation,
@@ -178,6 +179,8 @@ export class EmployeesService {
     if (existing) {
       throw new ConflictException('An account with this email already exists.');
     }
+    // The Super Admin may cap this company's employee count; bulk import goes through here row by row.
+    await assertEmployeeRoom(organizationId);
 
     await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
     await this.assertOrgReferences(dto, organizationId);
@@ -1090,6 +1093,8 @@ export class EmployeesService {
       }
     }
     if (reinstating) {
+      // Bringing someone back counts as adding an employee (checked against the company's cap).
+      await assertEmployeeRoom(organizationId);
       // Reopening the account is part of the same save, so the status and the account never disagree.
       Object.assign(clean, { isActive: true });
     }

@@ -5,6 +5,7 @@
 // requests for the month being processed, and notifies every active HR/Admin via PAYROLL_CUTOFF_REMINDER.
 // Important: nothing is sent when nothing is pending. Leave counts requests overlapping the month; attendance and
 // overtime count only that month's dates; loans count every pending request.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
@@ -46,10 +47,12 @@ export class PayrollCutoffReminderService {
 
   @Cron('0 9 * * *')
   async sendDailyReminders() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true, timezone: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.payroll');
     for (const org of organizations) {
       try {
         await this.remindForOrg(org.id, todayInOrgTz(org.timezone));

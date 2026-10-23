@@ -4,6 +4,7 @@
 // Important: idempotent. The ledger's unique key (employee, type, period start) means a period is credited once however
 //   often this runs, retried or overlapped; a server that was down simply credits every missed period on the next run.
 //   Only a PERIODIC type (and only for leave years from LeaveType.periodicFromYear) is touched; upfront types are not.
+import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import {
@@ -100,10 +101,12 @@ export class LeaveAccrualService {
   // Every night, for every organisation. One organisation failing never stops the rest.
   @Cron('30 2 * * *')
   async nightlyAccrual() {
-    const organizations = await this.scopedPrisma.organization.findMany({
+    const allOrganizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true },
     });
+    // Skip companies whose Super Admin switched this module off.
+    const organizations = await keepModuleEnabled(allOrganizations, 'module.leave');
     for (const org of organizations) {
       try {
         await this.run(org.id, { source: LeaveAccrualSource.SCHEDULED });

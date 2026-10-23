@@ -6,6 +6,7 @@
 //   reports sees only those reports' requests, and only the request types a manager can decide (not finance/loan
 //   types). An approver never counts their own requests. Respects the recipient's "email notifications" preference
 //   and an org that has disabled the template (no email at all, unlike the generic fallback behaviour elsewhere).
+import { REQUEST_TYPE_MODULE, disabledModulesOf } from '../module-access/module-gate';
 import { NotificationCategory } from '@prisma/client';
 import { channelAllowed } from '../notifications/notification-preferences';
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -44,6 +45,18 @@ const ALL_KEYS: CountKey[] = [
   'reimbursement',
   'loan',
 ];
+
+// The queue-type name each digest count belongs to (see REQUEST_TYPE_MODULE).
+const DIGEST_TYPE: Record<CountKey, string> = {
+  leave: 'LEAVE',
+  regularization: 'REGULARIZATION',
+  wfh: 'WFH',
+  compOff: 'COMP_OFF',
+  overtime: 'OVERTIME',
+  encashment: 'ENCASHMENT',
+  reimbursement: 'REIMBURSEMENT',
+  loan: 'LOAN',
+};
 
 const emptyCounts = (): Counts => ({
   leave: 0,
@@ -96,6 +109,7 @@ export class ApprovalsDigestService {
     });
     if (template && !template.isActive) return 0;
 
+    const off = await disabledModulesOf(organizationId);
     const perEmployee = await this.pendingCountsByEmployee(organizationId);
     if (perEmployee.size === 0) return 0;
 
@@ -127,7 +141,8 @@ export class ApprovalsDigestService {
       if (!isOrgWide && !teamIds?.length) continue;
 
       const totals = emptyCounts();
-      const keys = isOrgWide ? ALL_KEYS : MANAGER_KEYS;
+      // Request types of a module the Super Admin switched off for this company are left out of the email.
+      const keys = (isOrgWide ? ALL_KEYS : MANAGER_KEYS).filter((k) => !off.has(REQUEST_TYPE_MODULE[DIGEST_TYPE[k]] ?? ''));
       const scope = isOrgWide ? [...perEmployee.keys()] : teamIds!;
       for (const employeeId of scope) {
         if (employeeId === approver.id) continue; // never their own requests
