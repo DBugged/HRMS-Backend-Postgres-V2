@@ -19,7 +19,7 @@ describe('Control Center roles', () => {
   it('reads a <resource>:* wildcard like the panel does', () => {
     expect(roleHas('BILLING', 'subscriptions:write')).toBe(true);
     expect(roleHas('BILLING', 'tickets:read')).toBe(false);
-    expect(roleHas('SUPPORT', 'impersonation:create')).toBe(true);
+    expect(roleHas('SUPPORT', 'tickets:write')).toBe(true);
     expect(roleHas('SUPPORT', 'billing:read')).toBe(false);
   });
   it('lists the permissions a role holds', () => {

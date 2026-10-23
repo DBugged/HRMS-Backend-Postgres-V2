@@ -18,7 +18,10 @@ describe('TENANT_SCOPED_MODELS covers the schema', () => {
     );
     const owned = [...schema.matchAll(/^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm)]
       .filter(([, , body]) => /^\s*organizationId\s/m.test(body))
-      .map(([, name]) => name);
+      .map(([, name]) => name)
+      // Control Center (Cc*) tables belong to the platform, not to a company: only Super Admin routes read them, and they
+      // carry organizationId solely so deleting an organization also removes its billing/ticket rows.
+      .filter((name) => !name.startsWith('Cc'));
 
     expect(owned.length).toBeGreaterThan(30); // sanity: the regex matched
     const missing = owned.filter((m) => !TENANT_SCOPED_MODELS.has(m));

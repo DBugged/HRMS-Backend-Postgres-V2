@@ -18,7 +18,6 @@ export const CC_RESOURCES = [
   'settings',
   'usage',
   'audit-log',
-  'impersonation',
 ] as const;
 
 const ADMIN_PERMISSIONS = [
@@ -36,13 +35,12 @@ const ADMIN_PERMISSIONS = [
   'audit-log:read',
   'super-admins:read',
   'rbac:read',
-  'impersonation:create',
 ];
 
 export const ROLE_PERMISSIONS: Record<SuperAdminRoleName, string[]> = {
   OWNER: ['*'],
   ADMIN: ADMIN_PERMISSIONS,
-  SUPPORT: ['organizations:read', 'tickets:*', 'announcements:read', 'usage:read', 'audit-log:read', 'impersonation:create'],
+  SUPPORT: ['organizations:read', 'tickets:*', 'announcements:read', 'usage:read', 'audit-log:read'],
   BILLING: ['organizations:read', 'plans:read', 'subscriptions:*', 'billing:*', 'payments:*', 'coupons:*', 'usage:read'],
   READ_ONLY: CC_RESOURCES.filter((r) => r !== 'super-admins' && r !== 'rbac').map((r) => `${r}:read`),
 };

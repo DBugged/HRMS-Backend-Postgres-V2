@@ -58,6 +58,13 @@ enum ProbationStatus {
 }
 
 model Organization {
+  // Control Center billing (plans, subscriptions, invoices, payments, flag overrides) owned by this organization.
+  ccSubscriptions CcSubscription[]
+  ccInvoices      CcInvoice[]
+  ccPayments      CcPayment[]
+  ccFlagOverrides CcFlagOverride[]
+  ccTickets       CcTicket[]
+
   id             String   @id @default(uuid())
   name           String
   timezone       String   @default("Asia/Kolkata")
@@ -178,12 +185,12 @@ model Organization {
   emailDomainStatus            String  @default("not_started")
 
   // Step 4 — Branding (companyLogoUrl doubles as the Step 1 company logo)
-  companyLogoUrl String?
-  faviconUrl     String?
-  reportLogoUrl  String?
-  emailLogoUrl   String?
-  primaryColor   String  @default("#5546e0")
-  secondaryColor String  @default("#14161d")
+  companyLogoUrl  String?
+  faviconUrl      String?
+  reportLogoUrl   String?
+  emailLogoUrl    String?
+  primaryColor    String  @default("#5546e0")
+  secondaryColor  String  @default("#14161d")
   // Large, faded, centered copy of the org's logo behind every page of a
   // generated document — Letters & Certificates (companyLogoUrl),
   // Payslips (each PayrollTemplate's own companyLogoUrl — see
@@ -191,7 +198,7 @@ model Organization {
   // Organization for branding fields; this toggle is a behavior switch,
   // not a branding value, so it's the one exception), and Report exports
   // (reportLogoUrl). See common/pdf-watermark.ts for the actual drawing.
-  watermarkLogo  Boolean @default(false)
+  watermarkLogo   Boolean @default(false)
   // Optional full-width header and footer strips for generated Letters & Certificates (A4 width). When a header is set
   // it replaces the built-in logo / name / address block at the top of every page; the footer is drawn at the bottom
   // of every page. Both null = the built-in header, no footer strip. See letters/letter-pdf.service.ts.
@@ -201,7 +208,7 @@ model Organization {
   // (logo/favicon/reportLogo/emailLogo/signature/seal) — the URL columns
   // point at a generated relativeKey, so this is the only place the real
   // uploaded filename survives, for display in Organization Settings.
-  assetMeta      Json    @default("{}")
+  assetMeta       Json    @default("{}")
 
   // Superseded by emailSignatures below (named, multiple) — not every org
   // has one team sending all mail (HR vs Payroll vs IT, say), so a single
@@ -4035,22 +4042,22 @@ model ScheduledReport {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id])
 
-  name      String
+  name         String
   // One of the keys in reports/scheduled-report-catalog.ts.
-  reportKey String
+  reportKey    String
   // xlsx | csv | pdf
-  format    String   @default("xlsx")
+  format       String   @default("xlsx")
   // DAILY | WEEKLY | MONTHLY
-  frequency String
+  frequency    String
   // WEEKLY: 0 (Sunday) - 6. MONTHLY: 1 - 28. Unused for DAILY.
-  dayOfWeek  Int?
-  dayOfMonth Int?
+  dayOfWeek    Int?
+  dayOfMonth   Int?
   // Hour of the day (0-23) in the organization's own timezone the email goes out.
-  sendHour   Int      @default(8)
-  recipients String[]
+  sendHour     Int      @default(8)
+  recipients   String[]
   // Optional department filter for the reports that take one.
   departmentId String?
-  enabled      Boolean @default(true)
+  enabled      Boolean  @default(true)
 
   // Whoever created it: the reports run with their access, and the schedule stops if they are no longer an active Admin/HR.
   createdById String
@@ -4086,19 +4093,19 @@ model CustomFieldDefinition {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   // Stable id of the field, made from the label when it is created and never changed (the values are stored under it).
-  key      String
-  label    String
-  type     CustomFieldType
+  key              String
+  label            String
+  type             CustomFieldType
   // The choices of a DROPDOWN, as a list of strings.
-  options  Json?
-  required Boolean         @default(false)
-  helpText String          @default("")
+  options          Json?
+  required         Boolean         @default(false)
+  helpText         String          @default("")
   // The heading it is shown under on the profile.
-  section  String          @default("Additional information")
+  section          String          @default("Additional information")
   // Whether the employee may fill in / change their own value (otherwise only HR and Admin).
-  employeeEditable Boolean @default(false)
-  isActive         Boolean @default(true)
-  displayOrder     Int     @default(0)
+  employeeEditable Boolean         @default(false)
+  isActive         Boolean         @default(true)
+  displayOrder     Int             @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -4168,4 +4175,225 @@ model SuperAdminSession {
 
   @@index([superAdminId])
   @@map("super_admin_sessions")
+}
+
+// ---- Control Center: plans, subscriptions, billing, coupons, feature flags ----
+// Status/type columns are plain strings (the values are validated in cc-*.service.ts) so a new status never needs a migration.
+// Every table that belongs to a customer carries organizationId, which is how "delete organization" finds and removes it.
+
+model CcPlan {
+  id                   String           @id @default(uuid())
+  name                 String
+  code                 String           @unique
+  billingModel         String           @default("PER_EMPLOYEE") // PER_EMPLOYEE | FIXED_TERM
+  currency             String           @default("INR")
+  trialDays            Int              @default(0)
+  perEmployeeRate      Decimal?         @db.Decimal(12, 2)
+  termMonths           Int?
+  basePrice            Decimal?         @db.Decimal(12, 2)
+  includedEmployees    Int?
+  perExtraEmployeeRate Decimal?         @db.Decimal(12, 2)
+  seatLimit            Int?
+  gstApplicable        Boolean          @default(true)
+  whiteLabelEligible   Boolean          @default(false)
+  features             Json             @default("[]")
+  limits               Json             @default("{}")
+  isPublic             Boolean          @default(true)
+  status               String           @default("ACTIVE") // ACTIVE | DEPRECATED | DRAFT
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+  subscriptions        CcSubscription[]
+
+  @@map("cc_plans")
+}
+
+model CcSubscription {
+  id                    String       @id @default(uuid())
+  organizationId        String
+  organization          Organization @relation(fields: [organizationId], references: [id])
+  planId                String
+  plan                  CcPlan       @relation(fields: [planId], references: [id])
+  term                  String       @default("MONTHLY") // MONTHLY | YEARLY | FIVE_YEAR | TEN_YEAR
+  termMonths            Int          @default(1)
+  includedEmployeesSnap Int?
+  status                String       @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | CANCELED | EXPIRED
+  trialEndsAt           DateTime?
+  currentPeriodEnd      DateTime?
+  cancelAtPeriodEnd     Boolean      @default(false)
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@map("cc_subscriptions")
+}
+
+model CcInvoice {
+  id             String       @id @default(uuid())
+  number         String       @unique
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  status         String       @default("OPEN") // DRAFT | OPEN | PAID | VOID | UNCOLLECTIBLE
+  subtotal       Decimal      @db.Decimal(12, 2)
+  discount       Decimal      @default(0) @db.Decimal(12, 2)
+  tax            Decimal      @default(0) @db.Decimal(12, 2)
+  total          Decimal      @db.Decimal(12, 2)
+  currency       String       @default("INR")
+  dueDate        DateTime?
+  lineItems      Json         @default("[]")
+  couponCode     String?
+  paidAt         DateTime?
+  paymentRef     String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  payments       CcPayment[]
+
+  @@index([organizationId])
+  @@map("cc_invoices")
+}
+
+model CcPayment {
+  id             String       @id @default(uuid())
+  invoiceId      String
+  invoice        CcInvoice    @relation(fields: [invoiceId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  amount         Decimal      @db.Decimal(12, 2)
+  currency       String       @default("INR")
+  provider       String
+  providerRef    String
+  last4          String?
+  status         String       @default("SUCCEEDED") // PENDING | SUCCEEDED | FAILED | REFUNDED | PARTIALLY_REFUNDED
+  refundedAmount Decimal      @default(0) @db.Decimal(12, 2)
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId])
+  @@map("cc_payments")
+}
+
+model CcCoupon {
+  id               String    @id @default(uuid())
+  code             String    @unique
+  type             String // PERCENT | FIXED
+  value            Decimal   @db.Decimal(12, 2)
+  currency         String?
+  maxRedemptions   Int?
+  redeemedCount    Int       @default(0)
+  perOrgLimit      Int?
+  validFrom        DateTime?
+  validUntil       DateTime?
+  appliesToPlanIds Json      @default("[]")
+  status           String    @default("ACTIVE") // ACTIVE | INACTIVE | EXPIRED
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@map("cc_coupons")
+}
+
+model CcFeatureFlag {
+  key          String           @id
+  description  String           @default("")
+  defaultValue Json             @default("false")
+  status       String           @default("ACTIVE") // ACTIVE | INACTIVE
+  updatedAt    DateTime         @updatedAt
+  overrides    CcFlagOverride[]
+
+  @@map("cc_feature_flags")
+}
+
+model CcFlagOverride {
+  id             String        @id @default(uuid())
+  flagKey        String
+  flag           CcFeatureFlag @relation(fields: [flagKey], references: [key], onDelete: Cascade)
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  value          Json
+  updatedAt      DateTime      @updatedAt
+
+  @@unique([flagKey, organizationId])
+  @@index([organizationId])
+  @@map("cc_flag_overrides")
+}
+
+// ---- Control Center: support tickets, announcements, audit trail, platform settings ----
+model CcTicket {
+  id             String            @id @default(uuid())
+  organizationId String?
+  organization   Organization?     @relation(fields: [organizationId], references: [id])
+  subject        String
+  body           String
+  status         String            @default("OPEN") // OPEN | PENDING | RESOLVED | CLOSED
+  priority       String            @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
+  assigneeId     String? // a super_admins.id
+  createdById    String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  comments       CcTicketComment[]
+
+  @@index([organizationId])
+  @@map("cc_tickets")
+}
+
+model CcTicketComment {
+  id             String   @id @default(uuid())
+  ticketId       String
+  ticket         CcTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  // Copied from the ticket so deleting an organization also clears its ticket comments.
+  organizationId String?
+  authorId       String
+  authorName     String
+  body           String
+  internal       Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([ticketId])
+  @@map("cc_ticket_comments")
+}
+
+model CcAnnouncement {
+  id          String    @id @default(uuid())
+  title       String
+  body        String
+  audience    String    @default("ALL") // ALL | PLAN | ORG
+  audienceRef String? // plan id or organization id
+  startsAt    DateTime?
+  endsAt      DateTime?
+  severity    String    @default("INFO") // INFO | WARNING | CRITICAL
+  published   Boolean   @default(false) // status (DRAFT/SCHEDULED/LIVE/ENDED) is derived from this and the dates
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@map("cc_announcements")
+}
+
+// Append-only record of what Super Admins did in the panel. Not tied to an organization on purpose: it must survive
+// deleting one.
+model CcAuditLog {
+  id         String   @id @default(uuid())
+  at         DateTime @default(now())
+  actorId    String
+  actorEmail String
+  ip         String   @default("")
+  userAgent  String   @default("")
+  action     String
+  entityType String   @default("")
+  entityId   String   @default("")
+  before     Json?
+  after      Json?
+  context    Json?
+  requestId  String   @default("")
+
+  @@index([at])
+  @@index([actorId])
+  @@map("cc_audit_log")
+}
+
+model CcSetting {
+  key         String   @id
+  value       Json
+  type        String   @default("string") // string | number | bool | json
+  restricted  Boolean  @default(false) // restricted settings are shown read-only in the panel
+  description String   @default("")
+  updatedAt   DateTime @updatedAt
+
+  @@map("cc_settings")
 }
