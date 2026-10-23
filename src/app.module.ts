@@ -75,6 +75,8 @@ import { PlatformInternalModule } from './platform-internal/platform-internal.mo
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PasswordRotationGuard } from './common/guards/password-rotation.guard';
+import { ModuleAccessModule } from './module-access/module-access.module';
+import { ModuleGuard } from './module-access/module.guard';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 @Module({
@@ -161,6 +163,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     OrgListItemsModule,
     CustomFieldsModule,
     ControlCenterModule,
+    ModuleAccessModule,
     WorkSchedulesModule,
     LettersModule,
     LetterTemplatesModule,
@@ -197,6 +200,8 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     // but nothing enforced it server-side: an emailed temporary password
     // could drive the whole API without ever being rotated.
     { provide: APP_GUARD, useClass: PasswordRotationGuard },
+    // Refuses routes of a module the company's Super Admin switched off (module.* flags in the Control Center).
+    { provide: APP_GUARD, useClass: ModuleGuard },
     // Every error response (HttpException or not) comes out in one
     // consistent {statusCode, message, error, path, timestamp} shape —
     // see the filter for why message/error are preserved as Nest
