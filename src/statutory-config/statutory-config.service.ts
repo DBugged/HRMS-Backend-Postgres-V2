@@ -8,6 +8,7 @@
 // module per employee inside a full payroll batch — O(9xN) lookups of data that rarely changes. remove()
 // only allows deleting a future-dated version — past/current versions are permanent history — and refuses
 // to delete the last remaining version for a module.
+import { summariseModules } from './statutory-summary';
 import {
   BadRequestException,
   ConflictException,
@@ -308,6 +309,16 @@ export class StatutoryConfigService {
       SETUP_MODULES.map((m) => this.getEffective(m, date, organizationId)),
     );
     return !results.some((r) => r.version?.isEnabled);
+  }
+
+  // One line per module for the Statutory Compliance Center's tab bar: in force today, and any change already scheduled.
+  async getSummary(organizationId: string) {
+    const today = localDateStr(await this.getOrgTimezone(organizationId));
+    const versions = await this.scopedPrisma.statutoryConfigVersion.findMany({
+      where: { organizationId },
+      select: { module: true, effectiveFrom: true, effectiveTo: true, isEnabled: true },
+    });
+    return summariseModules(Object.values(StatutoryModule), versions, today);
   }
 
   // What the guide needs: whether setup is still due, the headcount, and which of PF/ESI/PT to pre-select.

@@ -56,6 +56,12 @@ export class StatutoryConfigController {
   }
 
   // Guided setup. Declared before ':module' routes so 'setup' is not read as a module name.
+  // Tab-bar dots: which rules are in force today and which have a change scheduled (declared before ':module' so it is not read as one).
+  @Get('summary')
+  summary(@CurrentUser() caller: Caller) {
+    return this.statutoryConfigService.getSummary(caller.organizationId);
+  }
+
   @Get('setup/status')
   setupStatus(@CurrentUser() caller: Caller) {
     return this.statutoryConfigService.getSetupStatus(caller.organizationId);
