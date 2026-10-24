@@ -675,6 +675,25 @@ export class SettlementsService {
         },
       }),
     ]);
+    // A regular run locked before the exit was known pays the whole month: the days after the last working day were
+    // paid although the employee had left. The settlement cannot take that back by itself, so say so.
+    if (monthAlreadyPaid) {
+      const monthLastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const daysAfterLwd = monthLastDay - Number(lwdDate.slice(8, 10));
+      if (daysAfterLwd > 0) {
+        const paidRun = await this.scopedPrisma.payrollRun.findFirst({
+          where: { organizationId, employeeId: dto.employeeId, month, year, isFinalSettlement: false, runSequence: 0, status: { in: SETTLED_REGULAR_RUN_STATUSES } },
+          select: { grossSalary: true, attendanceSummary: true },
+        });
+        const notElapsed = Number((paidRun?.attendanceSummary as { daysNotElapsed?: number } | null)?.daysNotElapsed ?? 0);
+        if (paidRun && notElapsed < daysAfterLwd) {
+          const extra = Math.round((paidRun.grossSalary / monthLastDay) * (daysAfterLwd - notElapsed));
+          warnings.push(
+            `The ${month}/${year} regular payroll was locked for the whole month, but the last working day is ${dmyText(lwdDate)}: about Rs ${extra.toLocaleString('en-IN')} was paid for ${daysAfterLwd - notElapsed} day(s) after they left. Enter it under Recoveries (reason: salary paid after last working day) and recalculate, or unlock that payroll and re-run it.`,
+          );
+        }
+      }
+    }
     if (pendingLeaveCount > 0)
       warnings.push(
         `${pendingLeaveCount} leave application(s) are still pending - decide them before processing.`,
@@ -1190,7 +1209,7 @@ export class SettlementsService {
     });
     if (open) {
       throw new BadRequestException(
-        `The regular ${month}/${year} payroll run for this employee is ${open.status.toLowerCase()} but not locked — lock that run first (it then pays the ${month}/${year} salary), then calculate the settlement.`,
+        `The regular ${month}/${year} payroll run for this employee is ${open.status.toLowerCase()} but not locked — lock that run first (it then pays the ${month}/${year} salary up to the last working day), or delete it from Payroll, then calculate the settlement.`,
       );
     }
   }
