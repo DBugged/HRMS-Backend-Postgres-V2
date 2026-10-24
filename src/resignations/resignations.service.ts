@@ -7,6 +7,7 @@
 // case. Nobody decides their own resignation, and only an ADMIN decides an HR/ADMIN user's (same rule as the
 // privacy module's requests). approvedLwd defaults to the last working day the employee asked for; an approver may
 // move it, and a date before the notice period ends (an early release) needs a note explaining why.
+import { assertAccountCanLeave } from '../common/account-guard';
 import { managerIdsOf, reportsToWhere } from '../common/managers';
 import {
   BadRequestException,
@@ -91,6 +92,8 @@ export class ResignationsService {
         'Only an active employee can submit a resignation.',
       );
     }
+    // The registered account / last active Admin cannot leave, so say so now rather than when HR tries to approve.
+    await assertAccountCanLeave(this.scopedPrisma, actor.id, organizationId);
     const submittedOn = todayInOrgTz(await this.getOrgTimezone(organizationId));
     if (dto.requestedLwd < submittedOn) {
       throw new BadRequestException('requestedLwd cannot be before today.');
@@ -332,6 +335,7 @@ export class ResignationsService {
         'A resignation can only be recorded for an active employee.',
       );
     }
+    await assertAccountCanLeave(this.scopedPrisma, dto.employeeId, organizationId);
     // Same tier rule as deciding one: only an Admin handles an HR or Admin employee's resignation.
     if (HR_ROLES.includes(employee.role) && actor.role !== Role.ADMIN) {
       throw new ForbiddenException(
