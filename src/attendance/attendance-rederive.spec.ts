@@ -45,6 +45,7 @@ function build(rows: Record<string, unknown>[], locked: string[] = []) {
     },
     payrollRun: {
       findMany: async () => locked.map((employeeId) => ({ employeeId })),
+      updateMany: async () => ({ count: 0 }),
     },
     department: { findMany: async () => [dept] },
     attendance: {
