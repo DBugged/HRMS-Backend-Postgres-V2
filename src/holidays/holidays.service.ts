@@ -119,7 +119,8 @@ export class HolidaysService {
     actorId?: string,
   ) {
     const name = dto.name.trim();
-    const year = new Date(dto.date).getFullYear();
+    // From the date text itself: reading it through a Date and its local year gives the wrong year on a server west of UTC.
+    const year = Number(dto.date.slice(0, 4));
 
     // A holiday on a date that has passed could never be edited or deleted afterwards (the attendance and payroll
     // already calculated against that day are kept as they were), so it is not accepted in the first place.
@@ -128,6 +129,7 @@ export class HolidaysService {
         "A holiday can't be added for a date that has already passed - attendance and payroll for that day are already recorded. Add holidays before they happen.",
       );
     }
+    await this.assertDepartmentInOrg(dto.department, organizationId);
     await this.assertNoDuplicate(organizationId, dto.date, name);
 
     const holiday = await this.scopedPrisma.holiday.create({
@@ -215,6 +217,7 @@ export class HolidaysService {
       );
     }
 
+    await this.assertDepartmentInOrg(dto.department, organizationId);
     const nextName = (dto.name ?? existing.name).trim();
     const nextDate = dto.date ?? existing.date;
     await this.assertNoDuplicate(organizationId, nextDate, nextName, id);
@@ -225,7 +228,7 @@ export class HolidaysService {
         ...(dto.name !== undefined && { name: nextName }),
         ...(dto.date !== undefined && {
           date: dto.date,
-          year: new Date(dto.date).getFullYear(),
+          year: Number(dto.date.slice(0, 4)),
         }),
         ...(dto.department !== undefined && { departmentId: dto.department }),
         ...(dto.isOptional !== undefined && { isOptional: dto.isOptional }),
@@ -424,6 +427,16 @@ export class HolidaysService {
       pastReferenceOnly: toCreate.filter((h) => !h.isActive).length,
       failed,
     };
+  }
+
+  // A department-specific holiday must name a department of this organisation.
+  private async assertDepartmentInOrg(departmentId: string | null | undefined, organizationId: string) {
+    if (!departmentId) return;
+    const dept = await this.scopedPrisma.department.findFirst({
+      where: { id: departmentId, organizationId },
+      select: { id: true },
+    });
+    if (!dept) throw new BadRequestException('The selected department was not found.');
   }
 
   private async assertNoDuplicate(

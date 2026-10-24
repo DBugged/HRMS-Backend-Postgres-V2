@@ -913,7 +913,7 @@ export class AttendanceService {
           isActive: true,
           departmentId: { in: departmentIds },
         },
-        select: { id: true, departmentId: true, joiningDate: true },
+        select: { id: true, departmentId: true, joiningDate: true, exitDate: true },
       });
       if (employees.length === 0) return { updated: 0 };
       const lockedRuns = await this.scopedPrisma.payrollRun.findMany({
@@ -942,6 +942,7 @@ export class AttendanceService {
         },
       });
       let updated = 0;
+      const changedEmployees = new Set<string>();
       await mapWithConcurrency(rows, 8, async (row) => {
         const employee = employeeById.get(row.employeeId);
         if (!employee) return;
@@ -949,6 +950,7 @@ export class AttendanceService {
           return;
         }
         if (row.date < utcDateStrOf(employee.joiningDate)) return;
+        if (!isEmployedOn(employee.exitDate, row.date)) return;
         const hasPunch = !!(row.inTime || row.outTime);
         if (row.date > yesterday && !hasPunch) return;
         const department = employee.departmentId
@@ -986,7 +988,12 @@ export class AttendanceService {
           },
         });
         updated += 1;
+        changedEmployees.add(row.employeeId);
       });
+      // Their days changed under the new schedule, so a payroll already calculated for this month is out of date.
+      for (const employeeId of changedEmployees) {
+        await markPayrollInputsChanged(this.scopedPrisma, organizationId, employeeId, [{ month, year }]);
+      }
       if (updated > 0 && actorId) {
         await this.auditLogService.log({
           actorId,
