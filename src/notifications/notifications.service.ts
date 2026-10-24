@@ -6,6 +6,7 @@
 // Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the original release exactly);
 // the optional accompanying email is gated per-recipient by their own emailEnabled preference — the only
 // place that flag is actually consulted.
+import { managerIdsOf } from '../common/managers';
 import {
   BadRequestException,
   Inject,
@@ -90,7 +91,7 @@ export class NotificationsService {
   // encashment, reimbursement). Best-effort — a notification problem must never fail the request itself.
   async notifyReviewers(input: {
     organizationId: string;
-    requester: Pick<User, 'id' | 'reportingManagerId'>;
+    requester: Pick<User, 'id' | 'reportingManagerId'> & { additionalReportingManagerIds?: string[] | null };
     title: string;
     message: string;
     category: NotificationCategory;
@@ -98,19 +99,12 @@ export class NotificationsService {
   }) {
     try {
       const { organizationId, requester, title, message, category } = input;
-      if (
-        input.managerFirst &&
-        requester.reportingManagerId &&
-        requester.reportingManagerId !== requester.id
-      ) {
-        await this.create({
-          organizationId,
-          userId: requester.reportingManagerId,
-          title,
-          message,
-          category,
-          pushKind: 'APPROVAL',
-        });
+      const managers = managerIdsOf(requester).filter((m) => m !== requester.id);
+      if (input.managerFirst && managers.length > 0) {
+        // Every reporting manager (primary and additional) is told.
+        await this.createMany(
+          managers.map((userId) => ({ organizationId, userId, title, message, category, pushKind: 'APPROVAL' as const })),
+        );
         return;
       }
       // An Admin's request goes to the other Admins only: it never falls back to HR.

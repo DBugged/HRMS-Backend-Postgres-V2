@@ -657,7 +657,14 @@ export class AuthService {
         safe.organizationId,
       ) as unknown as typeof safe.personalData;
     }
-    return { ...safe, selfieRequired, locationMode };
+    // The extra reporting managers' names, for the profile screens (the primary is `reportingManager`).
+    const additionalReportingManagers = user.additionalReportingManagerIds.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { id: { in: user.additionalReportingManagerIds }, organizationId },
+          select: { id: true, name: true, employeeId: true },
+        })
+      : [];
+    return { ...safe, selfieRequired, locationMode, additionalReportingManagers };
   }
 
   // Never reveals whether the email exists — same response either way.

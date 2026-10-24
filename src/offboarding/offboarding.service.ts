@@ -42,6 +42,7 @@ import { UpdateLastWorkingDayDto } from './dto/update-last-working-day.dto';
 import { todayInOrgTz } from '../common/org-date';
 import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
+import { assertAccountCanLeave } from '../common/account-guard';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { ListOffboardingQueryDto } from './dto/list-offboarding-query.dto';
@@ -187,6 +188,7 @@ export class OffboardingService {
       where: { id: dto.employeeId, organizationId },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
+    await assertAccountCanLeave(this.scopedPrisma, dto.employeeId, organizationId);
 
     const existing = await this.scopedPrisma.offboardingCase.findFirst({
       where: {
@@ -267,6 +269,11 @@ export class OffboardingService {
           exitStatus: exit,
           previousEmploymentStatus: employee.employmentStatus,
         },
+      });
+      // Last working day drives who still shows on trackers/lists after leaving (account stays active until completion).
+      await tx.user.updateMany({
+        where: { id: dto.employeeId, organizationId },
+        data: { exitDate: dto.lastWorkingDay },
       });
       if (entersNotice && !alreadyInNotice) {
         await tx.user.updateMany({
@@ -489,6 +496,10 @@ export class OffboardingService {
           ...(record.settlementId ? { settlementId: null } : {}),
         },
       });
+      await tx.user.updateMany({
+        where: { id: record.employeeId, organizationId },
+        data: { exitDate: dto.lastWorkingDay },
+      });
       await tx.resignation.updateMany({
         where: {
           organizationId,
@@ -573,6 +584,7 @@ export class OffboardingService {
     // `settlement` relation, so its current status is available here
     // without a second query.
     const record = await this.assertOpenCase(id, organizationId);
+    await assertAccountCanLeave(this.scopedPrisma, record.employeeId, organizationId);
 
     const leaver = await this.scopedPrisma.user.findFirst({
       where: { id: record.employeeId, organizationId },
@@ -777,6 +789,13 @@ export class OffboardingService {
         },
         data: { status: OffboardingStatus.CANCELLED },
       });
+      // Cancelled exit: they are staying, so the last working day no longer applies.
+      if (count > 0) {
+        await tx.user.updateMany({
+          where: { id: record.employeeId, organizationId },
+          data: { exitDate: null },
+        });
+      }
       // Restore the pre-notice status only on the first cancel of an open case, and only if the
       // employee is still RESIGNED (HR may have changed it manually since).
       const wasOpen = OPEN_STATUSES.includes(record.status);

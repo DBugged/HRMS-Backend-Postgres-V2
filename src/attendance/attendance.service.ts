@@ -61,6 +61,7 @@ import {
 } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
+import { isEmployedOn } from '../common/managers';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
   assertManagerDeptScope,
@@ -3153,6 +3154,7 @@ export class AttendanceService {
           joiningDate: true,
           departmentId: true,
           createdAt: true,
+          exitDate: true,
         },
       }),
       this.scopedPrisma.attendance.findMany({
@@ -3205,15 +3207,19 @@ export class AttendanceService {
         joiningDate: _joiningDate,
         departmentId: _departmentId,
         createdAt: _createdAt,
+        exitDate: _exitDate,
         ...publicEmployee
       } = employee;
       void _joiningDate;
       void _departmentId;
       void _createdAt;
+      void _exitDate;
+      const exitDate = employee.exitDate;
 
       for (const dateStr of rangeDays) {
         if (existingKeys.has(`${employee.id}|${dateStr}`)) continue;
         if (dateStr < joiningDateStr) continue; // not yet an employee
+        if (!isEmployedOn(exitDate, dateStr)) continue; // past their last working day
         if (dateStr >= today) {
           // Today and later: only a holiday from the calendar is shown (nothing else about those days is known yet).
           const isHoliday = upcomingHolidays.some(
@@ -4966,7 +4972,7 @@ export class AttendanceService {
         // holidays went unpaid. An Admin is on payroll like anyone else, so is swept too.
         role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN] },
       },
-      select: { id: true },
+      select: { id: true, exitDate: true },
     });
 
     // Attendance of a payroll month that is already locked or paid is never rewritten by a sweep: a payslip was issued
@@ -4989,6 +4995,8 @@ export class AttendanceService {
     const employeeIds: string[] = [];
     await mapWithConcurrency(employees, 8, async (employee) => {
       if (lockedEmployees.has(employee.id)) return;
+      // Serving out notice is over after the last working day: no Absent row (or alert) for days they were not employed.
+      if (!isEmployedOn(employee.exitDate, date)) return;
       const row = await this.recalculateAttendanceForDay(
         this.scopedPrisma,
         employee.id,

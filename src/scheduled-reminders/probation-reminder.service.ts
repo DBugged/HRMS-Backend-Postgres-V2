@@ -4,6 +4,7 @@
 // reporting manager and every active HR/Admin — in-app and by the PROBATION_ENDING email template.
 // Important: only employees still on probation (status pending/extended/unset) are considered; an employee never
 // receives the reminder about themselves; each recipient is told once per employee per milestone.
+import { managerIdsOf } from '../common/managers';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { NotificationCategory, ProbationStatus, Role } from '@prisma/client';
@@ -66,6 +67,7 @@ export class ProbationReminderService {
         employeeId: true,
         probationEndDate: true,
         reportingManagerId: true,
+        additionalReportingManagerIds: true,
       },
     });
     const due = onProbation
@@ -87,10 +89,11 @@ export class ProbationReminderService {
     let sent = 0;
     for (const emp of due) {
       const recipients = new Map(hr.map((u) => [u.id, u]));
-      const manager = emp.reportingManagerId
-        ? byId.get(emp.reportingManagerId)
-        : undefined;
-      if (manager) recipients.set(manager.id, manager);
+      // Every reporting manager (primary and additional) is told.
+      for (const managerId of managerIdsOf(emp)) {
+        const manager = byId.get(managerId);
+        if (manager) recipients.set(manager.id, manager);
+      }
       recipients.delete(emp.id); // never about themselves
 
       const endDisplay = formatDateDisplay(emp.probationEndDate, '');

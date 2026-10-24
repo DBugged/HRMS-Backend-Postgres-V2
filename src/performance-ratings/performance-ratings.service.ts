@@ -7,6 +7,7 @@
 // write directly through upsert() (publishing instantly, status APPROVED) for an employee who has no
 // reportingManagerId at all — once a manager is assigned, ADMIN/HR's role narrows to approve()/reject()
 // only, no override.
+import { isManagerOf, reportsToWhere } from '../common/managers';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -81,7 +82,7 @@ export class PerformanceRatingsService {
             ...(actor.departmentId !== null
               ? [{ departmentId: actor.departmentId }]
               : []),
-            { reportingManagerId: actor.id },
+            ...reportsToWhere(actor.id).OR,
           ],
         },
         select: { id: true },
@@ -220,7 +221,7 @@ export class PerformanceRatingsService {
         // null === null must not count as "same department".
         (actor.departmentId === null ||
           employee.departmentId !== actor.departmentId) &&
-        employee.reportingManagerId !== actor.id
+        !isManagerOf(actor.id, employee)
       ) {
         throw new ForbiddenException(
           'You may only rate employees in your own department or who report to you.',

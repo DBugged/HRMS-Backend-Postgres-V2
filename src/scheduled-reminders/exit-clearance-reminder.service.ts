@@ -7,6 +7,7 @@
 //     (assets not returned, exit interview, F&F settlement, system access) — only when something is open.
 // Important: the date in each title keeps one reminder per milestone per person; a cancelled or completed case is
 // never reminded.
+import { managerIdsOf } from '../common/managers';
 import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
@@ -68,6 +69,7 @@ export class ExitClearanceReminderService {
               name: true,
               employeeId: true,
               reportingManagerId: true,
+              additionalReportingManagerIds: true,
             },
           },
         },
@@ -148,10 +150,10 @@ export class ExitClearanceReminderService {
       // HR/Admin and the manager, only while clearance is still open.
       if (open.length === 0) continue;
       const recipients = new Map(hr.map((u) => [u.id, u]));
-      const manager = c.employee.reportingManagerId
-        ? byId.get(c.employee.reportingManagerId)
-        : undefined;
-      if (manager) recipients.set(manager.id, manager);
+      for (const managerId of managerIdsOf(c.employee)) {
+        const manager = byId.get(managerId);
+        if (manager) recipients.set(manager.id, manager);
+      }
       recipients.delete(c.employeeId);
       for (const user of recipients.values()) {
         const delivered = await this.notifier.send({

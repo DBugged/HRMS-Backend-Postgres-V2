@@ -1,3 +1,4 @@
+import { isManagerOf, managerIdsOf } from './managers';
 import { ForbiddenException } from '@nestjs/common';
 import { Role } from '@prisma/client';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -122,7 +123,7 @@ export async function assertManagerScopeOrDelegate(
   if (actor.role !== Role.MANAGER) return;
   const target = await prisma.user.findFirst({
     where: { id: targetEmployeeId, organizationId },
-    select: { departmentId: true, reportingManagerId: true },
+    select: { departmentId: true, reportingManagerId: true, additionalReportingManagerIds: true },
   });
   if (!target) {
     throw new ForbiddenException(
@@ -132,7 +133,7 @@ export async function assertManagerScopeOrDelegate(
   // The actual reporting relationship always grants access, independent of
   // department — this covers a manager/employee pair that predates (or
   // simply never got) a department assignment.
-  if (target.reportingManagerId === actor.id) return;
+  if (isManagerOf(actor.id, target)) return;
   // actor.departmentId === null is deliberately excluded — see
   // assertManagerDeptScope's identical guard against null-department
   // managers matching every other null-department employee.
@@ -143,20 +144,16 @@ export async function assertManagerScopeOrDelegate(
     return;
   }
 
-  if (target.reportingManagerId) {
+  // A delegate of ANY of the employee's managers (primary or additional) may act for them.
+  const managerIds = managerIdsOf(target);
+  if (managerIds.length > 0) {
     const org = await prisma.organization.findFirst({
       where: { id: organizationId },
       select: { timezone: true },
     });
-    if (
-      await delegationService.isActiveDelegate(
-        target.reportingManagerId,
-        actor.id,
-        organizationId,
-        todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'),
-      )
-    ) {
-      return;
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    for (const managerId of managerIds) {
+      if (await delegationService.isActiveDelegate(managerId, actor.id, organizationId, today)) return;
     }
   }
 

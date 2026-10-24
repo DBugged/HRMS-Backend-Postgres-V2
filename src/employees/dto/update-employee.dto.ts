@@ -1,17 +1,6 @@
 import { IsIndianMobile } from '../../common/indian-mobile';
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsBoolean,
-  IsEmail,
-  IsEnum,
-  IsNotEmpty,
-  IsOptional,
-  IsString,
-  IsUUID,
-  Matches,
-  MaxLength,
-  ValidateIf,
-} from 'class-validator';
+import { IsBoolean, IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateIf, IsArray, ArrayMaxSize } from 'class-validator';
 import {
   EmploymentStatus,
   Gender,
@@ -139,6 +128,15 @@ export class UpdateEmployeeDto {
   @IsOptional()
   @IsUUID()
   reportingManagerId?: string;
+
+  // Further managers beyond the primary one (the "Reporting managers" multi-select: the first pick is the primary, the rest
+  // are listed here). They can approve and are notified like the primary. An Admin reports to nobody, so it is cleared then.
+  @ApiPropertyOptional({ type: [String] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @IsUUID('all', { each: true })
+  additionalReportingManagerIds?: string[];
 
   @ApiPropertyOptional({ enum: EmploymentStatus })
   @IsOptional()

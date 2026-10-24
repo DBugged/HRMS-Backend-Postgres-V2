@@ -7,6 +7,7 @@
 // case. Nobody decides their own resignation, and only an ADMIN decides an HR/ADMIN user's (same rule as the
 // privacy module's requests). approvedLwd defaults to the last working day the employee asked for; an approver may
 // move it, and a date before the notice period ends (an early release) needs a note explaining why.
+import { managerIdsOf, reportsToWhere } from '../common/managers';
 import {
   BadRequestException,
   ConflictException,
@@ -189,7 +190,7 @@ export class ResignationsService {
   // employee themself. Best-effort in-app notices.
   private async notifyApprovers(
     organizationId: string,
-    employee: { id: string; reportingManagerId: string | null },
+    employee: { id: string; reportingManagerId: string | null; additionalReportingManagerIds?: string[] | null },
     title: string,
     message: string,
   ) {
@@ -200,9 +201,7 @@ export class ResignationsService {
         id: { not: employee.id },
         OR: [
           { role: { in: HR_ROLES } },
-          ...(employee.reportingManagerId
-            ? [{ id: employee.reportingManagerId }]
-            : []),
+          ...managerIdsOf(employee).map((id) => ({ id })),
         ],
       },
       select: { id: true },
@@ -249,7 +248,7 @@ export class ResignationsService {
     const rows = await this.scopedPrisma.resignation.findMany({
       where: {
         organizationId: actor.organizationId,
-        employee: { reportingManagerId: actor.id },
+        employee: reportsToWhere(actor.id),
       },
       include: {
         employee: { select: { id: true, name: true, employeeId: true } },
@@ -302,7 +301,7 @@ export class ResignationsService {
         where: {
           id: record.employeeId,
           organizationId: actor.organizationId,
-          reportingManagerId: actor.id,
+          ...reportsToWhere(actor.id),
         },
         select: { id: true },
       });
@@ -461,9 +460,7 @@ export class ResignationsService {
         id: { notIn: [actor.id, dto.employeeId] },
         OR: [
           { role: { in: HR_ROLES } },
-          ...(employee.reportingManagerId
-            ? [{ id: employee.reportingManagerId }]
-            : []),
+          ...managerIdsOf(employee).map((id) => ({ id })),
         ],
       },
       select: { id: true },
@@ -601,7 +598,7 @@ export class ResignationsService {
     }
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: actor.id, organizationId },
-      select: { id: true, name: true, reportingManagerId: true },
+      select: { id: true, name: true, reportingManagerId: true, additionalReportingManagerIds: true },
     });
     await this.auditLogService.log({
       actorId: actor.id,

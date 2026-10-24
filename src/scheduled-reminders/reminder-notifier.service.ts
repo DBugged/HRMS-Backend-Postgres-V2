@@ -18,6 +18,7 @@ export interface ReminderUser {
   email: string;
   role: Role;
   reportingManagerId: string | null;
+  additionalReportingManagerIds?: string[] | null;
   notificationPreferences: unknown;
 }
 
@@ -57,6 +58,7 @@ export class ReminderNotifier {
         email: true,
         role: true,
         reportingManagerId: true,
+        additionalReportingManagerIds: true,
         notificationPreferences: true,
       },
     });

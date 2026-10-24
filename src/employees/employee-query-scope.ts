@@ -50,10 +50,10 @@ export function canManagerAccessEmployee(
  */
 export function noDepartmentManagerScope(
   actor: Actor & { id?: string },
-): { OR: Array<{ id: string } | { reportingManagerId: string }> } | undefined {
+): { OR: Array<{ id: string } | { reportingManagerId: string } | { additionalReportingManagerIds: { has: string } }> } | undefined {
   if (actor.role !== Role.MANAGER || actor.departmentId) return undefined;
   const id = actor.id ?? '';
-  return { OR: [{ id }, { reportingManagerId: id }] };
+  return { OR: [{ id }, { reportingManagerId: id }, { additionalReportingManagerIds: { has: id } }] };
 }
 
 /**
@@ -67,14 +67,17 @@ export function noDepartmentManagerScope(
  */
 export function collectReportingChain(
   managerId: string,
-  allPairs: Array<{ id: string; reportingManagerId: string | null }>,
+  allPairs: Array<{ id: string; reportingManagerId: string | null; additionalReportingManagerIds?: string[] | null }>,
 ): string[] {
   const reportsOf = new Map<string, string[]>();
-  for (const { id, reportingManagerId } of allPairs) {
-    if (!reportingManagerId) continue;
-    const list = reportsOf.get(reportingManagerId);
-    if (list) list.push(id);
-    else reportsOf.set(reportingManagerId, [id]);
+  for (const { id, reportingManagerId, additionalReportingManagerIds } of allPairs) {
+    // A person reports to their primary manager and to every additional one.
+    for (const managerId of [reportingManagerId, ...(additionalReportingManagerIds ?? [])]) {
+      if (!managerId) continue;
+      const list = reportsOf.get(managerId);
+      if (list) list.push(id);
+      else reportsOf.set(managerId, [id]);
+    }
   }
   const chain: string[] = [];
   const queue = [...(reportsOf.get(managerId) ?? [])];

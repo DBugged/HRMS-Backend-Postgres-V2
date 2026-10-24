@@ -30,6 +30,7 @@ function build(
       },
     },
     resignation: { updateMany: async () => ({ count: 0 }) },
+    user: { updateMany: async () => ({ count: 1 }) },
   };
   const prisma: Row = {
     user: {

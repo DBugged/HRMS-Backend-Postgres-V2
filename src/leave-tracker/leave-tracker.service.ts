@@ -396,6 +396,7 @@ export class LeaveTrackerService {
         joiningDate: true,
         // An inactive employee earns no leave: no balance row is created for them here (existing rows still show).
         isActive: true,
+        exitDate: true,
         // Shown by the Employee Leave Stat page.
         designation: true,
         department: { select: { name: true } },
@@ -412,6 +413,8 @@ export class LeaveTrackerService {
     if (periodEnd) {
       for (let i = employees.length - 1; i >= 0; i--) {
         if (joinedOn(employees[i]) > periodEnd) employees.splice(i, 1);
+        // ...and only up to the month of their last working day: a month that began after it does not list them.
+        else if (periodStart && employees[i].exitDate && employees[i].exitDate! < periodStart) employees.splice(i, 1);
       }
     }
 

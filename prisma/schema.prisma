@@ -542,9 +542,17 @@ model User {
   // NOT_NEEDED override it. See common/location-requirement.ts.
   locationRequirement         LocationRequirement @default(DEFAULT)
 
-  reportingManagerId String?
-  reportingManager   User?   @relation("ReportingManager", fields: [reportingManagerId], references: [id])
-  subordinates       User[]  @relation("ReportingManager")
+  reportingManagerId            String?
+  reportingManager              User?    @relation("ReportingManager", fields: [reportingManagerId], references: [id])
+  // Further managers beyond the primary one above (a matrix / dotted-line reporting). They can approve and are told about
+  // requests exactly like the primary manager. Plain ids (no FK): they are cleaned up when a manager leaves
+  // (common/manager-reassignment.ts) and validated as active people of the organisation when set.
+  additionalReportingManagerIds String[] @default([])
+  // The last working day once an exit is planned (YYYY-MM-DD), kept in step with the resignation / offboarding case.
+  // Trackers, absence marking and headcounts stop counting the person after this day, even though the account stays
+  // active until Offboarding is completed. Null = no exit planned.
+  exitDate                      String?
+  subordinates                  User[]   @relation("ReportingManager")
 
   managedDepartments Department[] @relation("DepartmentHead")
 

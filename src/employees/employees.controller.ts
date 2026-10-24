@@ -19,6 +19,7 @@ import { EmployeeProfileService } from './employee-profile.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { BulkCreateEmployeesDto } from './dto/bulk-create-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { ReassignReportsDto } from './dto/reassign-reports.dto';
 import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
@@ -163,6 +164,19 @@ export class EmployeesController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // Moves everyone who reports to this manager (primary or additional) to a replacement in one step - used when a manager
+  // resigns, before their offboarding completes.
+  @Post(':id/reassign-reports')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  reassignReports(
+    @Param('id') id: string,
+    @Body() dto: ReassignReportsDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.employeesService.reassignAllReports(id, dto.newManagerId, caller, caller.organizationId);
   }
 
   @Post(':id/resend-credentials')

@@ -6,6 +6,7 @@
 //   reports sees only those reports' requests, and only the request types a manager can decide (not finance/loan
 //   types). An approver never counts their own requests. Respects the recipient's "email notifications" preference
 //   and an org that has disabled the template (no email at all, unlike the generic fallback behaviour elsewhere).
+import { managerIdsOf } from '../common/managers';
 import { REQUEST_TYPE_MODULE, disabledModulesOf } from '../module-access/module-gate';
 import { NotificationCategory } from '@prisma/client';
 import { channelAllowed } from '../notifications/notification-preferences';
@@ -121,15 +122,19 @@ export class ApprovalsDigestService {
         email: true,
         role: true,
         reportingManagerId: true,
+        additionalReportingManagerIds: true,
         notificationPreferences: true,
       },
     });
     const reportsByManager = new Map<string, string[]>();
     for (const u of users) {
-      if (!u.reportingManagerId || u.reportingManagerId === u.id) continue;
-      const list = reportsByManager.get(u.reportingManagerId) ?? [];
-      list.push(u.id);
-      reportsByManager.set(u.reportingManagerId, list);
+      // A person counts as a report of every one of their managers (primary and additional).
+      for (const managerId of managerIdsOf(u)) {
+        if (managerId === u.id) continue;
+        const list = reportsByManager.get(managerId) ?? [];
+        list.push(u.id);
+        reportsByManager.set(managerId, list);
+      }
     }
 
     let sent = 0;

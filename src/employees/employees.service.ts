@@ -8,6 +8,7 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { isManagerOf } from '../common/managers';
 import { assertEmployeeRoom } from '../module-access/module-gate';
 import { buildOrgChart } from './org-chart';
 import {
@@ -71,7 +72,8 @@ import {
 } from './employee-query-scope';
 import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
-import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
+import { reassignReports, reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
+import { assertAccountCanLeave } from '../common/account-guard';
 import { DEFAULT_EMPLOYEE_TYPES } from '../organizations/employee-types';
 import { normalizeEmail } from '../common/normalize-input';
 
@@ -184,6 +186,11 @@ export class EmployeesService {
 
     await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
     await this.assertOrgReferences(dto, organizationId);
+    // Extra managers beyond the primary (an Admin reports to nobody, so none).
+    const extraManagers =
+      (dto.role ?? Role.EMPLOYEE) === Role.ADMIN
+        ? []
+        : await this.cleanExtraManagers(dto.additionalReportingManagerIds, dto.reportingManagerId, undefined, organizationId);
     await this.assertContactNumberUnique(dto.contactNumber, organizationId);
 
     const generatedPassword = generatePolicyPassword();
@@ -221,6 +228,7 @@ export class EmployeesService {
             // An Admin reports to nobody: their requests are decided by an Admin, never routed to HR.
             reportingManagerId:
               requestedRole === Role.ADMIN ? undefined : dto.reportingManagerId,
+            additionalReportingManagerIds: extraManagers,
             employeeType: dto.employeeType ?? 'permanent',
             employmentStatus:
               dto.employeeType === 'probation' ? 'PROBATION' : 'ONBOARDING',
@@ -843,7 +851,7 @@ export class EmployeesService {
             actor.id,
             await this.scopedPrisma.user.findMany({
               where: { organizationId },
-              select: { id: true, reportingManagerId: true },
+              select: { id: true, reportingManagerId: true, additionalReportingManagerIds: true },
             }),
           )
         : null;
@@ -904,7 +912,7 @@ export class EmployeesService {
     const ownOrDirectReport =
       !!noDeptScope &&
       !!actor.id &&
-      (employee.id === actor.id || employee.reportingManagerId === actor.id);
+      (employee.id === actor.id || isManagerOf(actor.id, employee));
     if (
       !ownOrDirectReport &&
       !canManagerAccessEmployee(actor, employee.departmentId)
@@ -927,7 +935,15 @@ export class EmployeesService {
         },
       );
     }
-    return toSafe(employee, maskFor(actor, employee.id));
+    // Names for the extra reporting managers, so the profile can show them without a second lookup.
+    const extraIds = employee.additionalReportingManagerIds ?? [];
+    const additionalReportingManagers = extraIds.length
+      ? await this.scopedPrisma.user.findMany({
+          where: { id: { in: extraIds }, organizationId },
+          select: { id: true, name: true, employeeId: true },
+        })
+      : [];
+    return { ...toSafe(employee, maskFor(actor, employee.id)), additionalReportingManagers };
   }
 
   async update(
@@ -1015,6 +1031,9 @@ export class EmployeesService {
     // can set it to. Without this check, HR could PATCH an employee's role
     // straight to ADMIN even though they're blocked from doing so at
     // creation time.
+    if (clean.role !== undefined && clean.role !== Role.ADMIN && before.role === Role.ADMIN) {
+      await assertAccountCanLeave(this.scopedPrisma, id, organizationId);
+    }
     if (
       actor.role === Role.HR &&
       clean.role !== undefined &&
@@ -1146,7 +1165,15 @@ export class EmployeesService {
 
     // An Admin reports to nobody: whenever the resulting role is Admin the reporting manager is cleared.
     if ((clean.role ?? before.role) === Role.ADMIN) {
-      Object.assign(clean, { reportingManagerId: null });
+      Object.assign(clean, { reportingManagerId: null, additionalReportingManagerIds: [] });
+    } else if (clean.additionalReportingManagerIds !== undefined || clean.reportingManagerId) {
+      // Extra managers: validated like the primary, never the person themself or the primary, no cycles. When only the
+      // primary changes (an older client), a new primary that was already an extra manager is simply moved up.
+      const primary = clean.reportingManagerId !== undefined ? clean.reportingManagerId : before.reportingManagerId;
+      const wanted = clean.additionalReportingManagerIds ?? before.additionalReportingManagerIds ?? [];
+      const extras = await this.cleanExtraManagers(wanted, primary, id, organizationId);
+      for (const m of extras) await this.assertNoReportingCycle(id, m, organizationId);
+      Object.assign(clean, { additionalReportingManagerIds: extras });
     }
 
     // Reporting manager: no self-reporting and no cycles in the chain.
@@ -1170,6 +1197,8 @@ export class EmployeesService {
     // reports first — otherwise they're left pointing at a manager who can
     // no longer even log in.
     if (clean.isActive === false && before.isActive) {
+      // The registered account and the last active Admin must stay (Control Panel needs an active Admin per company).
+      await assertAccountCanLeave(this.scopedPrisma, id, organizationId);
       await reassignDirectReportsBeforeDeactivation(
         {
           scopedPrisma: this.scopedPrisma,
@@ -1548,6 +1577,24 @@ export class EmployeesService {
   // DEACTIVATION_BLOCKED_MESSAGE). Closing the account is the last step of Offboarding, which settles the final pay
   // first and records the exit.
   // eslint-disable-next-line @typescript-eslint/require-await -- only ever throws, but stays async so callers get a rejected promise
+  /** Reassign all of a manager's active reports (primary or additional) to a replacement manager at once. */
+  async reassignAllReports(
+    managerId: string,
+    newManagerId: string,
+    actor: Actor & { id: string },
+    organizationId: string,
+  ) {
+    const manager = await this.scopedPrisma.user.findFirst({ where: { id: managerId, organizationId }, select: { id: true } });
+    if (!manager) throw new NotFoundException('Employee not found.');
+    return reassignReports(
+      { scopedPrisma: this.scopedPrisma, timelineService: this.timelineService, auditLogService: this.auditLogService },
+      managerId,
+      newManagerId,
+      organizationId,
+      actor.id,
+    );
+  }
+
   async deactivate(
     id: string,
     dto: DeactivateEmployeeDto,
@@ -1797,6 +1844,29 @@ export class EmployeesService {
         });
       current = row?.reportingManagerId ?? null;
     }
+  }
+
+  // The additional reporting managers to store: each must be an active Admin, HR or Manager of this organisation; the
+  // employee themself, the primary manager and duplicates are dropped.
+  private async cleanExtraManagers(
+    ids: string[] | undefined,
+    primaryId: string | null | undefined,
+    selfId: string | undefined,
+    organizationId: string,
+  ): Promise<string[]> {
+    const wanted = [...new Set((ids ?? []).filter((x) => !!x && x !== selfId && x !== primaryId))];
+    if (wanted.length === 0) return [];
+    const found = await this.scopedPrisma.user.findMany({
+      where: { id: { in: wanted }, organizationId, isActive: true },
+      select: { id: true, role: true },
+    });
+    if (found.length !== wanted.length) {
+      throw new BadRequestException('One of the additional reporting managers was not found.');
+    }
+    if (found.some((m) => m.role === Role.EMPLOYEE)) {
+      throw new BadRequestException('Every reporting manager must be an Admin, HR or Manager.');
+    }
+    return wanted;
   }
 
   // departmentId / reportingManagerId must reference a row of the caller's

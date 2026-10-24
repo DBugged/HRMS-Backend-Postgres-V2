@@ -7,6 +7,7 @@
 // Important: review() implements a two-level workflow where a MANAGER's approval on a 2-level leave type
 // only records level-1 sign-off (status stays PENDING); only ADMIN/HR can give final approval. releaseHold()
 // is the single place that reverses whatever a leave's current status implied, shared by update() and cancel().
+import { managerIdsOf } from '../common/managers';
 import { keepModuleEnabled } from '../module-access/module-gate';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
@@ -1283,16 +1284,14 @@ export class LeavesService {
   ): Promise<boolean> {
     const applicant = await this.scopedPrisma.user.findFirst({
       where: { id: leave.employeeId, organizationId },
-      select: { role: true, reportingManagerId: true, departmentId: true },
+      select: { role: true, reportingManagerId: true, additionalReportingManagerIds: true, departmentId: true },
     });
     if (!applicant) return false;
     if (applicant.role === Role.ADMIN || applicant.role === Role.HR) {
       return false;
     }
     const scope: Prisma.UserWhereInput[] = [];
-    if (applicant.reportingManagerId) {
-      scope.push({ id: applicant.reportingManagerId });
-    }
+    for (const managerId of managerIdsOf(applicant)) scope.push({ id: managerId });
     if (applicant.departmentId) {
       scope.push({ departmentId: applicant.departmentId });
     }
@@ -2495,10 +2494,9 @@ export class LeavesService {
     );
     const title = 'Leave Cancellation Request';
     const message = `${actor.name} asked to cancel the approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}. Reason: ${reason}`;
-    const toManager =
-      actor.reportingManagerId && actor.reportingManagerId !== actor.id;
-    const recipients = toManager
-      ? [actor.reportingManagerId as string]
+    const managerRecipients = managerIdsOf(actor).filter((m) => m !== actor.id);
+    const recipients = managerRecipients.length > 0
+      ? managerRecipients
       : (
           await this.scopedPrisma.user.findMany({
             where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
@@ -2548,15 +2546,19 @@ export class LeavesService {
     const title = 'New Leave Application';
     const message = `${actor.name} applied for leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.`;
 
-    if (actor.reportingManagerId && actor.reportingManagerId !== actor.id) {
-      await this.notificationsService.create({
-        organizationId,
-        userId: actor.reportingManagerId,
-        title,
-        message,
-        category: NotificationCategory.LEAVE,
-        pushKind: 'APPROVAL',
-      });
+    // Every reporting manager (primary and additional) is told.
+    const managersToTell = managerIdsOf(actor).filter((m) => m !== actor.id);
+    if (managersToTell.length > 0) {
+      await this.notificationsService.createMany(
+        managersToTell.map((userId) => ({
+          organizationId,
+          userId,
+          title,
+          message,
+          category: NotificationCategory.LEAVE,
+          pushKind: 'APPROVAL' as const,
+        })),
+      );
       return;
     }
 
