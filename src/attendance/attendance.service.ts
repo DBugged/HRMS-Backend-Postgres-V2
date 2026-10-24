@@ -1327,6 +1327,11 @@ export class AttendanceService {
         `The date ${dmyText(attendanceDate)} is before this employee's joining date (${dmyText(utcDateStrOf(user.joiningDate))}).`,
       );
     }
+    if (!isEmployedOn(user.exitDate, attendanceDate)) {
+      throw new BadRequestException(
+        `The date ${dmyText(attendanceDate)} is after this employee's last working day (${dmyText(user.exitDate!)}).`,
+      );
+    }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       dto.organizationId,
@@ -1473,6 +1478,11 @@ export class AttendanceService {
         `The date ${dmyText(attendanceDate)} is before this employee's joining date (${dmyText(utcDateStrOf(user.joiningDate))}).`,
       );
     }
+    if (!isEmployedOn(user.exitDate, attendanceDate)) {
+      throw new BadRequestException(
+        `The date ${dmyText(attendanceDate)} is after this employee's last working day (${dmyText(user.exitDate!)}).`,
+      );
+    }
     await assertPayrollPeriodUnlocked(
       this.scopedPrisma,
       organizationId,
@@ -1599,6 +1609,18 @@ export class AttendanceService {
       punchTime,
       selfShiftConfig,
     );
+    // Not before they have joined, and not after their last working day (the account stays open until the exit is
+    // completed, but they are no longer working).
+    if (employee && attendanceDate < utcDateStrOf(employee.joiningDate)) {
+      throw new BadRequestException(
+        `You can check in from your joining date (${dmyText(utcDateStrOf(employee.joiningDate))}).`,
+      );
+    }
+    if (employee && !isEmployedOn(employee.exitDate, attendanceDate)) {
+      throw new BadRequestException(
+        `Your last working day was ${dmyText(employee.exitDate!)}, so attendance can no longer be recorded.`,
+      );
+    }
 
     // Selfie at check-in/out: the employee's own setting, else the org's
     // (common/selfie-requirement.ts). Enforced here, not just in the app, so
