@@ -5,6 +5,7 @@
 // Important: upsert()'s isOwnDeclaration check is identity-based, not role-based — an HR/Admin caller
 // editing their OWN declaration can never set `status` themselves (closing a self-verification loophole),
 // even though they could set it freely when editing someone else's.
+import { markPayrollStaleForFinancialYear } from '../payroll/payroll-period-guard';
 import { isMetroCity } from '../common/hra-cities';
 import {
   BadRequestException,
@@ -441,6 +442,9 @@ export class TaxDeclarationsService {
       });
     }
 
+    // TDS follows the declaration (regime, deductions, HRA, relief): a payroll already calculated for this year, not yet
+    // locked, used the old one and has to be recalculated before it is signed off.
+    await markPayrollStaleForFinancialYear(this.scopedPrisma, organizationId, dto.financialYear, { employeeId });
     await this.auditLogService.log({
       actorId: actor.id,
       action: existing ? 'TAX_DECLARATION_UPDATED' : 'TAX_DECLARATION_CREATED',
@@ -568,6 +572,7 @@ export class TaxDeclarationsService {
           },
         });
       }
+      await markPayrollStaleForFinancialYear(this.scopedPrisma, organizationId, dto.financialYear, { employeeId });
       await this.auditLogService.log({
         actorId: actor.id,
         action: 'TAX_REGIME_SET_BY_HR',

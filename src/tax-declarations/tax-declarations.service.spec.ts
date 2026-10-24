@@ -41,7 +41,7 @@ function build(
               departmentId: 'd1',
             },
     },
-    payrollRun: { count: async () => opts.payrollRuns ?? 0 },
+    payrollRun: { count: async () => opts.payrollRuns ?? 0, updateMany: async () => ({ count: 0 }) },
     employeeTaxDeclaration: {
       findFirst: async (a: Row) => {
         const r = store.find((x) => match(x, a?.where));
