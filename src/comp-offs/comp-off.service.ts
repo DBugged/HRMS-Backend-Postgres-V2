@@ -4,6 +4,8 @@
 // COMPOFF-type Leave is approved or cancelled, rather than duplicating comp-off math there.
 // Important: consumeForLeave() throws on insufficient balance rather than partially consuming — callers
 // must check availability before approving. sweepExpired() runs inline before reads, not on a cron.
+import { isEmployedOn } from '../common/managers';
+import { todayInOrgTz } from '../common/org-date';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -93,7 +95,16 @@ export class CompOffService {
       );
     }
 
-    const today = new Date().toISOString().slice(0, 10);
+    // Today in the organisation's own time zone: the server's UTC date is still yesterday for the first hours of an Indian
+    // morning, which refused a comp-off for the day just worked.
+    const today = todayInOrgTz(
+      (
+        await this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        })
+      )?.timezone ?? 'Asia/Kolkata',
+    );
     if (dto.earnedForDate > today) {
       throw new BadRequestException('earnedForDate cannot be in the future.');
     }
@@ -106,6 +117,15 @@ export class CompOffService {
       where: { id: targetEmployeeId, organizationId },
     });
     if (!targetEmployee) throw new NotFoundException('Employee not found.');
+    if (!targetEmployee.isActive) {
+      throw new BadRequestException('Comp-off cannot be earned for a deactivated employee.');
+    }
+    // ...nor for a day after their last working day.
+    if (!isEmployedOn(targetEmployee.exitDate, dto.earnedForDate)) {
+      throw new BadRequestException(
+        `Comp-off cannot be earned for a date after the last working day (${dmyText(targetEmployee.exitDate!)}).`,
+      );
+    }
     // Nobody earns comp-off before they have joined (the same rule as punches, regularization, WFH and leave).
     const joinedOn = targetEmployee.joiningDate.toISOString().slice(0, 10);
     if (dto.earnedForDate < joinedOn) {
