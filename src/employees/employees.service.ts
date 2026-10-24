@@ -1227,6 +1227,9 @@ export class EmployeesService {
             ? new Date(clean.joiningDate)
             : undefined,
           joiningDateChangedAt: joiningDateChange ? new Date() : undefined,
+          // Bringing someone back (or reopening the account) ends the exit: its last working day must stop hiding them
+          // from the trackers and cutting their payroll short.
+          ...(clean.isActive === true && !before.isActive ? { exitDate: null } : {}),
         },
       });
     } catch (err) {
