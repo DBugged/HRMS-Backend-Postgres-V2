@@ -22,7 +22,8 @@ import {
   formatTimeInZone,
   resolveOrgTimeContext,
 } from '../payroll/format-date';
-import { dateStrInOrgTz } from '../common/org-date';
+import { dateStrInOrgTz, todayInOrgTz } from '../common/org-date';
+import { employedOnWhere, isEmployedOn } from '../common/managers';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportColumn } from './report-export';
 import {
@@ -83,12 +84,17 @@ export class ReportsService {
     const where: Prisma.AttendanceWhereInput = { organizationId };
     // No dates given used to mean every day anyone ever punched - thousands of rows and several seconds. It now means
     // the current month, the same period the screen opens on; a caller who wants more names a from/to.
-    const now = new Date();
-    const from =
-      query.from ??
-      (query.to
-        ? undefined
-        : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-01`);
+    // The current month in the organisation's own time zone (not the server's UTC date, which is still last month for the
+    // first hours of a month in India).
+    const orgTodayStr = todayInOrgTz(
+      (
+        await this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true },
+        })
+      )?.timezone ?? 'Asia/Kolkata',
+    );
+    const from = query.from ?? (query.to ? undefined : `${orgTodayStr.slice(0, 7)}-01`);
     if (from || query.to) {
       where.date = {};
       if (from) where.date.gte = from;
@@ -115,7 +121,7 @@ export class ReportsService {
       where,
       include: {
         employee: {
-          select: { name: true, employeeId: true, joiningDate: true },
+          select: { name: true, employeeId: true, joiningDate: true, exitDate: true },
         },
       },
       take: REPORT_ROW_LIMIT + 1,
@@ -124,8 +130,11 @@ export class ReportsService {
     assertWithinReportLimit(fetched);
     // Nothing is reported for a day before the employee joined (an import or manual entry can carry one), the same
     // rule as the attendance tracker and the Attendance Records list.
+    // ...nor after their last working day.
     const records = fetched.filter(
-      (r) => r.date >= r.employee.joiningDate.toISOString().slice(0, 10),
+      (r) =>
+        r.date >= r.employee.joiningDate.toISOString().slice(0, 10) &&
+        isEmployedOn(r.employee.exitDate, r.date),
     );
 
     // Punch times are instants: print them as clock times in the ORG's timezone (the Date column already says which
@@ -538,7 +547,17 @@ export class ReportsService {
       // (was an N+1 — a query per row of the report).
       this.scopedPrisma.user.groupBy({
         by: ['departmentId'],
-        where: { organizationId, departmentId: { not: null } },
+        // People working there today: active, joined, and not past their last working day.
+        where: {
+          organizationId,
+          departmentId: { not: null },
+          isActive: true,
+          ...employedOnWhere(
+            todayInOrgTz(
+              (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata',
+            ),
+          ),
+        },
         _count: { _all: true },
       }),
     ]);

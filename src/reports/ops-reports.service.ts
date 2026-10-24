@@ -4,6 +4,8 @@
 //   scoping where a Manager may see the report, and caps result size like every other report.
 // Important: read-only. Loans, reimbursements, tax declarations and payroll variance are Admin/HR only (money / tax
 //   data); overtime and regularization also allow a Manager, limited to their own department.
+import { employedOnWhere } from '../common/managers';
+import { todayInOrgTz } from '../common/org-date';
 import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -366,6 +368,10 @@ export class OpsReportsService {
       where: {
         organizationId,
         isActive: true,
+        // Still working: declarations are not chased from people who have left or not yet joined.
+        ...employedOnWhere(
+          todayInOrgTz((await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata'),
+        ),
         ...(scope && { id: { in: scope } }),
       },
       select: {
