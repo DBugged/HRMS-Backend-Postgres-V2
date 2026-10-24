@@ -51,7 +51,9 @@ export class ReminderNotifier {
   /** Every active user of the org, with just the fields reminders need. */
   activeUsers(organizationId: string): Promise<ReminderUser[]> {
     return this.scopedPrisma.user.findMany({
-      where: { organizationId, isActive: true },
+      // People past their last working day are not reminded of anything (their account stays open until the exit is
+      // completed).
+      where: { organizationId, isActive: true, OR: [{ exitDate: null }, { exitDate: { gte: new Date().toISOString().slice(0, 10) } }] },
       select: {
         id: true,
         name: true,

@@ -52,6 +52,7 @@ export class ProbationReminderService {
         organizationId,
         isActive: true,
         probationEndDate: { not: null },
+        AND: [{ OR: [{ exitDate: null }, { exitDate: { gte: new Date().toISOString().slice(0, 10) } }] }],
         OR: [
           { probationStatus: null },
           {

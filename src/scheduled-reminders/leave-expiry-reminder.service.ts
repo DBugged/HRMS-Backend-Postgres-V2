@@ -101,7 +101,7 @@ export class LeaveExpiryReminderService {
             notIn: [AllocationType.NONE, AllocationType.UNLIMITED],
           },
         },
-        employee: { isActive: true },
+        employee: { isActive: true, OR: [{ exitDate: null }, { exitDate: { gte: new Date().toISOString().slice(0, 10) } }] },
       },
       include: {
         leaveType: {

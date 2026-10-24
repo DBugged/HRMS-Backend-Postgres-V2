@@ -809,6 +809,9 @@ export class EmployeeProfileService {
   ) {
     this.assertSelfOrHr(actor, id);
     const employee = await this.findEmployeeOrThrow(id, organizationId);
+    // One tier up only: HR cannot upload into an HR or Admin colleague's file (an Admin's uploads are auto-approved, so
+    // that would let HR approve paperwork with nobody above to check it).
+    this.assertMayAccessDocumentsFor(actor, employee);
     // Approval tier follows the document owner's role, not who physically
     // clicked upload (an HR/Admin can upload on an employee's behalf):
     // Founder/Admin documents need no review at all — there's no one above
@@ -910,6 +913,10 @@ export class EmployeeProfileService {
     organizationId: string,
   ) {
     this.assertSelfOrHr(actor, id);
+    this.assertMayAccessDocumentsFor(
+      actor,
+      await this.findEmployeeOrThrow(id, organizationId),
+    );
     const doc = await this.scopedPrisma.employeeDocument.findFirst({
       where: { id: docId, employeeId: id, organizationId },
     });
