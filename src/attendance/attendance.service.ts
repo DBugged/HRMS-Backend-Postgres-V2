@@ -3106,7 +3106,8 @@ export class AttendanceService {
       FROM attendances a
       JOIN users u ON u.id = a."employeeId"
       WHERE a."organizationId" = ${organizationId}
-        AND a.date < to_char(u."joiningDate" AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+        AND (a.date < to_char(u."joiningDate" AT TIME ZONE 'UTC', 'YYYY-MM-DD')
+          OR (u."exitDate" IS NOT NULL AND a.date > u."exitDate"))
         ${from ? Prisma.sql`AND a.date >= ${from}` : Prisma.empty}
         ${to ? Prisma.sql`AND a.date <= ${to}` : Prisma.empty}
         ${scopeIds ? Prisma.sql`AND a."employeeId" = ANY(${scopeIds}::text[])` : Prisma.empty}
@@ -4972,7 +4973,7 @@ export class AttendanceService {
         // holidays went unpaid. An Admin is on payroll like anyone else, so is swept too.
         role: { in: [Role.EMPLOYEE, Role.MANAGER, Role.HR, Role.ADMIN] },
       },
-      select: { id: true, exitDate: true },
+      select: { id: true, exitDate: true, joiningDate: true },
     });
 
     // Attendance of a payroll month that is already locked or paid is never rewritten by a sweep: a payslip was issued
@@ -4997,6 +4998,7 @@ export class AttendanceService {
       if (lockedEmployees.has(employee.id)) return;
       // Serving out notice is over after the last working day: no Absent row (or alert) for days they were not employed.
       if (!isEmployedOn(employee.exitDate, date)) return;
+      if (date < utcDateStrOf(employee.joiningDate)) return; // not yet joined
       const row = await this.recalculateAttendanceForDay(
         this.scopedPrisma,
         employee.id,

@@ -95,6 +95,8 @@ export class CheckInReminderService {
         organizationId,
         isActive: true,
         joiningDate: { lte: new Date(`${today}T00:00:00.000Z`) },
+        // Not after their last working day.
+        OR: [{ exitDate: null }, { exitDate: { gte: today } }],
       },
       select: {
         id: true,
