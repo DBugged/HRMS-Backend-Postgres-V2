@@ -64,7 +64,7 @@ import {
   bonusPaidIn,
   finalStatutoryBonus,
 } from './final-bonus';
-import { leaveEncashmentExemption } from './leave-encashment-tax';
+import { leaveEncashmentExemption, LEAVE_EXEMPTION_AVERAGE_MONTHS } from './leave-encashment-tax';
 import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
@@ -431,7 +431,8 @@ export class SettlementsService {
     );
     const leaveEncashmentExempt = leaveEncashmentExemption({
       amount: leaveEncashmentAmount,
-      basicPlusDaMonthly: basicMonthly + daMonthly,
+      // s.10(10AA)(c) is the AVERAGE salary of the ten months before leaving, not the current figure.
+      basicPlusDaMonthly: await this.averageBasicDaBefore(dto.employeeId, lwdDate, basicMonthly + daMonthly, organizationId),
       yearsOfService: serviceYears,
     });
 
@@ -1047,6 +1048,30 @@ export class SettlementsService {
   // default) running from the day they gave it: days short of it are recovered at the daily rate. When the company
   // ends the employment it is the company that owes the notice: the shortfall is paid in lieu only if HR asks
   // (payNoticeInLieu). The daily rate is the last full month's gross over 30, falling back to basic + DA.
+  // Average Basic + DA earned over the (up to) ten finalised regular months before the last working day's month - what
+  // the leave-encashment exemption is capped on. `fallback` (the current monthly Basic + DA) when there is no history.
+  private async averageBasicDaBefore(employeeId: string, lwdDate: string, fallback: number, organizationId: string): Promise<number> {
+    const year = Number(lwdDate.slice(0, 4));
+    const month = Number(lwdDate.slice(5, 7));
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        isFinalSettlement: false,
+        runSequence: 0,
+        status: { in: SETTLED_REGULAR_RUN_STATUSES },
+        OR: [{ year: { lt: year } }, { year, month: { lt: month } }],
+      },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+      take: LEAVE_EXEMPTION_AVERAGE_MONTHS,
+      select: { earnings: true },
+    });
+    const figures = runs
+      .map((r) => bonusMonthFromRun({ ...r, month: 0, year: 0, attendanceSummary: null }).basicDaEarned)
+      .filter((v) => v > 0);
+    return figures.length > 0 ? figures.reduce((a, b) => a + b, 0) / figures.length : fallback;
+  }
+
   // The latest regular payslip from a month BEFORE the last working day's: the exit month's own run is cut short at the
   // last working day, so its gross is part of a month and would understate the daily rate for notice pay and the
   // gratuity wage floor. Falls back to the latest run of any month when there is none earlier.
