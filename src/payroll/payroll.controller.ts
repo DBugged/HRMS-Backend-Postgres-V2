@@ -23,6 +23,7 @@ import { PayrollService } from './payroll.service';
 import { PayslipPdfService } from './payslip-pdf.service';
 import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
+import { DeleteMonthPayrollDto } from './dto/delete-month-payroll.dto';
 import { DraftPayrollDto } from './dto/draft-payroll.dto';
 import { AttendanceGapsQueryDto } from './dto/attendance-gaps-query.dto';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
@@ -376,6 +377,21 @@ export class PayrollController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // Delete a not-yet-locked payroll run (or, with delete-month, every such run of a month) so it can be run again.
+  @Post('delete-month')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  removeMonth(@Body() dto: DeleteMonthPayrollDto, @CurrentUser() caller: Caller) {
+    return this.payrollService.removeMonthRuns(dto.month, dto.year, caller, caller.organizationId);
+  }
+
+  @Delete(':id')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  removeRun(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.payrollService.removeRun(id, caller, caller.organizationId);
   }
 
   @Delete('supplementary/:id')

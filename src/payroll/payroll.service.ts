@@ -3106,6 +3106,76 @@ export class PayrollService {
 
   // Discards a supplementary run that has not been approved yet (wrong amount, wrong employee). Approved, locked or
   // paid ones are unlocked/reopened through the normal steps first.
+  // Statuses a run can be deleted from: nothing has been finalised yet (loans, claims and leave encashments are only
+  // settled when a run is LOCKED, and an unlock reverses that), so removing it leaves no side effects behind and the
+  // month can simply be run again. LOCKED / PAID runs must be unlocked first.
+  private static readonly DELETABLE_RUN_STATUSES: PayrollRunStatus[] = [
+    PayrollRunStatus.DRAFT,
+    PayrollRunStatus.CALCULATED,
+    PayrollRunStatus.VERIFIED,
+    PayrollRunStatus.APPROVED,
+  ];
+
+  /** Deletes one payroll run (not a final settlement) that has not been locked, so it can be calculated again. */
+  async removeRun(id: string, actor: Actor, organizationId: string) {
+    const run = await this.scopedPrisma.payrollRun.findFirst({ where: { id, organizationId } });
+    if (!run) throw new NotFoundException('Payroll run not found.');
+    if (run.isFinalSettlement) {
+      throw new BadRequestException('A final settlement payroll is managed from Settlements and cannot be deleted here.');
+    }
+    assertNotOwnPayroll(actor, run.employeeId, 'delete');
+    if (!PayrollService.DELETABLE_RUN_STATUSES.includes(run.status)) {
+      throw new BadRequestException('Locked or paid payroll cannot be deleted. Unlock it first, then delete it.');
+    }
+    const { count } = await this.scopedPrisma.payrollRun.deleteMany({
+      where: { id, organizationId, status: { in: PayrollService.DELETABLE_RUN_STATUSES } },
+    });
+    if (count === 0) throw new BadRequestException('This payroll changed status while you were deleting it. Reload and try again.');
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_RUN_DELETED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { employeeId: run.employeeId, month: run.month, year: run.year, runSequence: run.runSequence, status: run.status },
+    });
+    return { id };
+  }
+
+  /** Deletes every not-yet-locked regular run of a month in one go, ready for a fresh Run Payroll. Locked/paid ones stay. */
+  async removeMonthRuns(month: number, year: number, actor: Actor, organizationId: string) {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: {
+        organizationId,
+        month,
+        year,
+        runSequence: 0,
+        isFinalSettlement: false,
+        status: { in: PayrollService.DELETABLE_RUN_STATUSES },
+        // An HR user cannot delete their own payslip; an Admin can.
+        ...(actor.role !== Role.ADMIN ? { employeeId: { not: actor.id } } : {}),
+      },
+      select: { id: true },
+    });
+    const ids = runs.map((r) => r.id);
+    if (ids.length === 0) return { deleted: 0, kept: 0 };
+    const { count } = await this.scopedPrisma.payrollRun.deleteMany({
+      where: { id: { in: ids }, organizationId, status: { in: PayrollService.DELETABLE_RUN_STATUSES } },
+    });
+    const kept = await this.scopedPrisma.payrollRun.count({
+      where: { organizationId, month, year, runSequence: 0, isFinalSettlement: false },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'PAYROLL_MONTH_DELETED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: `${year}-${String(month).padStart(2, '0')}`,
+      details: { month, year, deleted: count, keptLocked: kept },
+    });
+    return { deleted: count, kept };
+  }
+
   async removeSupplementary(id: string, actor: Actor, organizationId: string) {
     const run = await this.scopedPrisma.payrollRun.findFirst({
       where: { id, organizationId },
