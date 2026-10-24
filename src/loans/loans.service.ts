@@ -229,6 +229,7 @@ export class LoansService {
         'Cannot sanction a loan for a deactivated employee.',
       );
     }
+    if (employeeRow.exitDate) throw new BadRequestException(EXIT_IN_PROGRESS_LOAN_MESSAGE);
 
     this.assertAdvanceIsInterestFree(
       dto.loanType ?? LoanType.LOAN,
@@ -342,6 +343,11 @@ export class LoansService {
         'You already have a loan/advance request waiting for a decision. Wait for it to be reviewed, or ask HR to reject it, before requesting another.',
       );
     }
+    const requester = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { exitDate: true },
+    });
+    if (requester?.exitDate) throw new BadRequestException(EXIT_IN_PROGRESS_LOAN_MESSAGE);
     const now = new Date();
     const emiAmount = calculateEmi(dto.principal, 0, dto.tenureMonths);
 
@@ -428,6 +434,7 @@ export class LoansService {
         'Cannot approve a loan for a deactivated employee.',
       );
     }
+    if (employee.exitDate) throw new BadRequestException(EXIT_IN_PROGRESS_LOAN_MESSAGE);
 
     const interestRate = dto.interestRate ?? 0;
     this.assertAdvanceIsInterestFree(loan.loanType, interestRate);
@@ -904,6 +911,11 @@ export class LoansService {
     });
   }
 }
+
+// A loan or advance is recovered from the final settlement, which may not cover it: nothing new is lent to someone who is
+// leaving (their last working day is set) - HR can lend again if the exit is cancelled.
+export const EXIT_IN_PROGRESS_LOAN_MESSAGE =
+  'This employee is leaving (their last working day is set), so a new loan or advance cannot be given. Cancel the exit first if they are staying.';
 
 // "LOAN" -> "loan", "ADVANCE" -> "advance" for user-facing sentences (the enum value read "A LOAN loan").
 function loanKind(type: string): string {
