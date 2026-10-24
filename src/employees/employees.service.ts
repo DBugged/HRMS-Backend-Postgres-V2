@@ -767,6 +767,8 @@ export class EmployeesService {
         organizationId,
         isActive: true,
         employmentStatus: { in: ['PROBATION', 'EXTENDED_PROBATION'] },
+        // Not someone who is leaving: there is no probation decision left to take.
+        exitDate: null,
         ...(departmentId && { departmentId }),
         ...(noDeptScope && { AND: [noDeptScope] }),
       },

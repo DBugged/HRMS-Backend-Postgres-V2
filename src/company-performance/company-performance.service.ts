@@ -14,6 +14,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { wrapAll } from '../common/pagination';
+import { markPayrollStaleForFinancialYear } from '../payroll/payroll-period-guard';
 import { SetCompanyPerformanceDto } from './dto/set-company-performance.dto';
 import {
   pendingHolds,
@@ -85,6 +86,8 @@ export class CompanyPerformanceService {
       id = created.id;
     }
 
+    // Payrolls already calculated for this year used the old percentage.
+    await markPayrollStaleForFinancialYear(this.scopedPrisma, organizationId, dto.financialYear, { departmentId });
     await this.auditLogService.log({
       actorId,
       action: 'COMPANY_PERFORMANCE_SET',
@@ -113,6 +116,7 @@ export class CompanyPerformanceService {
     await this.scopedPrisma.companyPerformance.deleteMany({
       where: { id, organizationId },
     });
+    await markPayrollStaleForFinancialYear(this.scopedPrisma, organizationId, row.financialYear, { departmentId: row.departmentId });
     await this.auditLogService.log({
       actorId,
       action: 'COMPANY_PERFORMANCE_REMOVED',

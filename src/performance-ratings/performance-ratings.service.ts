@@ -7,6 +7,7 @@
 // write directly through upsert() (publishing instantly, status APPROVED) for an employee who has no
 // reportingManagerId at all — once a manager is assigned, ADMIN/HR's role narrows to approve()/reject()
 // only, no override.
+import { markPayrollStaleForFinancialYear } from '../payroll/payroll-period-guard';
 import { isManagerOf, reportsToWhere } from '../common/managers';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
@@ -130,6 +131,8 @@ export class PerformanceRatingsService {
       | 'PERFORMANCE_RATING_UPDATED'
       | 'PERFORMANCE_RATING_APPROVED',
   ): Promise<void> {
+    // The published payout percentage scales this employee's variable pay: their calculated payrolls for the year are out of date.
+    await markPayrollStaleForFinancialYear(this.scopedPrisma, organizationId, rating.financialYear, { employeeId: rating.employeeId });
     await this.auditLogService.log({
       actorId,
       action: actionLabel,
@@ -227,6 +230,10 @@ export class PerformanceRatingsService {
           'You may only rate employees in your own department or who report to you.',
         );
       }
+    } else if (employee.id === actor.id && actor.role !== Role.ADMIN) {
+      // HR rating themselves would publish the rating (and its variable-pay percentage) with nobody else involved; the
+      // same rule as approving your own request. An Admin has nobody above them, so may.
+      throw new ForbiddenException('You cannot rate yourself. Ask an Admin or another HR user.');
     } else if (employee.reportingManager?.role === Role.MANAGER) {
       // No override: once an employee has a genuine MANAGER-role reviewer
       // assigned, ADMIN/HR can no longer originate a rating for them

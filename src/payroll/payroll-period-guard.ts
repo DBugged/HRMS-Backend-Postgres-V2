@@ -92,3 +92,34 @@ export async function markPayrollInputsChanged(
   });
   return count;
 }
+
+// A performance input that scales variable pay (an employee's rating payout %, or the company / department achievement %)
+// changed for this financial year: every run already calculated (not yet locked) for it was worked out with the old
+// figure, so it is marked out of date and has to be recalculated before it can be signed off. Locked / paid runs are
+// untouched (their variable pay was settled with the figure then in force).
+export async function markPayrollStaleForFinancialYear(
+  db: Db,
+  organizationId: string,
+  financialYear: string,
+  scope: { employeeId?: string; departmentId?: string | null } = {},
+): Promise<number> {
+  const { count } = await db.payrollRun.updateMany({
+    where: {
+      organizationId,
+      financialYear,
+      isFinalSettlement: false,
+      runSequence: 0,
+      status: {
+        in: [
+          PayrollRunStatus.CALCULATED,
+          PayrollRunStatus.VERIFIED,
+          PayrollRunStatus.APPROVED,
+        ],
+      },
+      ...(scope.employeeId ? { employeeId: scope.employeeId } : {}),
+      ...(scope.departmentId ? { employee: { departmentId: scope.departmentId } } : {}),
+    },
+    data: { status: PayrollRunStatus.CALCULATED, inputsChangedAt: new Date() },
+  });
+  return count;
+}

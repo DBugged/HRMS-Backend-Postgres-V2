@@ -675,6 +675,11 @@ export class EmployeeProfileService {
         'This employee is not on probation — there is nothing to decide.',
       );
     }
+    if (employee.exitDate) {
+      throw new BadRequestException(
+        'This employee is leaving (their last working day is set), so their probation cannot be decided. Cancel the exit first if they are staying.',
+      );
+    }
     if (dto.decision === 'extended' && !dto.newProbationEndDate) {
       throw new BadRequestException(
         'newProbationEndDate is required when extending probation.',
