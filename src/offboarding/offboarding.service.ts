@@ -40,6 +40,7 @@ import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
 import { UpdateLastWorkingDayDto } from './dto/update-last-working-day.dto';
 import { todayInOrgTz } from '../common/org-date';
+import { markPayrollInputsChanged, monthsBetween } from '../payroll/payroll-period-guard';
 import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
 import { assertAccountCanLeave } from '../common/account-guard';
@@ -275,6 +276,7 @@ export class OffboardingService {
         where: { id: dto.employeeId, organizationId },
         data: { exitDate: dto.lastWorkingDay },
       });
+      await this.markPayrollStale(tx, organizationId, dto.employeeId, dto.lastWorkingDay);
       if (entersNotice && !alreadyInNotice) {
         await tx.user.updateMany({
           where: { id: dto.employeeId, organizationId },
@@ -339,6 +341,19 @@ export class OffboardingService {
     });
 
     return offboardingCase;
+  }
+
+  // A change of last working day changes what a regular run for that month (and later ones) should pay, so any run already
+  // calculated from that date on is marked out of date and has to be recalculated before it can be signed off.
+  private markPayrollStale(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    employeeId: string,
+    fromDate: string,
+  ) {
+    const to = new Date(`${fromDate}T00:00:00.000Z`);
+    to.setUTCDate(to.getUTCDate() + 366);
+    return markPayrollInputsChanged(tx, organizationId, employeeId, monthsBetween(fromDate, to.toISOString().slice(0, 10)));
   }
 
   async updateChecklist(
@@ -500,6 +515,12 @@ export class OffboardingService {
         where: { id: record.employeeId, organizationId },
         data: { exitDate: dto.lastWorkingDay },
       });
+      await this.markPayrollStale(
+        tx,
+        organizationId,
+        record.employeeId,
+        dto.lastWorkingDay < record.lastWorkingDay ? dto.lastWorkingDay : record.lastWorkingDay,
+      );
       await tx.resignation.updateMany({
         where: {
           organizationId,
@@ -795,6 +816,7 @@ export class OffboardingService {
           where: { id: record.employeeId, organizationId },
           data: { exitDate: null },
         });
+        await this.markPayrollStale(tx, organizationId, record.employeeId, record.lastWorkingDay);
       }
       // Restore the pre-notice status only on the first cancel of an open case, and only if the
       // employee is still RESIGNED (HR may have changed it manually since).

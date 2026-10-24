@@ -2188,6 +2188,23 @@ export class PayrollService {
         }
         return;
       }
+      // Already gone: their last working day is before this month, so nothing is earned in it (the exit month was
+      // paid by its regular run or the final settlement). The account stays open until the offboarding is completed,
+      // which is why they are still in this list.
+      const monthFirstDay = `${dto.year}-${String(dto.month).padStart(2, '0')}-01`;
+      if (!dto.employeeId && employee.exitDate && employee.exitDate < monthFirstDay) {
+        skipped.push({
+          employeeId: employee.id,
+          name: employee.name,
+          code: employee.employeeId,
+          reason: `Last working day (${employee.exitDate}) was before this month - nothing to pay. Final dues go through the final settlement.`,
+        });
+        const gone = existingRunByEmployeeId.get(employee.id);
+        if (gone && (gone.status === PayrollRunStatus.DRAFT || gone.status === PayrollRunStatus.CALCULATED)) {
+          await this.scopedPrisma.payrollRun.deleteMany({ where: { id: gone.id, organizationId } });
+        }
+        return;
+      }
       // Not employed yet: no payroll for a month that ended before the joining date.
       const notOnPayroll = notOnPayrollReason(
         employee.joiningDate,
