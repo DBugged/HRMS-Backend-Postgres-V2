@@ -11,6 +11,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcSupportService } from './cc-support.service';
 import { ModuleAccessService } from '../module-access/module-access.service';
 import { EmailService } from '../notifications/email.service';
+import { validateCouponInput, validateInvoiceInput, validatePaymentInput, validateRefundInput } from './cc-validation';
 import { addMonths, monthlyCharge, nextInvoiceNumber, num, paging, type PageQuery } from './cc-util';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
@@ -56,7 +57,7 @@ export class CcBillingService {
   async createInvoice(b: { organizationId: string; lineItems: Line[]; dueDate?: string; couponCode?: string }, extra: { subscriptionId?: string; periodMonths?: number; source?: string } = {}) {
     const org = await this.prisma.organization.findFirst({ where: { id: b.organizationId } });
     if (!org) throw new NotFoundException('Organization not found.');
-    if (!b.lineItems?.length) throw new BadRequestException('Add at least one line item.');
+    validateInvoiceInput(b);
     const subtotal = r2(b.lineItems.reduce((s, l) => s + Number(l.quantity) * Number(l.unitAmount), 0));
     let discount = 0;
     let couponCode: string | null = null;
@@ -188,7 +189,11 @@ export class CcBillingService {
   async voidInvoice(id: string) {
     const inv = await this.getInvoice(id);
     if (!['DRAFT', 'OPEN'].includes(inv.status)) throw new ConflictException('Only an unpaid invoice can be voided.');
-    await this.prisma.ccInvoice.update({ where: { id }, data: { status: 'VOID' } });
+    // Only the request that actually voids it gives the coupon redemption back.
+    await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.ccInvoice.updateMany({ where: { id, status: { in: ['DRAFT', 'OPEN'] } }, data: { status: 'VOID' } });
+      if (count > 0 && inv.couponCode) await tx.ccCoupon.updateMany({ where: { code: inv.couponCode, redeemedCount: { gt: 0 } }, data: { redeemedCount: { decrement: 1 } } });
+    });
     return this.getInvoice(id);
   }
 
@@ -227,25 +232,41 @@ export class CcBillingService {
   }
 
   async createPayment(b: { invoiceId: string; amount: number; currency?: string; provider: string; providerRef: string; last4?: string }) {
+    validatePaymentInput(b);
     const inv = await this.prisma.ccInvoice.findUnique({ where: { id: b.invoiceId } });
     if (!inv) throw new NotFoundException('Invoice not found.');
-    if (!(b.amount > 0)) throw new BadRequestException('Amount must be more than zero.');
-    const p = await this.prisma.ccPayment.create({ data: { invoiceId: inv.id, organizationId: inv.organizationId, amount: b.amount, currency: b.currency ?? inv.currency, provider: b.provider, providerRef: b.providerRef, last4: b.last4 ?? null, status: 'SUCCEEDED' } });
-    const paid = await this.prisma.ccPayment.aggregate({ where: { invoiceId: inv.id, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } }, _sum: { amount: true } });
-    if (inv.status === 'OPEN' && Number(paid._sum.amount ?? 0) >= Number(inv.total)) {
-      await this.prisma.ccInvoice.update({ where: { id: inv.id }, data: { status: 'PAID', paidAt: new Date(), paymentRef: b.providerRef } });
-      await this.applyPaid(inv.id);
-    }
+    const provider = b.provider.trim();
+    const providerRef = b.providerRef.trim();
+    const p = await this.prisma.$transaction(async (tx) => {
+      // One payment at a time per invoice: the checks below and the write must not interleave with another payment.
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`cc-pay:${inv.id}`}))`;
+      const fresh = await tx.ccInvoice.findUnique({ where: { id: inv.id } });
+      if (!fresh || !['OPEN', 'DRAFT'].includes(fresh.status)) throw new ConflictException(`This invoice is ${fresh?.status.toLowerCase() ?? 'not available'}, so a payment cannot be recorded against it.`);
+      if ((b.currency ?? fresh.currency) !== fresh.currency) throw new BadRequestException(`This invoice is in ${fresh.currency}; the payment currency must match.`);
+      if (await tx.ccPayment.findFirst({ where: { provider, providerRef }, select: { id: true } })) throw new ConflictException('A payment with this provider and reference is already recorded.');
+      const paid = await tx.ccPayment.aggregate({ where: { invoiceId: fresh.id, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } }, _sum: { amount: true } });
+      const already = Number(paid._sum.amount ?? 0);
+      if (already + b.amount > Number(fresh.total) + 0.005) throw new BadRequestException(`This would pay more than the invoice total (${Number(fresh.total).toFixed(2)}; ${already.toFixed(2)} already received).`);
+      const created = await tx.ccPayment.create({ data: { invoiceId: fresh.id, organizationId: fresh.organizationId, amount: b.amount, currency: fresh.currency, provider, providerRef, last4: b.last4 ?? null, status: 'SUCCEEDED' } });
+      if (already + b.amount >= Number(fresh.total) - 0.005) await tx.ccInvoice.updateMany({ where: { id: fresh.id, status: { in: ['OPEN', 'DRAFT'] } }, data: { status: 'PAID', paidAt: new Date(), paymentRef: providerRef } });
+      return created;
+    });
+    await this.applyPaid(inv.id);
     return this.payOut(p);
   }
 
   async refund(id: string, b: { amount: number; reason: string }) {
+    validateRefundInput(b);
     const p = await this.prisma.ccPayment.findUnique({ where: { id } });
     if (!p) throw new NotFoundException('Payment not found.');
+    if (!['SUCCEEDED', 'PARTIALLY_REFUNDED'].includes(p.status)) throw new ConflictException(`A ${p.status.toLowerCase()} payment cannot be refunded.`);
     const left = Number(p.amount) - Number(p.refundedAmount);
-    if (!(b.amount > 0) || b.amount > left) throw new BadRequestException(`You can refund at most ${left.toFixed(2)}.`);
-    const total = Number(p.refundedAmount) + b.amount;
-    return this.payOut(await this.prisma.ccPayment.update({ where: { id }, data: { refundedAmount: total, status: total >= Number(p.amount) ? 'REFUNDED' : 'PARTIALLY_REFUNDED' } }));
+    if (b.amount > left + 0.005) throw new BadRequestException(`You can refund at most ${left.toFixed(2)}.`);
+    const total = Math.round((Number(p.refundedAmount) + b.amount) * 100) / 100;
+    // Compare-and-swap on the amount already refunded: two simultaneous refunds cannot both be applied on the same figure.
+    const { count } = await this.prisma.ccPayment.updateMany({ where: { id, refundedAmount: p.refundedAmount }, data: { refundedAmount: total, status: total >= Number(p.amount) - 0.005 ? 'REFUNDED' : 'PARTIALLY_REFUNDED' } });
+    if (count === 0) throw new ConflictException('This payment was just changed. Reload it and try again.');
+    return this.payOut(await this.prisma.ccPayment.findUniqueOrThrow({ where: { id } }));
   }
 
   // ---------------- coupons ----------------
@@ -276,12 +297,15 @@ export class CcBillingService {
   async createCoupon(b: Record<string, unknown>) {
     const d = this.couponData(b);
     if (!d.code || !d.type || d.value == null) throw new BadRequestException('Code, type and value are required.');
-    if (d.type === 'PERCENT' && Number(d.value) > 100) throw new BadRequestException('A percentage cannot be more than 100.');
+    validateCouponInput(d as unknown as Record<string, unknown>);
     try { return this.couponOut(await this.prisma.ccCoupon.create({ data: d })); } catch { throw new ConflictException('A coupon with this code already exists.'); }
   }
   async updateCoupon(id: string, b: Record<string, unknown>) {
-    await this.getCoupon(id);
-    return this.couponOut(await this.prisma.ccCoupon.update({ where: { id }, data: this.couponData(b) }));
+    const existing = await this.getCoupon(id);
+    const data = this.couponData(b);
+    // A changed value is judged against the coupon's type (the new one, else the current one).
+    validateCouponInput({ ...(data as unknown as Record<string, unknown>), ...('value' in data ? { type: (data as { type?: string }).type ?? existing.type } : {}) });
+    return this.couponOut(await this.prisma.ccCoupon.update({ where: { id }, data }));
   }
   async removeCoupon(id: string) {
     await this.getCoupon(id);

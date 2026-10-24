@@ -4,6 +4,7 @@ import { BadRequestException, ConflictException, Inject, Injectable, NotFoundExc
 import type { CcPlan, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { validatePlanInput } from './cc-validation';
 import { addMonths, num, orgSlug, paging, TERM_MONTHS, type PageQuery } from './cc-util';
 
 const PLAN_FIELDS = ['name', 'code', 'billingModel', 'currency', 'trialDays', 'perEmployeeRate', 'termMonths', 'basePrice', 'includedEmployees', 'perExtraEmployeeRate', 'seatLimit', 'gstApplicable', 'whiteLabelEligible', 'features', 'limits', 'isPublic', 'status'] as const;
@@ -45,6 +46,7 @@ export class CcPlansService {
   async createPlan(body: Record<string, unknown>) {
     const data = this.pick(body);
     if (!data.name || !data.code) throw new BadRequestException('Name and code are required.');
+    validatePlanInput(data as unknown as Record<string, unknown>);
     try {
       return planOut(await this.prisma.ccPlan.create({ data }));
     } catch {
@@ -54,7 +56,9 @@ export class CcPlansService {
 
   async updatePlan(id: string, body: Record<string, unknown>) {
     await this.getPlan(id);
-    return planOut(await this.prisma.ccPlan.update({ where: { id }, data: this.pick(body) }));
+    const data = this.pick(body);
+    validatePlanInput(data as unknown as Record<string, unknown>);
+    return planOut(await this.prisma.ccPlan.update({ where: { id }, data }));
   }
 
   async removePlan(id: string) {
@@ -118,16 +122,23 @@ export class CcPlansService {
     const [org, plan] = await Promise.all([this.prisma.organization.findFirst({ where: { id: b.organizationId } }), this.prisma.ccPlan.findUnique({ where: { id: b.planId } })]);
     if (!org) throw new NotFoundException('Organization not found.');
     if (!plan) throw new NotFoundException('Plan not found.');
-    if (await this.prisma.ccSubscription.count({ where: { organizationId: org.id, status: { in: ['TRIALING', 'ACTIVE', 'PAST_DUE'] } } }))
-      throw new ConflictException('This organization already has a live subscription. Change its plan instead.');
     const { term, termMonths } = this.pickTerm(plan, b.term);
     const customRate = this.pickRate(plan, b.customPerEmployeeRate);
+    const maxEmployees = this.pickMax(b.maxEmployees);
+    if (b.trialDaysOverride != null && (!Number.isInteger(b.trialDaysOverride) || b.trialDaysOverride < 0 || b.trialDaysOverride > 365)) throw new BadRequestException('Trial days must be a whole number from 0 to 365.');
     const trialDays = b.trialDaysOverride ?? plan.trialDays;
     const now = new Date();
     const trialEndsAt = trialDays > 0 ? new Date(now.getTime() + trialDays * 86400000) : null;
-    const s = await this.prisma.ccSubscription.create({
-      data: { organizationId: org.id, planId: plan.id, term, termMonths, customPerEmployeeRate: customRate, maxEmployees: this.pickMax(b.maxEmployees), includedEmployeesSnap: plan.includedEmployees, status: trialEndsAt ? 'TRIALING' : 'ACTIVE', trialEndsAt, currentPeriodEnd: trialEndsAt ?? addMonths(now, termMonths) },
-      include: this.incl,
+    // The "only one live subscription" check and the create run under a per-company lock, so two simultaneous requests
+    // cannot both pass the check.
+    const s = await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`cc-sub:${org.id}`}))`;
+      if (await tx.ccSubscription.count({ where: { organizationId: org.id, status: { in: ['TRIALING', 'ACTIVE', 'PAST_DUE'] } } }))
+        throw new ConflictException('This organization already has a live subscription. Change its plan instead.');
+      return tx.ccSubscription.create({
+        data: { organizationId: org.id, planId: plan.id, term, termMonths, customPerEmployeeRate: customRate, maxEmployees, includedEmployeesSnap: plan.includedEmployees, status: trialEndsAt ? 'TRIALING' : 'ACTIVE', trialEndsAt, currentPeriodEnd: trialEndsAt ?? addMonths(now, termMonths) },
+        include: this.incl,
+      });
     });
     return this.subOut(s);
   }
