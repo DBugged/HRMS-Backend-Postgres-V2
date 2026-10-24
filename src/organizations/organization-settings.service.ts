@@ -544,6 +544,22 @@ export class OrganizationSettingsService {
     if (incomingPolicies && typeof incomingPolicies === 'object') {
       incomingPolicies.dateFormat = 'DD-MM-YYYY';
     }
+    // The financial year decides how every payslip, declaration and tax figure is grouped: once payroll has been run it
+    // cannot move without re-labelling years already processed.
+    const newFyStart = (incomingPolicies as { financialYearStartMonth?: unknown } | undefined)?.financialYearStartMonth;
+    if (section === 'policies' && newFyStart !== undefined && newFyStart !== null && newFyStart !== '') {
+      const [current, anyRun] = await Promise.all([
+        this.prisma.payrollSettings.findFirst({ where: { organizationId }, select: { financialYearStartMonth: true } }),
+        this.prisma.payrollRun.findFirst({ where: { organizationId }, select: { id: true } }),
+      ]);
+      const existingPolicies = (await this.findOrThrow(organizationId)).policies as { financialYearStartMonth?: unknown } | null;
+      const currentMonth = Number(existingPolicies?.financialYearStartMonth) || current?.financialYearStartMonth || 4;
+      if (anyRun && Number(newFyStart) !== currentMonth) {
+        throw new BadRequestException(
+          'The financial year start month cannot be changed once payroll has been run - it would re-label the years already processed.',
+        );
+      }
+    }
     if (jsonObjectFields.length > 0) {
       const existingOrg = await this.findOrThrow(organizationId);
       for (const field of jsonObjectFields) {
