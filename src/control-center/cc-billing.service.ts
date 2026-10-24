@@ -5,12 +5,13 @@
 import PDFDocument from 'pdfkit';
 import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { forgetOrganizationStatus } from '../common/org-status';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcSupportService } from './cc-support.service';
 import { ModuleAccessService } from '../module-access/module-access.service';
 import { EmailService } from '../notifications/email.service';
-import { addMonths, monthlyCharge, num, paging, type PageQuery } from './cc-util';
+import { addMonths, monthlyCharge, nextInvoiceNumber, num, paging, type PageQuery } from './cc-util';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 type Line = { description: string; quantity: number; unitAmount: number };
@@ -47,8 +48,9 @@ export class CcBillingService {
   private async nextNumber() {
     const d = new Date();
     const prefix = `INV-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}-`;
-    const n = await this.prisma.ccInvoice.count({ where: { number: { startsWith: prefix } } });
-    return `${prefix}${String(n + 1).padStart(4, '0')}`;
+    // One more than the highest number used this month - a row count breaks once any invoice has been deleted.
+    const last = await this.prisma.ccInvoice.findFirst({ where: { number: { startsWith: prefix } }, orderBy: { number: 'desc' }, select: { number: true } });
+    return nextInvoiceNumber(prefix, last?.number);
   }
 
   async createInvoice(b: { organizationId: string; lineItems: Line[]; dueDate?: string; couponCode?: string }, extra: { subscriptionId?: string; periodMonths?: number; source?: string } = {}) {
@@ -152,11 +154,17 @@ export class CcBillingService {
     }
     const org = await this.prisma.organization.findFirst({ where: { id: inv.organizationId } });
     if (org?.platformStatus === 'SUSPENDED') {
+      // Only a suspension the system made itself is lifted. A manual suspend/archive/reactivate by a Super Admin marks the
+      // automatic one as ended (AUTO_SUSPENDED_ENDED), so an old alert can never switch a company back on.
       const [overdue, auto] = await Promise.all([
         this.prisma.ccInvoice.count({ where: { organizationId: org.id, status: 'OPEN', dueDate: { lt: new Date() } } }),
         this.prisma.ccAlert.count({ where: { organizationId: org.id, kind: 'AUTO_SUSPENDED' } }),
       ]);
-      if (!overdue && auto) await this.prisma.organization.updateMany({ where: { id: org.id }, data: { platformStatus: 'ACTIVE', isActive: true } });
+      if (!overdue && auto) {
+        await this.prisma.organization.updateMany({ where: { id: org.id }, data: { platformStatus: 'ACTIVE', isActive: true } });
+        await this.prisma.ccAlert.updateMany({ where: { organizationId: org.id, kind: 'AUTO_SUSPENDED' }, data: { kind: 'AUTO_SUSPENDED_ENDED' } });
+        forgetOrganizationStatus(org.id);
+      }
     }
   }
 
@@ -188,11 +196,15 @@ export class CcBillingService {
     const inv = await this.getInvoice(id);
     if (inv.status === 'PAID') return inv;
     if (!['OPEN', 'DRAFT'].includes(inv.status)) throw new ConflictException('This invoice cannot be marked paid.');
-    await this.prisma.$transaction([
-      this.prisma.ccInvoice.update({ where: { id }, data: { status: 'PAID', paidAt: new Date(), paymentRef } }),
-      this.prisma.ccPayment.create({ data: { invoiceId: id, organizationId: inv.organizationId, amount: inv.total!, currency: inv.currency, provider: 'MANUAL', providerRef: paymentRef || 'manual', status: 'SUCCEEDED' } }),
-    ]);
-    await this.applyPaid(id);
+    // The status flip is the lock: only the request that actually moves the invoice from unpaid to paid records the payment and
+    // extends the subscription, so a double click or two admins cannot do either twice.
+    const won = await this.prisma.$transaction(async (tx) => {
+      const { count } = await tx.ccInvoice.updateMany({ where: { id, status: { in: ['OPEN', 'DRAFT'] } }, data: { status: 'PAID', paidAt: new Date(), paymentRef } });
+      if (count === 0) return false;
+      await tx.ccPayment.create({ data: { invoiceId: id, organizationId: inv.organizationId, amount: inv.total!, currency: inv.currency, provider: 'MANUAL', providerRef: paymentRef || 'manual', status: 'SUCCEEDED' } });
+      return true;
+    });
+    if (won) await this.applyPaid(id);
     return this.getInvoice(id);
   }
 

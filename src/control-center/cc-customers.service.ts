@@ -5,6 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
+import { forgetOrganizationStatus } from '../common/org-status';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuthService } from '../auth/auth.service';
@@ -259,6 +260,9 @@ export class CcCustomersService {
     const org = await this.prisma.organization.findFirst({ where: { id } });
     if (!org) throw new NotFoundException('Organization not found.');
     await this.prisma.organization.updateMany({ where: { id }, data: { platformStatus: status, isActive: status === 'ACTIVE' } });
+    // A Super Admin's own decision ends any automatic (non-payment) suspension: a later payment must not undo it.
+    await this.prisma.ccAlert.updateMany({ where: { organizationId: id, kind: 'AUTO_SUSPENDED' }, data: { kind: 'AUTO_SUSPENDED_ENDED' } });
+    forgetOrganizationStatus(id);
     // The reason given when archiving is kept as the churn reason, so it can be found later.
     if (status === 'ARCHIVED' && reason) await this.prisma.ccOrgProfile.upsert({ where: { organizationId: id }, create: { organizationId: id, churnReason: reason }, update: { churnReason: reason } });
     this.logger.warn(`Organization ${id} (${org.name}) ${org.platformStatus} -> ${status} by ${actorEmail}${reason ? `: ${reason}` : ''}`);

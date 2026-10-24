@@ -61,6 +61,7 @@ import {
 } from '../work-locations/geo-fence';
 import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
+import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { isEmployedOn } from '../common/managers';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
@@ -1300,10 +1301,14 @@ export class AttendanceService {
       .digest('hex');
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: dto.organizationId, faceApiKeyHash: providedKeyHash },
-      select: { id: true },
+      select: { id: true, isActive: true },
     });
     if (!org) {
       throw new UnauthorizedException('Invalid or missing Face API key.');
+    }
+    // A company the platform has suspended or archived records nothing, device key or not.
+    if (!org.isActive) {
+      throw new ForbiddenException(ORG_SUSPENDED_MESSAGE);
     }
 
     const user = await this.scopedPrisma.user.findFirst({

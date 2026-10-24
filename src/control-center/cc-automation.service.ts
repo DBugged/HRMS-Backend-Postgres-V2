@@ -5,6 +5,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { EmailService } from '../notifications/email.service';
+import { forgetOrganizationStatus } from '../common/org-status';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcBillingService } from './cc-billing.service';
@@ -111,6 +112,9 @@ export class CcAutomationService {
         if (suspendDays > 0 && days >= suspendDays && inv.organization.platformStatus === 'ACTIVE') {
           await this.prisma.organization.updateMany({ where: { id: inv.organizationId }, data: { platformStatus: 'SUSPENDED', isActive: false } });
           report.suspended.push(name);
+          // If this invoice's suspension alert already exists (the company was switched back on by hand and is overdue again), make it current again.
+          await this.prisma.ccAlert.updateMany({ where: { dedupeKey: `autosuspend:${inv.organizationId}:${inv.id}` }, data: { kind: 'AUTO_SUSPENDED' } });
+          forgetOrganizationStatus(inv.organizationId);
           await this.alert('AUTO_SUSPENDED', `Switched off for non-payment: ${name}`, `${inv.number} was ${days} days overdue.`, inv.organizationId, `autosuspend:${inv.organizationId}:${inv.id}`, fresh);
           this.logger.warn(`Organization ${inv.organizationId} (${name}) switched off automatically: ${inv.number} ${days} days overdue`);
         }

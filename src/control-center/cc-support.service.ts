@@ -7,7 +7,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcAuthService } from './cc-auth.service';
 import { EmailService } from '../notifications/email.service';
 import { normalizeEmail } from './cc-auth-rules';
-import { paging, type PageQuery } from './cc-util';
+import { csvSafe, paging, type PageQuery } from './cc-util';
 
 const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
 const pick = (b: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter((k) => k in b).map((k) => [k, b[k]]));
@@ -171,7 +171,7 @@ export class CcSupportService {
     const rows = (await this.prisma.ccAuditLog.findMany({ where: this.auditWhere(q), orderBy: { at: 'desc' }, take: 10_000 })).map((a) => this.auditOut(a));
     if (format === 'json') return { type: 'application/json', body: JSON.stringify(rows, null, 2) };
     const cols = ['at', 'actorEmail', 'action', 'entityType', 'entityId', 'ip'] as const;
-    const cell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const cell = (v: unknown) => `"${csvSafe(v).replace(/"/g, '""')}"`;
     return { type: 'text/csv', body: [cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n') };
   }
   async record(e: { actor: SuperAdmin; ip?: string; userAgent?: string; action: string; entityType: string; entityId: string; after?: unknown; requestId?: string }) {

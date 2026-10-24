@@ -7,10 +7,11 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcCustomersService } from './cc-customers.service';
 
+import { csvSafe } from './cc-util';
 const DAY = 86400000;
 const r2 = (n: number) => Math.round(n * 100) / 100;
 const monthKey = (d: Date) => d.toISOString().slice(0, 7);
-const csvCell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+const csvCell = (v: unknown) => `"${csvSafe(v).replace(/"/g, '""')}"`;
 export const toCsv = (cols: string[], rows: Record<string, unknown>[]) => [cols.join(','), ...rows.map((r) => cols.map((c) => csvCell(r[c])).join(','))].join('\n');
 
 @Injectable()

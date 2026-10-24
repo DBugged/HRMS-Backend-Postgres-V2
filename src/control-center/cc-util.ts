@@ -42,3 +42,15 @@ export function employeeLimit(plan: { includedEmployees: number | null; perExtra
   // blockAt: the hard limit the Super Admin set on the subscription (HRMS refuses new employees beyond it); null = none.
   return { used: employees, included, overBy: Math.max(0, employees - included), hasOverageRate: plan.perExtraEmployeeRate != null, blockAt: maxEmployees };
 }
+
+/** A CSV/Excel cell that cannot run as a formula: text starting with = + - @ (or a tab / CR) gets a leading apostrophe. Numbers are left alone. */
+export function csvSafe(v: unknown): string {
+  const text = String(v ?? '');
+  return typeof v === 'string' && /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+}
+
+/** The next invoice number for a month: one more than the highest suffix already used (counting rows is not safe once any are deleted). */
+export function nextInvoiceNumber(prefix: string, highestExisting: string | null | undefined): string {
+  const used = highestExisting && highestExisting.startsWith(prefix) ? Number(highestExisting.slice(prefix.length)) : 0;
+  return `${prefix}${String((Number.isFinite(used) ? used : 0) + 1).padStart(4, '0')}`;
+}
