@@ -881,16 +881,7 @@ export class SettlementsService {
     // Codes' 50% wages rule is on, at least half of the latest full regular payslip's gross.
     let lastDrawn = basicMonthly + daMonthly;
     if (cfg.applyFiftyPercentRule === true) {
-      const latest = await this.scopedPrisma.payrollRun.findFirst({
-        where: {
-          organizationId,
-          employeeId: dto.employeeId,
-          isFinalSettlement: false,
-          runSequence: 0,
-        },
-        orderBy: [{ year: 'desc' }, { month: 'desc' }],
-        select: { grossSalary: true },
-      });
+      const latest = await this.lastFullMonthRun(dto.employeeId, dto.lastWorkingDay.slice(0, 10), organizationId);
       lastDrawn = Math.max(lastDrawn, (latest?.grossSalary ?? 0) * 0.5);
     }
     // Average Basic + DA of the last ten months - the wages a non-covered employer's exemption is figured on.
@@ -1056,6 +1047,24 @@ export class SettlementsService {
   // default) running from the day they gave it: days short of it are recovered at the daily rate. When the company
   // ends the employment it is the company that owes the notice: the shortfall is paid in lieu only if HR asks
   // (payNoticeInLieu). The daily rate is the last full month's gross over 30, falling back to basic + DA.
+  // The latest regular payslip from a month BEFORE the last working day's: the exit month's own run is cut short at the
+  // last working day, so its gross is part of a month and would understate the daily rate for notice pay and the
+  // gratuity wage floor. Falls back to the latest run of any month when there is none earlier.
+  private async lastFullMonthRun(employeeId: string, lwdDate: string, organizationId: string) {
+    const year = Number(lwdDate.slice(0, 4));
+    const month = Number(lwdDate.slice(5, 7));
+    const base = { organizationId, employeeId, isFinalSettlement: false, runSequence: 0 };
+    const order = [{ year: 'desc' as const }, { month: 'desc' as const }];
+    return (
+      (await this.scopedPrisma.payrollRun.findFirst({
+        where: { ...base, OR: [{ year: { lt: year } }, { year, month: { lt: month } }] },
+        orderBy: order,
+        select: { grossSalary: true },
+      })) ??
+      (await this.scopedPrisma.payrollRun.findFirst({ where: base, orderBy: order, select: { grossSalary: true } }))
+    );
+  }
+
   private async computeNotice(args: {
     dto: CalculateSettlementDto;
     organizationId: string;
@@ -1090,16 +1099,7 @@ export class SettlementsService {
     const shortfallDays = noticeShortfallDays(noticeDays, startedOn, lwdDate);
     if (shortfallDays <= 0) return none;
 
-    const lastRun = await this.scopedPrisma.payrollRun.findFirst({
-      where: {
-        organizationId,
-        employeeId: dto.employeeId,
-        isFinalSettlement: false,
-        runSequence: 0,
-      },
-      orderBy: [{ year: 'desc' }, { month: 'desc' }],
-      select: { grossSalary: true },
-    });
+    const lastRun = await this.lastFullMonthRun(dto.employeeId, lwdDate, organizationId);
     const monthly =
       lastRun && lastRun.grossSalary > 0
         ? lastRun.grossSalary
