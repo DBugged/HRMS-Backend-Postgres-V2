@@ -38,6 +38,8 @@ describe('leave cancel rules', () => {
   it('offers a cancellation request once direct cancel is closed, once', () => {
     expect(ownerCancelOptions(approved, '2026-11-20', 0)).toEqual({ canCancel: false, canRequestCancel: true });
     expect(ownerCancelOptions({ ...approved, cancelRequestedAt: new Date() }, '2026-11-20', 0)).toEqual({ canCancel: false, canRequestCancel: false });
+    // An Admin/HR owner cancels directly even after the leave has started - no request that would sit pending.
+    expect(ownerCancelOptions(approved, '2026-11-20', 0, true)).toEqual({ canCancel: true, canRequestCancel: false });
     expect(ownerCancelOptions(approved, '2026-11-01', 0)).toEqual({ canCancel: true, canRequestCancel: false });
   });
 });

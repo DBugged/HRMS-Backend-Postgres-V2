@@ -45,8 +45,15 @@ export function ownerCancelOptions(
   leave: CancelSubject,
   today: string,
   windowDays: number,
+  // An Admin / HR owner cancels their own leave directly at any time (nobody above them has to agree), so they are
+  // never sent through a cancellation request that would sit pending.
+  canAlwaysCancel = false,
 ): { canCancel: boolean; canRequestCancel: boolean } {
-  const canCancel = ownerCanCancel(leave, today, windowDays);
+  const cancellable =
+    leave.status === LeaveStatus.PENDING ||
+    leave.status === LeaveStatus.RETURNED ||
+    leave.status === LeaveStatus.APPROVED;
+  const canCancel = canAlwaysCancel ? cancellable : ownerCanCancel(leave, today, windowDays);
   return {
     canCancel,
     canRequestCancel:

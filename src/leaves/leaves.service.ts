@@ -552,7 +552,7 @@ export class LeavesService {
         ).map((l) => ({
           ...l,
           ...(l.employeeId === actor.id
-            ? ownerCancelOptions(l, today, windowDays)
+            ? ownerCancelOptions(l, today, windowDays, CANCEL_OVERRIDE_ROLES.includes(actor.role))
             : { canCancel: false, canRequestCancel: false }),
         })),
       () => this.scopedPrisma.leave.count({ where }),
@@ -2385,6 +2385,10 @@ export class LeavesService {
       (org?.policies as { leaveCancelWindowDays?: unknown } | null)
         ?.leaveCancelWindowDays,
     );
+    // An Admin / HR cancels their own leave directly: a request would wait for an approver who is not there.
+    if (CANCEL_OVERRIDE_ROLES.includes(actor.role)) {
+      return this.performCancel(id, leave, actor, organizationId, false);
+    }
     if (ownerCanCancel(leave, today, windowDays)) {
       throw new BadRequestException(
         'This leave has not started yet - cancel it directly instead of sending a request.',
