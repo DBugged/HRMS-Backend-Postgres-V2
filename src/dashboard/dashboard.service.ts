@@ -1230,9 +1230,11 @@ export class DashboardService {
         null) as OrganizationAttendancePrefs | null,
     );
     const joined = employee?.joiningDate?.toISOString().slice(0, 10) ?? '';
+    const exit = employee?.exitDate ?? null;
     const working = dates.filter(
       (d) =>
         d >= joined &&
+        (!exit || d <= exit) &&
         !holidayDates.has(d) &&
         !isWeeklyOff(d, shiftConfig.weeklyOffs),
     );
@@ -1287,6 +1289,10 @@ export class DashboardService {
           employeeId: actor.id,
           // Final payslips only: an approved one can still change (see EMPLOYEE_VISIBLE_STATUSES in payroll.service.ts).
           status: { in: [PayrollRunStatus.LOCKED, PayrollRunStatus.PAID] },
+          // The monthly salary: an arrears / off-cycle payment or the final settlement of the same month is not it, and
+          // would otherwise be picked arbitrarily when the months tie.
+          isFinalSettlement: false,
+          runSequence: 0,
         },
         orderBy: [{ year: 'desc' }, { month: 'desc' }],
       }), null),
@@ -1356,14 +1362,7 @@ export class DashboardService {
       // (not counted via the `regularization` JSON above — that only
       // tracks requests already made) — this is the "you need to act"
       // nudge, surfaced separately from the "waiting on HR" count.
-      gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
-        where: {
-          organizationId,
-          employeeId: actor.id,
-          date: { startsWith: monthPrefix },
-          status: AttendanceStatus.INCOMPLETE,
-        },
-      }), 0),
+      Promise.resolve(0), // worked out below from this month's rows, leaving out days already sent for regularization
       gate(off, 'module.leave', async () => this.scopedPrisma.compOff.count({
         where: {
           organizationId,
@@ -1402,6 +1401,12 @@ export class DashboardService {
       }), null),
     ]);
 
+    // Incomplete days still needing a request: the ones with a regularization already waiting are not asked for again.
+    const incompleteNeedingRequest = attendanceThisMonth.filter(
+      (r) =>
+        r.status === AttendanceStatus.INCOMPLETE &&
+        (r.regularization as { status?: string } | null)?.status !== 'pending',
+    ).length;
     const summary: Record<string, number> = {
       PRESENT: 0,
       HALF_DAY: 0,
@@ -1443,7 +1448,7 @@ export class DashboardService {
       // Days this month marked Incomplete (punch-out missing) that the
       // employee hasn't yet requested regularization for — drives the
       // "N day(s) need your attention" dashboard nudge.
-      incompleteAttendanceCount,
+      incompleteAttendanceCount: incompleteNeedingRequest,
       reimbursements: {
         recent: recentReimbursements,
         pendingCount: reimbursementPending._count,
