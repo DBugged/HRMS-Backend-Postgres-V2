@@ -7,6 +7,7 @@
 //   Content is fully admin-authored via LetterTemplatesService — nothing here hardcodes letter wording;
 //   only the *shape* of the 4 dataProfiles (BASIC/EXIT/PAYROLL/SETTLEMENT) is fixed, since each names a
 //   real prerequisite record (OffboardingCase/PayrollRun/Settlement) that can't be invented from nothing.
+import { personalEmailOf } from '../common/personal-email';
 import {
   BadRequestException,
   ForbiddenException,
@@ -933,10 +934,14 @@ export class LettersService {
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: employeeId, organizationId },
-      select: { name: true, email: true },
+      select: { name: true, email: true, isActive: true, exitDate: true, personalData: true },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
-    if (!employee.email) {
+    // Someone who has left (or is leaving) loses the company mailbox, so their letters - relieving, experience - go to the
+    // personal address on file when there is one.
+    const leaving = !employee.isActive || !!employee.exitDate;
+    const recipient = (leaving ? personalEmailOf(employee.personalData) : null) ?? employee.email;
+    if (!recipient) {
       throw new BadRequestException(
         'This employee has no email address on file to send the letter to.',
       );
@@ -973,7 +978,7 @@ export class LettersService {
 
     await this.emailService.send({
       organizationId,
-      to: employee.email,
+      to: recipient,
       subject: rendered.subject,
       html: rendered.html,
       attachments: [{ filename, content: buffer }],
@@ -986,17 +991,17 @@ export class LettersService {
       module: AuditModule.DOCUMENT,
       organizationId,
       targetId: employeeId,
-      details: { key, templateName: template.name, to: employee.email, edited },
+      details: { key, templateName: template.name, to: recipient, edited },
     });
     await this.timelineService.logEvent({
       organizationId,
       employeeId,
       eventKey: 'LETTER_EMAILED',
       performedById: actor.id,
-      description: `${template.name} emailed to ${employee.email}.`,
+      description: `${template.name} emailed to ${recipient}.`,
     });
 
-    return { message: `${template.name} emailed to ${employee.email}.` };
+    return { message: `${template.name} emailed to ${recipient}.` };
   }
 
   private async latestOffboardingCase(

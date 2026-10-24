@@ -2,6 +2,7 @@
 // Important: A request never touches a balance. Approval calls LeaveGrantsService.grant() - the same eligibility,
 //   policy-maximum, one-grant-per-event and idempotency checks as a manual grant - so there is one place that credits
 //   event leave. A request is validated up front (the same rules) so the employee hears about a problem immediately.
+import { isEmployedOn } from '../common/managers';
 import { managerIdsOf, reportsToWhere } from '../common/managers';
 import {
   BadRequestException,
@@ -124,6 +125,8 @@ export class LeaveGrantRequestsService {
         id: true,
         name: true,
         reportingManagerId: true,
+        additionalReportingManagerIds: true,
+        exitDate: true,
         joiningDate: true,
         departmentId: true,
         employeeType: true,
@@ -131,6 +134,11 @@ export class LeaveGrantRequestsService {
       },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
+    if (!isEmployedOn(employee.exitDate, dto.eventDate)) {
+      throw new BadRequestException(
+        `Your last working day (${employee.exitDate}) is before the event date.`,
+      );
+    }
     if (
       !isEligible(leaveType, employee, new Date(`${dto.eventDate}T00:00:00Z`))
     ) {

@@ -2253,6 +2253,20 @@ export class AttendanceService {
         dateStr,
       );
     }
+    const meEmployment = await this.scopedPrisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { joiningDate: true, exitDate: true },
+    });
+    if (meEmployment && dateStr < utcDateStrOf(meEmployment.joiningDate)) {
+      throw new BadRequestException(
+        `The date is before your joining date (${dmyText(utcDateStrOf(meEmployment.joiningDate))}).`,
+      );
+    }
+    if (meEmployment && !isEmployedOn(meEmployment.exitDate, dateStr)) {
+      throw new BadRequestException(
+        `The date is after your last working day (${dmyText(meEmployment.exitDate!)}).`,
+      );
+    }
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
     });
@@ -2358,9 +2372,13 @@ export class AttendanceService {
       const end = l.endDate < to ? l.endDate : to;
       for (let d = start; d <= end; d = addDaysStr(d, 1)) leaveDates.add(d);
     }
+    // Only days they are employed: not before joining, not after the last working day.
+    const joinedStr = employee ? utcDateStrOf(employee.joiningDate) : from;
+    const effFrom = from < joinedStr ? joinedStr : from;
+    const effTo = employee?.exitDate && employee.exitDate < to ? employee.exitDate : to;
     const result = wfhRequestDays({
-      from,
-      to,
+      from: effFrom,
+      to: effTo,
       isWeeklyOff: (date) => isWeeklyOff(date, weeklyOffs),
       holidayDates: new Set(holidays.map((h) => h.date)),
       leaveDates,

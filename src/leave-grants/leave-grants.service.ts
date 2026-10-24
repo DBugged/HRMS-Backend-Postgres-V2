@@ -5,6 +5,7 @@
 //   reversal (status REVERSED, who/when/why), never a delete. Repeats are blocked by a partial unique index
 //   (one ACTIVE grant per employee, leave type and event date) and by the optional idempotency key, so retries and
 //   concurrent requests cannot grant twice.
+import { isEmployedOn } from '../common/managers';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { leaveYearOf } from '../leave-balances/leave-year';
 import {
@@ -88,6 +89,7 @@ export class LeaveGrantsService {
         select: {
           id: true,
           isActive: true,
+          exitDate: true,
           joiningDate: true,
           departmentId: true,
           employeeType: true,
@@ -101,6 +103,12 @@ export class LeaveGrantsService {
       throw new BadRequestException('This employee is not active.');
     }
     const effectiveDate = dto.effectiveDate ?? dto.eventDate;
+    // Leave for an event after their last working day would never be taken.
+    if (!isEmployedOn(employee.exitDate, effectiveDate)) {
+      throw new BadRequestException(
+        `This employee's last working day (${employee.exitDate}) is before the date this leave takes effect.`,
+      );
+    }
     if (
       !isEligible(leaveType, employee, new Date(`${effectiveDate}T00:00:00Z`))
     ) {
