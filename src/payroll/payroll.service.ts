@@ -671,13 +671,19 @@ export class PayrollService {
     // not for days to come: those are neither unpaid nor paid weekly offs yet. A final settlement does its own period
     // handling.
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    // A regular run for someone leaving stops at their last working day (exitDate, kept in step with the offboarding
+    // case): paying the whole month and then calling the settlement's pending salary "already paid" overpaid them for
+    // the days after they had left.
+    const runThrough = lastCountedDay(today, month, year);
     const employed = employmentWindow(
       employee.joiningDate,
       month,
       year,
       options?.finalSettlement
         ? options.finalSettlement.lastWorkingDay
-        : lastCountedDay(today, month, year),
+        : employee.exitDate && employee.exitDate < runThrough
+          ? employee.exitDate
+          : runThrough,
     );
     const elapsedAttendanceRows = attendanceRows.filter(
       (r) => r.date <= employed.to,
