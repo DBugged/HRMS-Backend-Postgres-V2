@@ -115,7 +115,8 @@ export class ApprovalsDigestService {
     if (perEmployee.size === 0) return 0;
 
     const users = await this.scopedPrisma.user.findMany({
-      where: { organizationId, isActive: true },
+      // Not people past their last working day: they are no longer approving anything.
+      where: { organizationId, isActive: true, OR: [{ exitDate: null }, { exitDate: { gte: new Date().toISOString().slice(0, 10) } }] },
       select: {
         id: true,
         name: true,

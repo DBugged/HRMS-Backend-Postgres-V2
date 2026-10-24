@@ -72,6 +72,18 @@ export class ApprovalDelegationService {
         'Delegate must be a manager, HR, or admin.',
       );
     }
+    // The person standing in has to be able to act: a deactivated account or one past its last working day cannot.
+    if (!delegateUser.isActive || (delegateUser.exitDate && delegateUser.exitDate < dto.fromDate)) {
+      throw new BadRequestException('That person is no longer active, so approvals cannot be delegated to them.');
+    }
+    // An Admin / HR creating one on someone's behalf must name a real person of this organisation.
+    if (delegatorId !== actor.id) {
+      const delegator = await this.scopedPrisma.user.findFirst({
+        where: { id: delegatorId, organizationId, isActive: true },
+        select: { id: true },
+      });
+      if (!delegator) throw new BadRequestException('The person delegating was not found.');
+    }
 
     const delegation = await this.scopedPrisma.approvalDelegation.create({
       data: {

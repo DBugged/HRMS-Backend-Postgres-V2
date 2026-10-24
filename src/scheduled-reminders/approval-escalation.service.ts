@@ -131,6 +131,8 @@ export class ApprovalEscalationService {
     };
     for (const item of due) {
       const requester = byId.get(item.requesterId);
+      // A request from someone who has left (or is past their last working day) is no longer chased.
+      if (!requester) continue;
       if (MANAGER_KINDS.has(item.kind)) {
         const manager = requester?.reportingManagerId
           ? byId.get(requester.reportingManagerId)

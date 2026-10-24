@@ -99,7 +99,22 @@ export class NotificationsService {
   }) {
     try {
       const { organizationId, requester, title, message, category } = input;
-      const managers = managerIdsOf(requester).filter((m) => m !== requester.id);
+      const managerCandidates = managerIdsOf(requester).filter((m) => m !== requester.id);
+      // Only managers who still work here: a request must not be addressed to someone whose account is closed or whose
+      // last working day has passed (it would reach nobody). With none left it falls back to HR/Admin below.
+      const managers = managerCandidates.length
+        ? (
+            await this.scopedPrisma.user.findMany({
+              where: {
+                organizationId,
+                id: { in: managerCandidates },
+                isActive: true,
+                OR: [{ exitDate: null }, { exitDate: { gte: new Date().toISOString().slice(0, 10) } }],
+              },
+              select: { id: true },
+            })
+          ).map((m) => m.id)
+        : [];
       if (input.managerFirst && managers.length > 0) {
         // Every reporting manager (primary and additional) is told.
         await this.createMany(
