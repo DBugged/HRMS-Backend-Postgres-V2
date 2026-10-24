@@ -29,3 +29,9 @@ export function splitManagerIds(picked: string[], selfId?: string): { reportingM
 
 /** Is the person still counted on `date` (YYYY-MM-DD)? Nobody is, after their planned last working day (exitDate). */
 export const isEmployedOn = (exitDate: string | null | undefined, date: string): boolean => !exitDate || date <= exitDate;
+
+/** Prisma filter for people working on `date` (YYYY-MM-DD): already joined, and not past their last working day. */
+export const employedOnWhere = (date: string) => ({
+  joiningDate: { lte: new Date(`${date}T00:00:00.000Z`) },
+  OR: [{ exitDate: null }, { exitDate: { gte: date } }],
+});

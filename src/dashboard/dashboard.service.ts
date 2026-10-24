@@ -6,6 +6,7 @@
 // Important: departmentHeadDashboard() intentionally ports a quirk from the original release — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
+import { employedOnWhere } from '../common/managers';
 import { REQUEST_TYPE_MODULE, disabledModulesOf, gate } from '../module-access/module-gate';
 import {
   pageRequest,
@@ -248,8 +249,10 @@ export class DashboardService {
       leaveBalanceRows,
       deptLeaveSummaryRaw,
     ] = await Promise.all([
+      // Headcount: on the books today - joined, and not past the last working day (the account stays open until the exit
+      // is completed).
       this.scopedPrisma.user.count({
-        where: { organizationId, isActive: true },
+        where: { organizationId, isActive: true, ...employedOnWhere(today) },
       }),
       // Present = a finished punch pair (or a regularized day). Someone who has only punched in so far is counted
       // separately as Checked in until their punch-out arrives.
@@ -372,7 +375,7 @@ export class DashboardService {
             countInTotalBalance: true,
             allocationType: { not: AllocationType.EVENT_BASED },
           },
-          employee: { isActive: true },
+          employee: { isActive: true, ...employedOnWhere(today) },
         },
         include: {
           employee: { select: { id: true, name: true, employeeId: true } },
@@ -562,6 +565,7 @@ export class DashboardService {
               organizationId,
               departmentId: actor.departmentId,
               isActive: true,
+              ...employedOnWhere(todayInOrgTz(await this.getOrgTimezone(organizationId))),
             },
             select: { id: true },
           });
@@ -1598,6 +1602,7 @@ export class DashboardService {
   async executiveDashboard(organizationId: string) {
     const WINDOW_DAYS = 30;
     const today = await this.orgNow(organizationId);
+    const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
 
     // Birthdays only need the date of birth, which is stored as plain text inside personalData. Reading the whole
     // personalData would decrypt every employee's PAN / Aadhaar / bank fields just to throw them away, so the one key is
@@ -1616,6 +1621,8 @@ export class DashboardService {
                "personalData"->>'dateOfBirth' AS "dateOfBirth"
           FROM "users"
          WHERE "organizationId" = ${organizationId} AND "isActive" = true
+           AND "joiningDate" <= ${today}
+           AND ("exitDate" IS NULL OR "exitDate" >= ${todayStr})
          ORDER BY "employeeId" ASC`,
     ]);
 
