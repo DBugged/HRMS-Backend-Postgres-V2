@@ -299,6 +299,7 @@ model Organization {
   loanRepayments                   LoanRepayment[]
   settlements                      Settlement[]
   offboardingCases                 OffboardingCase[]
+  joiningChecklists                JoiningChecklist[]
   resignations                     Resignation[]
   employeeMovements                EmployeeMovement[]
   auditLogs                        AuditLog[]
@@ -625,6 +626,7 @@ model User {
   settlements                      Settlement[]                      @relation("SettlementEmployee")
   settlementsProcessed             Settlement[]                      @relation("SettlementProcessedBy")
   offboardingCases                 OffboardingCase[]                 @relation("OffboardingCaseEmployee")
+  joiningChecklists                JoiningChecklist[]                @relation("JoiningChecklistEmployee")
   offboardingCasesInitiated        OffboardingCase[]                 @relation("OffboardingCaseInitiatedBy")
   offboardingCasesCompleted        OffboardingCase[]                 @relation("OffboardingCaseCompletedBy")
   resignations                     Resignation[]                     @relation("ResignationEmployee")
@@ -2790,6 +2792,28 @@ enum OffboardingStatus {
 // One row per employee exit — tracks the checklist that has to complete
 // before the account is deactivated, mirroring the old system's
 // OffboardingCase.
+// The joining checklist of one new joiner: who owns each step (laptop, work email, ID card, team introduction...) and by when.
+// Steps the system can see for itself (assets allocated, documents uploaded, profile completed) are worked out on read, not stored.
+// Created automatically for people who joined recently or are about to (see JoiningChecklistService).
+model JoiningChecklist {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("JoiningChecklistEmployee", fields: [employeeId], references: [id])
+
+  // { [itemKey]: { ownerId: string | null, dueDate: 'YYYY-MM-DD' | null, doneAt: ISO string | null, doneById: string | null } }
+  items Json @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, employeeId])
+  @@index([organizationId])
+  @@map("joining_checklists")
+}
+
 model OffboardingCase {
   id             String       @id @default(uuid())
   organizationId String

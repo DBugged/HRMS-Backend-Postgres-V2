@@ -67,6 +67,8 @@ import { CustomFieldsModule } from './custom-fields/custom-fields.module';
 import { ControlCenterModule } from './control-center/control-center.module';
 import { WorkSchedulesModule } from './work-schedules/work-schedules.module';
 import { LettersModule } from './letters/letters.module';
+import { JoiningModule } from './joining/joining.module';
+import { OrgHealthModule } from './org-health/org-health.module';
 import { LetterTemplatesModule } from './letter-templates/letter-templates.module';
 import { LeaveTrackerModule } from './leave-tracker/leave-tracker.module';
 import { PrivacyModule } from './privacy/privacy.module';
@@ -146,6 +148,8 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     LoansModule,
     SettlementsModule,
     OffboardingModule,
+    JoiningModule,
+    OrgHealthModule,
     ResignationsModule,
     DashboardModule,
     ReportsModule,

@@ -59,6 +59,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'LoanRepayment',
   'Settlement',
   'OffboardingCase',
+  'JoiningChecklist',
   'Resignation',
   'EmployeeMovement',
   'AuditLog',
