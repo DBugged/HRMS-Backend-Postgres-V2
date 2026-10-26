@@ -45,7 +45,6 @@ import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
 import { ReviewEmployeeDocumentDto } from './dto/review-employee-document.dto';
-import { SetDocumentExpiryDto } from './dto/set-document-expiry.dto';
 import { SetDocumentVisibilityDto } from './dto/set-document-visibility.dto';
 import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
@@ -899,7 +898,6 @@ export class EmployeeProfileService {
           fileName: dto.fileName,
           fileUrl: dto.fileUrl,
           category,
-          ...(dto.expiryDate && { expiryDate: dto.expiryDate }),
           ...(isFounderDoc && {
             status: EmployeeDocumentStatus.APPROVED,
             reviewedById: actor.id,
@@ -940,31 +938,6 @@ export class EmployeeProfileService {
     await this.scopedPrisma.employeeDocument.updateMany({
       where: { id: docId, organizationId },
       data: { visibleToEmployee: dto.visibleToEmployee },
-    });
-    const updated = await this.scopedPrisma.employeeDocument.findFirstOrThrow({
-      where: { id: docId, organizationId },
-    });
-    return withSignedFileUrl(updated);
-  }
-
-  // Sets or clears the date a document stops being valid. The owner or HR/Admin may do it; reminders follow the date.
-  async setDocumentExpiry(
-    id: string,
-    docId: string,
-    dto: SetDocumentExpiryDto,
-    actor: Actor,
-    organizationId: string,
-  ) {
-    this.assertSelfOrHr(actor, id);
-    const employee = await this.findEmployeeOrThrow(id, organizationId);
-    this.assertMayAccessDocumentsFor(actor, employee);
-    const doc = await this.scopedPrisma.employeeDocument.findFirst({
-      where: { id: docId, employeeId: id, organizationId },
-    });
-    if (!doc) throw new NotFoundException('Document not found.');
-    await this.scopedPrisma.employeeDocument.updateMany({
-      where: { id: docId, organizationId },
-      data: { expiryDate: dto.expiryDate },
     });
     const updated = await this.scopedPrisma.employeeDocument.findFirstOrThrow({
       where: { id: docId, organizationId },

@@ -81,7 +81,6 @@ const SUPPLIED: Record<string, string[]> = {
   ROLE_CHANGED: ['previousRole', 'newRole'],
   SALARY_REVISED: ['effectiveFrom'],
   EXIT_COMPLETED: ['lastWorkingDay'],
-  DOCUMENT_EXPIRING: ['documentName', 'when', 'expiryDate', 'reviewUrl'],
   EXIT_DOCUMENTS_PACK: ['lastWorkingDay', 'payslipCount'],
   APPROVALS_DIGEST: [
     'totalPending',

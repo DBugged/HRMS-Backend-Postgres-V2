@@ -103,7 +103,6 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
     'Your exit process is complete and your HRMS access is closed.',
   EXIT_DOCUMENTS_PACK:
     'Your last payslips and exit documents are attached, as your work account is now closed.',
-  DOCUMENT_EXPIRING: 'Your {{documentName}} expires {{when}}.',
   APPROVALS_DIGEST: '{{totalPending}} request(s) are waiting for your review.',
   PROBATION_ENDING: "{{subjectName}}'s probation ends in {{daysLeft}} days.",
   PAYROLL_CUTOFF_REMINDER:
@@ -790,30 +789,6 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     }),
     ccAllActive: false,
     category: 'Exit',
-  },
-  {
-    // Fires from DocumentExpiryReminderService (daily) 30, 15 and 7 days before a document's expiry date, and on the day -
-    // to the document's owner. HR and the manager get an in-app notice only.
-    occasionKey: 'DOCUMENT_EXPIRING',
-    name: 'Document Expiring',
-    subject: 'Your {{documentName}} expires {{when}}',
-    bodyHtml: emailBody({
-      category: 'General',
-      title: 'A document is about to expire',
-      blocks: [
-        greet,
-        paragraph(
-          'Your {{documentName}} expires {{when}}. Please upload the renewed document so your record stays valid.',
-        ),
-        infoCard([
-          row('Document', '{{documentName}}'),
-          row('Expiry date', '{{expiryDate}}'),
-        ]),
-        button('{{reviewUrl}}', 'Open my documents'),
-      ],
-    }),
-    ccAllActive: false,
-    category: 'General',
   },
   {
     // Fires from ApprovalsDigestService (weekday mornings) — one email per approver, and only

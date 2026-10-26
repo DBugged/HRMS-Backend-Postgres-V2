@@ -26,7 +26,6 @@ import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
 import { ReviewEmployeeDocumentDto } from './dto/review-employee-document.dto';
-import { SetDocumentExpiryDto } from './dto/set-document-expiry.dto';
 import { SetDocumentVisibilityDto } from './dto/set-document-visibility.dto';
 import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
@@ -279,23 +278,6 @@ export class EmployeesController {
   ) {
     return this.employeeProfileService.addDocument(
       id,
-      dto,
-      caller,
-      caller.organizationId,
-    );
-  }
-
-  // The date a document stops being valid (owner or HR/Admin); a daily job reminds before it passes.
-  @Patch(':id/documents/:docId/expiry')
-  setDocumentExpiry(
-    @Param('id') id: string,
-    @Param('docId') docId: string,
-    @Body() dto: SetDocumentExpiryDto,
-    @CurrentUser() caller: Caller,
-  ) {
-    return this.employeeProfileService.setDocumentExpiry(
-      id,
-      docId,
       dto,
       caller,
       caller.organizationId,
