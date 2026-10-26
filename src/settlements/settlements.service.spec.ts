@@ -51,6 +51,7 @@ function build(o: Opts = {}) {
       return v === undefined || r[k] === v;
     });
   const unlinked: Row[] = [];
+  const linked: Row[] = [];
   const tx: Row = {
     offboardingCase: {
       updateMany: async (a: Row) => {
@@ -79,7 +80,7 @@ function build(o: Opts = {}) {
     },
     leave: { count: async () => 0 },
     resignation: { findFirst: async () => o.resignation ?? null },
-    offboardingCase: { findFirst: async () => o.openCase ?? null },
+    offboardingCase: { findFirst: async () => o.openCase ?? null, updateMany: async (a: Row) => { linked.push(a); return { count: 1 }; } },
     leaveEncashment: { count: async () => 0 },
     settlement: {
       findFirst: async (a: Row) => {
@@ -185,7 +186,7 @@ function build(o: Opts = {}) {
       }),
     }),
   );
-  return { service, settlements, audit, payrollService, unlinked };
+  return { service, settlements, audit, payrollService, unlinked, linked };
 }
 
 const admin = { id: 'admin', role: Role.ADMIN } as never;
@@ -217,6 +218,29 @@ describe('final settlement: the exit it belongs to', () => {
     await expect(service.calculate(dto(), admin, 'org')).rejects.toThrow(
       /offboarding case has last working day 08-10-2026/,
     );
+  });
+});
+
+describe('final settlement: automatic link and system drafts', () => {
+  it('a settlement figured for the exit\'s last working day is linked to the open offboarding case by itself', async () => {
+    const { service, linked, settlements } = build({ openCase: { lastWorkingDay: '2026-10-08', createdAt: new Date('2026-09-01T00:00:00Z'), exitStatus: 'RELEASED', id: 'c1' } });
+    await service.calculate(dto({ lastWorkingDay: '2026-10-08' }), admin, 'org');
+    expect(linked).toHaveLength(1);
+    expect(linked[0].data).toEqual({ settlementId: settlements[0].id });
+    expect(linked[0].where).toMatchObject({ employeeId: 'e1', lastWorkingDay: '2026-10-08' });
+  });
+
+  it('a draft prepared by the system is recorded as calculated by nobody, so the reviewer satisfies maker-checker', async () => {
+    const { service, settlements } = build();
+    await service.calculate(dto(), admin, 'org', { system: true });
+    expect(settlements[0].calculatedById).toBeNull();
+    expect(settlements[0].processedById).toBeNull();
+  });
+
+  it('a draft calculated by a person records that person', async () => {
+    const { service, settlements } = build();
+    await service.calculate(dto(), admin, 'org');
+    expect(settlements[0].calculatedById).toBe((admin as unknown as { id: string }).id);
   });
 });
 

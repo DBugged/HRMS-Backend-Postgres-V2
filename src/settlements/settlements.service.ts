@@ -224,6 +224,9 @@ export class SettlementsService {
     dto: CalculateSettlementDto,
     actor: Actor,
     organizationId: string,
+    // system: the draft is prepared automatically (see OffboardingAutomationService). It is recorded as calculated by nobody, so
+    // the maker-checker rule is met by whoever reviews and processes it; `actor` is only who the audit / timeline entries name.
+    opts: { system?: boolean } = {},
   ) {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: dto.employeeId, organizationId },
@@ -769,8 +772,8 @@ export class SettlementsService {
       receivableNote: null,
       receivableClosedAt: null,
       receivableClosedById: null,
-      calculatedById: actor.id,
-      processedById: actor.id,
+      calculatedById: opts.system ? null : actor.id,
+      processedById: opts.system ? null : actor.id,
     };
     const pendingSalaryNote = monthAlreadyPaid
       ? `Pending salary is 0 — the ${month}/${year} salary was already covered by a regular payroll run.`
@@ -795,6 +798,7 @@ export class SettlementsService {
         data,
         dto.employeeId,
       );
+      await this.linkToOpenCase(dto.employeeId, existing.id, lwdDate, organizationId);
       return {
         ...this.withGratuityPayout(
           await this.scopedPrisma.settlement.findFirstOrThrow({
@@ -825,6 +829,7 @@ export class SettlementsService {
         where: { id: winner.id, organizationId },
         data,
       });
+      await this.linkToOpenCase(dto.employeeId, winner.id, lwdDate, organizationId);
       return {
         ...this.withGratuityPayout(
           await this.scopedPrisma.settlement.findFirstOrThrow({
@@ -842,6 +847,7 @@ export class SettlementsService {
       data,
       dto.employeeId,
     );
+    await this.linkToOpenCase(dto.employeeId, created.id, lwdDate, organizationId);
     // FNF_INITIATED — only on the first calculate() for this employee (the
     // `existing` branch above is a re-preview of the same in-flight draft,
     // not a new initiation), so re-calculating doesn't spam the timeline.
@@ -852,6 +858,21 @@ export class SettlementsService {
       performedById: actor.id,
     });
     return { ...this.withGratuityPayout(created), pendingSalaryNote, warnings };
+  }
+
+  // A settlement figured for the last working day of an exit that is under way is linked to that offboarding case by itself, so
+  // HR never links it by hand (and a recalculation keeps the link). A case with a different last working day is left alone.
+  private async linkToOpenCase(employeeId: string, settlementId: string, lwdDate: string, organizationId: string) {
+    await this.scopedPrisma.offboardingCase.updateMany({
+      where: {
+        organizationId,
+        employeeId,
+        status: { in: ['INITIATED', 'IN_PROGRESS'] },
+        lastWorkingDay: lwdDate,
+        OR: [{ settlementId: null }, { settlementId: { not: settlementId } }],
+      },
+      data: { settlementId },
+    });
   }
 
   // Gratuity for the exit. The GRATUITY statutory version in force on the last working day decides whether it is

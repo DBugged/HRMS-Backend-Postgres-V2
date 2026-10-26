@@ -25,5 +25,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
   ],
   controllers: [SettlementsController],
   providers: [SettlementsService],
+  // Exported so the exit automation can prepare a final settlement draft.
+  exports: [SettlementsService],
 })
 export class SettlementsModule {}
