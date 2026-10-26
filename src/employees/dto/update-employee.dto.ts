@@ -149,6 +149,12 @@ export class UpdateEmployeeDto {
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'confirmationDate must be a date in YYYY-MM-DD form.' })
   confirmationDate?: string;
 
+  // When probation ends (only for someone on probation). Shows in the Probation Tracker; blank = no date set yet.
+  @ApiPropertyOptional({ example: '2027-01-31' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'probationEndDate must be a date in YYYY-MM-DD form.' })
+  probationEndDate?: string;
+
   // Missing from this DTO entirely until now — the Edit Employee form
   // always sends it (create and edit share one payload builder on the
   // frontend), so every edit save 400'd with "property employeeType

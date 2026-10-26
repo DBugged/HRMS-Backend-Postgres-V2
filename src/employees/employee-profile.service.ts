@@ -554,6 +554,7 @@ export class EmployeeProfileService {
     await this.findEmployeeOrThrow(id, organizationId);
     return this.scopedPrisma.employmentStatusHistory.findMany({
       where: { organizationId, employeeId: id },
+      include: { changedBy: { select: { id: true, name: true } } },
       orderBy: { changedAt: 'desc' },
     });
   }

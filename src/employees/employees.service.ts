@@ -1163,6 +1163,9 @@ export class EmployeesService {
       clean.employmentStatus === 'EXTENDED_PROBATION'
     ) {
       Object.assign(clean, { probationStatus: 'EXTENDED' });
+    } else if (statusChanging && clean.employmentStatus === 'PROBATION') {
+      // Back on (or newly on) probation: the decision is pending again, so reminders and the tracker pick them up.
+      Object.assign(clean, { probationStatus: 'PENDING' });
     }
 
     // The confirmation date follows the status: moving to Confirmed stamps today (unless one was given), moving back to a
@@ -1180,6 +1183,18 @@ export class EmployeesService {
       // explicitly chosen different type is respected.
       if (statusChanging && resultingStatus === 'CONFIRMED' && before.employeeType === 'probation' && (clean.employeeType === undefined || clean.employeeType === 'probation')) {
         Object.assign(clean, { employeeType: 'permanent' });
+      }
+      // Moving a Permanent employee onto probation puts them on the Probation type, so leave types set for probation apply.
+      if (statusChanging && ['PROBATION', 'EXTENDED_PROBATION'].includes(resultingStatus) && before.employeeType === 'permanent' && (clean.employeeType === undefined || clean.employeeType === 'permanent')) {
+        Object.assign(clean, { employeeType: 'probation' });
+      }
+      if (typeof clean.probationEndDate === 'string') {
+        if (!['PROBATION', 'EXTENDED_PROBATION'].includes(resultingStatus)) {
+          throw new BadRequestException('A probation end date can only be set for someone on probation.');
+        }
+        if (clean.probationEndDate <= before.joiningDate.toISOString().slice(0, 10)) {
+          throw new BadRequestException('The probation end date must be after the joining date.');
+        }
       }
       if (typeof clean.confirmationDate === 'string') {
         if (resultingStatus !== 'CONFIRMED') {
@@ -1580,11 +1595,15 @@ export class EmployeesService {
       // confirm/extend, offboarding) log their own specific eventKey
       // instead via their own services, so this only fires for the
       // plain PATCH /employees/:id path.
+      const label = (v: string) => { const t = v.toLowerCase().replace(/_/g, ' '); return t.charAt(0).toUpperCase() + t.slice(1); };
       await this.timelineService.logEvent({
         organizationId,
         employeeId: before.id,
         eventKey: 'EMPLOYEE_UPDATED',
         performedById: changedById,
+        description:
+          `Employment status changed from ${label(before.employmentStatus)} to ${label(clean.employmentStatus)}.` +
+          (clean.employeeType !== undefined && clean.employeeType !== before.employeeType ? ` Employee type changed to ${clean.employeeType}.` : ''),
       });
     }
   }

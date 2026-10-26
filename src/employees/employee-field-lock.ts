@@ -31,6 +31,7 @@ const LOCKED_FIELDS_FOR_EMPLOYEE: (keyof UpdateEmployeeDto)[] = [
   'email',
   'employmentStatus',
   'confirmationDate',
+  'probationEndDate',
   'employeeType',
 ];
 
