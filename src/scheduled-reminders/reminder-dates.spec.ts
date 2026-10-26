@@ -1,5 +1,6 @@
 // Purpose: Unit tests for the pure rules behind the scheduled reminder jobs.
 import {
+  isResignationReminderDue,
   dateOf,
   daysBetween,
   isEscalationDue,
@@ -143,5 +144,11 @@ describe('isProbationEndOrOverdueReminderDay', () => {
   });
   it('stays quiet on the other days', () => {
     for (const d of [15, 7, 1, -2, -7, -9]) expect(isProbationEndOrOverdueReminderDay(d)).toBe(false);
+  });
+});
+
+describe('isResignationReminderDue', () => {
+  it('from day 2, then every 2 days', () => {
+    expect([0, 1, 2, 3, 4, 5, 6, 8].map(isResignationReminderDue)).toEqual([false, false, true, false, true, false, true, true]);
   });
 });

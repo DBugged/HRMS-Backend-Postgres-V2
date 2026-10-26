@@ -252,3 +252,9 @@ export function isTaxDeclarationReminderDay(
   if (today < window.opens || today > window.deadline) return false;
   return daysBetween(window.opens, today) % 7 === 0;
 }
+
+/** A resignation still waiting for a decision is reminded about from this age (in days), then every this many days. */
+export const RESIGNATION_REMINDER_EVERY_DAYS = 2;
+export function isResignationReminderDue(ageDays: number): boolean {
+  return ageDays >= RESIGNATION_REMINDER_EVERY_DAYS && ageDays % RESIGNATION_REMINDER_EVERY_DAYS === 0;
+}

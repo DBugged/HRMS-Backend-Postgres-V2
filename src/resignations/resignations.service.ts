@@ -8,6 +8,9 @@
 // privacy module's requests). approvedLwd defaults to the last working day the employee asked for; an approver may
 // move it, and a date before the notice period ends (an early release) needs a note explaining why.
 import { assertAccountCanLeave } from '../common/account-guard';
+import { findResignationApprovers } from './resignation-approvers';
+import { channelAllowed } from '../notifications/notification-preferences';
+import { frontendUrl } from '../common/frontend-url';
 import { managerIdsOf, reportsToWhere } from '../common/managers';
 import {
   BadRequestException,
@@ -45,6 +48,7 @@ import {
 } from './dto/decide-resignation.dto';
 import { ListResignationsQueryDto } from './dto/list-resignations-query.dto';
 import { todayInOrgTz } from '../common/org-date';
+import { formatDateDisplay } from '../payroll/format-date';
 
 function addDaysToDateStr(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00.000Z`);
@@ -186,7 +190,43 @@ export class ResignationsService {
       'Resignation Submitted',
       `${employee.name} has submitted a resignation (requested last working day ${dto.requestedLwd}).`,
     );
+    void this.emailApprovers(organizationId, employee, dto.requestedLwd, dto.reason);
     return created;
+  }
+
+  // Email to the people who handle a resignation (the reporting manager(s) and the HR / Admin who decide it), on top of the in-app
+  // notice, so it is not missed. Honours each person's email preference and the company's template switch; best-effort.
+  private async emailApprovers(
+    organizationId: string,
+    employee: { id: string; name: string; role: Role; reportingManagerId: string | null; additionalReportingManagerIds?: string[] | null },
+    requestedLwd: string,
+    reason: string | null | undefined,
+    excludeIds: string[] = [],
+  ) {
+    try {
+      const recipients = await findResignationApprovers(this.scopedPrisma, organizationId, employee, excludeIds);
+      const template = await this.scopedPrisma.emailTemplate.findFirst({ where: { organizationId, occasionKey: 'RESIGNATION_SUBMITTED' }, select: { isActive: true } });
+      if (template && !template.isActive) return;
+      for (const user of recipients) {
+        if (!channelAllowed(user.notificationPreferences, NotificationCategory.GENERAL, 'email')) continue;
+        const variables = {
+          employeeName: user.name,
+          subjectName: employee.name,
+          requestedLwd: formatDateDisplay(requestedLwd),
+          reason: reason?.trim() || '-',
+          reviewUrl: `${frontendUrl()}/resignations`,
+        };
+        const rendered = await this.emailTemplatesService.renderOccasion(
+          organizationId,
+          'RESIGNATION_SUBMITTED',
+          variables,
+          this.emailTemplatesService.defaultFor('RESIGNATION_SUBMITTED', variables),
+        );
+        await this.emailService.send({ organizationId, to: user.email, subject: rendered.subject, html: rendered.html });
+      }
+    } catch {
+      // best-effort - the resignation itself has already been saved
+    }
   }
 
   // The people who handle a resignation: every active HR/Admin and the employee's reporting manager, never the
@@ -479,6 +519,8 @@ export class ResignationsService {
         ),
       ),
     );
+
+    void this.emailApprovers(organizationId, employee, dto.requestedLwd, dto.reason, [actor.id]);
 
     // Recorded as already approved: the same decision flow as a normal approval - the offboarding case opens and the
     // employee moves to Resigned. If that is refused (an approved leave runs past the date, say) the resignation

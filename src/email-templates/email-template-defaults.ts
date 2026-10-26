@@ -122,6 +122,10 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
     'Your last working day is {{lastWorkingDay}} ({{when}}).',
   EXIT_CLEARANCE_REMINDER:
     "{{subjectName}}'s last working day is {{lastWorkingDay}}; clearance is still open.",
+  RESIGNATION_SUBMITTED:
+    '{{subjectName}} has submitted a resignation; requested last working day {{requestedLwd}}.',
+  RESIGNATION_PENDING_REMINDER:
+    "{{subjectName}}'s resignation has been waiting {{daysWaiting}} days for a decision.",
 };
 
 // Shared shape for the many "your <thing> was <decision>" emails.
@@ -1084,6 +1088,46 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
         ),
         infoCard([row('Open items', '{{openItems}}')]),
         button('{{reviewUrl}}', 'Open exit process'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Exit',
+  },
+  {
+    // Fires from ResignationsService when a resignation is submitted (or recorded for someone): to the employee's reporting
+    // manager(s) and the HR / Admin who decide it.
+    occasionKey: 'RESIGNATION_SUBMITTED',
+    name: 'Resignation Submitted',
+    subject: 'Resignation submitted: {{subjectName}}',
+    bodyHtml: emailBody({
+      category: 'Exit',
+      title: 'A resignation needs a decision',
+      blocks: [
+        hello,
+        paragraph('{{subjectName}} has submitted a resignation. It is waiting for HR to approve.'),
+        infoCard([
+          row('Requested last working day', '{{requestedLwd}}'),
+          row('Reason', '{{reason}}'),
+        ]),
+        button('{{reviewUrl}}', 'Review the resignation'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Exit',
+  },
+  {
+    // Fires from ResignationReminderService every 2 days while a resignation is still waiting for a decision.
+    occasionKey: 'RESIGNATION_PENDING_REMINDER',
+    name: 'Resignation Waiting for a Decision',
+    subject: 'Reminder: {{subjectName}}\'s resignation is still waiting',
+    bodyHtml: emailBody({
+      category: 'Exit',
+      title: 'Resignation still waiting for a decision',
+      blocks: [
+        hello,
+        paragraph("{{subjectName}}'s resignation has been waiting {{daysWaiting}} days for a decision."),
+        infoCard([row('Requested last working day', '{{requestedLwd}}')]),
+        button('{{reviewUrl}}', 'Review the resignation'),
       ],
     }),
     ccAllActive: false,

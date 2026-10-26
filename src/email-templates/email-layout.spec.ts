@@ -139,6 +139,8 @@ const SUPPLIED: Record<string, string[]> = {
     'openItems',
     'reviewUrl',
   ],
+  RESIGNATION_SUBMITTED: ['subjectName', 'requestedLwd', 'reason', 'reviewUrl'],
+  RESIGNATION_PENDING_REMINDER: ['subjectName', 'requestedLwd', 'daysWaiting', 'reviewUrl'],
 };
 
 describe('email layout', () => {
