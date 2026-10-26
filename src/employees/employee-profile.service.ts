@@ -6,6 +6,7 @@
 // Important: assertSelfOrHr() gates personal-data/document/asset self-service so a non-HR actor can only
 // touch their own profile; getFullProfile() is the HR/Admin-only variant that returns everything, unlike
 // the password-stripped-only view elsewhere.
+import { profileScore } from './profile-score';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly } from '../letters/auto-letter';
 import { todayInOrgTz } from '../common/org-date';
@@ -164,6 +165,68 @@ export class EmployeeProfileService {
       }),
     ]);
     return areMandatoryDocumentsUploaded(requirements, documents);
+  }
+
+  // How complete one employee's profile is, and what is missing (see profile-score.ts). The employee themselves or HR/Admin.
+  async profileScore(id: string, actor: Actor, organizationId: string) {
+    this.assertSelfOrHr(actor, id);
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    const [requirements, documents] = await Promise.all([
+      this.scopedPrisma.documentRequirement.findMany({
+        where: { organizationId, isMandatory: true, isActive: true },
+        select: { name: true, isMandatory: true, isActive: true },
+      }),
+      this.scopedPrisma.employeeDocument.findMany({
+        where: { organizationId, employeeId: id, category: EmployeeDocumentCategory.DOCUMENT },
+        select: { docType: true, status: true },
+      }),
+    ]);
+    return profileScore(employee.personalData as Record<string, unknown>, requirements, documents);
+  }
+
+  // The score of every active employee who is not leaving, lowest first - so HR sees who to chase. Same visibility rule as the
+  // onboarding document list: an HR/Admin colleague's row is shown to an Admin (or to themselves) only.
+  async profileScores(actor: Actor, organizationId: string) {
+    const [requirements, employees] = await Promise.all([
+      this.scopedPrisma.documentRequirement.findMany({
+        where: { organizationId, isMandatory: true, isActive: true },
+        select: { name: true, isMandatory: true, isActive: true },
+      }),
+      this.scopedPrisma.user.findMany({
+        where: { organizationId, isActive: true, exitDate: null },
+        select: { id: true, name: true, employeeId: true, role: true, personalData: true },
+      }),
+    ]);
+    const visible = employees.filter(
+      (e) => actor.id === e.id || actor.role === Role.ADMIN || !(e.role === Role.ADMIN || e.role === Role.HR),
+    );
+    const documents = visible.length
+      ? await this.scopedPrisma.employeeDocument.findMany({
+          where: { organizationId, employeeId: { in: visible.map((e) => e.id) }, category: EmployeeDocumentCategory.DOCUMENT },
+          select: { employeeId: true, docType: true, status: true },
+        })
+      : [];
+    const byEmployee = new Map<string, { docType: string; status: string }[]>();
+    for (const d of documents) {
+      const list = byEmployee.get(d.employeeId) ?? [];
+      list.push(d);
+      byEmployee.set(d.employeeId, list);
+    }
+    const data = visible.map((e) => {
+      const score = profileScore(e.personalData as Record<string, unknown>, requirements, byEmployee.get(e.id) ?? []);
+      return {
+        employeeId: e.id,
+        name: e.name,
+        code: e.employeeId,
+        percent: score.percent,
+        payrollReady: score.payrollReady,
+        missingCount: score.missing.length,
+        // Just the first few, enough for a list; the profile shows them all.
+        missingPreview: score.missing.slice(0, 3).map((m) => m.label),
+      };
+    });
+    data.sort((a, b) => a.percent - b.percent || a.name.localeCompare(b.name));
+    return { data };
   }
 
   // One row per active employee still onboarding (Onboarding / Probation / Extended Probation): how far their
@@ -783,18 +846,22 @@ export class EmployeeProfileService {
         : {}),
     });
 
-    // The outcome letter goes out with the decision (confirmation letter, or the extension notice), so HR does not have to
-    // generate it. Quiet on failure - the decision stands and HR can still send it from the Letters tab.
-    await sendLetterQuietly(
-      this.lettersService,
-      this.logger,
-      id,
-      dto.decision === 'confirmed' ? 'confirmationLetter' : 'probationExtensionLetter',
-      actor as never,
-      organizationId,
-    );
+    // The outcome letter goes out with the decision (confirmation letter, or the extension notice) unless the caller asked to
+    // skip it, so HR does not have to generate it. Quiet on failure - the decision stands and HR can still send it from the
+    // Letters tab; `letterSent` tells the caller which happened (null when it was not asked for).
+    const letterSent =
+      dto.sendLetter === false
+        ? null
+        : await sendLetterQuietly(
+            this.lettersService,
+            this.logger,
+            id,
+            dto.decision === 'confirmed' ? 'confirmationLetter' : 'probationExtensionLetter',
+            actor as never,
+            organizationId,
+          );
 
-    return toSafe(await this.findEmployeeOrThrow(id, organizationId));
+    return { ...toSafe(await this.findEmployeeOrThrow(id, organizationId)), letterSent };
   }
 
   // -- Documents --

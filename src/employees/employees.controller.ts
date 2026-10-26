@@ -102,6 +102,14 @@ export class EmployeesController {
     return this.employeesService.orgChart(caller.organizationId);
   }
 
+  // How complete every active employee's profile is, lowest first (HR/Admin). Before the :id routes so "profile-scores" is not read as an id.
+  @Get('profile-scores')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  profileScores(@CurrentUser() caller: Caller) {
+    return this.employeeProfileService.profileScores(caller, caller.organizationId);
+  }
+
   // Mandatory-document progress for everyone still onboarding - feeds the Pending Onboarding list. Declared before
   // the :id routes so "onboarding-documents" is not read as an id.
   @Get('onboarding-documents')
@@ -198,6 +206,12 @@ export class EmployeesController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // One employee's profile completeness and what is missing (the employee themselves, or HR/Admin).
+  @Get(':id/profile-score')
+  profileScore(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.employeeProfileService.profileScore(id, caller, caller.organizationId);
   }
 
   @Get(':id/full-profile')

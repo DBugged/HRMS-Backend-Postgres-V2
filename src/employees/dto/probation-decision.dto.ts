@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, IsString, Matches } from 'class-validator';
 
 export class ProbationDecisionDto {
   @ApiProperty({ enum: ['confirmed', 'extended'] })
@@ -27,4 +27,12 @@ export class ProbationDecisionDto {
   @IsOptional()
   @IsString()
   note?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Email the confirmation / probation-extension letter with the decision. Defaults to true; send false to skip it.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sendLetter?: boolean;
 }
