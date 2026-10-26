@@ -17,6 +17,7 @@ import { LetterTemplatesService } from './letter-templates.service';
 import { UpdateLetterTemplateDto } from './dto/update-letter-template.dto';
 import { CreateLetterTemplateDto } from './dto/create-letter-template.dto';
 import { Roles } from '../common/decorators/roles.decorator';
+import { AutomationTemplateCheckService } from './automation-template-check.service';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
@@ -28,6 +29,7 @@ type Caller = Omit<User, 'password'>;
 export class LetterTemplatesController {
   constructor(
     private readonly letterTemplatesService: LetterTemplatesService,
+    private readonly automationTemplateCheck: AutomationTemplateCheckService,
   ) {}
 
   // Admin/HR only (the Letter Templates screen is theirs); other roles get 403.
@@ -36,6 +38,14 @@ export class LetterTemplatesController {
   @UseGuards(RolesGuard)
   findAll(@CurrentUser() caller: Caller) {
     return this.letterTemplatesService.findAll(caller.organizationId);
+  }
+
+  // Letters/emails the system sends by itself whose template is missing or switched off. Before ':key' so it is not read as a key.
+  @Get('automation-check')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  automationCheck(@CurrentUser() caller: Caller) {
+    return this.automationTemplateCheck.check(caller.organizationId);
   }
 
   @Get(':key')
