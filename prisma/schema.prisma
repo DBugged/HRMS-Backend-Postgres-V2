@@ -3242,6 +3242,9 @@ model EmployeeDocument {
   // Only meaningful for an uploaded Letter (category LETTER): HR/Admin can switch it off so the employee no longer sees
   // it (the "Visible to employee" tick, as on the generated letters). Defaults to visible, as before.
   visibleToEmployee Boolean                  @default(true)
+  // YYYY-MM-DD the document stops being valid (passport, visa, licence, certificate). Optional; the daily
+  // DocumentExpiryReminderService reminds the owner and HR before it passes.
+  expiryDate        String?
 
   status       EmployeeDocumentStatus @default(PENDING)
   reviewReason String?

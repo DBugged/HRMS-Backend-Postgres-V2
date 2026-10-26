@@ -12,6 +12,8 @@ import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
+import { LettersModule } from '../letters/letters.module';
+
 @Module({
   imports: [
     UsersModule,
@@ -22,6 +24,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
     AuditLogModule,
     EmailTemplatesModule,
     PrivacyModule,
+    LettersModule,
   ],
   controllers: [EmployeesController],
   providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],

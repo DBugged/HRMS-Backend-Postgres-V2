@@ -7,9 +7,12 @@ import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.m
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
+import { LettersModule } from '../letters/letters.module';
+
 @Module({
   imports: [
     OffboardingModule,
+    LettersModule,
     AuditLogModule,
     EmployeeTimelineModule,
     NotificationsModule,

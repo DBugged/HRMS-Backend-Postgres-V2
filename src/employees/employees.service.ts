@@ -8,6 +8,8 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { LettersService } from '../letters/letters.service';
+import { sendLetterQuietly } from '../letters/auto-letter';
 import { isManagerOf } from '../common/managers';
 import { assertEmployeeRoom } from '../module-access/module-gate';
 import { buildOrgChart } from './org-chart';
@@ -27,8 +29,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+  NotFoundException, Logger } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { generatePolicyPassword } from '../common/password-policy';
@@ -134,6 +135,8 @@ const DEACTIVATION_BLOCKED_MESSAGE =
 
 @Injectable()
 export class EmployeesService {
+  private readonly logger = new Logger(EmployeesService.name);
+
   constructor(
     // The tenant-scope-extended client only — including for
     // $transaction(). Using the plain PrismaService's $transaction here
@@ -152,6 +155,7 @@ export class EmployeesService {
     private readonly privacyAudit: PrivacyAuditService,
     private readonly attendanceService: AttendanceService,
     private readonly payrollService: PayrollService,
+    private readonly lettersService: LettersService,
   ) {}
 
   async create(
@@ -1368,6 +1372,18 @@ export class EmployeesService {
       targetId: id,
       details: { fields: changedFieldKeys, changes },
     });
+
+    // The probation outcome letter goes out with the decision (confirmation, or the extension notice), so HR does not have
+    // to generate it. Only when the status actually changed to that outcome; quiet on failure (see sendLetterQuietly).
+    if (statusChanging && before.isActive) {
+      const letter =
+        clean.employmentStatus === 'CONFIRMED'
+          ? 'confirmationLetter'
+          : clean.employmentStatus === 'EXTENDED_PROBATION'
+            ? 'probationExtensionLetter'
+            : null;
+      if (letter) await sendLetterQuietly(this.lettersService, this.logger, id, letter, actor as never, organizationId);
+    }
 
     return toSafe(await this.findByIdOrThrow(id, organizationId));
   }

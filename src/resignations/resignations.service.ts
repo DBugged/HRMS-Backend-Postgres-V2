@@ -7,6 +7,8 @@
 // case. Nobody decides their own resignation, and only an ADMIN decides an HR/ADMIN user's (same rule as the
 // privacy module's requests). approvedLwd defaults to the last working day the employee asked for; an approver may
 // move it, and a date before the notice period ends (an early release) needs a note explaining why.
+import { LettersService } from '../letters/letters.service';
+import { sendLetterQuietly } from '../letters/auto-letter';
 import { assertAccountCanLeave } from '../common/account-guard';
 import { findResignationApprovers } from './resignation-approvers';
 import { channelAllowed } from '../notifications/notification-preferences';
@@ -18,8 +20,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+  NotFoundException, Logger } from '@nestjs/common';
 import {
   NotificationCategory,
   OffboardingStatus,
@@ -68,6 +69,8 @@ function addDays(date: string, days: number): string {
 
 @Injectable()
 export class ResignationsService {
+  private readonly logger = new Logger(ResignationsService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly offboardingService: OffboardingService,
@@ -76,6 +79,7 @@ export class ResignationsService {
     private readonly notificationsService: NotificationsService,
     private readonly emailService: EmailService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly lettersService: LettersService,
   ) {}
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
@@ -871,6 +875,9 @@ export class ResignationsService {
       approvedLwd,
       ...(earlyRelease ? { earlyRelease: true, noticeEndsOn } : {}),
     });
+    // The acceptance letter goes out with the approval (to the personal email once an exit is under way), so HR does not
+    // have to generate it. Quiet on failure - the approval stands, and HR can still send it from the Letters tab.
+    await sendLetterQuietly(this.lettersService, this.logger, record.employeeId, 'resignationAcceptance', actor, organizationId);
     return this.scopedPrisma.resignation.findFirstOrThrow({
       where: { id, organizationId },
     });

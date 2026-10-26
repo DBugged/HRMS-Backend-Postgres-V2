@@ -6,6 +6,8 @@
 // Important: assertSelfOrHr() gates personal-data/document/asset self-service so a non-HR actor can only
 // touch their own profile; getFullProfile() is the HR/Admin-only variant that returns everything, unlike
 // the password-stripped-only view elsewhere.
+import { LettersService } from '../letters/letters.service';
+import { sendLetterQuietly } from '../letters/auto-letter';
 import { todayInOrgTz } from '../common/org-date';
 import {
   BadRequestException,
@@ -14,6 +16,7 @@ import {
   Inject,
   Injectable,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import {
   EmployeeDocument,
@@ -42,6 +45,7 @@ import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
 import { ProbationDecisionDto } from './dto/probation-decision.dto';
 import { CreateEmployeeDocumentDto } from './dto/create-employee-document.dto';
 import { ReviewEmployeeDocumentDto } from './dto/review-employee-document.dto';
+import { SetDocumentExpiryDto } from './dto/set-document-expiry.dto';
 import { SetDocumentVisibilityDto } from './dto/set-document-visibility.dto';
 import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
@@ -84,6 +88,8 @@ function withSignedFileUrl<T extends EmployeeDocument>(doc: T): T {
 
 @Injectable()
 export class EmployeeProfileService {
+  private readonly logger = new Logger(EmployeeProfileService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly timelineService: EmployeeTimelineService,
@@ -92,6 +98,7 @@ export class EmployeeProfileService {
     private readonly auditLogService: AuditLogService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly privacyAudit: PrivacyAuditService,
+    private readonly lettersService: LettersService,
   ) {}
 
   private async findEmployeeOrThrow(id: string, organizationId: string) {
@@ -777,6 +784,17 @@ export class EmployeeProfileService {
         : {}),
     });
 
+    // The outcome letter goes out with the decision (confirmation letter, or the extension notice), so HR does not have to
+    // generate it. Quiet on failure - the decision stands and HR can still send it from the Letters tab.
+    await sendLetterQuietly(
+      this.lettersService,
+      this.logger,
+      id,
+      dto.decision === 'confirmed' ? 'confirmationLetter' : 'probationExtensionLetter',
+      actor as never,
+      organizationId,
+    );
+
     return toSafe(await this.findEmployeeOrThrow(id, organizationId));
   }
 
@@ -881,6 +899,7 @@ export class EmployeeProfileService {
           fileName: dto.fileName,
           fileUrl: dto.fileUrl,
           category,
+          ...(dto.expiryDate && { expiryDate: dto.expiryDate }),
           ...(isFounderDoc && {
             status: EmployeeDocumentStatus.APPROVED,
             reviewedById: actor.id,
@@ -921,6 +940,31 @@ export class EmployeeProfileService {
     await this.scopedPrisma.employeeDocument.updateMany({
       where: { id: docId, organizationId },
       data: { visibleToEmployee: dto.visibleToEmployee },
+    });
+    const updated = await this.scopedPrisma.employeeDocument.findFirstOrThrow({
+      where: { id: docId, organizationId },
+    });
+    return withSignedFileUrl(updated);
+  }
+
+  // Sets or clears the date a document stops being valid. The owner or HR/Admin may do it; reminders follow the date.
+  async setDocumentExpiry(
+    id: string,
+    docId: string,
+    dto: SetDocumentExpiryDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    this.assertSelfOrHr(actor, id);
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    this.assertMayAccessDocumentsFor(actor, employee);
+    const doc = await this.scopedPrisma.employeeDocument.findFirst({
+      where: { id: docId, employeeId: id, organizationId },
+    });
+    if (!doc) throw new NotFoundException('Document not found.');
+    await this.scopedPrisma.employeeDocument.updateMany({
+      where: { id: docId, organizationId },
+      data: { expiryDate: dto.expiryDate },
     });
     const updated = await this.scopedPrisma.employeeDocument.findFirstOrThrow({
       where: { id: docId, organizationId },
