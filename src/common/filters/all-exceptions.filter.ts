@@ -61,6 +61,14 @@ function asBodyParserError(
   return { type: e.type, status, message: e.message };
 }
 
+// "45 seconds" / "1 minute" / "3 minutes": how long a caller who was rate-limited has to wait.
+export function describeWait(seconds: number): string {
+  const s = Math.max(1, Math.ceil(seconds));
+  if (s < 60) return `${s} second${s === 1 ? '' : 's'}`;
+  const m = Math.ceil(s / 60);
+  return `${m} minute${m === 1 ? '' : 's'}`;
+}
+
 // Every error response, HttpException or not, comes out in this exact
 // shape. statusCode/message/error are Nest's own fields (preserved
 // as-is — many e2e tests assert res.body.message directly), path/
@@ -180,6 +188,20 @@ export class AllExceptionsFilter implements ExceptionFilter {
       captureException(exception);
     }
 
+    // Rate-limited (429): say how long to wait, from the Retry-After the throttler set, instead of "ThrottlerException: Too Many
+    // Requests". A 429 that already carries its own wording (for example a sign-in lockout) is left as written.
+    let retryAfterSeconds: number | undefined;
+    if (status === HttpStatus.TOO_MANY_REQUESTS && typeof message === 'string' && /^ThrottlerException|^Too Many Requests/i.test(message)) {
+      const raw = Number(response.getHeader('Retry-After'));
+      if (Number.isFinite(raw) && raw > 0) {
+        retryAfterSeconds = Math.ceil(raw);
+        message = `Too many attempts. Please wait ${describeWait(raw)} and try again.`;
+      } else {
+        message = 'Too many attempts. Please wait a moment and try again.';
+      }
+      error = 'Too Many Requests';
+    }
+
     // Only a refused call to a sensitive route waits for its audit write; every other error is answered at once.
     const denial = this.auditDenial(request, status, message);
     if (denial) await denial;
@@ -188,6 +210,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
       statusCode: status,
       message,
       error,
+      ...(retryAfterSeconds !== undefined ? { retryAfterSeconds } : {}),
       path: request.url,
       timestamp: new Date().toISOString(),
     });

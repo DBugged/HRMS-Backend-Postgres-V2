@@ -91,6 +91,7 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOrigins(),
     credentials: true, // required for the httpOnly refresh cookie to be sent/received cross-origin
+    exposedHeaders: ['Retry-After'], // lets a browser client read how long a rate-limited caller must wait
   });
 
   if (swaggerEnabled()) {
