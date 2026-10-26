@@ -502,6 +502,8 @@ model User {
 
   probationEndDate String?
   probationStatus  ProbationStatus?
+  // YYYY-MM-DD the employee was confirmed from (set when probation is confirmed, or the status is moved to Confirmed).
+  confirmationDate String?
 
   // Profile photo — a relativeKey through the existing generic files
   // module (POST /files/upload/profile-photos), not raw personalData.

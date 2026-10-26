@@ -1165,6 +1165,33 @@ export class EmployeesService {
       Object.assign(clean, { probationStatus: 'EXTENDED' });
     }
 
+    // The confirmation date follows the status: moving to Confirmed stamps today (unless one was given), moving back to a
+    // probation / onboarding status clears it, and a given date has to belong to a Confirmed employee between joining and today.
+    {
+      const resultingStatus = (clean.employmentStatus ?? before.employmentStatus) as EmploymentStatus;
+      const orgTz = (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata';
+      const today = todayInOrgTz(orgTz);
+      if (statusChanging && resultingStatus === 'CONFIRMED' && clean.confirmationDate === undefined) {
+        Object.assign(clean, { confirmationDate: today });
+      } else if (statusChanging && ['ONBOARDING', 'PROBATION', 'EXTENDED_PROBATION'].includes(resultingStatus) && clean.confirmationDate === undefined) {
+        Object.assign(clean, { confirmationDate: null });
+      }
+      // Confirmation moves a probation-type employee to Permanent, so leave types and rules set for Permanent apply to them. An
+      // explicitly chosen different type is respected.
+      if (statusChanging && resultingStatus === 'CONFIRMED' && before.employeeType === 'probation' && (clean.employeeType === undefined || clean.employeeType === 'probation')) {
+        Object.assign(clean, { employeeType: 'permanent' });
+      }
+      if (typeof clean.confirmationDate === 'string') {
+        if (resultingStatus !== 'CONFIRMED') {
+          throw new BadRequestException('A confirmation date can only be set for a Confirmed employee.');
+        }
+        const joined = before.joiningDate.toISOString().slice(0, 10);
+        if (clean.confirmationDate < joined || clean.confirmationDate > today) {
+          throw new BadRequestException('The confirmation date must be between the joining date and today.');
+        }
+      }
+    }
+
     // An Admin reports to nobody: whenever the resulting role is Admin the reporting manager is cleared.
     if ((clean.role ?? before.role) === Role.ADMIN) {
       Object.assign(clean, { reportingManagerId: null, additionalReportingManagerIds: [] });
@@ -1543,6 +1570,9 @@ export class EmployeesService {
           previousStatus: before.employmentStatus,
           newStatus: clean.employmentStatus,
           changedById,
+          ...(clean.employeeType !== undefined && clean.employeeType !== before.employeeType
+            ? { note: `Employee type changed from ${before.employeeType} to ${clean.employeeType}.` }
+            : {}),
         },
       });
       // Generic fallback event for direct employmentStatus edits through

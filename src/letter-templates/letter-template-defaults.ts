@@ -15,7 +15,7 @@ export interface LetterTemplateDefault {
 // afterward from Organization Settings > Letter Templates. Every
 // {{placeholder}} used here is documented in LettersService's variable
 // list; BASIC vars (employeeName, firstName, employeeId, designation,
-// department, employeeType, joiningDate, companyName, companyAddress,
+// department, employeeType, joiningDate, confirmationDate, companyName, companyAddress,
 // issueDate, probationEndDate) are always available, the rest depend on
 // dataProfile (EXIT adds lastWorkingDay/reason/noticeDate, PAYROLL adds
 // month/year/grossSalary/netPay/annualCTC, SETTLEMENT adds the F&F

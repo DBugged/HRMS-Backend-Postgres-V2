@@ -405,6 +405,8 @@ export class LettersService {
       department: employee.department?.name || '—',
       employeeType: employee.employeeType,
       joiningDate: formatDateDisplay(employee.joiningDate),
+      // The date the employee was confirmed from ('—' until they are confirmed).
+      confirmationDate: employee.confirmationDate ? formatDateDisplay(employee.confirmationDate) : '—',
       companyName,
       companyAddress: organization.registeredAddress || '',
       // Organization Settings > Registration Details ('—' when not filled in).

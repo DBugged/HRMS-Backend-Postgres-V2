@@ -6,6 +6,7 @@
 // Important: assertSelfOrHr() gates personal-data/document/asset self-service so a non-HR actor can only
 // touch their own profile; getFullProfile() is the HR/Admin-only variant that returns everything, unlike
 // the password-stripped-only view elsewhere.
+import { todayInOrgTz } from '../common/org-date';
 import {
   BadRequestException,
   ConflictException,
@@ -709,7 +710,9 @@ export class EmployeeProfileService {
       }
     }
     if (dto.decision === 'confirmed' && dto.effectiveDate) {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayInOrgTz(
+        (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata',
+      );
       if (dto.effectiveDate < joined || dto.effectiveDate > today) {
         throw new BadRequestException(
           'The confirmation date must be between the joining date and today.',
@@ -726,6 +729,18 @@ export class EmployeeProfileService {
           employmentStatus: newStatus,
           probationStatus:
             dto.decision === 'confirmed' ? 'CONFIRMED' : 'EXTENDED',
+          // Confirmed means Permanent: a probation-type employee is moved to the Permanent type, so leave types set for it apply.
+          ...(dto.decision === 'confirmed' && employee.employeeType === 'probation' ? { employeeType: 'permanent' } : {}),
+          // The date it counts from: the effective date the approver gave, else today in the organisation's time zone.
+          ...(dto.decision === 'confirmed'
+            ? {
+                confirmationDate:
+                  dto.effectiveDate ??
+                  todayInOrgTz(
+                    (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata',
+                  ),
+              }
+            : {}),
           probationEndDate:
             dto.decision === 'extended'
               ? dto.newProbationEndDate
@@ -740,6 +755,7 @@ export class EmployeeProfileService {
           newStatus,
           note:
             (dto.effectiveDate ? `Effective ${dto.effectiveDate}. ` : '') +
+            (dto.decision === 'confirmed' && employee.employeeType === 'probation' ? 'Employee type changed from probation to permanent. ' : '') +
             (dto.note ?? ''),
           changedById: actor.id,
         },

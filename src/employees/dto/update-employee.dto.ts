@@ -143,6 +143,12 @@ export class UpdateEmployeeDto {
   @IsEnum(EmploymentStatus)
   employmentStatus?: EmploymentStatus;
 
+  // The date the employee was confirmed from (only for a Confirmed employee; set automatically when the status changes).
+  @ApiPropertyOptional({ example: '2026-10-01' })
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'confirmationDate must be a date in YYYY-MM-DD form.' })
+  confirmationDate?: string;
+
   // Missing from this DTO entirely until now — the Edit Employee form
   // always sends it (create and edit share one payload builder on the
   // frontend), so every edit save 400'd with "property employeeType

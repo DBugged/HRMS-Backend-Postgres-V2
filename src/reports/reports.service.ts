@@ -515,6 +515,7 @@ export class ReportsService {
       designation: e.designation,
       role: e.role,
       joiningDate: formatDateDisplay(e.joiningDate),
+      confirmationDate: e.confirmationDate ? formatDateDisplay(e.confirmationDate) : '',
       isActive: e.isActive ? 'Active' : 'Inactive',
     }));
 
@@ -526,6 +527,7 @@ export class ReportsService {
       { header: 'Designation', key: 'designation', width: 18 },
       { header: 'Role', key: 'role', width: 16 },
       { header: 'Joining Date', key: 'joiningDate', width: 14 },
+      { header: 'Confirmation Date', key: 'confirmationDate', width: 16 },
       { header: 'Status', key: 'isActive', width: 12 },
     ];
 
