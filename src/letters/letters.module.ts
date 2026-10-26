@@ -18,5 +18,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
   ],
   controllers: [LettersController],
   providers: [LettersService, LetterPdfService],
+  // Exported so completing an exit can email the relieving / experience letters.
+  exports: [LettersService],
 })
 export class LettersModule {}

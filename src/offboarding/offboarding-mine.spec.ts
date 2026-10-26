@@ -14,6 +14,7 @@ function build(record: Row | null) {
     stub({}),
     stub({}),
     stub({}),
+    stub({}),
   );
 }
 
@@ -51,6 +52,7 @@ describe('my exit status', () => {
       exitInterviewDone: false,
       settlementStage: 'BEING_PREPARED',
       documentsGoToPersonalEmail: true,
+      lettersSent: false,
     });
   });
 

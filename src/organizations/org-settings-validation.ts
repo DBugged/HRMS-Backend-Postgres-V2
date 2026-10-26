@@ -280,6 +280,8 @@ function validatePolicies(p: Record<string, unknown>) {
     'allowCarryForward',
     'allowLeaveEncashment',
     'allowNegativeLeaveBalance',
+    'autoPrepareFnf',
+    'autoCompleteExit',
   ]) {
     if (p[key] !== undefined && typeof p[key] !== 'boolean') {
       bad(`policies.${key} must be true or false.`);

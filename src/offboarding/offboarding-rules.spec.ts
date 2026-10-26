@@ -35,6 +35,8 @@ function build(
   };
   const prisma: Row = {
     user: {
+      count: async () => 0,
+      findMany: async () => [],
       findFirst: async () => ({
         id: 'e1',
         name: 'Asha',
@@ -54,6 +56,7 @@ function build(
       updateMany: tx.offboardingCase.updateMany,
     },
     employeeAsset: { findMany: async () => [] },
+    notification: { findMany: async () => [] },
     leave: { findFirst: async () => null },
     $transaction: async (cb: (t: Row) => unknown) => cb(tx),
   };
@@ -65,6 +68,7 @@ function build(
     stub({ create: async () => undefined }),
     stub({ send: async () => undefined }),
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
+    stub({ send: async () => undefined }), // LettersService
   );
   return { service, kase, audit };
 }
@@ -147,5 +151,17 @@ describe('offboarding: exit rules', () => {
         'org',
       ),
     ).rejects.toThrow(/reverse it before changing the date/);
+  });
+
+  it('completing needs the final settlement PAID - processed is not enough', async () => {
+    const { service, kase } = build({ settlementStatus: 'PROCESSED' });
+    Object.assign(kase, { assetsReturned: true, accessRevoked: true, exitInterviewDone: true, exitStatus: 'RELEASED' });
+    await expect(service.complete('c1', {} as never, actor, 'org')).rejects.toThrow(/settlement payment/);
+  });
+
+  it('completing is refused while the settlement is still a draft', async () => {
+    const { service, kase } = build({ settlementStatus: 'DRAFT' });
+    Object.assign(kase, { assetsReturned: true, accessRevoked: true, exitInterviewDone: true, exitStatus: 'RELEASED' });
+    await expect(service.complete('c1', {} as never, actor, 'org')).rejects.toThrow(/still DRAFT/);
   });
 });

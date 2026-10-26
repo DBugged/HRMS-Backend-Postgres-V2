@@ -17,6 +17,7 @@ import { OffboardingService } from './offboarding.service';
 import { UpdateLastWorkingDayDto } from './dto/update-last-working-day.dto';
 import { InitiateOffboardingDto } from './dto/initiate-offboarding.dto';
 import { UpdateChecklistDto } from './dto/update-checklist.dto';
+import { UpdateChecklistOwnerDto } from './dto/update-checklist-owner.dto';
 import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
 import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
@@ -76,6 +77,16 @@ export class OffboardingController {
       dto,
       caller.organizationId,
     );
+  }
+
+  // Who owns a checklist item and by when (the owner is told, and reminded until it is done).
+  @Patch(':id/checklist-owner')
+  updateChecklistOwner(
+    @Param('id') id: string,
+    @Body() dto: UpdateChecklistOwnerDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.offboardingService.updateChecklistOwner(id, dto, caller.organizationId);
   }
 
   @Patch(':id/exit-interview')

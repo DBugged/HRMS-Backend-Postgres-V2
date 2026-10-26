@@ -2830,6 +2830,17 @@ model OffboardingCase {
   // HR's explicit note when completing with company assets still unreturned.
   assetOverrideNote        String?
 
+  // Who owns each checklist item and by when: { assets: { ownerId, dueDate }, access: {...}, handover: {...}, interview: {...} }.
+  // Set when the exit starts (defaults), editable by HR; drives the owner's reminders.
+  checklistMeta Json @default("{}")
+  // Items the system ticked by itself (e.g. no assets left allocated): { assets: true, ... }, shown as "done automatically".
+  autoTicked    Json @default("{}")
+  // When the final settlement draft was prepared automatically, and when the case first became ready to complete.
+  fnfPreparedAt     DateTime?
+  readyToCompleteAt DateTime?
+  // When the relieving / experience letters were emailed on completion.
+  lettersSentAt     DateTime?
+
   completedById String?
   completedBy   User?     @relation("OffboardingCaseCompletedBy", fields: [completedById], references: [id])
   completedAt   DateTime?
