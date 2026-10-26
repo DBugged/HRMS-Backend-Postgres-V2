@@ -40,6 +40,7 @@ import { SubmitExitInterviewDto } from './dto/submit-exit-interview.dto';
 import { LinkSettlementDto } from './dto/link-settlement.dto';
 import { UpdateLastWorkingDayDto } from './dto/update-last-working-day.dto';
 import { todayInOrgTz } from '../common/org-date';
+import { isCleanDraft } from '../settlements/settlement-clean';
 import { markPayrollInputsChanged, monthsBetween } from '../payroll/payroll-period-guard';
 import { CompleteOffboardingDto } from './dto/complete-offboarding.dto';
 import { reassignDirectReportsBeforeDeactivation } from '../common/manager-reassignment';
@@ -117,6 +118,79 @@ export class OffboardingService {
     );
   }
 
+  // After a leaver's team is moved, the new manager is told how many of those people's requests are waiting for a decision,
+  // so nothing sits unnoticed with a manager who has gone. Best-effort: the exit must not fail on a notice.
+  private async tellNewManagerOfPending(leaverId: string, newManagerId: string | undefined, organizationId: string) {
+    if (!newManagerId) return;
+    try {
+      const reports = await this.scopedPrisma.user.findMany({
+        where: { organizationId, isActive: true, ...reportsToWhere(newManagerId) },
+        select: { id: true },
+      });
+      const ids = reports.map((r) => r.id);
+      if (ids.length === 0) return;
+      const [leaves, loans] = await Promise.all([
+        this.scopedPrisma.leave.count({ where: { organizationId, employeeId: { in: ids }, status: 'PENDING' } }),
+        this.scopedPrisma.loan.count({ where: { organizationId, employeeId: { in: ids }, status: 'PENDING' } }),
+      ]);
+      if (leaves + loans === 0) return;
+      const leaver = await this.scopedPrisma.user.findFirst({ where: { id: leaverId, organizationId }, select: { name: true } });
+      await this.notifyOnce(
+        organizationId,
+        [newManagerId],
+        `Team taken over from ${leaver?.name ?? 'a leaver'}: requests waiting`,
+        `Your team now includes people who reported to ${leaver?.name ?? 'the manager who left'}. ${leaves} leave request(s) and ${loans} loan request(s) from your team are waiting for a decision.`,
+      );
+    } catch {
+      // best-effort notice
+    }
+  }
+
+  // The exit tracker for HR: every open exit with days left, each checklist item's owner and due date, what it is waiting for,
+  // and the state of the final settlement - overdue exits first, then the ones leaving soonest.
+  async overview(organizationId: string) {
+    const org = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const cases = await this.scopedPrisma.offboardingCase.findMany({
+      where: { organizationId, status: { in: OPEN_STATUSES } },
+      include: { employee: { select: { id: true, name: true, employeeId: true } }, settlement: true },
+    });
+    const rows = await Promise.all(
+      cases.map(async (c) => {
+        const view = await this.buildView(c as never, organizationId);
+        const dayNo = (ymd: string) => Math.round(Date.parse(`${ymd.slice(0, 10)}T00:00:00Z`) / 86400000);
+        const overdueItems = view.checklist.filter((i) => i.overdue);
+        return {
+          id: c.id,
+          employee: c.employee,
+          lastWorkingDay: c.lastWorkingDay,
+          // Negative once the last working day has passed.
+          daysLeft: dayNo(c.lastWorkingDay) - dayNo(today),
+          checklist: view.checklist,
+          overdueCount: overdueItems.length,
+          waitingFor: view.waitingFor,
+          readyToComplete: view.readyToComplete,
+          settlementStage: !c.settlement ? 'NOT_STARTED' : c.settlement.status,
+          cleanDraft: !!c.settlement && isCleanDraft(c.settlement),
+          pendingClearedAt: c.pendingClearedAt,
+          exitPackSentAt: c.exitPackSentAt,
+        };
+      }),
+    );
+    rows.sort((a, b) => b.overdueCount - a.overdueCount || a.daysLeft - b.daysLeft);
+    return {
+      today,
+      summary: {
+        open: rows.length,
+        withOverdueItems: rows.filter((r) => r.overdueCount > 0).length,
+        pastLastWorkingDay: rows.filter((r) => r.daysLeft < 0).length,
+        readyToComplete: rows.filter((r) => r.readyToComplete).length,
+        cleanDrafts: rows.filter((r) => r.cleanDraft).length,
+      },
+      cases: rows,
+    };
+  }
+
   // The employee's own exit progress, for the mobile/web "Exit status" card. Deliberately narrow: the last working
   // day, the checklist ticks, a coarse settlement stage and where their documents will go - never the settlement
   // figures, the reason, HR's notes or the exit interview answers. null when they have no exit under way.
@@ -141,9 +215,22 @@ export class OffboardingService {
     const interviewRequired =
       record.exitStatus !== EmploymentStatus.TERMINATED &&
       record.exitStatus !== EmploymentStatus.ABSCONDED;
+    // The choices for the exit interview form, offered only while it is still to be filled.
+    const reasonsForLeaving =
+      interviewRequired && !record.exitInterviewDone && record.status !== OffboardingStatus.COMPLETED
+        ? (
+            await this.scopedPrisma.orgListItem.findMany({
+              where: { organizationId: actor.organizationId, type: OrgListType.REASON_FOR_LEAVING, isActive: true },
+              orderBy: { name: 'asc' },
+              select: { name: true },
+            })
+          ).map((r) => r.name)
+        : [];
     return {
       status: record.status,
       lastWorkingDay: record.lastWorkingDay,
+      reasonsForLeaving,
+      // Sign-in ends the day after the last working day; the last payslips are then emailed to the personal address.
       assetsReturned: record.assetsReturned,
       accessRevoked: record.accessRevoked,
       interviewRequired,
@@ -586,7 +673,32 @@ export class OffboardingService {
     organizationId: string,
   ) {
     const record = await this.assertOpenCase(id, organizationId);
+    return this.saveExitInterview(record, dto, actor, organizationId);
+  }
 
+  // The leaver fills in their own exit interview. This ticks the checklist item itself, so HR no longer has to key it in.
+  async submitMyExitInterview(dto: SubmitExitInterviewDto, actor: Actor) {
+    const mine = await this.scopedPrisma.offboardingCase.findFirst({
+      where: { organizationId: actor.organizationId, employeeId: actor.id, status: { in: OPEN_STATUSES } },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true },
+    });
+    if (!mine) throw new NotFoundException('You have no exit under way.');
+    const record = await this.assertOpenCase(mine.id, actor.organizationId);
+    if (record.exitStatus === EmploymentStatus.TERMINATED || record.exitStatus === EmploymentStatus.ABSCONDED) {
+      throw new BadRequestException('An exit interview is not asked for in your case.');
+    }
+    await this.saveExitInterview(record, dto, actor, actor.organizationId);
+    return this.findMine(actor);
+  }
+
+  private async saveExitInterview(
+    record: Awaited<ReturnType<OffboardingService['assertOpenCase']>>,
+    dto: SubmitExitInterviewDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const id = record.id;
     // Reasons are org-configurable (Organization → Reasons for Leaving).
     const reason = await this.scopedPrisma.orgListItem.findFirst({
       where: {
@@ -874,6 +986,7 @@ export class OffboardingService {
       organizationId,
       actor.id,
     );
+    await this.tellNewManagerOfPending(record.employeeId, dto.reassignManagerId, organizationId);
 
     // A case still carrying the old RESIGNED exit type ends as RELEASED (RESIGNED is the notice stage now).
     const finalStatus =

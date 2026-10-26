@@ -65,7 +65,8 @@ export class EcrController {
     // The file body is not part of the check response.
     const { content: _content, ...rest } = r;
     void _content;
-    return rest;
+    // Members leaving this month, with the date of exit to mark on the EPFO member portal.
+    return { ...rest, exits: await this.ecrService.exitsInMonth(q.month, q.year, c.organizationId) };
   }
 
   @Get()

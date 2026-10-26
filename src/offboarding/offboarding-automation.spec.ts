@@ -3,7 +3,7 @@ import { OffboardingAutomationService } from './offboarding-automation.service';
 type Row = Record<string, any>;
 
 function build(o: { settlement?: Row | null; policies?: Row; ready?: boolean; failCalculate?: boolean; lwd?: string; checklistMeta?: Row } = {}) {
-  const calls = { calculate: [] as Row[], link: [] as Row[], complete: [] as Row[], notifyHr: [] as Row[], notifyOnce: [] as Row[], audit: [] as Row[] };
+  const calls = { cleared: 0, packed: 0, calculate: [] as Row[], link: [] as Row[], complete: [] as Row[], notifyHr: [] as Row[], notifyOnce: [] as Row[], audit: [] as Row[] };
   const kase: Row = {
     id: 'c1', employeeId: 'e1', initiatedById: 'hr1', status: 'IN_PROGRESS', lastWorkingDay: o.lwd ?? '2026-11-10',
     settlementId: null, checklistMeta: o.checklistMeta ?? {}, employee: { id: 'e1', name: 'Asha', employeeId: 'DP-1' }, settlement: null,
@@ -33,7 +33,7 @@ function build(o: { settlement?: Row | null; policies?: Row; ready?: boolean; fa
     },
   };
   const stub = <T>(x: T) => x as never;
-  const svc = new OffboardingAutomationService(stub(prisma), stub(offboarding), stub(settlements), stub({ log: async (e: Row) => calls.audit.push(e) }), stub({ logEvent: async () => undefined }));
+  const svc = new OffboardingAutomationService(stub(prisma), stub(offboarding), stub(settlements), stub({ log: async (e: Row) => calls.audit.push(e) }), stub({ logEvent: async () => undefined }), stub({ clearPending: async () => { calls.cleared++; }, sendExitPack: async () => { calls.packed++; return true; } }));
   return { svc, calls };
 }
 
@@ -46,6 +46,15 @@ describe('OffboardingAutomationService.runForOrg', () => {
     expect(calls.link.some((d) => d.settlementId === 's1' && d.fnfPreparedAt)).toBe(true);
     expect(calls.notifyHr.some((a) => String(a[2]).startsWith('Final settlement draft ready'))).toBe(true);
     expect(calls.audit[0]).toMatchObject({ action: 'FNF_AUTO_PREPARED', details: { automatic: true } });
+  });
+
+  it('clears pending requests and emails the exit pack once the last working day has passed, not before', async () => {
+    const after = build();
+    await after.svc.runForOrg('org', '2026-11-11', 9);
+    expect([after.calls.cleared, after.calls.packed]).toEqual([1, 1]);
+    const onDay = build();
+    await onDay.svc.runForOrg('org', '2026-11-10', 9);
+    expect([onDay.calls.cleared, onDay.calls.packed]).toEqual([0, 0]);
   });
 
   it('does nothing on the last working day itself, or at night', async () => {

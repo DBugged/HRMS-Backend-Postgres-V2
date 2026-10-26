@@ -8,6 +8,7 @@ import { Prisma, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { isOrganizationActive } from '../common/org-status';
+import { organizationToday } from '../common/exit-access';
 
 // Deliberately thin — this phase only needs enough to support Auth.
 // A real Employees module (profile fields, org-wide listing, etc.) is a
@@ -62,6 +63,11 @@ export class UsersService {
   // Whether the user's organisation is switched on (not suspended/archived by the platform) - see org-status.ts.
   isOrganizationActive(organizationId: string): Promise<boolean> {
     return isOrganizationActive(this.prisma, organizationId);
+  }
+
+  // Today's date in the organisation's own time zone (cached for a minute) - used to end access after a last working day.
+  organizationToday(organizationId: string): Promise<string> {
+    return organizationToday(this.prisma, organizationId);
   }
 
   findByIdInOrg(id: string, organizationId: string): Promise<User | null> {

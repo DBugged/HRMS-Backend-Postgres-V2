@@ -9,6 +9,7 @@
 // rotate on every use (revoke-and-reissue) to limit replay of a leaked token. forgotPassword() and
 // findRefreshTokenByHash() deliberately return the same response/bypass tenant scoping for tenant-unknown
 // lookups by design, not by oversight.
+import { EXIT_ACCESS_ENDED_MESSAGE, exitAccessEnded } from '../common/exit-access';
 import {
   BadRequestException,
   ConflictException,
@@ -416,6 +417,10 @@ export class AuthService {
     if (!stillUnlocked) {
       throw new UnauthorizedException('Invalid email or password.');
     }
+    // Only someone who proved the password learns that their access has ended with their last working day.
+    if (user.exitDate && exitAccessEnded(user.exitDate, await this.usersService.organizationToday(user.organizationId))) {
+      throw new UnauthorizedException(EXIT_ACCESS_ENDED_MESSAGE);
+    }
     // Only someone who proved the password learns the organisation is switched off.
     if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
       throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
@@ -512,6 +517,10 @@ export class AuthService {
       LOGIN_BLOCKED_STATUSES.includes(user.employmentStatus)
     ) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
+    }
+
+    if (user.exitDate && exitAccessEnded(user.exitDate, await this.usersService.organizationToday(user.organizationId))) {
+      throw new UnauthorizedException(EXIT_ACCESS_ENDED_MESSAGE);
     }
 
     // Rotation: revoke the presented token and mint a brand-new one, rather

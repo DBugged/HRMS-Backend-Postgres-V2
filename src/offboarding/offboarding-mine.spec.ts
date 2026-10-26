@@ -5,6 +5,7 @@ type Row = Record<string, any>;
 function build(record: Row | null) {
   const prisma = {
     offboardingCase: { findFirst: async () => record },
+    orgListItem: { findMany: async () => [{ name: 'Better opportunity' }, { name: 'Relocation' }] },
   };
   const stub = <T>(x: T) => x as never;
   return new OffboardingService(
@@ -33,6 +34,8 @@ describe('my exit status', () => {
     const mine = await build({
       status: 'IN_PROGRESS',
       lastWorkingDay: '2026-10-30',
+      // offered while the interview is still to be filled
+      reasonsForLeaving: ['Better opportunity', 'Relocation'],
       assetsReturned: true,
       accessRevoked: false,
       exitInterviewDone: false,
@@ -49,6 +52,8 @@ describe('my exit status', () => {
       assetsReturned: true,
       accessRevoked: false,
       interviewRequired: true,
+      // offered while the interview is still to be filled
+      reasonsForLeaving: ['Better opportunity', 'Relocation'],
       exitInterviewDone: false,
       settlementStage: 'BEING_PREPARED',
       documentsGoToPersonalEmail: true,
@@ -70,5 +75,6 @@ describe('my exit status', () => {
     );
     expect((await stage({ status: 'PAID' })).settlementStage).toBe('PAID');
     expect((await stage(null, 'TERMINATED')).interviewRequired).toBe(false);
+    expect((await stage(null, 'TERMINATED')).reasonsForLeaving).toEqual([]);
   });
 });

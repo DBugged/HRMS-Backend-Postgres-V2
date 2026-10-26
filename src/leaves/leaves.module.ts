@@ -21,5 +21,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
   ],
   controllers: [LeavesController],
   providers: [LeavesService],
+  // Exported so the offboarding automation can cancel a leaver's pending leave requests.
+  exports: [LeavesService],
 })
 export class LeavesModule {}

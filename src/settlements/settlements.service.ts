@@ -16,6 +16,7 @@
 // with no minBalanceToRetain cap since there's no future balance to protect. The settlement notification
 // email goes to the employee's personalEmail, not their login email, since by process() time the account is
 // already deactivated.
+import { isCleanDraft } from './settlement-clean';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { leaveYearOf } from '../leave-balances/leave-year';
 import { todayInOrgTz } from '../common/org-date';
@@ -208,7 +209,7 @@ export class SettlementsService {
             skip: skip(query.page, query.limit),
             take: query.limit,
           })
-        ).map((row) => this.withGratuityPayout(row)),
+        ).map((row) => ({ ...this.withGratuityPayout(row), cleanDraft: isCleanDraft(row) })),
       () => this.scopedPrisma.settlement.count({ where }),
       query.page,
       query.limit,

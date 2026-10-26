@@ -28,11 +28,59 @@ const linesOf = (json: unknown): Line[] => (json as Line[] | null) ?? [];
 const amountOf = (lines: unknown, code: string): number =>
   linesOf(lines).find((l) => l.code === code)?.amount ?? 0;
 
+// The wording for the EPFO member-exit reason, from how the employee left.
+const EXIT_REASON_TEXT: Record<string, string> = {
+  RESIGNED: 'Cessation of service (resignation)',
+  RELEASED: 'Cessation of service (released)',
+  TERMINATED: 'Cessation of service (termination)',
+  ABSCONDED: 'Cessation of service (absconded)',
+};
+
 @Injectable()
 export class EcrService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
   ) {}
+
+  // Members whose last working day falls in the month, with the date of exit the EPFO member portal asks for - filled from
+  // the exit itself so HR copies it instead of working it out. Only settled exits (processed or paid) are listed.
+  async exitsInMonth(month: number, year: number, organizationId: string) {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const last = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const settlements = await this.scopedPrisma.settlement.findMany({
+      where: {
+        organizationId,
+        status: { in: ['PROCESSED', 'PAID'] },
+        lastWorkingDay: { gte: `${year}-${pad(month)}-01`, lte: `${year}-${pad(month)}-${pad(last)}` },
+      },
+      select: { employeeId: true, lastWorkingDay: true },
+      orderBy: { lastWorkingDay: 'asc' },
+    });
+    if (settlements.length === 0) return [];
+    const ids = settlements.map((s) => s.employeeId);
+    const [users, cases] = await Promise.all([
+      this.scopedPrisma.user.findMany({ where: { organizationId, id: { in: ids } }, select: { id: true, name: true, personalData: true } }),
+      this.scopedPrisma.offboardingCase.findMany({
+        where: { organizationId, employeeId: { in: ids } },
+        orderBy: { createdAt: 'desc' },
+        select: { employeeId: true, exitStatus: true },
+      }),
+    ]);
+    const userById = new Map(users.map((u) => [u.id, u]));
+    const statusById = new Map<string, string>();
+    for (const c of cases) if (!statusById.has(c.employeeId)) statusById.set(c.employeeId, c.exitStatus);
+    return settlements.map((s) => {
+      const u = userById.get(s.employeeId);
+      const pd = (u?.personalData ?? {}) as Record<string, unknown>;
+      return {
+        employeeId: s.employeeId,
+        name: u?.name ?? '',
+        uan: typeof pd.uanNumber === 'string' ? pd.uanNumber.trim() : '',
+        dateOfExit: s.lastWorkingDay.slice(0, 10),
+        reason: EXIT_REASON_TEXT[statusById.get(s.employeeId) ?? ''] ?? 'Cessation of service',
+      };
+    });
+  }
 
   async build(
     month: number,

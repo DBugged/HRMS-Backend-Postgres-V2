@@ -3,6 +3,8 @@
 //   - brings it up to date (ticks "assets returned" once nothing is allocated, tells HR when the case becomes ready to complete);
 //   - from the morning after the last working day, links the settlement already made for it, or prepares the final settlement
 //     draft (when the company has "Prepare F&F automatically" on - the default) and tells HR to review it;
+//   - from the morning after the last working day, clears the leaver's pending requests and emails the last payslips to the
+//     personal email (see ExitClosureService);
 //   - reminds each checklist item's owner, once a day, while the item is open and due;
 //   - when the company turned on "Complete exits automatically", closes a case that is ready.
 // Important: the draft is recorded as calculated by nobody, so the person who reviews and processes it satisfies the
@@ -21,6 +23,7 @@ import { keepModuleEnabled } from '../module-access/module-gate';
 import { todayInOrgTz } from '../common/org-date';
 import { dmyText } from '../payroll/format-date';
 import { OffboardingService } from './offboarding.service';
+import { ExitClosureService } from './exit-closure.service';
 import { CHECKLIST_ITEM_KEYS, CHECKLIST_ITEM_LABELS, readExitAutomation, type ChecklistMeta } from './offboarding-checklist';
 
 type Actor = Omit<User, 'password'>;
@@ -39,6 +42,7 @@ export class OffboardingAutomationService {
     private readonly settlements: SettlementsService,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly closure: ExitClosureService,
   ) {}
 
   @Cron('20 * * * *')
@@ -74,6 +78,12 @@ export class OffboardingAutomationService {
         const actor = (await this.scopedPrisma.user.findFirst({ where: { id: c.initiatedById, organizationId } })) as Actor | null;
         if (!actor) continue;
         const workingHours = localHour >= 7 && localHour <= 20;
+
+        // 0. The morning after the last working day: close the leaver's pending requests and email the exit documents.
+        if (workingHours && c.lastWorkingDay < today) {
+          if (!c.pendingClearedAt) await this.closure.clearPending(c, actor, organizationId);
+          if (!c.exitPackSentAt) await this.closure.sendExitPack(c, actor, organizationId);
+        }
 
         // 1. The final settlement: link the one made for this last working day, or prepare the draft.
         if (workingHours && c.lastWorkingDay < today && !c.settlementId) {

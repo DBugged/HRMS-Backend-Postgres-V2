@@ -101,6 +101,8 @@ export const EMAIL_PREHEADERS: Record<string, string> = {
     'Your salary structure was revised, effective {{effectiveFrom}}. The updated document is attached.',
   EXIT_COMPLETED:
     'Your exit process is complete and your HRMS access is closed.',
+  EXIT_DOCUMENTS_PACK:
+    'Your last payslips and exit documents are attached, as your work account is now closed.',
   APPROVALS_DIGEST: '{{totalPending}} request(s) are waiting for your review.',
   PROBATION_ENDING: "{{subjectName}}'s probation ends in {{daysLeft}} days.",
   PAYROLL_CUTOFF_REMINDER:
@@ -757,6 +759,32 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
         ),
         infoCard([row('Last working day', '{{lastWorkingDay}}')]),
         paragraph('Thank you for your time with us.'),
+      ],
+    }),
+    ccAllActive: false,
+    category: 'Exit',
+  },
+  {
+    // Fires from OffboardingAutomationService the morning after the last working day - sent to the PERSONAL email only,
+    // with the last six payslips attached, because sign-in to the work account ends that day.
+    occasionKey: 'EXIT_DOCUMENTS_PACK',
+    name: 'Exit Documents Pack',
+    subject: 'Your payslips and exit documents',
+    bodyHtml: emailBody({
+      category: 'Exit',
+      title: 'Your payslips and exit documents',
+      blocks: [
+        greet,
+        paragraph(
+          'Your last working day was {{lastWorkingDay}}, so sign-in to your work account has now ended. Your last payslips are attached to this email for your records.',
+        ),
+        infoCard([
+          row('Last working day', '{{lastWorkingDay}}'),
+          row('Payslips attached', '{{payslipCount}}'),
+        ]),
+        paragraph(
+          'Your relieving and experience letters are emailed to this address as soon as HR issues them. Please contact HR if anything is missing.',
+        ),
       ],
     }),
     ccAllActive: false,

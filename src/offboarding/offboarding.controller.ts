@@ -56,6 +56,20 @@ export class OffboardingController {
     return this.offboardingService.findMine(caller);
   }
 
+  // The leaver fills in their own exit interview (ticks the checklist item). Before ':id' routes so 'mine' is not read as an id.
+  @Post('mine/exit-interview')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER, Role.EMPLOYEE)
+  @UseGuards(RolesGuard)
+  submitMyExitInterview(@Body() dto: SubmitExitInterviewDto, @CurrentUser() caller: Caller) {
+    return this.offboardingService.submitMyExitInterview(dto, caller);
+  }
+
+  // Exit tracker: open exits with days left, owners, overdue items and settlement state.
+  @Get('overview')
+  overview(@CurrentUser() caller: Caller) {
+    return this.offboardingService.overview(caller.organizationId);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string, @CurrentUser() caller: Caller) {
     return this.offboardingService.findOne(id, caller.organizationId);

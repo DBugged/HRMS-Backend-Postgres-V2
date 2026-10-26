@@ -4,6 +4,7 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from '../../common/interfaces/jwt-payload.interface';
 import { ORG_SUSPENDED_MESSAGE } from '../../common/org-status';
 import { UsersService } from '../../users/users.service';
+import { EXIT_ACCESS_ENDED_MESSAGE, exitAccessEnded } from '../../common/exit-access';
 
 /**
  * Deliberately re-fetches the user row from the DB on every request rather
@@ -40,6 +41,10 @@ export class JwtAccessStrategy extends PassportStrategy(
     // A suspended or archived organisation's sessions stop working at once, not at token expiry.
     if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
       throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
+    }
+    // Once the last working day has passed, access ends even though the account stays open until HR completes the exit.
+    if (user.exitDate && exitAccessEnded(user.exitDate, await this.usersService.organizationToday(user.organizationId))) {
+      throw new UnauthorizedException(EXIT_ACCESS_ENDED_MESSAGE);
     }
     // A password change or reset ends every older session at once: an access token signed before it is refused
     // (compared in whole seconds, the resolution of the token's own issue time).

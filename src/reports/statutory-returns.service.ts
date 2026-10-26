@@ -111,7 +111,8 @@ export class StatutoryReturnsService {
         where: {
           organizationId,
           employeeId: { in: ids },
-          status: SettlementStatus.PROCESSED,
+          // A paid settlement is as final as a processed one: the member's exit must still be reported.
+          status: { in: [SettlementStatus.PROCESSED, SettlementStatus.PAID] },
           lastWorkingDay: {
             lte: `${year}-${pad(month)}-${pad(daysInMonth)}`,
           },

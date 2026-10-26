@@ -2840,6 +2840,10 @@ model OffboardingCase {
   readyToCompleteAt DateTime?
   // When the relieving / experience letters were emailed on completion.
   lettersSentAt     DateTime?
+  // When the leaver's pending requests were closed automatically after the last working day, and when the final-documents pack
+  // (last six payslips) was emailed to their personal address.
+  pendingClearedAt  DateTime?
+  exitPackSentAt    DateTime?
 
   completedById String?
   completedBy   User?     @relation("OffboardingCaseCompletedBy", fields: [completedById], references: [id])
