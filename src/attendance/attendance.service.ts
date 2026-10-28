@@ -63,6 +63,7 @@ import { paginate, skip } from '../common/pagination';
 import { mapWithConcurrency } from '../common/concurrency';
 import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { isEmployedOn } from '../common/managers';
+import { alwaysPresentApplies, shiftMinutes } from './always-present';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
   assertManagerDeptScope,
@@ -621,16 +622,31 @@ export class AttendanceService {
       }
     }
 
-    const { status, workDurationMinutes, isLate, isEarlyOut } =
-      await this.deriveDayOutcome(db, {
-        organizationId,
-        employeeId,
-        employeeDepartmentId: employee.departmentId,
-        dateStr,
-        shiftConfig,
-        inTime,
-        outTime,
-      });
+    const outcome = await this.deriveDayOutcome(db, {
+      organizationId,
+      employeeId,
+      employeeDepartmentId: employee.departmentId,
+      dateStr,
+      shiftConfig,
+      inTime,
+      outTime,
+    });
+    let { status, workDurationMinutes, isLate, isEarlyOut } = outcome;
+    // Marked always-present: a working day with no approved leave is Present, never Absent, and - with no punches - shows the
+    // person's own shift timings. A day of approved leave stays leave (balance and pay follow the normal leave rules). A real punch keeps its times. Weekly offs and holidays stay as the schedule says.
+    let autoPresent = false;
+    if (alwaysPresentApplies(employee, dateStr, status)) {
+      autoPresent = true;
+      status = AttendanceStatus.PRESENT;
+      isLate = false;
+      isEarlyOut = false;
+      if (punches.length === 0) {
+        const tz = shiftConfig.timezone ?? DEFAULT_ORG_TIMEZONE;
+        inTime = buildShiftDateTime(dateStr, shiftConfig.shiftStartTime, tz);
+        outTime = buildShiftDateTime(shiftConfig.crossesMidnight ? addDaysStr(dateStr, 1) : dateStr, shiftConfig.shiftEndTime, tz);
+        workDurationMinutes = shiftMinutes(shiftConfig.shiftStartTime, shiftConfig.shiftEndTime, shiftConfig.crossesMidnight, shiftConfig.breakMinutes);
+      }
+    }
 
     const fields = {
       status,
@@ -649,7 +665,7 @@ export class AttendanceService {
       isEarlyOut,
       // Reflects "how was this row last derived" — always FACE_API on
       // recalculation regardless of which punch source triggered it.
-      source: AttendanceSource.FACE_API,
+      source: autoPresent && punches.length === 0 ? AttendanceSource.SYSTEM : AttendanceSource.FACE_API,
     };
 
     if (existing) {
@@ -5411,6 +5427,31 @@ export class AttendanceService {
         );
       }
     }
+  }
+
+  // Writes (or rewrites) the Present days of an always-present employee from `from` up to yesterday, so turning the setting on today
+  // also fixes the days since the effective date. Skips months whose payroll is locked or paid, days before joining and after the last
+  // working day, and goes back at most 92 days. Returns how many days were written.
+  async backfillAlwaysPresent(employeeId: string, from: string, organizationId: string): Promise<number> {
+    const employee = await this.scopedPrisma.user.findFirst({ where: { id: employeeId, organizationId }, select: { joiningDate: true, exitDate: true } });
+    if (!employee) return 0;
+    const yesterday = yesterdayInOrgTz(await this.getOrgTimezone(organizationId), new Date());
+    const earliest = addDaysStr(yesterday, -92);
+    let day = [from, utcDateStrOf(employee.joiningDate), earliest].sort().pop() as string;
+    const locked = new Map<string, boolean>();
+    let written = 0;
+    for (; day <= yesterday; day = addDaysStr(day, 1)) {
+      if (!isEmployedOn(employee.exitDate, day)) break;
+      const monthKey = day.slice(0, 7);
+      if (!locked.has(monthKey)) {
+        const ids = await lockedEmployeeIdsForMonth(this.scopedPrisma, organizationId, Number(day.slice(0, 4)), Number(day.slice(5, 7)));
+        locked.set(monthKey, ids.has(employeeId));
+      }
+      if (locked.get(monthKey)) continue;
+      await this.recalculateAttendanceForDay(this.scopedPrisma, employeeId, day, organizationId, { quiet: true });
+      written += 1;
+    }
+    return written;
   }
 
   // Tells employees about yesterday's absence at 08:00 in their organization's own timezone, instead of at 01:00 when the

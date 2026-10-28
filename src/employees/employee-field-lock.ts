@@ -12,6 +12,8 @@ const LOCKED_FIELDS_FOR_EMPLOYEE: (keyof UpdateEmployeeDto)[] = [
   'departmentId',
   'workLocationId',
   'brandId',
+  'alwaysPresent',
+  'alwaysPresentFrom',
   'requireWorkLocationForPunch',
   'selfieRequirement',
   'locationRequirement',

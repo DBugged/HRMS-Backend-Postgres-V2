@@ -19,6 +19,7 @@ import { EmployeeProfileService } from './employee-profile.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { BulkCreateEmployeesDto } from './dto/bulk-create-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { BulkSetAlwaysPresentDto } from './dto/bulk-set-always-present.dto';
 import { BulkSetCompanyDto } from './dto/bulk-set-company.dto';
 import { ReassignReportsDto } from './dto/reassign-reports.dto';
 import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
@@ -109,6 +110,14 @@ export class EmployeesController {
   @UseGuards(RolesGuard)
   bulkSetCompany(@Body() dto: BulkSetCompanyDto, @CurrentUser() caller: Caller) {
     return this.employeesService.bulkSetCompany(dto.employeeIds, dto.brandId, caller, caller.organizationId);
+  }
+
+  // Marks several employees present on every working day (or back to normal). Before the :id routes so the path is not read as an id.
+  @Post('bulk-always-present')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkSetAlwaysPresent(@Body() dto: BulkSetAlwaysPresentDto, @CurrentUser() caller: Caller) {
+    return this.employeesService.bulkSetAlwaysPresent(dto.employeeIds, dto.alwaysPresent, dto.from, caller, caller.organizationId);
   }
 
   // How complete every active employee's profile is, lowest first (HR/Admin). Before the :id routes so "profile-scores" is not read as an id.

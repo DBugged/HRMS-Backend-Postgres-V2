@@ -628,6 +628,10 @@ model User {
   settlementsProcessed             Settlement[]                      @relation("SettlementProcessedBy")
   offboardingCases                 OffboardingCase[]                 @relation("OffboardingCaseEmployee")
   joiningChecklists                JoiningChecklist[]                @relation("JoiningChecklistEmployee")
+  // Marked present on every working day without punching: the nightly sweep writes a Present day for the person's own shift timings
+  // (never absent, even on unpaid leave), from alwaysPresentFrom (YYYY-MM-DD) up to their last working day. Payroll counts the days as normal.
+  alwaysPresent                    Boolean                           @default(false)
+  alwaysPresentFrom                String?
   // The company name this person's payslips, letters and emails carry (a sister company's name and logo). Null = the company's
   // own branding. Changing it never changes the employee ID.
   brandId                          String?

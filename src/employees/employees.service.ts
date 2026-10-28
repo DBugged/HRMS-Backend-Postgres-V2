@@ -218,6 +218,7 @@ export class EmployeesService {
             organizationId,
             employeeId,
             brandId,
+            ...(dto.alwaysPresent ? { alwaysPresent: true, alwaysPresentFrom: dto.alwaysPresentFrom ?? null } : {}),
             email: dto.email,
             password: hashedPassword,
             name: dto.name,
@@ -1061,6 +1062,12 @@ export class EmployeesService {
       );
     }
     const clean = stripLockedFields(updateFields, actor.role);
+    // Always-present: switching it on starts today unless a date is given; switching it off clears the date.
+    if (clean.alwaysPresent === true && !clean.alwaysPresentFrom && !before.alwaysPresentFrom) {
+      const tz = (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata';
+      clean.alwaysPresentFrom = todayInOrgTz(tz);
+    }
+    if (clean.alwaysPresent === false) (clean as Record<string, unknown>).alwaysPresentFrom = null;
     await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
     // The company brand may be changed, never to an inactive or foreign one; the employee ID is untouched either way.
     if (clean.brandId !== undefined && !(await sisterCompaniesOn(organizationId))) delete clean.brandId;
@@ -1417,6 +1424,15 @@ export class EmployeesService {
       targetId: id,
       details: { fields: changedFieldKeys, changes },
     });
+
+    // Newly marked (or the start date moved): write the Present days since the effective date. Best-effort - the nightly sweep covers it too.
+    if (clean.alwaysPresent === true && (!before.alwaysPresent || (clean.alwaysPresentFrom && clean.alwaysPresentFrom !== before.alwaysPresentFrom))) {
+      try {
+        await this.attendanceService.backfillAlwaysPresent(id, (clean.alwaysPresentFrom ?? before.alwaysPresentFrom) as string, organizationId);
+      } catch (err) {
+        this.logger.warn(`Always-present backfill for ${id} failed: ${(err as Error).message}`);
+      }
+    }
 
     // The probation outcome letter goes out with the decision (confirmation, or the extension notice), so HR does not have
     // to generate it. Only when the status actually changed to that outcome; quiet on failure (see sendLetterQuietly).
@@ -2126,6 +2142,44 @@ export class EmployeesService {
       targetId: brandId ?? 'none',
       details: { brandId, employeeIds: allowed.map((t) => t.id) },
     });
+    return { updated: allowed.length, skipped: employeeIds.length - allowed.length };
+  }
+
+  // Marks several employees always-present (or normal) in one go. HR cannot change an Admin's record, so those are skipped and counted.
+  async bulkSetAlwaysPresent(
+    employeeIds: string[],
+    alwaysPresent: boolean,
+    from: string | undefined,
+    actor: Actor & { id: string; role: Role },
+    organizationId: string,
+  ) {
+    const tz = (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata';
+    const start = from ?? todayInOrgTz(tz);
+    const targets = await this.scopedPrisma.user.findMany({ where: { id: { in: employeeIds }, organizationId }, select: { id: true, role: true } });
+    const allowed = targets.filter((t) => actor.role === Role.ADMIN || t.role !== Role.ADMIN);
+    if (allowed.length > 0) {
+      await this.scopedPrisma.user.updateMany({
+        where: { id: { in: allowed.map((t) => t.id) }, organizationId },
+        data: { alwaysPresent, alwaysPresentFrom: alwaysPresent ? start : null },
+      });
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEES_ALWAYS_PRESENT_SET',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: 'bulk',
+      details: { alwaysPresent, from: alwaysPresent ? start : null, employeeIds: allowed.map((t) => t.id) },
+    });
+    if (alwaysPresent) {
+      for (const t of allowed) {
+        try {
+          await this.attendanceService.backfillAlwaysPresent(t.id, start, organizationId);
+        } catch (err) {
+          this.logger.warn(`Always-present backfill for ${t.id} failed: ${(err as Error).message}`);
+        }
+      }
+    }
     return { updated: allowed.length, skipped: employeeIds.length - allowed.length };
   }
 

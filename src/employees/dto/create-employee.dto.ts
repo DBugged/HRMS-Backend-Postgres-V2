@@ -45,6 +45,18 @@ export class CreateEmployeeDto {
 
   // Department, designation, employee category and work location are required - the Add Employee form and the
   // Excel import enforce the same four, so an employee cannot be created without them from any client.
+  // Marked present on every working day without punching (shown with the person's own shift timings; absent only on approved leave; payroll counts the days).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  alwaysPresent?: boolean;
+
+  // YYYY-MM-DD the marking starts from (today when left out as it is switched on).
+  @ApiPropertyOptional()
+  @IsOptional()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'alwaysPresentFrom must be YYYY-MM-DD.' })
+  alwaysPresentFrom?: string;
+
   // The company (brand) whose name and logo this person's payslips, letters and emails carry. Blank/omitted = the default company
   // brand if one is set, else the organization's own. null = the organization's own, even when a default exists.
   @ApiPropertyOptional({ nullable: true })
