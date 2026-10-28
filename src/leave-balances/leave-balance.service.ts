@@ -344,10 +344,12 @@ export class LeaveBalanceService {
     updated: LeaveType,
     organizationId: string,
     // `year` reconciles that leave year instead of the one in progress (the transition tops up the extended year).
+    // `employeeIds` limits it to those people (an employee's joining date was corrected).
     options: {
       dryRun?: boolean;
       year?: number;
       cfg?: LeaveYearConfig;
+      employeeIds?: string[];
     } = {},
   ): Promise<{
     rowsUpdated: number;
@@ -380,7 +382,12 @@ export class LeaveBalanceService {
     if (isPeriodicForYear(updated, year))
       return { rowsUpdated: 0, changes: [] };
     const rows = await tx.leaveBalance.findMany({
-      where: { organizationId, leaveTypeId: updated.id, year },
+      where: {
+        organizationId,
+        leaveTypeId: updated.id,
+        year,
+        ...(options.employeeIds && { employeeId: { in: options.employeeIds } }),
+      },
     });
     if (rows.length === 0) return { rowsUpdated: 0, changes: [] };
 

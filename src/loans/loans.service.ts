@@ -182,13 +182,19 @@ export class LoansService {
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
     } else if (actor.role === Role.MANAGER) {
-      where.employeeId = {
-        in: await deptScopedEmployeeIds(
-          this.scopedPrisma,
-          actor,
-          organizationId,
-        ),
-      };
+      // A manager's own loans (My Loans / Advances) - they borrow like any employee - or one person, or the whole
+      // department they manage.
+      const scope = await deptScopedEmployeeIds(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+      );
+      where.employeeId =
+        query.employeeId === actor.id
+          ? actor.id
+          : query.employeeId
+            ? { in: scope.filter((id) => id === query.employeeId) }
+            : { in: scope };
     } else if (query.employeeId) {
       where.employeeId = query.employeeId;
     }
@@ -550,7 +556,12 @@ export class LoansService {
     // Guarded compare-and-swap — see approve()'s comment for why.
     const { count } = await this.scopedPrisma.loan.updateMany({
       where: { id, organizationId, status: LoanStatus.PENDING },
-      data: { status: LoanStatus.REJECTED, approvedById: actor.id },
+      // A rejected request was never paid out, so nothing is owed on it (the requested amount sat in the balance).
+      data: {
+        status: LoanStatus.REJECTED,
+        approvedById: actor.id,
+        outstandingBalance: 0,
+      },
     });
     if (count === 0) {
       throw new ConflictException('This loan request was already reviewed.');

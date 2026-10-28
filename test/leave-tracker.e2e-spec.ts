@@ -386,9 +386,9 @@ describe('Leave Tracker (e2e)', () => {
       // recorded is backfilled to ABSENT, not left blank.
       expect(cells[11]).toBe('ABSENT');
 
-      // Day 15 (a Saturday) also has no Attendance row, but it's a weekend
-      // — must stay blank, never backfilled to ABSENT.
-      expect(cells[15]).toBeUndefined();
+      // Day 15 (a Saturday) also has no Attendance row, but it's a weekly off
+      // — shown as Weekly Off from the shift, never backfilled to ABSENT.
+      expect(cells[15]).toBe('WEEKLY_OFF');
 
       const day8 = body.days.find((day) => day.day === 8);
       expect(day8?.holidayName).toBe('Test Holiday');
@@ -461,11 +461,12 @@ describe('Leave Tracker (e2e)', () => {
         .expect(200);
       const cells = (res.body as GridResponse).cells[empAId] ?? {};
       // No Attendance rows exist for empA in the current month at all — if
-      // today/future backfilling ever leaked in, this would start failing.
-      expect(cells[todayDay]).toBeUndefined();
+      // today/future backfilling ever leaked in, this would start failing. (A weekly off is shown as Weekly Off even
+      // ahead of time, so only Absent is ruled out.)
+      expect(cells[todayDay]).not.toBe('ABSENT');
       const lastDay = new Date(Date.UTC(todayYear, todayMonth, 0)).getUTCDate();
       if (lastDay > todayDay) {
-        expect(cells[lastDay]).toBeUndefined();
+        expect(cells[lastDay]).not.toBe('ABSENT');
       }
     });
 

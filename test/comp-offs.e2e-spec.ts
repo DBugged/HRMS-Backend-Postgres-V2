@@ -482,17 +482,21 @@ describe('Comp-Offs (e2e)', () => {
     });
   });
 
-  it('accepts a regular working day: the approver decides, the date is not refused up front', async () => {
-    // pastDate() is a Sunday (the weekly off); one day before it is an ordinary Saturday-or-weekday the old rule refused.
+  it('refuses a regular working day: comp-off is only for work on a weekly off or a holiday', async () => {
+    // pastDate() is a Sunday (the weekly off); the Tuesday after it is an ordinary working day, already paid through
+    // attendance.
     const d = new Date(`${pastDate(5)}T00:00:00.000Z`);
-    d.setUTCDate(d.getUTCDate() + 2); // the Tuesday after that Sunday
-    await request(app.getHttpServer())
+    d.setUTCDate(d.getUTCDate() + 2);
+    const res = await request(app.getHttpServer())
       .post('/comp-offs')
       .set('Authorization', `Bearer ${employeeToken}`)
       .send({
         earnedForDate: d.toISOString().slice(0, 10),
         reason: 'Covered a release on a working day',
       })
-      .expect(201);
+      .expect(400);
+    expect(String((res.body as { message: unknown }).message)).toContain(
+      'regular working day',
+    );
   });
 });

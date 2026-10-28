@@ -50,6 +50,20 @@ export class WorkLocationsService {
       dto.longitude as number,
       dto.radiusMeters ?? 200,
     );
+    const radiusMeters =
+      fenceType === FenceType.CIRCLE
+        ? Number(dto.radiusMeters) || 200
+        : summary.radiusMeters;
+    await this.assertFenceUnique(
+      {
+        fenceType,
+        boundary,
+        latitude: summary.latitude,
+        longitude: summary.longitude,
+        radiusMeters,
+      },
+      organizationId,
+    );
 
     const location = await this.scopedPrisma.workLocation.create({
       data: {
@@ -68,10 +82,7 @@ export class WorkLocationsService {
             : (boundary as Prisma.InputJsonValue),
         latitude: summary.latitude,
         longitude: summary.longitude,
-        radiusMeters:
-          fenceType === FenceType.CIRCLE
-            ? Number(dto.radiusMeters) || 200
-            : summary.radiusMeters,
+        radiusMeters,
         createdById,
       },
     });
@@ -183,6 +194,17 @@ export class WorkLocationsService {
         fenceType === FenceType.CIRCLE
           ? Number(radiusMeters) || 200
           : summary.radiusMeters;
+      await this.assertFenceUnique(
+        {
+          fenceType,
+          boundary,
+          latitude: summary.latitude,
+          longitude: summary.longitude,
+          radiusMeters: geometryData.radiusMeters,
+        },
+        organizationId,
+        id,
+      );
     }
 
     await this.scopedPrisma.workLocation.updateMany({
@@ -267,6 +289,47 @@ export class WorkLocationsService {
     if (dup)
       throw new ConflictException(
         'A work location with this name already exists.',
+      );
+  }
+
+  // The same place under another name is still a duplicate: a circle with the same centre (to about 10 cm) and radius,
+  // or a rectangle / polygon with the same corners, is refused whatever it is called (excluding self on update).
+  private async assertFenceUnique(
+    fence: {
+      fenceType: FenceType;
+      boundary: Boundary | undefined | null;
+      latitude: number;
+      longitude: number;
+      radiusMeters: number;
+    },
+    organizationId: string,
+    excludeId?: string,
+  ) {
+    const others = await this.scopedPrisma.workLocation.findMany({
+      where: {
+        organizationId,
+        fenceType: fence.fenceType,
+        ...(excludeId && { id: { not: excludeId } }),
+      },
+      select: {
+        name: true,
+        boundary: true,
+        latitude: true,
+        longitude: true,
+        radiusMeters: true,
+      },
+    });
+    const SAME_POINT = 1e-6;
+    const dup = others.find((o) =>
+      fence.fenceType === FenceType.CIRCLE
+        ? Math.abs(o.latitude - fence.latitude) < SAME_POINT &&
+          Math.abs(o.longitude - fence.longitude) < SAME_POINT &&
+          o.radiusMeters === fence.radiusMeters
+        : JSON.stringify(o.boundary) === JSON.stringify(fence.boundary ?? null),
+    );
+    if (dup)
+      throw new ConflictException(
+        `"${dup.name}" already covers exactly this location and geo-fence. Use that work location instead of adding a duplicate.`,
       );
   }
 

@@ -13,6 +13,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 import { LettersModule } from '../letters/letters.module';
+import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { LettersModule } from '../letters/letters.module';
     EmailTemplatesModule,
     PrivacyModule,
     LettersModule,
+    LeaveBalancesModule,
   ],
   controllers: [EmployeesController],
   providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],

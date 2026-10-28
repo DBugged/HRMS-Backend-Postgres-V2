@@ -77,6 +77,7 @@ import { reassignReports, reassignDirectReportsBeforeDeactivation } from '../com
 import { assertAccountCanLeave } from '../common/account-guard';
 import { DEFAULT_EMPLOYEE_TYPES } from '../organizations/employee-types';
 import { normalizeEmail } from '../common/normalize-input';
+import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // The original release's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
@@ -156,6 +157,7 @@ export class EmployeesService {
     private readonly attendanceService: AttendanceService,
     private readonly payrollService: PayrollService,
     private readonly lettersService: LettersService,
+    private readonly leaveBalanceService: LeaveBalanceService,
   ) {}
 
   async create(
@@ -1822,6 +1824,23 @@ export class EmployeesService {
       actor.id,
       organizationId,
     );
+
+    // This year's leave was credited for the old joining date: someone created with a wrong date (e.g. 01-01-2000) got
+    // the whole annual quota, and moving the date to this year has to cut it to the prorated share (and the other way
+    // round). Same rule as a leave-type edit (reconcileUpfrontCredit): never below what is already used or pending.
+    const leaveTypes = await this.scopedPrisma.leaveType.findMany({
+      where: { organizationId, isActive: true },
+    });
+    await this.scopedPrisma.$transaction(async (tx) => {
+      for (const leaveType of leaveTypes) {
+        await this.leaveBalanceService.reconcileUpfrontCredit(
+          tx,
+          leaveType,
+          organizationId,
+          { employeeIds: [before.id] },
+        );
+      }
+    });
 
     // Recalculate only the months that have an open (draft/calculated) payroll run in the affected range.
     const from = (newDate < oldDate ? newDate : oldDate).slice(0, 7);

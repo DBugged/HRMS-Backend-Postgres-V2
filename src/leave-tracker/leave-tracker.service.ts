@@ -33,6 +33,11 @@ import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { todayInOrgTz } from '../common/org-date';
 import {
+  isWeeklyOff,
+  resolveShiftConfig,
+  type OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
+import {
   clampLeaveDaysToMonth,
   clampLeaveDaysToRange,
 } from '../payroll/payroll-date-math';
@@ -157,7 +162,7 @@ export class LeaveTrackerService {
       await Promise.all([
         this.scopedPrisma.organization.findFirst({
           where: { id: organizationId },
-          select: { timezone: true },
+          select: { timezone: true, attendancePayrollPrefs: true },
         }),
         this.scopedPrisma.user.findMany({
           where: { id: { in: employeeIds }, organizationId },
@@ -167,6 +172,10 @@ export class LeaveTrackerService {
             employeeId: true,
             joiningDate: true,
             departmentId: true,
+            isActive: true,
+            exitDate: true,
+            // The department's shift decides each person's weekly offs.
+            department: true,
           },
           orderBy: EMPLOYEE_ORDER_BY,
         }),
@@ -212,9 +221,20 @@ export class LeaveTrackerService {
     const joiningOf = new Map(
       employees.map((e) => [e.id, e.joiningDate.toISOString().slice(0, 10)]),
     );
+    // ...and up to their last working day: not listed for a month that began after it, and no day after it carries
+    // data. A deactivated employee with no last working day on record is not listed at all.
+    const exitOf = new Map(employees.map((e) => [e.id, e.exitDate ?? null]));
     for (let i = employees.length - 1; i >= 0; i--) {
-      if ((joiningOf.get(employees[i].id) ?? '') > end) employees.splice(i, 1);
+      const e = employees[i];
+      if ((joiningOf.get(e.id) ?? '') > end) employees.splice(i, 1);
+      else if (e.exitDate && e.exitDate < start) employees.splice(i, 1);
+      else if (!e.isActive && !e.exitDate) employees.splice(i, 1);
     }
+    const onBooks = (employeeId: string, date: string) => {
+      const joined = joiningOf.get(employeeId);
+      const exit = exitOf.get(employeeId);
+      return joined !== undefined && date >= joined && (!exit || date <= exit);
+    };
 
     const leavesByEmployee = new Map<string, typeof leaves>();
     for (const leave of leaves) {
@@ -233,8 +253,7 @@ export class LeaveTrackerService {
     // give back the exact minute (8.33h -> 8h 20m vs the real 8h 19m).
     const minutes: Record<string, Record<number, number>> = {};
     for (const row of attendanceRows) {
-      const joined = joiningOf.get(row.employeeId);
-      if (joined === undefined || row.date < joined) continue;
+      if (!onBooks(row.employeeId, row.date)) continue;
       const day = Number(row.date.slice(8, 10));
       if (row.workDurationMinutes > 0) {
         (hours[row.employeeId] ??= {})[day] =
@@ -306,9 +325,8 @@ export class LeaveTrackerService {
     // attendance row exists yet - so the grid and its Excel/PDF export always follow the calendar, and a department-only
     // holiday is not mistaken for a working day (or backfilled as Absent) below. A recorded row is never overridden here.
     for (const employee of employees) {
-      const joined = joiningOf.get(employee.id) ?? '';
       for (const day of days) {
-        if (day.dateStr < joined) continue;
+        if (!onBooks(employee.id, day.dateStr)) continue;
         if ((cells[employee.id] ?? {})[day.day]) continue;
         const applies = holidays.some(
           (h) =>
@@ -321,22 +339,32 @@ export class LeaveTrackerService {
       }
     }
 
-    // A working day (not a weekend/holiday) strictly before today, on or
-    // after the employee's own joining date, with no Attendance row at all
-    // — no punch, no leave, nothing — means the employee simply didn't show
-    // up: mark it ABSENT rather than leaving it blank. Today itself is left
-    // alone (the day isn't over — someone can still check in), future days
-    // are never touched, and days before someone joined are never touched
-    // either (they weren't an employee yet — blank, not Absent).
+    // Each person's own weekly offs (their department's shift, else the organisation's default - not always Saturday and
+    // Sunday) are shown as Weekly Off from their joining date, even before the nightly job has written the row. A
+    // working day strictly before today, on or after the joining date, with no Attendance row at all — no punch, no
+    // leave, nothing — means the employee simply didn't show up: mark it ABSENT rather than leaving it blank. Today
+    // itself is left alone (the day isn't over — someone can still check in), future days are never marked Absent, and
+    // days before someone joined or after they left are never touched (blank, not Absent).
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const orgPrefs =
+      (org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null) ??
+      null;
+    const timeZone = org?.timezone ?? 'Asia/Kolkata';
     for (const employee of employees) {
-      const joiningDateStr = employee.joiningDate.toISOString().slice(0, 10);
+      const { weeklyOffs } = resolveShiftConfig(
+        employee.department,
+        orgPrefs,
+        timeZone,
+      );
       for (const day of days) {
-        if (day.dow === 0 || day.dow === 6 || day.holidayName) continue;
+        if (!onBooks(employee.id, day.dateStr)) continue;
+        if (cells[employee.id]?.[day.day]) continue;
+        if (isWeeklyOff(day.dateStr, weeklyOffs)) {
+          (cells[employee.id] ??= {})[day.day] = 'WEEKLY_OFF';
+          continue;
+        }
+        if (day.holidayName) continue;
         if (day.dateStr >= today) continue;
-        if (day.dateStr < joiningDateStr) continue;
-        const existing = cells[employee.id]?.[day.day];
-        if (existing) continue;
         (cells[employee.id] ??= {})[day.day] = 'ABSENT';
       }
     }
@@ -346,6 +374,9 @@ export class LeaveTrackerService {
         id: e.id,
         name: e.name,
         employeeId: e.employeeId,
+        // So the grid leaves the days before joining / after leaving blank instead of drawing a weekend there.
+        joiningDate: joiningOf.get(e.id) ?? null,
+        exitDate: e.exitDate ?? null,
       })),
       days,
       cells,

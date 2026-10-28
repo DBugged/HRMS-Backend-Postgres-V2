@@ -6,6 +6,12 @@
 // must check availability before approving. sweepExpired() runs inline before reads, not on a cron.
 import { isEmployedOn } from '../common/managers';
 import { todayInOrgTz } from '../common/org-date';
+import { holidayInEffect } from '../holidays/holiday-in-effect';
+import {
+  isWeeklyOff,
+  resolveShiftConfig,
+  type OrganizationAttendancePrefs,
+} from '../attendance/attendance-shift-config';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -18,6 +24,7 @@ import {
 import {
   CompOff,
   CompOffStatus,
+  Department,
   NotificationCategory,
   Prisma,
   Role,
@@ -97,24 +104,18 @@ export class CompOffService {
 
     // Today in the organisation's own time zone: the server's UTC date is still yesterday for the first hours of an Indian
     // morning, which refused a comp-off for the day just worked.
-    const today = todayInOrgTz(
-      (
-        await this.scopedPrisma.organization.findFirst({
-          where: { id: organizationId },
-          select: { timezone: true },
-        })
-      )?.timezone ?? 'Asia/Kolkata',
-    );
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     if (dto.earnedForDate > today) {
       throw new BadRequestException('earnedForDate cannot be in the future.');
     }
 
-    // Any past day can be claimed: the approver (manager / HR) sees the date and the reason and decides, so the
-    // request is not refused up front for falling on a working day or a public holiday that was not set up in the
-    // calendar (it was refusing, for example, Gandhi Jayanti when the holiday had not been loaded). The target must
-    // still exist in the organisation.
     const targetEmployee = await this.scopedPrisma.user.findFirst({
       where: { id: targetEmployeeId, organizationId },
+      include: { department: true },
     });
     if (!targetEmployee) throw new NotFoundException('Employee not found.');
     if (!targetEmployee.isActive) {
@@ -183,6 +184,8 @@ export class CompOffService {
         'This day is already logged as overtime. Overtime and comp-off cannot both be claimed for the same day; the approver chooses how to compensate it.',
       );
     }
+
+    await this.assertDayOffWorked(targetEmployee, dto.earnedForDate, organizationId);
 
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
@@ -392,6 +395,44 @@ export class CompOffService {
     return result;
   }
 
+  // Comp-off is time off for working on a day off. A regular working day is already paid through attendance, so it
+  // earns none: only the employee's weekly off (their department's shift, else the organisation's default) or a
+  // holiday that applies to them qualifies. A public holiday missing from the calendar is added there first.
+  private async assertDayOffWorked(
+    employee: { departmentId: string | null; department: Department | null },
+    date: string,
+    organizationId: string,
+  ) {
+    const [org, holiday] = await Promise.all([
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { timezone: true, attendancePayrollPrefs: true },
+      }),
+      this.scopedPrisma.holiday.findFirst({
+        where: {
+          organizationId,
+          AND: [holidayInEffect],
+          date,
+          isOptional: false,
+          OR: employee.departmentId
+            ? [{ departmentId: null }, { departmentId: employee.departmentId }]
+            : [{ departmentId: null }],
+        },
+        select: { id: true },
+      }),
+    ]);
+    const { weeklyOffs } = resolveShiftConfig(
+      employee.department,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      org?.timezone ?? 'Asia/Kolkata',
+    );
+    if (!holiday && !isWeeklyOff(date, weeklyOffs)) {
+      throw new BadRequestException(
+        `${dmyText(date)} is a regular working day, so it does not earn a comp-off. Comp-off is only for work on a weekly off or a holiday - if this day was a public holiday, add it to the Holiday calendar first.`,
+      );
+    }
+  }
+
   async review(
     id: string,
     dto: ReviewCompOffDto,
@@ -418,6 +459,21 @@ export class CompOffService {
       throw new BadRequestException(
         'This comp-off request has already been reviewed.',
       );
+    }
+    // A request raised before the weekly-off / holiday rule existed can still be pending for a regular working day: it
+    // cannot be approved now either (it can be rejected).
+    if (dto.decision === CompOffStatus.APPROVED) {
+      const requester = await this.scopedPrisma.user.findFirst({
+        where: { id: compOff.employeeId, organizationId },
+        include: { department: true },
+      });
+      if (requester) {
+        await this.assertDayOffWorked(
+          requester,
+          compOff.earnedForDate,
+          organizationId,
+        );
+      }
     }
 
     // Guarded compare-and-swap: PENDING re-asserted in the write's own

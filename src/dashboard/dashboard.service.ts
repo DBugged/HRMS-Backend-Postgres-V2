@@ -228,6 +228,9 @@ export class DashboardService {
     const monthPrefix = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
 
     const off = await disabledModulesOf(organizationId);
+    // On the books today - joined, and not past the last working day (the account stays open until the exit is
+    // completed).
+    const onBooksToday = { isActive: true, ...employedOnWhere(today) };
     const [
       totalEmployees,
       presentToday,
@@ -235,6 +238,8 @@ export class DashboardService {
       absentToday,
       incompleteToday,
       onLeaveToday,
+      offToday,
+      notPunchedInToday,
       pendingLeaves,
       pendingRegularizationCount,
       payrollThisMonth,
@@ -249,18 +254,19 @@ export class DashboardService {
       leaveBalanceRows,
       deptLeaveSummaryRaw,
     ] = await Promise.all([
-      // Headcount: on the books today - joined, and not past the last working day (the account stays open until the exit
-      // is completed).
       this.scopedPrisma.user.count({
-        where: { organizationId, isActive: true, ...employedOnWhere(today) },
+        where: { organizationId, ...onBooksToday },
       }),
       // Present = a finished punch pair (or a regularized day). Someone who has only punched in so far is counted
-      // separately as Checked in until their punch-out arrives.
+      // separately as Checked in until their punch-out arrives. Every count below is limited to the people in the
+      // headcount, so the cards add up to Total Employees.
       gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
         where: {
           organizationId,
           date: today,
-          status: AttendanceStatus.PRESENT,
+          employee: onBooksToday,
+          // A half day was punched in and out too; it is not left out of every card.
+          status: { in: [AttendanceStatus.PRESENT, AttendanceStatus.HALF_DAY] },
           // Everything Present except a bare punch-in (a regularized or manually entered day with no punch pair still
           // counts as Present).
           NOT: { inTime: { not: null }, outTime: null },
@@ -270,13 +276,14 @@ export class DashboardService {
         where: {
           organizationId,
           date: today,
+          employee: onBooksToday,
           status: AttendanceStatus.PRESENT,
           inTime: { not: null },
           outTime: null,
         },
       }), 0),
       gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
-        where: { organizationId, date: today, status: AttendanceStatus.ABSENT },
+        where: { organizationId, date: today, employee: onBooksToday, status: AttendanceStatus.ABSENT },
       }), 0),
       // Punched in, no punch-out, shift already ended — distinct from a
       // plain no-show so HR can see who still needs to regularize today.
@@ -284,6 +291,7 @@ export class DashboardService {
         where: {
           organizationId,
           date: today,
+          employee: onBooksToday,
           status: AttendanceStatus.INCOMPLETE,
         },
       }), 0),
@@ -291,7 +299,26 @@ export class DashboardService {
         where: {
           organizationId,
           date: today,
+          employee: onBooksToday,
           status: AttendanceStatus.ON_LEAVE,
+        },
+      }), 0),
+      // A weekly off or holiday today: nobody is expected in.
+      gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          employee: onBooksToday,
+          status: { in: [AttendanceStatus.WEEKLY_OFF, AttendanceStatus.HOLIDAY] },
+        },
+      }), 0),
+      // Nothing recorded yet today: no punch, no leave. The nightly job marks them Absent after the day ends, so until
+      // then they are shown on their own instead of falling out of every card.
+      gate(off, 'module.attendance', async () => this.scopedPrisma.user.count({
+        where: {
+          ...onBooksToday,
+          organizationId,
+          attendances: { none: { organizationId, date: today } },
         },
       }), 0),
       gate(off, 'module.leave', async () => this.scopedPrisma.leave.count({
@@ -524,6 +551,8 @@ export class DashboardService {
         absentToday,
         incompleteToday,
         onLeaveToday,
+        offToday,
+        notPunchedInToday,
       },
       pendingItems: await this.pendingItems(organizationId, null, true, viewer),
       pendingApprovals: {

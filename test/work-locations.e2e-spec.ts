@@ -119,8 +119,10 @@ describe('Work Locations (e2e)', () => {
       .send({
         name: 'Mum',
         state: 'Maharashtra',
-        latitude: 19.07,
-        longitude: 72.87,
+        // Not 19.07 / 72.87: the required-fields helper already has a location there, and the same place under another
+        // name is refused as a duplicate.
+        latitude: 19.08,
+        longitude: 72.88,
       })
       .expect(201);
     expect((ok.body as { state: string }).state).toBe('Maharashtra');
@@ -150,11 +152,13 @@ describe('Work Locations (e2e)', () => {
   });
 
   it('classes a location from its city: metro city, other city, or a village chosen by hand', async () => {
+    // Each site at its own point: the same coordinates and radius under another name are refused as a duplicate.
+    let n = 0;
     const make = (body: Record<string, unknown>) =>
       request(app.getHttpServer())
         .post('/work-locations')
         .set('Authorization', `Bearer ${adminToken}`)
-        .send({ latitude: 18.5, longitude: 73.8, ...body });
+        .send({ latitude: 18.5 + ++n / 100, longitude: 73.8, ...body });
     const pune = await make({ name: 'Pune city site', city: 'Pune' }).expect(201);
     expect(pune.body).toMatchObject({ city: 'Pune', cityClass: 'METRO' });
     const blr = await make({ name: 'BLR office', city: 'Bangalore' }).expect(
@@ -311,6 +315,20 @@ describe('Work Locations (e2e)', () => {
       .expect(404);
   });
 
+  it('rejects the same place under another name: same centre and radius, or the same corners', async () => {
+    await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Head Office Copy', latitude: 19.076, longitude: 72.8777, radiusMeters: 200 })
+      .expect(409);
+    // The same centre with another radius is a different fence.
+    await request(app.getHttpServer())
+      .post('/work-locations')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Head Office Wide', latitude: 19.076, longitude: 72.8777, radiusMeters: 500 })
+      .expect(201);
+  });
+
   it('rejects duplicate names case-insensitively after trimming (create and update)', async () => {
     await request(app.getHttpServer())
       .post('/work-locations')
@@ -320,7 +338,7 @@ describe('Work Locations (e2e)', () => {
     const other = await request(app.getHttpServer())
       .post('/work-locations')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Pune Office', latitude: 18.5, longitude: 73.8 })
+      .send({ name: 'Pune Office', latitude: 18.45, longitude: 73.8 })
       .expect(201);
     await request(app.getHttpServer())
       .put(`/work-locations/${(other.body as WorkLocationBody).id}`)
