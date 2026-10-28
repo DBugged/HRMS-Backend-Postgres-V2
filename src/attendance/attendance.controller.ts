@@ -215,6 +215,13 @@ export class AttendanceController {
     return this.attendanceService.getMyGeoFence(caller, caller.organizationId);
   }
 
+  // One employee's day (record, overtime, shift, time beyond shift) for the Attendance Tracker popup. Literal path, before the :id routes.
+  @Get('day-detail')
+  @ApiBearerAuth('access-token')
+  dayDetail(@Query('employeeId') employeeId: string, @Query('date') date: string, @CurrentUser() caller: Caller) {
+    return this.attendanceService.getDayDetail(employeeId, date, caller, caller.organizationId);
+  }
+
   @Get()
   @ApiBearerAuth('access-token')
   list(@Query() query: QueryAttendanceDto, @CurrentUser() caller: Caller) {

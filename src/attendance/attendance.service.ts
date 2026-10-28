@@ -64,6 +64,7 @@ import { mapWithConcurrency } from '../common/concurrency';
 import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { isEmployedOn } from '../common/managers';
 import { alwaysPresentApplies, shiftMinutes } from './always-present';
+import { extraMinutesBeyondShift } from './day-detail';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
   assertManagerDeptScope,
@@ -2886,6 +2887,33 @@ export class AttendanceService {
       return { geoFence: null };
     }
     return { geoFence: fence };
+  }
+
+  // One employee's day for the Attendance Tracker popup: the attendance record, any overtime logged for it, the person's shift and how long
+  // they worked beyond it. ADMIN/HR may open anyone; a MANAGER only their department; an employee only themself.
+  async getDayDetail(employeeId: string, date: string, actor: Actor, organizationId: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BadRequestException('date must be YYYY-MM-DD.');
+    if (actor.role === Role.EMPLOYEE && actor.id !== employeeId) throw new ForbiddenException('You can only view your own attendance.');
+    if (actor.role === Role.MANAGER && actor.id !== employeeId) {
+      const ids = new Set(await deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId));
+      if (!ids.has(employeeId)) throw new ForbiddenException('You can only view attendance for your own department.');
+    }
+    const employee = await this.scopedPrisma.user.findFirst({ where: { id: employeeId, organizationId }, include: { department: true } });
+    if (!employee) throw new NotFoundException('Employee not found.');
+    const [record, overtime, org] = await Promise.all([
+      this.scopedPrisma.attendance.findFirst({ where: { organizationId, employeeId, date } }),
+      this.scopedPrisma.overtimeRecord.findMany({ where: { organizationId, employeeId, date }, orderBy: { createdAt: 'asc' } }),
+      this.prisma.organization.findUnique({ where: { id: organizationId } }),
+    ]);
+    const shift = resolveShiftConfig(employee.department, org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null, org?.timezone ?? DEFAULT_ORG_TIMEZONE);
+    const shiftNetMinutes = shiftMinutes(shift.shiftStartTime, shift.shiftEndTime, shift.crossesMidnight, shift.breakMinutes);
+    return {
+      date,
+      record,
+      overtime,
+      shift: { startTime: shift.shiftStartTime, endTime: shift.shiftEndTime, minutes: shiftNetMinutes },
+      extraMinutes: extraMinutesBeyondShift(record?.workDurationMinutes ?? 0, shiftNetMinutes),
+    };
   }
 
   async list(query: QueryAttendanceDto, actor: Actor, organizationId: string) {
