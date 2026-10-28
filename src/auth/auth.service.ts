@@ -29,13 +29,15 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
-import { EmploymentStatus, Role } from '@prisma/client';
+import { EmploymentStatus, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { signPersonalDataFileUrls } from '../employees/personal-data';
 import { UsersService } from '../users/users.service';
 import { sisterCompaniesOn } from '../module-access/module-gate';
+import { companyInitials, uniqueEmployeeIdPrefix } from '../common/employee-id-prefix';
+import { takenEmployeeIdPrefixes } from '../common/employee-id-prefixes';
 import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { LeaveTypesService } from '../leave-types/leave-types.service';
@@ -195,6 +197,16 @@ export class AuthService {
             ],
           },
         });
+        // The company's employee IDs start with its own initials (Demo Company -> DC-00001) instead of a shared default, so an ID is unique
+        // across companies and the employee can sign in with it. A clash with another company's prefix gets a number added (DC2-).
+        {
+          const prefix = uniqueEmployeeIdPrefix(companyInitials(dto.organizationName), await takenEmployeeIdPrefixes(tx));
+          const numbering = (organization.documentNumbering ?? {}) as Record<string, Record<string, unknown>>;
+          await tx.organization.update({
+            where: { id: organization.id },
+            data: { documentNumbering: { ...numbering, employeeId: { ...(numbering.employeeId ?? {}), format: `${prefix}{00000}` } } as unknown as Prisma.InputJsonValue },
+          });
+        }
         // Every new org gets all 9 statutory modules pre-seeded (most
         // disabled, payroll_calendar/rounding always enabled) so the
         // future payroll engine's period-aware resolution has a row to
@@ -350,7 +362,18 @@ export class AuthService {
     dto: LoginDto,
     meta: { ip?: string; userAgent?: string },
   ): Promise<IssuedTokens & { user: AuthUserDto }> {
-    const user = await this.usersService.findByEmail(dto.email);
+    // Sign in with an email, or with an employee ID (company ID prefixes are unique, so an ID names one person). An ID that two older
+    // companies still share cannot be told apart, and the person is asked to use their email.
+    let user: User | null;
+    if (dto.email.includes('@')) {
+      user = await this.usersService.findByEmail(dto.email);
+    } else {
+      const matches = await this.usersService.findByEmployeeId(dto.email);
+      if (matches.length > 1) {
+        throw new BadRequestException('This employee ID is shared by more than one company. Please sign in with your email address.');
+      }
+      user = matches[0] ?? null;
+    }
     // Exited employees are refused even if isActive was somehow left true.
     if (
       !user ||

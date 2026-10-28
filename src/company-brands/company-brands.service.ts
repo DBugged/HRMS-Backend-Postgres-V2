@@ -11,6 +11,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { sisterCompaniesOn } from '../module-access/module-gate';
 import { isKeyAllowedForOrg } from '../files/file-token';
+import { takenEmployeeIdPrefixes } from '../common/employee-id-prefixes';
 import { employeeIdPrefixOf, nextEmployeeId, prefixesClash } from './brand-rules';
 import { CreateCompanyBrandDto } from './dto/create-company-brand.dto';
 import { UpdateCompanyBrandDto } from './dto/update-company-brand.dto';
@@ -156,6 +157,9 @@ export class CompanyBrandsService {
     }
     const clash = others.find((o) => prefixesClash(prefix, employeeIdPrefixOf(o.employeeIdFormat)));
     if (clash) throw new ConflictException(`The ID prefix "${prefix}" is already used by ${clash.name}. Pick a different prefix.`);
+    // Also across every other company: an ID prefix is unique everywhere, so employees can sign in with their ID.
+    const elsewhere = (await takenEmployeeIdPrefixes(this.scopedPrisma, organizationId)).find((t) => prefixesClash(prefix, t));
+    if (elsewhere) throw new ConflictException(`The ID prefix "${prefix}" is already used by another company. Pick a different prefix.`);
   }
 
   private assertFileKeys(dto: { logoUrl?: string | null; emailLogoUrl?: string | null }, organizationId: string) {

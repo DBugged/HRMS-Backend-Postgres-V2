@@ -24,7 +24,8 @@ function build(o: { brands?: Row[]; users?: number; orgFormat?: string } = {}) {
       },
       deleteMany: async () => { written.push({ op: 'delete' }); },
     },
-    organization: { findFirst: async () => ({ documentNumbering: { employeeId: { format: o.orgFormat ?? 'DP-{00000}' } } }) },
+    organization: { findFirst: async () => ({ documentNumbering: { employeeId: { format: o.orgFormat ?? 'DP-{00000}' } } }), findMany: async () => [] },
+    $queryRaw: async () => [],
     user: { count: async () => o.users ?? 0 },
     $transaction: async (fn: (t: Row) => unknown) => fn(tx),
   };

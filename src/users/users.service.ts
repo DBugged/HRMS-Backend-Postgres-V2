@@ -49,6 +49,19 @@ export class UsersService {
     return lookup({ email: normalized });
   }
 
+  // Everyone who can sign in with this employee ID (compared without regard to case). Company ID prefixes are unique, so this is normally
+  // one person; two older companies that still share the default prefix can return two. Same tenant-unknown reasoning as findByEmail
+  // above; at most 3 are returned.
+  findByEmployeeId(employeeId: string): Promise<User[]> {
+    type FindManyArgs = Parameters<typeof this.prisma.user.findMany>[0];
+    const args = {
+      where: { employeeId: { equals: employeeId.trim(), mode: 'insensitive' }, isActive: true },
+      take: 3,
+      __tenantScopeBypass: true,
+    } as unknown as FindManyArgs;
+    return this.prisma.user.findMany(args);
+  }
+
   // A reset-token hash alone identifies the account — same tenant-unknown
   // reasoning as findByEmail above.
   findByResetToken(tokenHash: string): Promise<User | null> {

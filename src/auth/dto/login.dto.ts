@@ -1,6 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  IsEmail,
   IsIn,
   IsNotEmpty,
   IsOptional,
@@ -8,14 +7,21 @@ import {
   Matches,
   MaxLength,
 } from 'class-validator';
-import { NormalizeEmail } from '../../common/normalize-input';
+import { Transform } from 'class-transformer';
 
 const EXPO_PUSH_TOKEN = /^(Exponent|Expo)PushToken\[[A-Za-z0-9_-]+\]$/;
 
 export class LoginDto {
-  @ApiProperty({ example: 'founder@acme.test' })
-  @NormalizeEmail()
-  @IsEmail()
+  // An email address, or an employee ID (e.g. DC-00012). Kept under the name `email` so existing clients keep working.
+  @ApiProperty({ example: 'founder@acme.test', description: 'Email address or employee ID.' })
+  @Transform(({ value }: { value: unknown }) => {
+    if (typeof value !== 'string') return value;
+    const v = value.trim();
+    return v.includes('@') ? v.toLowerCase() : v;
+  })
+  @IsNotEmpty()
+  @IsString()
+  @MaxLength(254)
   email!: string;
 
   @ApiProperty()

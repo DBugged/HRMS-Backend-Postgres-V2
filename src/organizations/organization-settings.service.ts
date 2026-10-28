@@ -23,6 +23,8 @@ import { AuditModule, Organization, Role, User } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { takenEmployeeIdPrefixes } from '../common/employee-id-prefixes';
+import { employeeIdPrefixOf, prefixesClash } from '../company-brands/brand-rules';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
@@ -523,6 +525,19 @@ export class OrganizationSettingsService {
     // 12345, documentNumbering: "x") is a 400 here, never a Prisma 500 or
     // a silently-corrupted JSON column.
     validateSectionData(data);
+    // An employee ID prefix is unique across companies (it is what lets an employee sign in with their ID), so a new employee ID format
+    // cannot reuse another company's prefix.
+    const newIdFormat = (data.documentNumbering as { employeeId?: { format?: string } } | undefined)?.employeeId?.format;
+    if (typeof newIdFormat === 'string') {
+      const current = (await this.prisma.organization.findUnique({ where: { id: organizationId }, select: { documentNumbering: true } }))?.documentNumbering as { employeeId?: { format?: string } } | null;
+      if (newIdFormat !== current?.employeeId?.format) {
+        const prefix = employeeIdPrefixOf(newIdFormat);
+        const taken = await takenEmployeeIdPrefixes(this.prisma, organizationId);
+        if (prefix && taken.some((t) => prefixesClash(prefix, t))) {
+          throw new BadRequestException(`The employee ID prefix "${prefix}" is already used by another company. Pick a different prefix so employee IDs stay unique.`);
+        }
+      }
+    }
     // Optional wizard-progress advancement, allowed alongside any section's
     // payload.
     const setupStep =
