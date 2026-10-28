@@ -8,6 +8,7 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { summarizeDocumentReview, type DocumentReview } from './document-review';
 import { sisterCompaniesOn } from '../module-access/module-gate';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly } from '../letters/auto-letter';
@@ -927,10 +928,26 @@ export class EmployeesService {
       this.scopedPrisma.user.count({ where }),
     ]);
 
+    // Admin/HR see, per employee, how many uploaded documents are waiting for review or were rejected, so the directory can show a
+    // profile as "In review". An HR/Admin colleague's documents are for an Admin only (the same tier as their Documents tab).
+    let review = new Map<string, DocumentReview>();
+    if (actor.role === Role.ADMIN || actor.role === Role.HR) {
+      const reviewable = rows.filter((r) => actor.id === r.id || actor.role === Role.ADMIN || !(r.role === Role.ADMIN || r.role === Role.HR));
+      if (reviewable.length > 0) {
+        review = summarizeDocumentReview(
+          await this.scopedPrisma.employeeDocument.findMany({
+            where: { organizationId, employeeId: { in: reviewable.map((r) => r.id) }, category: 'DOCUMENT', status: { in: ['PENDING', 'REJECTED'] } },
+            select: { employeeId: true, status: true },
+          }),
+        );
+      }
+    }
+
     return {
-      data: rows.map((r) =>
-        this.forViewer(toSafe(r, maskFor(actor, r.id)), r.id, actor),
-      ),
+      data: rows.map((r) => ({
+        ...this.forViewer(toSafe(r, maskFor(actor, r.id)), r.id, actor),
+        ...(review.has(r.id) ? { documentReview: review.get(r.id) } : {}),
+      })),
       total,
       page: query.page,
       limit: query.limit,

@@ -978,8 +978,46 @@ export class EmployeeProfileService {
     // one, so skip the (harmless but pointless) recompute for those.
     if (category === EmployeeDocumentCategory.DOCUMENT) {
       await this.refreshProfileCompletion(id, organizationId);
+      // Tell the people who review it, so a document does not wait unseen (an Admin's own are approved on upload: nobody to tell).
+      if (!isFounderDoc) await this.notifyReviewersOfUpload(employee, doc.docType, organizationId);
     }
     return withSignedFileUrl(doc);
+  }
+
+  // Active Admins (and HR, unless the owner is an HR user, whose documents only an Admin reviews) get an in-app notice that a document is
+  // waiting. One notice per reviewer per person per hour, so several uploads in a row do not pile up. Best-effort: it never fails the upload.
+  private async notifyReviewersOfUpload(owner: { id: string; name: string; role: Role }, docType: string, organizationId: string) {
+    try {
+      const reviewers = await this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          isActive: true,
+          id: { not: owner.id },
+          role: { in: owner.role === Role.HR ? [Role.ADMIN] : [Role.ADMIN, Role.HR] },
+        },
+        select: { id: true },
+      });
+      if (reviewers.length === 0) return;
+      const title = `Documents to review: ${owner.name}`;
+      const recent = await this.scopedPrisma.notification.findMany({
+        where: { organizationId, title, userId: { in: reviewers.map((r) => r.id) }, createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) } },
+        select: { userId: true },
+      });
+      const already = new Set(recent.map((n) => n.userId));
+      await this.notificationsService.createMany(
+        reviewers
+          .filter((r) => !already.has(r.id))
+          .map((r) => ({
+            organizationId,
+            userId: r.id,
+            title,
+            message: `${owner.name} uploaded ${docType} and it is waiting for your review. Open their profile > Documents.`,
+            category: NotificationCategory.GENERAL,
+          })),
+      );
+    } catch (err) {
+      this.logger.warn(`Reviewer notice for ${owner.id} failed: ${(err as Error).message}`);
+    }
   }
 
   // The "Visible to employee" tick on an uploaded letter. HR/Admin only (route-guarded); letters only, since a
