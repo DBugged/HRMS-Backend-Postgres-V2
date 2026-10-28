@@ -110,7 +110,7 @@ export class EmployeeSalaryComponentsService {
         }),
         this.scopedPrisma.user.findFirst({
           where: { id: employeeId, organizationId },
-          select: { name: true, email: true, isActive: true },
+          select: { name: true, email: true, isActive: true, brandId: true },
         }),
       ]);
       const prefs = (org?.orgPayrollAttendancePrefs ?? {}) as {
@@ -135,6 +135,7 @@ export class EmployeeSalaryComponentsService {
         'SALARY_REVISED',
         variables,
         this.emailTemplatesService.defaultFor('SALARY_REVISED', variables),
+        { brandId: employee.brandId },
       );
       await this.emailService.send({
         organizationId,

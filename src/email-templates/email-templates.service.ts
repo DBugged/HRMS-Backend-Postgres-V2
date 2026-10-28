@@ -21,6 +21,7 @@ import { AuditModule, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { BrandingLookupService } from '../company-brands/branding-lookup.service';
 import { EmailService } from '../notifications/email.service';
 import { UpdateEmailTemplateDto } from './dto/update-email-template.dto';
 import { CreateEmailTemplateDto } from './dto/create-email-template.dto';
@@ -61,6 +62,7 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly emailService: EmailService,
+    private readonly brandingLookup: BrandingLookupService,
   ) {}
 
   // Orgs registered before a built-in template existed never got its row, so an admin could neither edit nor
@@ -503,6 +505,8 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
     occasionKey: string,
     variables: Record<string, string>,
     fallback: { subject: string; html: string },
+    // The recipient's company brand (sister-company name and logo) for the email's header and footer; omit for the organization's own.
+    opts?: { brandId?: string | null },
   ): Promise<{ subject: string; html: string; ccAllActive: boolean }> {
     const stored = await this.findActiveByOccasion(occasionKey, organizationId);
     // A stored welcome/credentials template that still uses the retired {{password}} placeholder predates
@@ -535,6 +539,7 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
           organizationId,
           variables,
           occasionKey,
+          opts?.brandId,
         ),
         ccAllActive: false,
       };
@@ -551,6 +556,7 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
         organizationId,
         variables,
         occasionKey,
+        opts?.brandId,
       ),
       ccAllActive: template.ccAllActive,
     };
@@ -568,6 +574,7 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
     organizationId: string,
     variables: Record<string, string>,
     occasionKey: string | null,
+    brandId?: string | null,
   ): Promise<string> {
     // Platform-level occasion — D'CoreHR welcoming a brand new org's
     // founder, before that org has any branding (logo, name) of its own
@@ -598,6 +605,8 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
         primaryColor: true,
       },
     });
+    // A sister company's email: its name, contact details and logo replace the organization's in the header and footer.
+    const brand = brandId ? await this.brandingLookup.forBrand(organizationId, brandId) : null;
     const preheaderTemplate = occasionKey
       ? EMAIL_PREHEADERS[occasionKey]
       : undefined;
@@ -608,15 +617,14 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
       branding: {
         // Orgs that haven't completed Organization Setup have no companyName yet — fall back to the
         // organization's registered name so the header/footer aren't blank.
-        companyName: org?.companyName || org?.name,
-        phone: org?.phone,
-        website: org?.website,
-        contactEmail: org?.contactEmail,
-        registeredAddress: org?.registeredAddress,
-        logoImgTag: companyLogoImgTag(
-          organizationId,
-          org?.emailLogoUrl || org?.companyLogoUrl,
-        ),
+        companyName: brand?.brandId ? brand.companyName : org?.companyName || org?.name,
+        phone: brand?.brandId ? brand.phone : org?.phone,
+        website: brand?.brandId ? brand.website : org?.website,
+        contactEmail: brand?.brandId ? brand.contactEmail : org?.contactEmail,
+        registeredAddress: brand?.brandId ? brand.address : org?.registeredAddress,
+        logoImgTag: brand?.brandId
+          ? companyLogoImgTag(organizationId, brand.emailLogoUrl, null, brand.brandId)
+          : companyLogoImgTag(organizationId, org?.emailLogoUrl || org?.companyLogoUrl),
         primaryColor: org?.primaryColor,
       },
     });

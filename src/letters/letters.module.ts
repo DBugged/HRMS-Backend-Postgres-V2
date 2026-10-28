@@ -8,6 +8,8 @@ import { EmployeeTimelineModule } from '../employee-timeline/employee-timeline.m
 import { NotificationsModule } from '../notifications/notifications.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
+import { CompanyBrandsModule } from '../company-brands/company-brands.module';
+
 @Module({
   imports: [
     AuditLogModule,
@@ -15,6 +17,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
     EmployeeTimelineModule,
     NotificationsModule,
     EmailTemplatesModule,
+    CompanyBrandsModule,
   ],
   controllers: [LettersController],
   providers: [LettersService, LetterPdfService],

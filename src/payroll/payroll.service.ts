@@ -2016,6 +2016,7 @@ export class PayrollService {
         data: missing.map((employee) => ({
           organizationId,
           employeeId: employee.id,
+          brandId: employee.brandId ?? null,
           month: dto.month,
           year: dto.year,
           status: PayrollRunStatus.DRAFT,
@@ -2306,6 +2307,8 @@ export class PayrollService {
             ),
           ));
         const data = {
+          // The company name on the payslip: refreshed with each recalculation, frozen once the run is locked.
+          brandId: employee.brandId ?? null,
           financialYear: calc.financialYear,
           status: PayrollRunStatus.CALCULATED,
           payslipNumber,
@@ -2666,6 +2669,7 @@ export class PayrollService {
           data: {
             organizationId,
             employeeId: employee.id,
+            brandId: employee.brandId ?? null,
             month: dto.month,
             year: dto.year,
             runSequence,

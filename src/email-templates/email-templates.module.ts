@@ -4,8 +4,10 @@ import { EmailTemplatesService } from './email-templates.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 
+import { CompanyBrandsModule } from '../company-brands/company-brands.module';
+
 @Module({
-  imports: [AuditLogModule, NotificationsModule],
+  imports: [AuditLogModule, NotificationsModule, CompanyBrandsModule],
   controllers: [EmailTemplatesController],
   providers: [EmailTemplatesService],
   exports: [EmailTemplatesService],

@@ -1094,7 +1094,7 @@ export class OffboardingService {
     try {
       const employee = await this.scopedPrisma.user.findFirst({
         where: { id: employeeId, organizationId },
-        select: { name: true, personalData: true },
+        select: { name: true, personalData: true, brandId: true },
       });
       const personalData = (employee?.personalData ?? {}) as Record<
         string,
@@ -1123,6 +1123,7 @@ export class OffboardingService {
         'EXIT_COMPLETED',
         variables,
         this.emailTemplatesService.defaultFor('EXIT_COMPLETED', variables),
+        { brandId: employee.brandId },
       );
       await this.emailService.send({
         organizationId,

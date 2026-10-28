@@ -35,6 +35,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { signPersonalDataFileUrls } from '../employees/personal-data';
 import { UsersService } from '../users/users.service';
+import { sisterCompaniesOn } from '../module-access/module-gate';
 import { EmployeeIdService } from '../employees/employee-id.service';
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { LeaveTypesService } from '../leave-types/leave-types.service';
@@ -630,12 +631,16 @@ export class AuthService {
           select: { id: true, name: true, employeeId: true },
         },
         workLocation: { select: { id: true, name: true } },
+        // The sister-company name shown on the profile (null for a company with none).
+        brand: { select: { id: true, name: true } },
       },
     });
     if (!user) throw new UnauthorizedException();
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
     const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
       user;
+    // Sister companies switched off: the company name is not shown, whatever tag the person carries.
+    if (safe.brand && !(await sisterCompaniesOn(organizationId))) safe.brand = null;
     // Whether this user must take a selfie to check in/out (their own
     // setting, else the org's) — the mobile app uses it to skip the camera.
     const org = await this.scopedPrisma.organization.findFirst({

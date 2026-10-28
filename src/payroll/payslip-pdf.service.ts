@@ -6,6 +6,7 @@ import { PayrollRunStatus, PayrollTemplate } from '@prisma/client';
 import type { TaxDetails } from './tax-engine';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
+import { BrandingLookupService } from '../company-brands/branding-lookup.service';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import {
   DEFAULT_TIMEZONE,
@@ -274,7 +275,29 @@ export class PayslipPdfService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly payrollSettingsService: PayrollSettingsService,
+    private readonly brandingLookup: BrandingLookupService,
   ) {}
+
+  // A sister company's payslip: its name, logo and address replace the template's header values. A run with no brand keeps the
+  // template exactly as it is, so a company with no sister companies gets the payslip it always did.
+  private async withBrand<T extends { companyName: string; companyAddress: string | null; companyEmail: string | null; companyWebsite: string | null; companyContactNumber: string | null; companyLogoUrl: string | null }>(
+    template: T,
+    brandId: string | null | undefined,
+    organizationId: string,
+  ): Promise<T> {
+    if (!brandId) return template;
+    const b = await this.brandingLookup.forBrand(organizationId, brandId);
+    if (!b.brandId) return template;
+    return {
+      ...template,
+      companyName: b.companyName,
+      companyAddress: b.address ?? template.companyAddress,
+      companyEmail: b.contactEmail ?? template.companyEmail,
+      companyWebsite: b.website ?? template.companyWebsite,
+      companyContactNumber: b.phone ?? template.companyContactNumber,
+      companyLogoUrl: b.logoUrl ?? template.companyLogoUrl,
+    };
+  }
 
   async buildPayslipPdfBuffer(
     runId: string,
@@ -313,7 +336,7 @@ export class PayslipPdfService {
       this.getOrgPrintInfo(organizationId),
     ]);
 
-    return this.renderPayslipPdf(run, template, settings, ytd, printInfo);
+    return this.renderPayslipPdf(run, await this.withBrand(template, run.brandId, organizationId), settings, ytd, printInfo);
   }
 
   // The payslip as it was when this revision of the run was finalised (the run itself now holds the corrected figures).
@@ -363,7 +386,7 @@ export class PayslipPdfService {
     ]);
     const rendered = await this.renderPayslipPdf(
       asFinalised,
-      template,
+      await this.withBrand(template, run.brandId, organizationId),
       settings,
       ytd,
       printInfo,

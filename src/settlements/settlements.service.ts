@@ -1628,10 +1628,12 @@ export class SettlementsService {
         );
       }
 
+      const joiner = await tx.user.findFirst({ where: { id: settlement.employeeId, organizationId }, select: { brandId: true } });
       const run = await tx.payrollRun.create({
         data: {
           organizationId,
           employeeId: settlement.employeeId,
+          brandId: joiner?.brandId ?? null,
           month,
           year,
           isFinalSettlement: true,

@@ -122,7 +122,7 @@ export class ExitClosureService {
   async sendExitPack(c: ExitCase, actor: Actor, organizationId: string): Promise<boolean> {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: c.employeeId, organizationId },
-      select: { name: true, personalData: true },
+      select: { name: true, personalData: true, brandId: true },
     });
     const to = personalEmailOf(employee?.personalData);
     if (!employee || !to) {
@@ -157,6 +157,7 @@ export class ExitClosureService {
       'EXIT_DOCUMENTS_PACK',
       variables,
       this.emailTemplates.defaultFor('EXIT_DOCUMENTS_PACK', variables),
+      { brandId: employee.brandId },
     );
     await this.emailService.send({ organizationId, to, subject: rendered.subject, html: rendered.html, attachments });
     await this.scopedPrisma.offboardingCase.updateMany({ where: { id: c.id, organizationId }, data: { exitPackSentAt: new Date() } });

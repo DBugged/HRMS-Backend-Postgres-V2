@@ -41,6 +41,7 @@ import {
   employeeCityClass,
   withCityHra,
 } from '../employee-salary-components/city-hra';
+import { BrandingLookupService } from '../company-brands/branding-lookup.service';
 import { LetterPdfService } from './letter-pdf.service';
 import {
   editedTextToParagraphs,
@@ -126,6 +127,7 @@ export class LettersService {
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailService: EmailService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    private readonly brandingLookup: BrandingLookupService,
   ) {}
 
   // Powers the Letters & Certificates tab's list — which of the org's
@@ -375,7 +377,9 @@ export class LettersService {
       },
     });
     if (!organization) throw new NotFoundException('Organization not found.');
-    const companyName = organization.companyName || 'the Company';
+    // A sister company's letter carries its brand's name, address and logo; no brand keeps the organization's own exactly.
+    const branding = employee.brandId ? await this.brandingLookup.forBrand(organizationId, employee.brandId) : null;
+    const companyName = branding?.brandId ? branding.companyName : organization.companyName || 'the Company';
     const policies = (organization.policies ?? {}) as {
       currencySymbol?: string;
     };
@@ -408,7 +412,7 @@ export class LettersService {
       // The date the employee was confirmed from ('—' until they are confirmed).
       confirmationDate: employee.confirmationDate ? formatDateDisplay(employee.confirmationDate) : '—',
       companyName,
-      companyAddress: organization.registeredAddress || '',
+      companyAddress: (branding?.brandId ? branding.address : organization.registeredAddress) || '',
       // Organization Settings > Registration Details ('—' when not filled in).
       companyGstin: organization.gstin?.trim() || '—',
       companyPan: organization.pan?.trim() || '—',
@@ -617,6 +621,7 @@ export class LettersService {
       template,
       employee,
       organization,
+      branding,
       companyName,
       title,
       paragraphs,
@@ -803,6 +808,7 @@ export class LettersService {
       template,
       employee,
       organization,
+      branding,
       companyName,
       title: computedTitle,
       paragraphs: computedParagraphs,
@@ -852,16 +858,17 @@ export class LettersService {
       letterHeaderBuffer,
       letterFooterBuffer,
     ] = await Promise.all([
-      organization.companyLogoUrl
-        ? readStoredFile(organization.companyLogoUrl).catch(() => null)
+      (branding?.brandId ? branding.logoUrl : organization.companyLogoUrl)
+        ? readStoredFile((branding?.brandId ? branding.logoUrl : organization.companyLogoUrl) as string).catch(() => null)
         : Promise.resolve(null),
       primarySignatory?.signatureUrl
         ? readStoredFile(primarySignatory.signatureUrl).catch(() => null)
         : Promise.resolve(null),
-      organization.letterHeaderUrl
+      // The organization's letter header/footer images carry the parent's name, so a sister company's letter uses the built-in header.
+      !branding?.brandId && organization.letterHeaderUrl
         ? readStoredFile(organization.letterHeaderUrl).catch(() => null)
         : Promise.resolve(null),
-      organization.letterFooterUrl
+      !branding?.brandId && organization.letterFooterUrl
         ? readStoredFile(organization.letterFooterUrl).catch(() => null)
         : Promise.resolve(null),
     ]);
@@ -871,7 +878,7 @@ export class LettersService {
       documentNumber,
       issueDate: new Date(),
       companyName,
-      companyAddress: organization.registeredAddress || '',
+      companyAddress: (branding?.brandId ? branding.address : organization.registeredAddress) || '',
       companyLogoBuffer,
       addressedToEmployee: template.addressedToEmployee,
       employeeName: employee.name,
@@ -936,7 +943,7 @@ export class LettersService {
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: employeeId, organizationId },
-      select: { name: true, email: true, isActive: true, exitDate: true, personalData: true },
+      select: { name: true, email: true, isActive: true, exitDate: true, personalData: true, brandId: true },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     // Someone who has left (or is leaving) loses the company mailbox, so their letters - relieving, experience - go to the
@@ -962,7 +969,8 @@ export class LettersService {
       where: { id: organizationId },
       select: { companyName: true, registeredAddress: true },
     });
-    const companyName = organization?.companyName || 'the Company';
+    const sisterBrand = employee.brandId ? await this.brandingLookup.forBrand(organizationId, employee.brandId) : null;
+    const companyName = sisterBrand?.brandId ? sisterBrand.companyName : organization?.companyName || 'the Company';
 
     const rendered = await this.emailTemplatesService.renderOccasion(
       organizationId,
@@ -976,6 +984,7 @@ export class LettersService {
         subject: `Your ${template.name} from ${companyName}`,
         html: `<p>Hi ${escapeHtml(employee.name)},</p><p>Please find your ${escapeHtml(template.name)} attached.</p><p>${escapeHtml(companyName)}</p>`,
       },
+      { brandId: employee.brandId },
     );
 
     await this.emailService.send({

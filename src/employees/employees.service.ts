@@ -8,6 +8,7 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { sisterCompaniesOn } from '../module-access/module-gate';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly } from '../letters/auto-letter';
 import { isManagerOf } from '../common/managers';
@@ -192,6 +193,7 @@ export class EmployeesService {
 
     await this.assertWorkLocationInOrg(dto.workLocationId, organizationId);
     await this.assertOrgReferences(dto, organizationId);
+    const brandId = await this.brandForNewEmployee(dto.brandId, organizationId);
     // Extra managers beyond the primary (an Admin reports to nobody, so none).
     const extraManagers =
       (dto.role ?? Role.EMPLOYEE) === Role.ADMIN
@@ -208,11 +210,13 @@ export class EmployeesService {
         const employeeId = await this.employeeIdService.generate(
           tx,
           organizationId,
+          brandId,
         );
         return tx.user.create({
           data: {
             organizationId,
             employeeId,
+            brandId,
             email: dto.email,
             password: hashedPassword,
             name: dto.name,
@@ -328,6 +332,7 @@ export class EmployeesService {
           loginUrl: `${frontendUrl()}/login`,
         },
         { subject: `Welcome to ${companyName} HRMS`, html: fallbackHtml },
+        { brandId: user.brandId },
       );
       // Fire-and-forget: EmailService.send() already never throws (falls
       // back to a console dry-run log on any delivery failure internally),
@@ -456,6 +461,7 @@ export class EmployeesService {
         subject: `Your ${companyName} HRMS login credentials`,
         html: fallbackHtml,
       },
+      { brandId: employee.brandId },
     );
     const sent = await this.emailService.send({
       organizationId,
@@ -493,6 +499,7 @@ export class EmployeesService {
       department?: unknown;
       employeeCategory?: unknown;
       workLocation?: unknown;
+      company?: unknown;
       role?: unknown;
       employeeType?: unknown;
     }>,
@@ -516,7 +523,9 @@ export class EmployeesService {
     // (not the internal ids/values the manual form's Selects submit) —
     // resolved once up front rather than per row, since every row in a
     // batch is checked against the same org-wide lists.
-    const [departments, workLocationItems, employeeCategoryItems, org] =
+    // The Company column is read only when sister companies is switched on; otherwise it is ignored.
+    const brandsOn = await sisterCompaniesOn(organizationId);
+    const [departments, workLocationItems, employeeCategoryItems, org, brandItems] =
       await Promise.all([
         this.scopedPrisma.department.findMany({
           where: { organizationId },
@@ -536,6 +545,10 @@ export class EmployeesService {
             customEmployeeTypes: true,
             inactiveBuiltinEmployeeTypes: true,
           },
+        }),
+        this.scopedPrisma.companyBrand.findMany({
+          where: { organizationId },
+          select: { id: true, name: true, isActive: true },
         }),
       ]);
     const customEmployeeTypes =
@@ -569,6 +582,7 @@ export class EmployeesService {
       const departmentName = asString(row.department).trim();
       const employeeCategoryName = asString(row.employeeCategory).trim();
       const workLocationName = asString(row.workLocation).trim();
+      const companyName = asString(row.company).trim();
       const roleInput = asString(row.role).trim();
       const employeeTypeInput = asString(row.employeeType).trim();
 
@@ -654,6 +668,14 @@ export class EmployeesService {
         });
         return;
       }
+      // The optional Company column: matched by name against the active companies. Blank = the default company, if any.
+      const company = companyName && brandsOn
+        ? brandItems.find((b) => b.isActive && b.name.toLowerCase() === companyName.toLowerCase())
+        : undefined;
+      if (companyName && brandsOn && !company) {
+        failed.push({ row, error: `Company "${companyName}" not found or inactive.` });
+        return;
+      }
       if (!employeeCategoryName) {
         failed.push({ row, error: 'Employee category is required.' });
         return;
@@ -707,6 +729,7 @@ export class EmployeesService {
             personalEmail,
             departmentId: department.id,
             workLocationId: workLocation.id,
+            brandId: company?.id,
             designation,
             employeeCategory: employeeCategory.name,
             contactNumber: contactNumber || undefined,
@@ -1022,6 +1045,9 @@ export class EmployeesService {
     }
     const clean = stripLockedFields(updateFields, actor.role);
     await this.assertWorkLocationInOrg(clean.workLocationId, organizationId);
+    // The company brand may be changed, never to an inactive or foreign one; the employee ID is untouched either way.
+    if (clean.brandId !== undefined && !(await sisterCompaniesOn(organizationId))) delete clean.brandId;
+    if (clean.brandId && clean.brandId !== before.brandId) await this.assertBrandUsable(clean.brandId, organizationId);
     await this.assertOrgReferences(
       clean,
       organizationId,
@@ -2055,6 +2081,56 @@ export class EmployeesService {
   }
 
   // workLocationId (nullable override) must reference a location of the same organization.
+  // Gives several employees the same company (or none) in one go. Only the tag changes: employee IDs and past payslips never do.
+  // HR cannot change an Admin's record (the same rule as editing one), so those rows are skipped and counted.
+  async bulkSetCompany(
+    employeeIds: string[],
+    brandId: string | null,
+    actor: Actor & { id: string; role: Role },
+    organizationId: string,
+  ) {
+    if (!(await sisterCompaniesOn(organizationId))) {
+      throw new ForbiddenException('Sister companies is not switched on for your company.');
+    }
+    if (brandId) await this.assertBrandUsable(brandId, organizationId);
+    const targets = await this.scopedPrisma.user.findMany({
+      where: { id: { in: employeeIds }, organizationId },
+      select: { id: true, role: true },
+    });
+    const allowed = targets.filter((t) => actor.role === Role.ADMIN || t.role !== Role.ADMIN);
+    if (allowed.length > 0) {
+      await this.scopedPrisma.user.updateMany({ where: { id: { in: allowed.map((t) => t.id) }, organizationId }, data: { brandId } });
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEES_COMPANY_SET',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: brandId ?? 'none',
+      details: { brandId, employeeIds: allowed.map((t) => t.id) },
+    });
+    return { updated: allowed.length, skipped: employeeIds.length - allowed.length };
+  }
+
+  // A new employee gets the brand picked, else the default brand (if there is one), else none. null means none, even with a default.
+  private async brandForNewEmployee(brandId: string | null | undefined, organizationId: string): Promise<string | null> {
+    // Sister companies switched off: no new employee is tagged, and the company's own ID series is used.
+    if (!(await sisterCompaniesOn(organizationId))) return null;
+    if (brandId === null) return null;
+    if (brandId) {
+      await this.assertBrandUsable(brandId, organizationId);
+      return brandId;
+    }
+    const fallback = await this.scopedPrisma.companyBrand.findFirst({ where: { organizationId, isDefault: true, isActive: true }, select: { id: true } });
+    return fallback?.id ?? null;
+  }
+
+  private async assertBrandUsable(brandId: string, organizationId: string) {
+    const brand = await this.scopedPrisma.companyBrand.findFirst({ where: { id: brandId, organizationId }, select: { isActive: true } });
+    if (!brand) throw new BadRequestException('The specified company was not found.');
+    if (!brand.isActive) throw new BadRequestException('That company is inactive. Pick an active one.');
+  }
+
   private async assertWorkLocationInOrg(
     workLocationId: string | null | undefined,
     organizationId: string,

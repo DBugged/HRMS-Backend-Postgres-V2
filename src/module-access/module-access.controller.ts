@@ -14,6 +14,10 @@ export class ModuleAccessController {
   @Get()
   async modules(@Req() req: Request) {
     const user = req.user as User;
-    return { disabled: [...(await this.access.disabledFor(user.organizationId))] };
+    return {
+      disabled: [...(await this.access.disabledFor(user.organizationId))],
+      // Opt-in features switched on for this company (sister companies: company names and employee ID series).
+      sisterCompanies: await this.access.featureEnabledFor(user.organizationId, 'feature.sister_companies'),
+    };
   }
 }

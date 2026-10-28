@@ -69,6 +69,7 @@ import { WorkSchedulesModule } from './work-schedules/work-schedules.module';
 import { LettersModule } from './letters/letters.module';
 import { JoiningModule } from './joining/joining.module';
 import { OrgHealthModule } from './org-health/org-health.module';
+import { CompanyBrandsModule } from './company-brands/company-brands.module';
 import { LetterTemplatesModule } from './letter-templates/letter-templates.module';
 import { LeaveTrackerModule } from './leave-tracker/leave-tracker.module';
 import { PrivacyModule } from './privacy/privacy.module';
@@ -150,6 +151,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     OffboardingModule,
     JoiningModule,
     OrgHealthModule,
+    CompanyBrandsModule,
     ResignationsModule,
     DashboardModule,
     ReportsModule,

@@ -21,6 +21,16 @@ export async function moduleEnabledFor(organizationId: string, module: string): 
   return service ? (await service.enabledAmong([organizationId], module)).has(organizationId) : true;
 }
 
+/** The opt-in feature flag for sister companies (company names and employee ID series per sister company). Off unless a Super Admin turns it on. */
+export const SISTER_COMPANIES_FLAG = 'feature.sister_companies';
+
+/** True when an opt-in feature is on for this organization. Before the gate is up (unit tests) it is on, so tests exercise the feature. */
+export async function featureEnabledFor(organizationId: string, key: string): Promise<boolean> {
+  return service ? service.featureEnabledFor(organizationId, key) : true;
+}
+
+export const sisterCompaniesOn = (organizationId: string) => featureEnabledFor(organizationId, SISTER_COMPANIES_FLAG);
+
 /** The module flags switched off for one organization (empty when none, or before the gate is up). */
 export async function disabledModulesOf(organizationId: string): Promise<Set<string>> {
   return service ? service.disabledFor(organizationId) : new Set();

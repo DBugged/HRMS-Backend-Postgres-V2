@@ -107,6 +107,14 @@ export class UpdateEmployeeDto {
   @IsIndianMobile()
   contactNumber?: string;
 
+  // The company (brand) whose name and logo this person's payslips, letters and emails carry. Blank/omitted = the default company
+  // brand if one is set, else the organization's own. null = the organization's own, even when a default exists.
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  brandId?: string | null;
+
   // Self-editable — feeds LeaveType.applicableGenders eligibility filtering
   // (leave-eligibility.ts), which has no other way to be set.
   @ApiPropertyOptional({ enum: Gender })

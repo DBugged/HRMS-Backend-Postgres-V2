@@ -1,4 +1,4 @@
-import { REQUEST_TYPE_MODULE, disabledModulesOf, gate, keepModuleEnabled, moduleEnabledFor, registerModuleGate } from './module-gate';
+import { REQUEST_TYPE_MODULE, SISTER_COMPANIES_FLAG, disabledModulesOf, featureEnabledFor, gate, keepModuleEnabled, moduleEnabledFor, registerModuleGate, sisterCompaniesOn } from './module-gate';
 import type { ModuleAccessService } from './module-access.service';
 
 // A stand-in for the real service: company "off" has attendance switched off, everyone else is on.
@@ -43,5 +43,19 @@ describe('gate', () => {
     expect(await gate(new Set(['module.leave']), 'module.leave', run, 0)).toBe(0);
     expect(await gate(new Set(['module.payroll']), 'module.leave', run, 0)).toBe(7);
     expect(calls).toBe(2);
+  });
+});
+
+describe('opt-in features (sister companies)', () => {
+  it('is on before the gate is up, so unit tests exercise the feature', async () => {
+    registerModuleGate(undefined as never);
+    expect(await sisterCompaniesOn('any')).toBe(true);
+  });
+
+  it('follows the service once it is up', async () => {
+    registerModuleGate({ featureEnabledFor: async (id: string, key: string) => id === 'on' && key === SISTER_COMPANIES_FLAG } as unknown as ModuleAccessService);
+    expect(await sisterCompaniesOn('on')).toBe(true);
+    expect(await sisterCompaniesOn('off')).toBe(false);
+    expect(await featureEnabledFor('on', 'feature.other')).toBe(false);
   });
 });

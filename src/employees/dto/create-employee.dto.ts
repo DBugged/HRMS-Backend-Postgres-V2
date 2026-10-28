@@ -45,6 +45,14 @@ export class CreateEmployeeDto {
 
   // Department, designation, employee category and work location are required - the Add Employee form and the
   // Excel import enforce the same four, so an employee cannot be created without them from any client.
+  // The company (brand) whose name and logo this person's payslips, letters and emails carry. Blank/omitted = the default company
+  // brand if one is set, else the organization's own. null = the organization's own, even when a default exists.
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null)
+  @IsUUID()
+  brandId?: string | null;
+
   @ApiProperty({ description: 'Department the employee belongs to.' })
   @IsNotEmpty({ message: 'Department is required.' })
   @IsUUID()

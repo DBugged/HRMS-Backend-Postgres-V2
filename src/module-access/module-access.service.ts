@@ -14,6 +14,7 @@ const TTL_MS = 30_000;
 export class ModuleAccessService implements OnModuleInit {
   private readonly logger = new Logger(ModuleAccessService.name);
   private cache = new Map<string, { at: number; disabled: Set<string> }>();
+  private featureCache = new Map<string, { at: number; on: boolean }>();
 
   constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient) {}
 
@@ -37,6 +38,28 @@ export class ModuleAccessService implements OnModuleInit {
     } catch (e) {
       this.logger.warn(`Module lookup failed, allowing all: ${(e as Error).message}`);
       return new Set(organizationIds);
+    }
+  }
+
+  /**
+   * Whether an opt-in feature (e.g. 'feature.sister_companies') is switched ON for this organization: the company's own override first,
+   * else the flag's default. Unlike modules, a feature is OFF unless explicitly on; a missing or inactive flag, or any lookup error, is off.
+   */
+  async featureEnabledFor(organizationId: string, key: string): Promise<boolean> {
+    const k = `${organizationId}:${key}`;
+    const hit = this.featureCache.get(k);
+    if (hit && Date.now() - hit.at < TTL_MS) return hit.on;
+    try {
+      const [flag, override] = await Promise.all([
+        this.prisma.ccFeatureFlag.findUnique({ where: { key } }),
+        this.prisma.ccFlagOverride.findFirst({ where: { organizationId, flagKey: key } }),
+      ]);
+      const on = !!flag && flag.status === 'ACTIVE' && (override ? override.value === true : flag.defaultValue === true);
+      this.featureCache.set(k, { at: Date.now(), on });
+      return on;
+    } catch (e) {
+      this.logger.warn(`Feature lookup failed, treating ${key} as off: ${(e as Error).message}`);
+      return false;
     }
   }
 
@@ -84,5 +107,6 @@ export class ModuleAccessService implements OnModuleInit {
   /** Called by the Control Center after any flag or override change. */
   clear() {
     this.cache.clear();
+    this.featureCache.clear();
   }
 }

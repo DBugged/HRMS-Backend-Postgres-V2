@@ -73,6 +73,11 @@ class BulkEmployeeRowDto {
   @IsOptional()
   workLocation?: unknown;
 
+  // Optional: the company (sister-company name) to give the employee; blank = the default company, if any.
+  @ApiPropertyOptional()
+  @IsOptional()
+  company?: unknown;
+
   @ApiPropertyOptional()
   @IsOptional()
   role?: unknown;

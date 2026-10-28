@@ -19,6 +19,7 @@ import { EmployeeProfileService } from './employee-profile.service';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { BulkCreateEmployeesDto } from './dto/bulk-create-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
+import { BulkSetCompanyDto } from './dto/bulk-set-company.dto';
 import { ReassignReportsDto } from './dto/reassign-reports.dto';
 import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
@@ -100,6 +101,14 @@ export class EmployeesController {
   @UseGuards(RolesGuard)
   orgChart(@CurrentUser() caller: Caller) {
     return this.employeesService.orgChart(caller.organizationId);
+  }
+
+  // Gives several employees the same company (sister-company name), or none. Before the :id routes so "bulk-company" is not an id.
+  @Post('bulk-company')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkSetCompany(@Body() dto: BulkSetCompanyDto, @CurrentUser() caller: Caller) {
+    return this.employeesService.bulkSetCompany(dto.employeeIds, dto.brandId, caller, caller.organizationId);
   }
 
   // How complete every active employee's profile is, lowest first (HR/Admin). Before the :id routes so "profile-scores" is not read as an id.

@@ -8,6 +8,8 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 import { SalaryStructurePdfService } from './salary-structure-pdf.service';
 import { PrivacyModule } from '../privacy/privacy.module';
 
+import { CompanyBrandsModule } from '../company-brands/company-brands.module';
+
 @Module({
   imports: [
     AuditLogModule,
@@ -15,6 +17,7 @@ import { PrivacyModule } from '../privacy/privacy.module';
     NotificationsModule,
     EmailTemplatesModule,
     PrivacyModule,
+    CompanyBrandsModule,
   ],
   controllers: [EmployeeSalaryComponentsController],
   providers: [EmployeeSalaryComponentsService, SalaryStructurePdfService],

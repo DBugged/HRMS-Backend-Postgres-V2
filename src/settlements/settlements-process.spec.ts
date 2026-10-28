@@ -101,6 +101,7 @@ function build(
     },
   };
   const tx: Row = {
+    user: { findFirst: async () => ({ brandId: null }) },
     settlement: settlementModel,
     payrollRun,
     loan: loanModel,

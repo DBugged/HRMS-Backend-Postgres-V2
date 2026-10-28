@@ -29,6 +29,7 @@ export function logoVersion(storedKey: string): string {
 export function emailLogoUrl(
   organizationId: string,
   storedKey: string,
+  brandId?: string | null,
 ): string {
   const base = backendPublicUrl().replace(/\/+$/, '');
   if (
@@ -43,7 +44,8 @@ export function emailLogoUrl(
       `WARNING: BACKEND_PUBLIC_URL ("${base}") is not a public https URL - the email logo will not load in mail clients.`,
     );
   }
-  return `${base}/public/branding/${organizationId}/email-logo?v=${logoVersion(storedKey)}`;
+  const brandPath = brandId ? `/brands/${brandId}` : '';
+  return `${base}/public/branding/${organizationId}${brandPath}/email-logo?v=${logoVersion(storedKey)}`;
 }
 
 // Returns '' when the org hasn't set a logo so a template using the placeholder renders nothing extra.
@@ -52,11 +54,12 @@ export function companyLogoImgTag(
   organizationId: string,
   storedEmailLogoKey: string | null | undefined,
   companyName?: string | null,
+  brandId?: string | null,
 ): string {
   // The public endpoint only serves raster images; an SVG company logo would render as a broken image in mail clients.
   if (!storedEmailLogoKey || !/\.(png|jpe?g|gif)$/i.test(storedEmailLogoKey))
     return '';
-  const url = emailLogoUrl(organizationId, storedEmailLogoKey);
+  const url = emailLogoUrl(organizationId, storedEmailLogoKey, brandId);
   const alt = escAttr((companyName ?? '').trim());
   return `<img src="${escAttr(url)}" alt="${alt}" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`;
 }

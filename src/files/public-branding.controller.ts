@@ -48,7 +48,26 @@ export class PublicBrandingController {
       where: { id: organizationId },
       select: { emailLogoUrl: true, companyLogoUrl: true },
     });
-    const key = org?.emailLogoUrl || org?.companyLogoUrl;
+    return this.serve(res, organizationId, org?.emailLogoUrl || org?.companyLogoUrl);
+  }
+
+  // A company brand's email logo (its own email logo, else its logo, else the organization's) - same rules as above.
+  @Get(':organizationId/brands/:brandId/email-logo')
+  @Public()
+  async brandEmailLogo(
+    @Param('organizationId', new ParseUUIDPipe({ exceptionFactory: () => new NotFoundException() })) organizationId: string,
+    @Param('brandId', new ParseUUIDPipe({ exceptionFactory: () => new NotFoundException() })) brandId: string,
+    @Res() res: Response,
+  ) {
+    const [org, brand] = await Promise.all([
+      this.prisma.organization.findUnique({ where: { id: organizationId }, select: { emailLogoUrl: true, companyLogoUrl: true } }),
+      this.prisma.companyBrand.findFirst({ where: { id: brandId, organizationId }, select: { emailLogoUrl: true, logoUrl: true } }),
+    ]);
+    if (!brand) throw new NotFoundException();
+    return this.serve(res, organizationId, brand.emailLogoUrl || brand.logoUrl || org?.emailLogoUrl || org?.companyLogoUrl);
+  }
+
+  private async serve(res: Response, organizationId: string, key: string | null | undefined) {
     if (!key || !isKeyAllowedForOrg(organizationId, key)) {
       throw new NotFoundException();
     }
