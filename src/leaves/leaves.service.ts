@@ -1412,7 +1412,48 @@ export class LeavesService {
         );
       }
     }
-    return this.performCancel(id, leave, actor, organizationId, !isSelf);
+    const result = await this.performCancel(id, leave, actor, organizationId, !isSelf);
+    // Cancelling an approved leave undoes something an approver signed off, so they are told (a pending leave was never
+    // approved, and a request an approver decides themselves needs no extra alert).
+    if (isSelf && leave.status === LeaveStatus.APPROVED) {
+      await this.notifyApprovedLeaveCancelled(leave, actor, organizationId).catch(
+        () => undefined,
+      );
+    }
+    return result;
+  }
+
+  // Tells the employee's reporting manager(s) and every HR/Admin that an approved leave was cancelled by its owner.
+  private async notifyApprovedLeaveCancelled(
+    leave: Leave,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    const hrAdmins = await this.scopedPrisma.user.findMany({
+      where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
+      select: { id: true },
+    });
+    const recipients = [
+      ...new Set([
+        ...managerIdsOf(actor),
+        ...hrAdmins.map((u) => u.id),
+      ]),
+    ].filter((id) => id !== actor.id);
+    if (recipients.length === 0) return;
+    const message = `${actor.name} cancelled their approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.`;
+    await this.notificationsService.createMany(
+      recipients.map((userId) => ({
+        organizationId,
+        userId,
+        title: 'Approved Leave Cancelled',
+        message,
+        category: NotificationCategory.LEAVE,
+      })),
+    );
   }
 
   // The cancellation itself, after whoever asked has been checked: reverses balance/attendance, writes the audit entry.
