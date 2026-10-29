@@ -72,6 +72,16 @@ export class CreateBreachDto {
   @IsOptional()
   @IsEnum(BreachNotificationStatus)
   notificationStatus?: BreachNotificationStatus;
+  @ApiPropertyOptional({
+    description: 'When the detailed report went to the Data Protection Board.',
+  })
+  @IsOptional()
+  @IsDateString()
+  boardReportedAt?: string;
+  @ApiPropertyOptional({ description: 'When the affected people were told.' })
+  @IsOptional()
+  @IsDateString()
+  principalsNotifiedAt?: string;
 }
 
 export class UpdateBreachDto {
@@ -129,6 +139,21 @@ export class UpdateBreachDto {
   @IsOptional()
   @IsEnum(BreachNotificationStatus)
   notificationStatus?: BreachNotificationStatus;
+  @ApiPropertyOptional({
+    description:
+      'When the detailed report went to the Data Protection Board; null clears it.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsDateString()
+  boardReportedAt?: string | null;
+  @ApiPropertyOptional({
+    description: 'When the affected people were told; null clears it.',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsDateString()
+  principalsNotifiedAt?: string | null;
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()

@@ -13,6 +13,7 @@ import { AppModule } from '../src/app.module';
 import { decryptPersonalData } from '../src/common/personal-data-crypto';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { PrivacyService } from '../src/privacy/privacy.service';
+import { BreachReminderService } from '../src/privacy/breach-reminder.service';
 
 // Dummy data only. Cleanup TRUNCATEs the test DB (never the dev DB) and removes files this suite created.
 
@@ -827,6 +828,17 @@ describe('Data Privacy & Protection (e2e)', () => {
       expect((a.body as { incidentNo: string }).incidentNo).toBe('INC-00001');
       expect((b.body as { incidentNo: string }).incidentNo).toBe('INC-00002');
       const id = (a.body as { id: string }).id;
+      // Not closable while nobody has decided whether the Board must be told.
+      await http()
+        .post(`/privacy/breaches/${id}/close`)
+        .set(auth(adminToken))
+        .send({ resolution: 'Resolved (dummy)' })
+        .expect(400);
+      await http()
+        .put(`/privacy/breaches/${id}`)
+        .set(auth(adminToken))
+        .send({ notificationStatus: 'NOT_REQUIRED' })
+        .expect(200);
       const closed = await http()
         .post(`/privacy/breaches/${id}/close`)
         .set(auth(adminToken))
@@ -840,6 +852,92 @@ describe('Data Privacy & Protection (e2e)', () => {
         .set(auth(adminToken))
         .send({ description: 'x' })
         .expect(409);
+    });
+
+    it('tracks the 72-hour Board report: due time, overdue count, and the Notified date', async () => {
+      const detectedAt = new Date(Date.now() - 80 * 3600_000);
+      const res = await http()
+        .post('/privacy/breaches')
+        .set(auth(adminToken))
+        .send({ detectedAt: detectedAt.toISOString(), severity: 'CRITICAL' })
+        .expect(201);
+      const row = res.body as {
+        id: string;
+        boardReportDueAt: string;
+        boardReportState: string;
+      };
+      expect(new Date(row.boardReportDueAt).getTime()).toBe(
+        detectedAt.getTime() + 72 * 3600_000,
+      );
+      expect(row.boardReportState).toBe('OVERDUE');
+      const summary = await http()
+        .get('/privacy/summary')
+        .set(auth(adminToken))
+        .expect(200);
+      expect(
+        (summary.body as { overdueBreaches: number }).overdueBreaches,
+      ).toBeGreaterThanOrEqual(1);
+      // The Admins are told once that it is overdue, not every hour.
+      const reminders = app.get(BreachReminderService);
+      expect(await reminders.remindForOrg(orgId)).toBeGreaterThanOrEqual(1);
+      expect(await reminders.remindForOrg(orgId)).toBe(0);
+      const told = await prisma.notification.count({
+        where: {
+          organizationId: orgId,
+          title: { startsWith: 'Breach report to the Board is overdue' },
+        },
+      });
+      expect(told).toBeGreaterThanOrEqual(1);
+
+      // Notified needs the date the report went to the Board, and that date cannot be before detection or in the future.
+      await http()
+        .put(`/privacy/breaches/${row.id}`)
+        .set(auth(adminToken))
+        .send({ notificationStatus: 'NOTIFIED' })
+        .expect(400);
+      await http()
+        .put(`/privacy/breaches/${row.id}`)
+        .set(auth(adminToken))
+        .send({
+          notificationStatus: 'NOTIFIED',
+          boardReportedAt: new Date(
+            detectedAt.getTime() - 3600_000,
+          ).toISOString(),
+        })
+        .expect(400);
+      await http()
+        .put(`/privacy/breaches/${row.id}`)
+        .set(auth(adminToken))
+        .send({
+          notificationStatus: 'NOTIFIED',
+          boardReportedAt: new Date(Date.now() + 86400_000).toISOString(),
+        })
+        .expect(400);
+      // A Board date without Notified is a contradiction.
+      await http()
+        .put(`/privacy/breaches/${row.id}`)
+        .set(auth(adminToken))
+        .send({ boardReportedAt: new Date().toISOString() })
+        .expect(400);
+      const done = await http()
+        .put(`/privacy/breaches/${row.id}`)
+        .set(auth(adminToken))
+        .send({
+          notificationStatus: 'NOTIFIED',
+          boardReportedAt: new Date(
+            detectedAt.getTime() + 60 * 3600_000,
+          ).toISOString(),
+          principalsNotifiedAt: new Date().toISOString(),
+        })
+        .expect(200);
+      expect((done.body as { boardReportState: string }).boardReportState).toBe(
+        'REPORTED',
+      );
+      await http()
+        .post(`/privacy/breaches/${row.id}/close`)
+        .set(auth(adminToken))
+        .send({ resolution: 'Reported and fixed' })
+        .expect(201);
     });
 
     it('sharing records CRUD is ADMIN-only', async () => {

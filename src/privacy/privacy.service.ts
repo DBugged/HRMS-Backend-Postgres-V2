@@ -14,12 +14,18 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { BreachStatus, Prisma, PrivacySettings } from '@prisma/client';
+import {
+  BreachNotificationStatus,
+  BreachStatus,
+  Prisma,
+  PrivacySettings,
+} from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { paginate, wrapAll } from '../common/pagination';
 import { PrivacyAuditService } from './privacy-audit.service';
+import { BOARD_REPORT_HOURS, withBoardDeadline } from './breach-deadline';
 import {
   LEGAL_BASES,
   ProcessingPurpose,
@@ -485,11 +491,25 @@ export class PrivacyService {
   async summaryCounts(organizationId: string) {
     // The register seeds itself on first read; seed first so the count matches what the Processors tab will list.
     await this.ensureProcessorsSeeded(organizationId);
-    const [openBreaches, processors] = await Promise.all([
-      this.scopedPrisma.breachIncident.count({ where: { organizationId, status: BreachStatus.OPEN } }),
+    const [openBreaches, overdueBreaches, processors] = await Promise.all([
+      this.scopedPrisma.breachIncident.count({
+        where: { organizationId, status: BreachStatus.OPEN },
+      }),
+      // Open incidents whose Board report is past the 72-hour deadline and still not sent (see breach-deadline.ts).
+      this.scopedPrisma.breachIncident.count({
+        where: {
+          organizationId,
+          status: BreachStatus.OPEN,
+          notificationStatus: { not: BreachNotificationStatus.NOT_REQUIRED },
+          boardReportedAt: null,
+          detectedAt: {
+            lt: new Date(Date.now() - BOARD_REPORT_HOURS * 60 * 60 * 1000),
+          },
+        },
+      }),
       this.scopedPrisma.dataProcessor.count({ where: { organizationId } }),
     ]);
-    return { openBreaches, processors };
+    return { openBreaches, overdueBreaches, processors };
   }
 
   async listProcessors(organizationId: string) {
@@ -664,6 +684,46 @@ export class PrivacyService {
     }
   }
 
+  // The Board-report and people-told dates must fit the incident: not in the future, not before it was detected, and a
+  // Board report date only with "Notified" (and "Notified" only with that date, so the register always shows when).
+  private assertReportDates(b: {
+    detectedAt: Date;
+    notificationStatus: BreachNotificationStatus;
+    boardReportedAt: Date | null;
+    principalsNotifiedAt: Date | null;
+  }) {
+    const slack = Date.now() + 5 * 60 * 1000;
+    for (const [d, what] of [
+      [b.boardReportedAt, 'Reported to the Board on'],
+      [b.principalsNotifiedAt, 'Affected people told on'],
+    ] as const) {
+      if (!d) continue;
+      if (d.getTime() > slack)
+        throw new BadRequestException(`${what} cannot be in the future.`);
+      if (d.getTime() < b.detectedAt.getTime()) {
+        throw new BadRequestException(
+          `${what} cannot be before the incident was detected.`,
+        );
+      }
+    }
+    if (
+      b.notificationStatus === BreachNotificationStatus.NOTIFIED &&
+      !b.boardReportedAt
+    ) {
+      throw new BadRequestException(
+        'Enter when the report went to the Data Protection Board before marking the incident Notified.',
+      );
+    }
+    if (
+      b.boardReportedAt &&
+      b.notificationStatus !== BreachNotificationStatus.NOTIFIED
+    ) {
+      throw new BadRequestException(
+        'A Board report date is entered, so set Notification status to Notified (or clear the date).',
+      );
+    }
+  }
+
   async listBreaches(query: ListBreachesQueryDto, organizationId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;
@@ -671,14 +731,17 @@ export class PrivacyService {
       organizationId,
       ...(query.status && { status: query.status }),
     };
+    const now = new Date();
     return paginate(
-      () =>
-        this.scopedPrisma.breachIncident.findMany({
-          where,
-          orderBy: { seqNo: 'desc' },
-          skip: (page - 1) * limit,
-          take: limit,
-        }),
+      async () =>
+        (
+          await this.scopedPrisma.breachIncident.findMany({
+            where,
+            orderBy: { seqNo: 'desc' },
+            skip: (page - 1) * limit,
+            take: limit,
+          })
+        ).map((b) => withBoardDeadline(b, now)),
       () => this.scopedPrisma.breachIncident.count({ where }),
       page,
       limit,
@@ -690,12 +753,25 @@ export class PrivacyService {
       where: { id, organizationId },
     });
     if (!b) throw new NotFoundException('Incident not found.');
-    return b;
+    return withBoardDeadline(b);
   }
 
   async createBreach(dto: CreateBreachDto, actor: Caller, ctx: ReqCtx) {
     const organizationId = actor.organizationId;
     this.assertNotFuture(dto.detectedAt);
+    const boardReportedAt = dto.boardReportedAt
+      ? new Date(dto.boardReportedAt)
+      : null;
+    const principalsNotifiedAt = dto.principalsNotifiedAt
+      ? new Date(dto.principalsNotifiedAt)
+      : null;
+    this.assertReportDates({
+      detectedAt: new Date(dto.detectedAt),
+      notificationStatus:
+        dto.notificationStatus ?? BreachNotificationStatus.NOT_ASSESSED,
+      boardReportedAt,
+      principalsNotifiedAt,
+    });
     for (let attempt = 0; attempt < 3; attempt++) {
       const last = await this.scopedPrisma.breachIncident.findFirst({
         where: { organizationId },
@@ -712,6 +788,8 @@ export class PrivacyService {
             createdById: actor.id,
             ...dto,
             detectedAt: new Date(dto.detectedAt),
+            boardReportedAt,
+            principalsNotifiedAt,
             reportedBy: dto.reportedBy ?? actor.name,
           },
         });
@@ -720,7 +798,7 @@ export class PrivacyService {
           entityId: row.id,
           meta: { incidentNo: row.incidentNo, severity: row.severity },
         });
-        return row;
+        return withBoardDeadline(row);
       } catch (err) {
         if (!isUniqueViolation(err)) throw err;
       }
@@ -740,12 +818,29 @@ export class PrivacyService {
     if (existing.status === 'CLOSED') {
       throw new ConflictException('A closed incident cannot be edited.');
     }
-    const { detectedAt, ...rest } = dto;
+    const { detectedAt, boardReportedAt, principalsNotifiedAt, ...rest } = dto;
     if (detectedAt) this.assertNotFuture(detectedAt);
+    // undefined keeps the stored date, null clears it.
+    const asDate = (v: string | null | undefined, kept: Date | null) =>
+      v === undefined ? kept : v === null ? null : new Date(v);
+    const dates = {
+      boardReportedAt: asDate(boardReportedAt, existing.boardReportedAt),
+      principalsNotifiedAt: asDate(
+        principalsNotifiedAt,
+        existing.principalsNotifiedAt,
+      ),
+    };
+    this.assertReportDates({
+      detectedAt: detectedAt ? new Date(detectedAt) : existing.detectedAt,
+      notificationStatus:
+        rest.notificationStatus ?? existing.notificationStatus,
+      ...dates,
+    });
     await this.scopedPrisma.breachIncident.updateMany({
       where: { id, organizationId: actor.organizationId },
       data: {
         ...rest,
+        ...dates,
         ...(detectedAt && { detectedAt: new Date(detectedAt) }),
       },
     });
@@ -766,6 +861,15 @@ export class PrivacyService {
     const existing = await this.getBreach(id, actor.organizationId);
     if (existing.status === 'CLOSED') {
       throw new ConflictException('This incident is already closed.');
+    }
+    // Closing ends the 72-hour clock, so the notification decision has to be on record first.
+    if (
+      existing.notificationStatus === BreachNotificationStatus.NOT_ASSESSED ||
+      existing.notificationStatus === BreachNotificationStatus.PENDING
+    ) {
+      throw new BadRequestException(
+        'Decide on notification before closing: edit the incident and set Notification status to Not required, or to Notified with the date the report went to the Data Protection Board.',
+      );
     }
     await this.scopedPrisma.breachIncident.updateMany({
       where: { id, organizationId: actor.organizationId },

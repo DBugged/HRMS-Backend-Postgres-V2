@@ -3680,6 +3680,13 @@ model BreachIncident {
   investigation      String                   @default("")
   actionsTaken       String                   @default("")
   notificationStatus BreachNotificationStatus @default(NOT_ASSESSED)
+  // DPDP: the Data Protection Board gets a detailed report within 72 hours of detection, and the affected people are told
+  // without delay. These record when each was done; the due time is detectedAt + 72 hours (worked out, not stored).
+  boardReportedAt      DateTime?
+  principalsNotifiedAt DateTime?
+  // When the Admins were last reminded about the Board report (24 hours left, then overdue), so each reminder goes once.
+  dueSoonRemindedAt    DateTime?
+  overdueRemindedAt    DateTime?
   resolution         String                   @default("")
   status             BreachStatus             @default(OPEN)
   closedAt           DateTime?
