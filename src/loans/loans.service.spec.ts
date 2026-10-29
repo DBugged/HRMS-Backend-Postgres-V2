@@ -10,6 +10,8 @@ const EMP = (over: Row = {}): Row => ({
   email: 'a@x.com',
   role: Role.EMPLOYEE,
   isActive: true,
+  employmentStatus: 'CONFIRMED',
+  employeeType: 'permanent',
   ...over,
 });
 
@@ -394,6 +396,19 @@ describe('loans: sanctioning', () => {
         'org',
       ),
     ).rejects.toThrow(/months from now/);
+  });
+});
+
+describe('loans: eligibility', () => {
+  it.each([
+    ['PROBATION', 'permanent'],
+    ['EXTENDED_PROBATION', 'permanent'],
+    ['CONFIRMED', 'intern'],
+  ])('a %s / %s employee cannot request a loan or advance', async (employmentStatus, employeeType) => {
+    const { service } = build({ employee: EMP({ employmentStatus, employeeType }) });
+    await expect(
+      service.request({ loanType: 'ADVANCE', principal: 1000, tenureMonths: 1 } as never, { id: 'e1', name: 'Asha', role: Role.EMPLOYEE } as never, 'org'),
+    ).rejects.toThrow(/confirmed, permanent employees/);
   });
 });
 
