@@ -29,6 +29,9 @@ export async function featureEnabledFor(organizationId: string, key: string): Pr
   return service ? service.featureEnabledFor(organizationId, key) : true;
 }
 
+/** The opt-in flag that removes our branding from the apps for a company that has paid for it. */
+export const WHITE_LABEL_FLAG = 'feature.white_label';
+
 export const sisterCompaniesOn = (organizationId: string) => featureEnabledFor(organizationId, SISTER_COMPANIES_FLAG);
 
 /** The module flags switched off for one organization (empty when none, or before the gate is up). */

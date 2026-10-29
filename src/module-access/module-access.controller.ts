@@ -18,6 +18,8 @@ export class ModuleAccessController {
       disabled: [...(await this.access.disabledFor(user.organizationId))],
       // Opt-in features switched on for this company (sister companies: company names and employee ID series).
       sisterCompanies: await this.access.featureEnabledFor(user.organizationId, 'feature.sister_companies'),
+      // Our branding is hidden in the apps (a paid option, switched on per company in the Control Panel).
+      whiteLabel: await this.access.featureEnabledFor(user.organizationId, 'feature.white_label'),
     };
   }
 }

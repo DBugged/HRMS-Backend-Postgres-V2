@@ -361,7 +361,12 @@ export class CcBillingService {
   }
   async setOverride(key: string, organizationId: string, value: unknown) {
     if (!(await this.prisma.ccFeatureFlag.findUnique({ where: { key } }))) throw new NotFoundException('Flag not found.');
-    if (!(await this.prisma.organization.findFirst({ where: { id: organizationId }, select: { id: true } }))) throw new NotFoundException('Organization not found.');
+    const org = await this.prisma.organization.findFirst({ where: { id: organizationId }, select: { id: true, companyLogoUrl: true } });
+    if (!org) throw new NotFoundException('Organization not found.');
+    // White label needs the company's own logo, so the app is never left with no name or logo at all.
+    if (key === 'feature.white_label' && value === true && !org.companyLogoUrl) {
+      throw new BadRequestException('This company has not uploaded its logo yet. Ask them to add it under Organization > Branding, then turn white label on.');
+    }
     const o = await this.prisma.ccFlagOverride.upsert({ where: { flagKey_organizationId: { flagKey: key, organizationId } }, create: { flagKey: key, organizationId, value: value as never }, update: { value: value as never }, include: { organization: true } });
     this.modules.clear();
     return { organizationId, organizationName: o.organization.companyName || o.organization.name, value: o.value, updatedAt: o.updatedAt.toISOString() };
