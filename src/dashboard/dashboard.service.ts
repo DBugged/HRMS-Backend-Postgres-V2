@@ -1638,6 +1638,7 @@ export class DashboardService {
     const today = await this.orgNow(organizationId);
     const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
 
+    // Joined on or before today, whatever the time on the stored joining date (see employedOnWhere).
     // Birthdays only need the date of birth, which is stored as plain text inside personalData. Reading the whole
     // personalData would decrypt every employee's PAN / Aadhaar / bank fields just to throw them away, so the one key is
     // read in SQL (organizationId is a bound parameter).
@@ -1655,7 +1656,7 @@ export class DashboardService {
                "personalData"->>'dateOfBirth' AS "dateOfBirth"
           FROM "users"
          WHERE "organizationId" = ${organizationId} AND "isActive" = true
-           AND "joiningDate" <= ${today}
+           AND "joiningDate" <= ${new Date(`${todayStr}T23:59:59.999Z`)}
            AND ("exitDate" IS NULL OR "exitDate" >= ${todayStr})
          ORDER BY "employeeId" ASC`,
     ]);

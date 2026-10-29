@@ -31,7 +31,9 @@ export function splitManagerIds(picked: string[], selfId?: string): { reportingM
 export const isEmployedOn = (exitDate: string | null | undefined, date: string): boolean => !exitDate || date <= exitDate;
 
 /** Prisma filter for people working on `date` (YYYY-MM-DD): already joined, and not past their last working day. */
+// Joined on or before `date`, whatever the time on the stored joining date: one added without a joining date gets the
+// moment it was created (schema default now()), and still joined that day.
 export const employedOnWhere = (date: string) => ({
-  joiningDate: { lte: new Date(`${date}T00:00:00.000Z`) },
+  joiningDate: { lte: new Date(`${date}T23:59:59.999Z`) },
   OR: [{ exitDate: null }, { exitDate: { gte: date } }],
 });

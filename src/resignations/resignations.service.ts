@@ -379,13 +379,14 @@ export class ResignationsService {
         'A resignation can only be recorded for an active employee.',
       );
     }
-    await assertAccountCanLeave(this.scopedPrisma, dto.employeeId, organizationId);
-    // Same tier rule as deciding one: only an Admin handles an HR or Admin employee's resignation.
+    // Same tier rule as deciding one: only an Admin handles an HR or Admin employee's resignation. Checked before
+    // whether the account may leave, so an HR user is refused outright rather than told about the Admin's account.
     if (HR_ROLES.includes(employee.role) && actor.role !== Role.ADMIN) {
       throw new ForbiddenException(
         'Only an Admin can record a resignation for an HR or Admin employee.',
       );
     }
+    await assertAccountCanLeave(this.scopedPrisma, dto.employeeId, organizationId);
 
     const timezone = await this.getOrgTimezone(organizationId);
     const today = todayInOrgTz(timezone);
@@ -398,7 +399,7 @@ export class ResignationsService {
     const joined = employee.joiningDate.toISOString().slice(0, 10);
     if (receivedOn < joined) {
       throw new BadRequestException(
-        `The date received cannot be before the joining date (${joined}).`,
+        `The date received cannot be before the joining date (${dmyText(joined)}).`,
       );
     }
     const org = await this.scopedPrisma.organization.findFirst({

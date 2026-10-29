@@ -97,7 +97,7 @@ export class CheckInReminderService {
         isActive: true,
         // Always-present employees do not punch, so they are not reminded to.
         alwaysPresent: false,
-        joiningDate: { lte: new Date(`${today}T00:00:00.000Z`) },
+        joiningDate: { lte: new Date(`${today}T23:59:59.999Z`) }, // joined today, at any time
         // Not after their last working day.
         OR: [{ exitDate: null }, { exitDate: { gte: today } }],
       },
