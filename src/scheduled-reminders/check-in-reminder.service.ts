@@ -6,6 +6,7 @@
 //   default). Nobody is nudged on a weekly off, a holiday (company-wide or their department's), a full day of approved
 //   leave, before they have joined, or once they have already punched in. One reminder per person per day (the
 //   notification title carries the date), even if the job re-runs.
+import { dmyText } from '../payroll/format-date';
 import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
@@ -175,7 +176,7 @@ export class CheckInReminderService {
       }
       const at = shiftTimeLabel(e.shift.shiftStartTime, hour12);
       // The date in the title is what keeps a re-run (or a restart in the same window) from reminding twice.
-      const title = `Mark your attendance - shift starts at ${at} (${today})`;
+      const title = `Mark your attendance - shift starts at ${at} (${dmyText(today)})`;
       const already = await this.scopedPrisma.notification.findFirst({
         where: {
           organizationId,
@@ -268,7 +269,7 @@ export class CheckInReminderService {
         continue;
       }
       const at = shiftTimeLabel(shift.shiftEndTime, hour12);
-      const title = `Remember to check out - shift ends at ${at} (${row.date})`;
+      const title = `Remember to check out - shift ends at ${at} (${dmyText(row.date)})`;
       const already = await this.scopedPrisma.notification.findFirst({
         where: {
           organizationId,

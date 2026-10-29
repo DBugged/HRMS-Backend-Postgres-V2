@@ -869,7 +869,7 @@ export class OffboardingService {
       organizationId,
       userId: record.employeeId,
       title: 'Last Working Day Updated',
-      message: `Your last working day is now ${dto.lastWorkingDay} (was ${record.lastWorkingDay}).`,
+      message: `Your last working day is now ${dmyText(dto.lastWorkingDay)} (was ${dmyText(record.lastWorkingDay)}).`,
       category: NotificationCategory.GENERAL,
     });
     return this.findOne(id, organizationId);
