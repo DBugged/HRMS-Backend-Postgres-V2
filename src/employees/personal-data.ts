@@ -240,6 +240,35 @@ export function assertValidIdentifiers(patch: Record<string, unknown>): void {
   }
 }
 
+// The last 10 digits of a phone number, so "+91 98765 43210" and "9876543210" compare equal.
+const phoneDigits = (v: unknown) =>
+  typeof v === 'string' ? v.replace(/\D/g, '').slice(-10) : '';
+
+// Family and emergency numbers are for reaching someone else: never the employee's own Contact Number, and the two
+// emergency contacts must be different numbers. Father's and mother's may share one (a family landline). Checked on the
+// record as it will be saved (stored values merged with this patch), so editing either side is caught.
+export function assertContactNumbersDistinct(
+  merged: Record<string, unknown>,
+  ownContactNumber: string | null | undefined,
+): void {
+  const own = phoneDigits(ownContactNumber);
+  if (own) {
+    for (const key of PHONE_KEYS) {
+      if (phoneDigits(merged[key]) === own) {
+        throw new BadRequestException(
+          `${IDENTIFIER_PATTERNS[key].label} cannot be your own contact number. Enter the number of the person to reach.`,
+        );
+      }
+    }
+  }
+  const e1 = phoneDigits(merged.emergencyContact1Number);
+  if (e1 && e1 === phoneDigits(merged.emergencyContact2Number)) {
+    throw new BadRequestException(
+      'Emergency contact 1 and 2 have the same number. Enter a different number for the second contact, or leave it blank.',
+    );
+  }
+}
+
 interface PreviousEmploymentEntry {
   documentUrl?: string;
   [key: string]: unknown;

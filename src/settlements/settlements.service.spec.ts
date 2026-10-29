@@ -22,6 +22,8 @@ interface Opts {
   bonusOn?: boolean;
   gratuityConfig?: Row;
   headcount?: number;
+  // Saved salary lines for the employee; 0 = no salary structure.
+  salaryLines?: number;
   signedRuns?: Row[];
   paidRuns?: Row[];
 }
@@ -120,6 +122,7 @@ function build(o: Opts = {}) {
         a.where.runSequence === 0 ? (o.signedRuns ?? []) : (o.paidRuns ?? []),
     },
     loan: { findMany: async () => o.loans ?? [] },
+    employeeSalaryComponent: { count: async () => o.salaryLines ?? 3 },
     leaveType: { findMany: async () => o.leaveTypes ?? [] },
     reimbursement: {
       aggregate: async () => ({ _sum: { amount: o.reimbursed ?? 0 } }),
@@ -245,6 +248,22 @@ describe('final settlement: automatic link and system drafts', () => {
 });
 
 describe('final settlement: who can be settled', () => {
+  it('someone with no salary structure is refused, since every amount would be 0 and leave would be encashed for nothing', async () => {
+    const { service, settlements } = build({ salaryLines: 0 });
+    await expect(service.calculate(dto(), admin, 'org')).rejects.toThrow(
+      /has no salary structure/,
+    );
+    expect(settlements).toHaveLength(0);
+  });
+
+  it('someone excluded from payroll is settled even without a salary structure', async () => {
+    const { service } = build({
+      salaryLines: 0,
+      employee: { id: 'e1', isActive: true, joiningDate: JOINED, excludeFromPayroll: true },
+    });
+    await expect(service.calculate(dto(), admin, 'org')).resolves.toBeDefined();
+  });
+
   it('someone whose account was closed before their settlement can still be settled', async () => {
     const left = build({
       employee: { id: 'e1', isActive: false, joiningDate: JOINED },

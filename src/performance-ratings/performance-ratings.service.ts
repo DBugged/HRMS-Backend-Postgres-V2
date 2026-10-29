@@ -108,6 +108,8 @@ export class PerformanceRatingsService {
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
+            // Who gave the rating, so a self-rating (an Admin may rate themselves) is visible as such.
+            ratedBy: { select: { id: true, name: true } },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { financialYear: 'desc' }],
           skip: skip(query.page, query.limit),

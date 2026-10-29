@@ -1,4 +1,5 @@
 import {
+  assertContactNumbersDistinct,
   areMandatoryDocumentsUploaded,
   assertValidAddress,
   assertValidDates,
@@ -350,5 +351,49 @@ describe('minimum age of 18', () => {
     expect(() => assertValidDates({ dateOfBirth: '2016-05-01' })).toThrow(
       'at least 18',
     );
+  });
+});
+
+describe('assertContactNumbersDistinct', () => {
+  it("refuses the employee's own number as a family or emergency contact, however it is written", () => {
+    expect(() =>
+      assertContactNumbersDistinct(
+        { emergencyContact1Number: '9876543210' },
+        '+91 98765 43210',
+      ),
+    ).toThrow(/Emergency contact 1 number cannot be your own/);
+    expect(() =>
+      assertContactNumbersDistinct(
+        { fatherContact: '+919876543210' },
+        '9876543210',
+      ),
+    ).toThrow(/Father's contact number/);
+  });
+
+  it('refuses the same number for both emergency contacts', () => {
+    expect(() =>
+      assertContactNumbersDistinct(
+        {
+          emergencyContact1Number: '9404162245',
+          emergencyContact2Number: '+91 94041 62245',
+        },
+        '7718035688',
+      ),
+    ).toThrow(/same number/);
+  });
+
+  it('allows father, mother and one emergency contact to share a number, and blanks', () => {
+    expect(() =>
+      assertContactNumbersDistinct(
+        {
+          fatherContact: '9404162245',
+          motherContact: '9404162245',
+          emergencyContact1Number: '9404162245',
+          emergencyContact2Number: '',
+        },
+        '7718035688',
+      ),
+    ).not.toThrow();
+    expect(() => assertContactNumbersDistinct({}, '')).not.toThrow();
   });
 });

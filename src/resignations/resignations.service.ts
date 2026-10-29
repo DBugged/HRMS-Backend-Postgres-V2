@@ -49,7 +49,7 @@ import {
 } from './dto/decide-resignation.dto';
 import { ListResignationsQueryDto } from './dto/list-resignations-query.dto';
 import { todayInOrgTz } from '../common/org-date';
-import { formatDateDisplay } from '../payroll/format-date';
+import { dmyText, formatDateDisplay } from '../payroll/format-date';
 
 function addDaysToDateStr(date: string, days: number): string {
   const d = new Date(`${date}T00:00:00.000Z`);
@@ -192,7 +192,7 @@ export class ResignationsService {
       organizationId,
       employee,
       'Resignation Submitted',
-      `${employee.name} has submitted a resignation (requested last working day ${dto.requestedLwd}).`,
+      `${employee.name} has submitted a resignation (requested last working day ${dmyText(dto.requestedLwd)}).`,
     );
     void this.emailApprovers(organizationId, employee, dto.requestedLwd, dto.reason);
     return created;
@@ -499,7 +499,7 @@ export class ResignationsService {
       organizationId,
       dto.employeeId,
       'Resignation recorded',
-      `${actor.name} recorded your resignation (received ${receivedOn}, requested last working day ${dto.requestedLwd}).`,
+      `${actor.name} recorded your resignation (received ${dmyText(receivedOn)}, requested last working day ${dmyText(dto.requestedLwd)}).`,
     );
     const recipients = await this.scopedPrisma.user.findMany({
       where: {
@@ -519,7 +519,7 @@ export class ResignationsService {
           organizationId,
           r.id,
           'Resignation Recorded',
-          `A resignation was recorded for ${employee.name} by ${actor.name} (requested last working day ${dto.requestedLwd}).`,
+          `A resignation was recorded for ${employee.name} by ${actor.name} (requested last working day ${dmyText(dto.requestedLwd)}).`,
         ),
       ),
     );

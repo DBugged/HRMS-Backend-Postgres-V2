@@ -308,6 +308,20 @@ export class SettlementsService {
       organizationId,
     );
 
+    // Without a salary structure every amount (final pay, leave encashment, gratuity, notice pay) works out to 0, and
+    // processing would still use up the leave balance being encashed - a Rs 0 settlement that looks complete. Someone
+    // excluded from payroll is settled outside it, so they may go ahead.
+    if (!employee.excludeFromPayroll) {
+      const salaryLines = await this.scopedPrisma.employeeSalaryComponent.count({
+        where: { organizationId, employeeId: dto.employeeId, isEnabled: true },
+      });
+      if (salaryLines === 0) {
+        throw new BadRequestException(
+          `${employee.name} has no salary structure, so final pay, leave encashment and gratuity would all come to 0. Add their salary (Employees > Salary) first, then calculate the settlement.`,
+        );
+      }
+    }
+
     const activeLoans = await this.scopedPrisma.loan.findMany({
       where: {
         employeeId: dto.employeeId,

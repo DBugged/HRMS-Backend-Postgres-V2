@@ -54,6 +54,7 @@ import {
   assertValidDates,
   assertPersonalDataShape,
   assertValidIdentifiers,
+  assertContactNumbersDistinct,
   mergePersonalData,
 } from './personal-data';
 import { assertNotSelfApproval } from '../common/dept-scope';
@@ -389,6 +390,7 @@ export class EmployeeProfileService {
       }
     }
     const merged = mergePersonalData(before, patch, mandatoryDocumentsUploaded);
+    assertContactNumbersDistinct(merged, employee.contactNumber);
 
     await this.scopedPrisma.user.updateMany({
       where: { id, organizationId },
@@ -824,7 +826,7 @@ export class EmployeeProfileService {
           previousStatus: employee.employmentStatus,
           newStatus,
           note:
-            (dto.effectiveDate ? `Effective ${dto.effectiveDate}. ` : '') +
+            (dto.effectiveDate ? `Effective ${dmyText(dto.effectiveDate)}. ` : '') +
             (dto.decision === 'confirmed' && employee.employeeType === 'probation' ? 'Employee type changed from probation to permanent. ' : '') +
             (dto.note ?? ''),
           changedById: actor.id,
