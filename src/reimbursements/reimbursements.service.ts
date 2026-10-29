@@ -27,7 +27,10 @@ import { signFileToken } from '../files/file-token';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
-import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
+import {
+  CreateReimbursementBatchDto,
+  CreateReimbursementDto,
+} from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
 import { paginate, skip } from '../common/pagination';
@@ -146,34 +149,40 @@ export class ReimbursementsService {
     };
   }
 
-  async create(
-    dto: CreateReimbursementDto,
-    actor: Actor,
-    organizationId: string,
-  ) {
+  // The rules every claim date has to meet (a claim is for an expense that has already happened, is not older than a
+  // year, and is not from before the person joined).
+  private assertClaimDateAllowed(claimDate: string, actor: Actor) {
     // A claim is for an expense that has already happened. One day of slack covers timezones ahead of UTC.
     const latestAllowed = new Date(Date.now() + 86400000)
       .toISOString()
       .slice(0, 10);
-    if (dto.claimDate > latestAllowed) {
+    if (claimDate > latestAllowed) {
       throw new BadRequestException('The claim date cannot be in the future.');
     }
     // ...and not one from years ago: a claim older than a year is no longer something to reimburse.
     const earliestAllowed = new Date(Date.now() - MAX_CLAIM_AGE_DAYS * 86400000)
       .toISOString()
       .slice(0, 10);
-    if (dto.claimDate < earliestAllowed) {
+    if (claimDate < earliestAllowed) {
       throw new BadRequestException(
         `A claim cannot be older than ${MAX_CLAIM_AGE_DAYS} days. Raise it with HR if it is genuinely older.`,
       );
     }
     // ...and not one from before the person joined (the same rule as punches, regularization, WFH, leave and comp-off).
     const joinedOn = actor.joiningDate.toISOString().slice(0, 10);
-    if (dto.claimDate < joinedOn) {
+    if (claimDate < joinedOn) {
       throw new BadRequestException(
         `The claim date cannot be before your joining date (${dmyText(joinedOn)}).`,
       );
     }
+  }
+
+  async create(
+    dto: CreateReimbursementDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    this.assertClaimDateAllowed(dto.claimDate, actor);
     // A missing (or null) category is "Other", not an error.
     const category = dto.category ?? ReimbursementCategory.OTHER;
     // Application-level duplicate-submission guard — this had none at all
@@ -243,6 +252,91 @@ export class ReimbursementsService {
     });
 
     return this.withSignedReceipt(claim);
+  }
+
+  // One submit for one category on several dates: each row (date + amount, optional note) becomes its own claim, so HR
+  // still approves, rejects and pays every date on its own. All-or-nothing: if any row is not allowed (bad date,
+  // already claimed) nothing is created and the message names the row.
+  async createMany(
+    dto: CreateReimbursementBatchDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const category = dto.category ?? ReimbursementCategory.OTHER;
+    const seen = new Set<string>();
+    for (const item of dto.items) {
+      this.assertClaimDateAllowed(item.claimDate, actor);
+      const key = `${item.claimDate}|${item.amount}`;
+      if (seen.has(key)) {
+        throw new BadRequestException(
+          `${dmyText(item.claimDate)} is listed twice with the same amount. Remove the repeated row.`,
+        );
+      }
+      seen.add(key);
+      const duplicate = await this.scopedPrisma.reimbursement.findFirst({
+        where: {
+          organizationId,
+          employeeId: actor.id,
+          category,
+          amount: item.amount,
+          claimDate: item.claimDate,
+          status: { not: ReimbursementStatus.REJECTED },
+        },
+      });
+      if (duplicate) {
+        throw new ConflictException(
+          `A claim for this amount and category on ${dmyText(item.claimDate)} already exists. Remove that row, or resubmit only if the earlier claim was rejected.`,
+        );
+      }
+    }
+
+    const claims = await this.scopedPrisma.$transaction(async (tx) => {
+      const created: Reimbursement[] = [];
+      for (const item of dto.items) {
+        created.push(
+          await tx.reimbursement.create({
+            data: {
+              organizationId,
+              employeeId: actor.id,
+              category,
+              amount: item.amount,
+              claimDate: item.claimDate,
+              description: item.description ?? dto.description ?? '',
+              receiptUrl: dto.receiptUrl ?? '',
+            },
+          }),
+        );
+      }
+      return created;
+    });
+
+    for (const claim of claims) {
+      await this.auditLogService.log({
+        actorId: actor.id,
+        action: 'REIMBURSEMENT_SUBMITTED',
+        module: 'PAYROLL',
+        organizationId,
+        targetId: claim.id,
+        details: { employeeId: actor.id, category, amount: claim.amount },
+      });
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: actor.id,
+        eventKey: 'REIMBURSEMENT_SUBMITTED',
+        performedById: actor.id,
+        description: `Submitted a reimbursement claim of ${claim.amount} for ${category}.`,
+      });
+    }
+    const total = claims.reduce((sum, c) => sum + c.amount, 0);
+    // One notification for the whole submit, not one per date.
+    await this.notificationsService.notifyReviewers({
+      organizationId,
+      requester: actor,
+      title: 'Reimbursement Claims Submitted',
+      message: `${actor.name} submitted ${claims.length} reimbursement claims for ${category} totalling ${Math.round(total * 100) / 100}, pending review.`,
+      category: NotificationCategory.PAYROLL,
+    });
+    return claims.map((c) => this.withSignedReceipt(c));
   }
 
   async review(

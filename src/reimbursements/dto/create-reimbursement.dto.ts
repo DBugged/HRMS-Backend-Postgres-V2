@@ -7,7 +7,12 @@ import {
   MaxLength,
   IsString,
   Max,
+  IsArray,
+  ArrayMinSize,
+  ArrayMaxSize,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
 import { ReimbursementCategory } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
@@ -43,4 +48,51 @@ export class CreateReimbursementDto {
   @IsOptional()
   @IsString()
   receiptUrl?: string;
+}
+
+// One date of a multi-date claim.
+export class ReimbursementBatchItemDto {
+  @ApiProperty({ example: '2026-06-10' })
+  @IsValidCalendarDateString()
+  claimDate!: string;
+
+  @ApiProperty()
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  @Max(MAX_REIMBURSEMENT_AMOUNT)
+  amount!: number;
+
+  // A note for this date; falls back to the claim-level description.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string;
+}
+
+// One category and receipt, several dates: each item becomes its own claim.
+export class CreateReimbursementBatchDto {
+  @ApiPropertyOptional({ enum: ReimbursementCategory })
+  @IsOptional()
+  @IsEnum(ReimbursementCategory)
+  category?: ReimbursementCategory;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  description?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  receiptUrl?: string;
+
+  @ApiProperty({ type: [ReimbursementBatchItemDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(31)
+  @ValidateNested({ each: true })
+  @Type(() => ReimbursementBatchItemDto)
+  items!: ReimbursementBatchItemDto[];
 }

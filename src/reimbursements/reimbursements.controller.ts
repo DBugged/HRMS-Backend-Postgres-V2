@@ -14,7 +14,10 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { ReimbursementsService } from './reimbursements.service';
-import { CreateReimbursementDto } from './dto/create-reimbursement.dto';
+import {
+  CreateReimbursementBatchDto,
+  CreateReimbursementDto,
+} from './dto/create-reimbursement.dto';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { BulkReviewReimbursementDto } from './dto/bulk-review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
@@ -48,6 +51,19 @@ export class ReimbursementsController {
   @Post()
   create(@Body() dto: CreateReimbursementDto, @CurrentUser() caller: Caller) {
     return this.reimbursementsService.create(
+      dto,
+      caller,
+      caller.organizationId,
+    );
+  }
+
+  // One category and receipt on several dates: creates one claim per date, all or nothing.
+  @Post('batch')
+  createMany(
+    @Body() dto: CreateReimbursementBatchDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.reimbursementsService.createMany(
       dto,
       caller,
       caller.organizationId,
