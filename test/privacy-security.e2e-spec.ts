@@ -272,12 +272,14 @@ describe('Privacy security hardening (e2e)', () => {
       svc.transporter = {
         sendMail: () => Promise.reject(new Error('smtp down')),
       };
+      // A deliverable-looking address: a reserved one (example.test) is skipped before the transporter is tried. The
+      // transporter is the stub above, so nothing is sent.
       await app
         .get(EmailService)
-        .send({ to: 'y@example.test', subject: 'Welcome', html });
+        .send({ to: 'y@smtp-check.co.in', subject: 'Welcome', html });
       svc.transporter = null;
       const out = logged();
-      expect(out).toContain('y@example.test');
+      expect(out).toContain('y@smtp-check.co.in');
       expect(out).toContain('smtp down');
       expect(out).not.toContain(SECRET);
     });

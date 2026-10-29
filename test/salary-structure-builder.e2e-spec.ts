@@ -78,6 +78,7 @@ describe('Salary structure builder (e2e)', () => {
         accessToken: string;
       }
     ).accessToken;
+    let seq = 0;
     const loc = (
       name: string,
       city: string,
@@ -85,7 +86,14 @@ describe('Salary structure builder (e2e)', () => {
     ) =>
       admin()
         .post('/work-locations')
-        .send({ name, city, latitude: 18.5, longitude: 73.8, ...extra })
+        // Each location its own spot: the same fence twice is refused as a duplicate.
+        .send({
+          name,
+          city,
+          latitude: 18.5 + seq++ * 0.01,
+          longitude: 73.8,
+          ...extra,
+        })
         .expect(201);
     puneId = ((await loc('Pune HQ', 'Pune')).body as { id: string }).id;
     villageId = (

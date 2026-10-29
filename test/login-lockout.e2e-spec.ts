@@ -60,6 +60,9 @@ describe('Login lockout (e2e)', () => {
       }),
     );
     await app.init();
+    // Listen once on a free port: given an unbound server, supertest opens a new one per request, and the
+    // concurrent bursts below then fail with ECONNRESET instead of reaching login().
+    await app.listen(0, '127.0.0.1');
     prisma = app.get(PrismaService);
 
     await request(app.getHttpServer()).post('/auth/register').send({
@@ -166,7 +169,12 @@ describe('Login lockout (e2e)', () => {
       }),
     ).toBe(lockedBefore + 1);
 
-    // And the lock holds against the correct password.
+    // And the lock holds against the correct password from an address this account has not signed in from (an
+    // address it has signed in from may still try - see AuthService.signedInFromRecently; earlier tests signed in
+    // from this one, so forget those sign-ins first).
+    await prisma.auditLog.deleteMany({
+      where: { actorId: userId, action: 'LOGIN' },
+    });
     await login(PASSWORD).expect(401);
   });
 

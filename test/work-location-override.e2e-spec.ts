@@ -68,13 +68,15 @@ describe('Per-employee work location + personalData encryption (e2e)', () => {
 
     // The API only accepts the supported state (Maharashtra); a second state is written straight to
     // the DB to simulate existing multi-state data, which the override logic must still handle.
+    // Each location its own spot: the same fence twice is refused as a duplicate.
+    let seq = 0;
     const mk = async (name: string, state: string) => {
       const id = (
         (
           await admin(http().post('/work-locations')).send({
             name,
             state: 'Maharashtra',
-            latitude: 19.07,
+            latitude: 19.07 + ++seq * 0.01,
             longitude: 72.87,
           })
         ).body as { id: string }

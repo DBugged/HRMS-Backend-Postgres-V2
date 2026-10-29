@@ -128,6 +128,10 @@ async function pages(buffer: Buffer) {
     .length;
 }
 
+// Rendering real PDFs with embedded fonts takes a few seconds when the whole unit suite runs in parallel; the default
+// 5 s limit then fails these at random.
+jest.setTimeout(30_000);
+
 describe('payslip PDF: output', () => {
   it('produces a real, loadable single-page PDF for an ordinary run, named after the employee and month', async () => {
     const { service } = build(run());
