@@ -1688,6 +1688,41 @@ describe('Attendance (e2e)', () => {
         .send({ decision: 'APPROVED' })
         .expect(400);
     });
+
+    it('a day already waiting or approved is not asked for again; going back to the office withdraws it and tells the approver', async () => {
+      const date = offsetDate(20);
+      const put = (workArrangement: string) =>
+        request(app.getHttpServer())
+          .put('/attendance/work-arrangement')
+          .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+          .send({ date, workArrangement });
+      await put('WFH').expect(200);
+      const again = await put('WFH').expect(409);
+      expect((again.body as { message: string }).message).toMatch(
+        /already waiting for approval/,
+      );
+
+      const before = await prisma.notification.count({
+        where: { title: 'Work From Home Withdrawn' },
+      });
+      await put('OFFICE').expect(200);
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: wfhEmployeeId, date },
+      });
+      expect(row.workArrangement).toBe('OFFICE');
+      expect(row.workArrangementStatus).toBe('NONE');
+      expect(
+        await prisma.notification.count({
+          where: { title: 'Work From Home Withdrawn' },
+        }),
+      ).toBeGreaterThan(before);
+
+      // Withdrawn, so it may be asked for again; leave nothing pending for later tests.
+      await put('WFH').expect(200);
+      await prisma.attendance.deleteMany({
+        where: { employeeId: wfhEmployeeId, date },
+      });
+    });
   });
 
   describe('GET /attendance/geofence/mine', () => {

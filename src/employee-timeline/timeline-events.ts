@@ -119,6 +119,10 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
     category: 'ATTENDANCE_LEAVE',
     title: 'Work From Home Rejected',
   },
+  WFH_WITHDRAWN: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Work From Home Withdrawn',
+  },
   LEAVE_ENCASHMENT_REQUESTED: {
     category: 'ATTENDANCE_LEAVE',
     title: 'Leave Encashment Requested',

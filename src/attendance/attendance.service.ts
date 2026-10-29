@@ -2299,6 +2299,22 @@ export class AttendanceService {
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
     });
+    // The Work From Home already on this day that is waiting or approved (a rejected one may be asked for again).
+    const liveWfh =
+      existing?.workArrangement === WorkArrangement.WFH &&
+      (existing.workArrangementStatus === WfhApprovalStatus.PENDING ||
+        existing.workArrangementStatus === WfhApprovalStatus.APPROVED)
+        ? existing.workArrangementStatus
+        : null;
+    // Asking again would reset an approved day to pending and notify the approver a second time (same rule as a
+    // multi-day request, which leaves such days out).
+    if (isWfh && liveWfh) {
+      throw new ConflictException(
+        liveWfh === WfhApprovalStatus.APPROVED
+          ? `Work From Home for ${dmyText(dateStr)} is already approved.`
+          : `Work From Home for ${dmyText(dateStr)} is already waiting for approval.`,
+      );
+    }
 
     if (existing) {
       await this.scopedPrisma.attendance.updateMany({
@@ -2329,6 +2345,28 @@ export class AttendanceService {
         description: `Requested Work From Home for ${formatDateDisplay(dateStr, '', dateFormat, timeZone)}.`,
       });
       await this.notifyWfhRequested(actor, dateStr, organizationId);
+    } else if (liveWfh) {
+      // Back to the office on a day with a waiting or approved Work From Home: the request is withdrawn, so the
+      // approver hears of it instead of the request just disappearing from their list.
+      const day = dmyText(dateStr);
+      const pending = liveWfh === WfhApprovalStatus.PENDING;
+      await this.timelineService.logEvent({
+        organizationId,
+        employeeId: actor.id,
+        eventKey: 'WFH_WITHDRAWN',
+        performedById: actor.id,
+        description: `Withdrew the ${pending ? 'pending' : 'approved'} Work From Home for ${day}; working from the office instead.`,
+      });
+      await this.notificationsService.notifyReviewers({
+        organizationId,
+        requester: actor,
+        title: 'Work From Home Withdrawn',
+        message: pending
+          ? `${actor.name} will work from the office on ${day} instead. Their Work From Home request for that day is withdrawn - nothing to approve.`
+          : `${actor.name} will work from the office on ${day} instead of the approved Work From Home.`,
+        category: NotificationCategory.ATTENDANCE,
+        managerFirst: true,
+      });
     }
 
     return this.scopedPrisma.attendance.findFirstOrThrow({
