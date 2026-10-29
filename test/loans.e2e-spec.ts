@@ -165,6 +165,12 @@ describe('Loans (e2e)', () => {
         password: (otherCreate.body as EmployeeCreateBody).generatedPassword,
       });
     otherEmployeeToken = (otherLogin.body as AuthBody).accessToken;
+
+    // Only a confirmed, permanent employee may take a loan (loan-eligibility.ts); a new hire starts out Onboarding.
+    await prisma.user.updateMany({
+      where: { email: { startsWith: 'loan-e2e-' } },
+      data: { employmentStatus: 'CONFIRMED', employeeType: 'permanent' },
+    });
   });
 
   afterAll(async () => {

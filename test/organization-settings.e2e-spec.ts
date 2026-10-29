@@ -171,8 +171,13 @@ describe('Organization Settings / Setup Wizard (e2e)', () => {
       // Org-wide leave/attendance switches exposed to every role so the apps can hide what is turned off.
       allowCarryForward: true,
       allowLeaveEncashment: true,
-      allowNegativeLeaveBalance: true,
+      // Negative balance is off unless switched on (see org-leave-switches.ts); the mode says what happens when it is.
+      allowNegativeLeaveBalance: false,
+      negativeLeaveBalanceMode: 'MARK_AS_LOP',
       requireSelfieForPunch: true,
+      // What a check-in/out needs by default, and the WFH days allowed per month (unset = no limit).
+      locationMode: 'ENFORCED',
+      wfhDaysPerMonth: null,
       // Needed client-side wherever a user enters a wall-clock time that
       // must be converted to UTC before being sent to an endpoint that
       // stores/interprets timestamps as UTC (e.g. attendance Excel import)

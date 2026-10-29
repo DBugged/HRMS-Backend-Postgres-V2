@@ -303,6 +303,11 @@ describe('Offboarding (e2e)', () => {
       .post(`/settlements/${settlementId}/process`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(201);
+    // The exit closes only once the final settlement has been paid out, not just processed.
+    await request(app.getHttpServer())
+      .post(`/settlements/${settlementId}/pay`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
 
     const res = await request(app.getHttpServer())
       .patch(`/offboarding/${caseId}/complete`)

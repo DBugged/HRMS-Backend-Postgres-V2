@@ -809,21 +809,27 @@ describe('Leaves (e2e)', () => {
       });
       expect(withinWindowRow.status).toBe('PENDING');
 
-      const year = new Date().getFullYear();
-      const balance = await prisma.leaveBalance.findFirstOrThrow({
-        where: { employeeId, leaveTypeId: autoTypeId, year },
-      });
+      // Each day is charged to its own leave year: run late in the year, the Friday can fall in January, so read the
+      // balance of the year each leave is in (the leave year starts on the calendar year here).
+      const yearOf = (days: number) => Number(offsetDate(days).slice(0, 4));
+      const balanceFor = (days: number) =>
+        prisma.leaveBalance.findFirstOrThrow({
+          where: { employeeId, leaveTypeId: autoTypeId, year: yearOf(days) },
+        });
       // The auto-approved day moved from pending to availed; the
       // still-pending one's hold is untouched.
-      expect(balance.availed).toBe(1);
-      expect(balance.pending).toBe(1);
+      const approvedYear = await balanceFor(wed);
+      const pendingYear = await balanceFor(fri);
+      expect(approvedYear.availed).toBe(1);
+      expect(pendingYear.pending).toBe(1);
+      if (yearOf(wed) !== yearOf(fri)) {
+        expect(approvedYear.pending).toBe(0);
+        expect(pendingYear.availed).toBe(0);
+      }
 
       // Running it again must not re-approve or double-credit anything.
       await leavesService.autoApprovePendingLeaves();
-      const balanceAgain = await prisma.leaveBalance.findFirstOrThrow({
-        where: { employeeId, leaveTypeId: autoTypeId, year },
-      });
-      expect(balanceAgain.availed).toBe(1);
+      expect((await balanceFor(wed)).availed).toBe(1);
     });
   });
 

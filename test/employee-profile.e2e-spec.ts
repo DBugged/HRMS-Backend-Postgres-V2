@@ -157,7 +157,7 @@ describe('Employee Rich Profile (e2e)', () => {
       );
     });
 
-    it("HR/Admin cannot change an employee's bank details or government IDs (view-only), but the employee can - and HR/Admin can update the address", async () => {
+    it('HR/Admin can fill in and correct bank details, government IDs and the address, and so can the employee', async () => {
       const send = (token: string, personalData: object) =>
         request(app.getHttpServer())
           .patch(`/employees/${empId}/personal-data`)
@@ -168,9 +168,17 @@ describe('Employee Rich Profile (e2e)', () => {
         panNumber: 'ABCDE1234F',
         currentAddress: '12 Main Street, Mumbai, Maharashtra 400001',
       }).expect(200);
-      await send(hrToken, { bankName: 'Other Bank' }).expect(403);
-      await send(adminToken, { panNumber: 'ZZZZZ9999Z' }).expect(403);
-      // The address is the one thing HR/Admin may correct on an employee's record.
+      // HR/Admin may set and correct bank details and identifiers on an employee's record (audited, see 67be87f).
+      const bank = await send(hrToken, { bankName: 'Other Bank' }).expect(200);
+      expect((bank.body as PersonalDataBody).personalData.bankName).toBe(
+        'Other Bank',
+      );
+      const pan = await send(adminToken, { panNumber: 'ZZZZZ9999Z' }).expect(
+        200,
+      );
+      expect((pan.body as PersonalDataBody).personalData.panNumber).toBe(
+        'ZZZZZ9999Z',
+      );
       const fixed = await send(hrToken, {
         currentAddress: '99 Elsewhere Road, Pune, Maharashtra 411001',
       }).expect(200);

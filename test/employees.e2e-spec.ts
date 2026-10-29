@@ -13,6 +13,7 @@ import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { EmailService } from '../src/notifications/email.service';
+import { companyInitials } from '../src/common/employee-id-prefix';
 
 interface AuthBody {
   accessToken: string;
@@ -195,11 +196,12 @@ describe('Employees + Departments (e2e)', () => {
       .expect(201);
     const managerBody = managerRes.body as EmployeeBody;
     // Employee IDs are issued from the org's own documentNumbering.
-    // employeeId config (see EmployeeIdService/issueDocumentNumber), not a
-    // hardcoded "EMP-" prefix — a freshly-registered org's schema default
-    // for that entry is "DP-{00000}" (see Organization.documentNumbering's
-    // own default in schema.prisma).
-    expect(managerBody.employee.employeeId).toMatch(/^DP-\d{5}$/);
+    // employeeId config (see EmployeeIdService/issueDocumentNumber). At
+    // registration that format starts with the company's initials
+    // ("Employees E2E Org" -> EEO-{00000}), see AuthService.register.
+    expect(managerBody.employee.employeeId).toMatch(
+      new RegExp(`^${companyInitials('Employees E2E Org')}-\\d{5}$`),
+    );
 
     const managerLogin = await request(app.getHttpServer())
       .post('/auth/login')
@@ -1454,8 +1456,9 @@ describe('Employees + Departments (e2e)', () => {
         .set('Authorization', `Bearer ${hrToken}`)
         .send({
           name: BULK_LOCATION,
-          latitude: 19.07,
-          longitude: 72.87,
+          // Not the e2e helper's default location (19.07, 72.87): the same fence twice is refused as a duplicate.
+          latitude: 19.11,
+          longitude: 72.91,
           radiusMeters: 200,
         })
         .expect(201);

@@ -384,6 +384,11 @@ describe('Resignations & exit lifecycle (e2e)', () => {
     expect(
       (await prisma.user.findFirstOrThrow({ where: { id: empId } })).isActive,
     ).toBe(true);
+    // The exit closes only once the final settlement has been paid out.
+    await request(app.getHttpServer())
+      .post(`/settlements/${settlementId}/pay`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(201);
 
     await request(app.getHttpServer())
       .patch(`/offboarding/${caseId}/complete`)

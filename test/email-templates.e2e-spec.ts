@@ -125,7 +125,9 @@ describe('EmailTemplates (e2e)', () => {
       'DOCUMENT_STATUS',
       'EXIT_CLEARANCE_REMINDER',
       'EXIT_COMPLETED',
+      'EXIT_DOCUMENTS_PACK',
       'EXIT_HANDOVER_REMINDER',
+      'HOLIDAY_CALENDAR_REMINDER',
       // FOUNDER_ACCOUNT_WELCOME deliberately not seeded — platform-level
       // (D'CoreHR welcoming a brand new org's founder), not an org-editable
       // template. See EmailTemplatesService.seedDefaults().
@@ -150,7 +152,10 @@ describe('EmailTemplates (e2e)', () => {
       'PROBATION_ENDING',
       'REGULARIZATION_DECISION',
       'REIMBURSEMENT_STATUS',
+      'RESIGNATION_PENDING_REMINDER',
+      'RESIGNATION_SUBMITTED',
       'ROLE_CHANGED',
+      'SALARY_REVISED',
       'SETTLEMENT_PROCESSED',
       'SETUP_COMPLETE',
       'STATUTORY_DUE_REMINDER',

@@ -244,7 +244,12 @@ describe('Settlements (e2e)', () => {
       .send({ gratuityEnabled: true })
       .expect(200);
 
-    // An active, interest-free loan -> fully recovered on settlement.
+    // An active, interest-free loan -> fully recovered on settlement. Only a confirmed, permanent employee may take
+    // one (loan-eligibility.ts); a new hire starts out Onboarding.
+    await prisma.user.updateMany({
+      where: { id: employeeId },
+      data: { employmentStatus: 'CONFIRMED', employeeType: 'permanent' },
+    });
     await request(app.getHttpServer())
       .post('/loans')
       .set('Authorization', `Bearer ${adminToken}`)
@@ -639,6 +644,10 @@ describe('Settlements (e2e)', () => {
         BASIC_MONTHLY,
       );
       await markPresent(loanEmpId, M2.month, 31, M2.year);
+      await prisma.user.updateMany({
+        where: { id: loanEmpId },
+        data: { employmentStatus: 'CONFIRMED', employeeType: 'permanent' },
+      });
       const loanRes = await request(app.getHttpServer())
         .post('/loans')
         .set('Authorization', `Bearer ${adminToken}`)
