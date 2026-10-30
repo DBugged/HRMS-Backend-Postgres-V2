@@ -7,6 +7,7 @@
 // write directly through upsert() (publishing instantly, status APPROVED) for an employee who has no
 // reportingManagerId at all — once a manager is assigned, ADMIN/HR's role narrows to approve()/reject()
 // only, no override.
+import { payoutForRating } from './rating-payout';
 import { markPayrollStaleForFinancialYear } from '../payroll/payroll-period-guard';
 import { isManagerOf, reportsToWhere } from '../common/managers';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
@@ -295,7 +296,8 @@ export class PerformanceRatingsService {
 
     const data = {
       rating: dto.rating,
-      payoutPercentage: dto.payoutPercentage ?? 100,
+      // Follows the rating (rating-payout.ts); a payout sent with it is not used.
+      payoutPercentage: payoutForRating(dto.rating),
       notes: dto.notes ?? '',
       ratedById: actor.id,
       status,
@@ -376,7 +378,7 @@ export class PerformanceRatingsService {
       },
       data: {
         rating: dto.rating ?? existing.rating,
-        payoutPercentage: dto.payoutPercentage ?? existing.payoutPercentage,
+        payoutPercentage: payoutForRating(dto.rating ?? existing.rating),
         status: PerformanceRatingStatus.APPROVED,
         approvedById: actor.id,
         approvedAt: new Date(),

@@ -250,7 +250,7 @@ describe('Performance Ratings (e2e)', () => {
       .expect(403);
   });
 
-  it('MANAGER rates an employee in their own department; payoutPercentage defaults to 100', async () => {
+  it('MANAGER rates an employee in their own department; the payout follows the rating (4 -> 75%)', async () => {
     const res = await request(app.getHttpServer())
       .post('/performance-ratings')
       .set('Authorization', `Bearer ${managerToken}`)
@@ -258,7 +258,7 @@ describe('Performance Ratings (e2e)', () => {
       .expect(201);
     const body = res.body as RatingBody;
     expect(body.rating).toBe(4);
-    expect(body.payoutPercentage).toBe(100);
+    expect(body.payoutPercentage).toBe(75);
   });
 
   it('upsert by (employee, financialYear) updates rather than duplicates', async () => {
@@ -291,7 +291,32 @@ describe('Performance Ratings (e2e)', () => {
       where: { employeeId: outsideEmployeeId, financialYear: '2026-27' },
     });
     expect(row?.rating).toBe(5);
-    expect(row?.payoutPercentage).toBe(150);
+    // A payout sent with the rating is not used: 5 earns 100%.
+    expect(row?.payoutPercentage).toBe(100);
+  });
+
+  it('every rating carries its fixed payout: 1 -> 0%, 2 -> 25%, 3 -> 50%, 4 -> 75%, 5 -> 100%', async () => {
+    const expected: Record<number, number> = {
+      1: 0,
+      2: 25,
+      3: 50,
+      4: 75,
+      5: 100,
+    };
+    for (const rating of [1, 2, 3, 4, 5]) {
+      const res = await request(app.getHttpServer())
+        .post('/performance-ratings')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          employeeId: outsideEmployeeId,
+          financialYear: '2026-27',
+          rating,
+          payoutPercentage: 100,
+        })
+        .expect(201);
+      expect((res.body as RatingBody).payoutPercentage).toBe(expected[rating]);
+    }
+    // Leave the row as the next tests expect it (5, published).
   });
 
   it('EMPLOYEE now sees their own just-published (APPROVED) rating', async () => {

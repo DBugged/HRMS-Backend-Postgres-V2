@@ -28,7 +28,10 @@ export class UpsertPerformanceRatingDto {
   @Max(5)
   rating!: number;
 
-  @ApiPropertyOptional({ description: '0-200, defaults to 100' })
+  // Accepted from older clients but not used: the payout follows the rating (see rating-payout.ts).
+  @ApiPropertyOptional({
+    description: 'Ignored - the payout follows the rating (1: 0%, 2: 25%, 3: 50%, 4: 75%, 5: 100%).',
+  })
   @IsOptional()
   @Min(0)
   @Max(200)
