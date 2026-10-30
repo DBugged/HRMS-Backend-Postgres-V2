@@ -181,7 +181,7 @@ describe('HrEventsService (e2e)', () => {
     expect(unrelatedNotifications).toHaveLength(0);
   });
 
-  it('sends the birthday email to the employee, cc-ing every other active employee but not themselves, rendered from the seeded template', () => {
+  it('sends the birthday email to the employee, blind-copying (bcc) every other active employee but not themselves, so nobody sees every address, rendered from the seeded template', () => {
     const birthdayCall = sendSpy.mock.calls.find(
       (call) => call[0].to === 'birthday.hr-events@example.com',
     );
@@ -191,6 +191,7 @@ describe('HrEventsService (e2e)', () => {
       subject: string;
       html: string;
       cc?: string[];
+      bcc?: string[];
     };
     expect(arg.subject).toBe('Happy Birthday!');
     // Rendered from the seeded BIRTHDAY template — real employee name and
@@ -199,15 +200,16 @@ describe('HrEventsService (e2e)', () => {
     expect(arg.html).toContain('HR Events Test Co');
     expect(arg.html).toContain('+91-9999999999');
     expect(arg.html).not.toContain('{{');
-    // cc = every other active employee, excluding the birthday person.
-    expect(arg.cc).toEqual(
+    // bcc = every other active employee, excluding the birthday person; nothing in cc.
+    expect(arg.cc).toBeUndefined();
+    expect(arg.bcc).toEqual(
       expect.arrayContaining([
         'hr-events-admin@example.com',
         'anniversary.hr-events@example.com',
         'unrelated.hr-events@example.com',
       ]),
     );
-    expect(arg.cc).not.toContain('birthday.hr-events@example.com');
+    expect(arg.bcc).not.toContain('birthday.hr-events@example.com');
   });
 
   it('sends a work-anniversary wish only to the employee who joined N years ago today', async () => {
@@ -243,12 +245,13 @@ describe('HrEventsService (e2e)', () => {
       subject: string;
       html: string;
       cc?: string[];
+      bcc?: string[];
     };
     expect(arg.subject).toBe('Happy Work Anniversary!');
     expect(arg.html).toContain('3rd work anniversary');
     expect(arg.html).toContain('Anniversary Employee');
     expect(arg.html).not.toContain('{{');
-    expect(arg.cc).not.toContain('anniversary.hr-events@example.com');
+    expect(arg.bcc).not.toContain('anniversary.hr-events@example.com');
   });
 
   it('does not send a work-anniversary wish for an employee who joined today (0 years)', async () => {

@@ -309,7 +309,8 @@ export class HrEventsService {
     // ccAllActive defaults to true for this occasion (see the
     // NEW_JOINER_ANNOUNCEMENT default), same "to: employee, cc: everyone
     // else active" delivery shape as Birthday/Anniversary.
-    const cc = ccAllActive
+    // "CC all" goes as blind copies: everyone gets it, nobody sees the whole company's addresses.
+    const bcc = ccAllActive
       ? activeEmails.filter((email) => email !== employee.email)
       : undefined;
     await this.emailService.send({
@@ -317,7 +318,7 @@ export class HrEventsService {
       to: employee.email,
       subject,
       html,
-      ...(cc?.length && { cc }),
+      ...(bcc?.length && { bcc }),
     });
   }
 
@@ -357,7 +358,8 @@ export class HrEventsService {
       variables,
       { subject: title, html: `<p>${message}</p>` },
     );
-    const cc = ccAllActive
+    // "CC all" goes as blind copies: everyone gets it, nobody sees the whole company's addresses.
+    const bcc = ccAllActive
       ? activeEmails.filter((email) => email !== employee.email)
       : undefined;
     await this.emailService.send({
@@ -365,7 +367,7 @@ export class HrEventsService {
       to: employee.email,
       subject,
       html,
-      ...(cc?.length && { cc }),
+      ...(bcc?.length && { bcc }),
     });
   }
 
@@ -407,7 +409,8 @@ export class HrEventsService {
       variables,
       { subject: title, html: `<p>${message}</p>` },
     );
-    const cc = ccAllActive
+    // "CC all" goes as blind copies: everyone gets it, nobody sees the whole company's addresses.
+    const bcc = ccAllActive
       ? activeEmails.filter((email) => email !== employee.email)
       : undefined;
     await this.emailService.send({
@@ -415,7 +418,7 @@ export class HrEventsService {
       to: employee.email,
       subject,
       html,
-      ...(cc?.length && { cc }),
+      ...(bcc?.length && { bcc }),
     });
   }
 }

@@ -20,6 +20,9 @@ export interface SendEmailInput {
   subject: string;
   html: string;
   cc?: string[];
+  // Blind copies: delivered, but no recipient sees the other addresses (used for company-wide announcements, so
+  // everyone's address is not shown to everyone).
+  bcc?: string[];
   attachments?: EmailAttachment[];
   // Optional — when the caller has one in scope, pass it so a verified
   // custom sending domain (Organization Settings > Email Sending) is used
@@ -137,13 +140,16 @@ export class EmailService {
     subject,
     html,
     cc,
+    bcc,
     attachments,
     organizationId,
   }: SendEmailInput): Promise<{ dryRun: boolean }> {
     const attachmentNote = attachments?.length
       ? ` | Attachments: ${attachments.map((a) => a.filename).join(', ')}`
       : '';
-    const ccNote = cc?.length ? ` | Cc: ${cc.join(', ')}` : '';
+    const ccNote =
+      (cc?.length ? ` | Cc: ${cc.join(', ')}` : '') +
+      (bcc?.length ? ` | Bcc: ${bcc.length} recipient(s)` : '');
     const from = await this.resolveFrom(organizationId);
 
     // An address that cannot exist: never handed to a provider.
@@ -168,6 +174,7 @@ export class EmailService {
           subject,
           html,
           ...(cc?.length && { cc }),
+          ...(bcc?.length && { bcc }),
           attachments: attachments?.map((a) => ({
             filename: a.filename,
             content: a.content,
@@ -205,6 +212,7 @@ export class EmailService {
         subject,
         html,
         ...(cc?.length && { cc }),
+        ...(bcc?.length && { bcc }),
         attachments,
       });
       return { dryRun: false };
