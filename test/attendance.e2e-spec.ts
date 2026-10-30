@@ -1699,7 +1699,7 @@ describe('Attendance (e2e)', () => {
       await put('WFH').expect(200);
       const again = await put('WFH').expect(409);
       expect((again.body as { message: string }).message).toMatch(
-        /already waiting for approval/,
+        /already waiting for approval\. Only one request is allowed per day\./,
       );
 
       const before = await prisma.notification.count({
@@ -1719,6 +1719,77 @@ describe('Attendance (e2e)', () => {
 
       // Withdrawn, so it may be asked for again; leave nothing pending for later tests.
       await put('WFH').expect(200);
+      await prisma.attendance.deleteMany({
+        where: { employeeId: wfhEmployeeId, date },
+      });
+    });
+
+    it('a day whose request was turned down is not asked for again, and switching it to office leaves it turned down', async () => {
+      const date = offsetDate(21);
+      const put = (workArrangement: string) =>
+        request(app.getHttpServer())
+          .put('/attendance/work-arrangement')
+          .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+          .send({ date, workArrangement });
+      await put('WFH').expect(200);
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: wfhEmployeeId, date },
+      });
+      await request(app.getHttpServer())
+        .patch(`/attendance/work-arrangement/${row.id}/review`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({ decision: 'REJECTED' })
+        .expect(200);
+      const again = await put('WFH').expect(409);
+      expect((again.body as { message: string }).message).toMatch(
+        /was not approved\. Only one request is allowed per day\./,
+      );
+      await put('OFFICE').expect(200);
+      const after = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: wfhEmployeeId, date },
+      });
+      expect(after.workArrangement).toBe('WFH');
+      expect(after.workArrangementStatus).toBe('REJECTED');
+      await put('WFH').expect(409);
+
+      // A range skips days already requested (the turned-down one included): with the next weekday requested too,
+      // a range of just those two has nothing left to ask for.
+      let next = 22;
+      while (
+        [0, 6].includes(new Date(`${offsetDate(next)}T00:00:00Z`).getUTCDay())
+      )
+        next += 1;
+      const nextDate = offsetDate(next);
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date: nextDate, workArrangement: 'WFH' })
+        .expect(200);
+      await request(app.getHttpServer())
+        .put('/attendance/work-arrangement')
+        .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+        .send({ date, endDate: nextDate, workArrangement: 'WFH' })
+        .expect(400);
+      await prisma.attendance.deleteMany({
+        where: { employeeId: wfhEmployeeId, date: { in: [date, nextDate] } },
+      });
+    });
+
+    it('two requests for the same day sent at the same moment: one goes through, the other gets 409', async () => {
+      const date = offsetDate(30);
+      const send = () =>
+        request(app.getHttpServer())
+          .put('/attendance/work-arrangement')
+          .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+          .send({ date, workArrangement: 'WFH' });
+      const results = await Promise.all([send(), send()]);
+      const codes = results.map((r) => r.status).sort();
+      expect(codes).toEqual([200, 409]);
+      expect(
+        await prisma.attendance.count({
+          where: { employeeId: wfhEmployeeId, date },
+        }),
+      ).toBe(1);
       await prisma.attendance.deleteMany({
         where: { employeeId: wfhEmployeeId, date },
       });

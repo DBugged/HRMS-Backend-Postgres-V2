@@ -502,6 +502,30 @@ function signSelfieKey(
   return `/files/${signFileToken(organizationId, key)}`;
 }
 
+// A day with a Work From Home request in one of these states is taken: one request per day, so it is not asked for
+// again. Shared by the single-day request, the concurrent-write guard and the multi-day request.
+const WFH_TAKEN_STATUSES: WfhApprovalStatus[] = [
+  WfhApprovalStatus.PENDING,
+  WfhApprovalStatus.APPROVED,
+  WfhApprovalStatus.REJECTED,
+];
+
+function wfhAlreadyRequestedMessage(
+  dateStr: string,
+  status?: WfhApprovalStatus | null,
+): string {
+  const day = dmyText(dateStr);
+  const what =
+    status === WfhApprovalStatus.APPROVED
+      ? `Work From Home for ${day} is already approved.`
+      : status === WfhApprovalStatus.REJECTED
+        ? `Work From Home for ${day} was not approved.`
+        : status === WfhApprovalStatus.PENDING
+          ? `Work From Home for ${day} is already waiting for approval.`
+          : `Work From Home for ${day} is already requested.`;
+  return `${what} Only one request is allowed per day.`;
+}
+
 @Injectable()
 export class AttendanceService {
   private readonly logger = new Logger(AttendanceService.name);
@@ -2299,37 +2323,64 @@ export class AttendanceService {
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
     });
-    // The Work From Home already on this day that is waiting or approved (a rejected one may be asked for again).
-    const liveWfh =
+    // One Work From Home request per day: a day already requested - waiting, approved or turned down - is not asked
+    // for again (same rule as a multi-day request, which leaves such days out).
+    const takenWfh =
       existing?.workArrangement === WorkArrangement.WFH &&
-      (existing.workArrangementStatus === WfhApprovalStatus.PENDING ||
-        existing.workArrangementStatus === WfhApprovalStatus.APPROVED)
+      WFH_TAKEN_STATUSES.includes(existing.workArrangementStatus)
         ? existing.workArrangementStatus
         : null;
-    // Asking again would reset an approved day to pending and notify the approver a second time (same rule as a
-    // multi-day request, which leaves such days out).
-    if (isWfh && liveWfh) {
-      throw new ConflictException(
-        liveWfh === WfhApprovalStatus.APPROVED
-          ? `Work From Home for ${dmyText(dateStr)} is already approved.`
-          : `Work From Home for ${dmyText(dateStr)} is already waiting for approval.`,
-      );
+    if (isWfh && takenWfh) {
+      throw new ConflictException(wfhAlreadyRequestedMessage(dateStr, takenWfh));
     }
+    // Back to the office on a day whose request was turned down: nothing to withdraw, and resetting it would free the
+    // day for a second request.
+    if (!isWfh && takenWfh === WfhApprovalStatus.REJECTED) {
+      return existing!;
+    }
+    // A waiting or approved request being withdrawn (switching to another arrangement).
+    const liveWfh = takenWfh === WfhApprovalStatus.REJECTED ? null : takenWfh;
 
     if (existing) {
-      await this.scopedPrisma.attendance.updateMany({
-        where: { id: existing.id, organizationId },
+      // The check is part of the write, so two requests sent at the same moment (a double tap, a retry) cannot both
+      // go through.
+      const { count } = await this.scopedPrisma.attendance.updateMany({
+        where: {
+          id: existing.id,
+          organizationId,
+          ...(isWfh && {
+            NOT: {
+              workArrangement: WorkArrangement.WFH,
+              workArrangementStatus: { in: WFH_TAKEN_STATUSES },
+            },
+          }),
+        },
         data: workArrangementFields,
       });
+      if (isWfh && count === 0) {
+        throw new ConflictException(wfhAlreadyRequestedMessage(dateStr));
+      }
     } else {
-      await this.scopedPrisma.attendance.create({
-        data: {
-          organizationId,
-          employeeId: actor.id,
-          date: dateStr,
-          ...workArrangementFields,
-        },
-      });
+      try {
+        await this.scopedPrisma.attendance.create({
+          data: {
+            organizationId,
+            employeeId: actor.id,
+            date: dateStr,
+            ...workArrangementFields,
+          },
+        });
+      } catch (err) {
+        // The other of two simultaneous requests created the day first.
+        if (
+          isWfh &&
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002'
+        ) {
+          throw new ConflictException(wfhAlreadyRequestedMessage(dateStr));
+        }
+        throw err;
+      }
     }
 
     if (isWfh) {
@@ -2426,9 +2477,7 @@ export class AttendanceService {
           employeeId: actor.id,
           date: { gte: from, lte: to },
           workArrangement: WorkArrangement.WFH,
-          workArrangementStatus: {
-            in: [WfhApprovalStatus.PENDING, WfhApprovalStatus.APPROVED],
-          },
+          workArrangementStatus: { in: WFH_TAKEN_STATUSES },
         },
         select: { date: true },
       }),
@@ -2450,7 +2499,7 @@ export class AttendanceService {
       holidayDates: new Set(holidays.map((h) => h.date)),
       leaveDates,
     });
-    // A day that is already requested or approved is not asked for again (that would reset its review).
+    // A day already requested - waiting, approved or turned down - is not asked for again (one request per day).
     const already = new Set(existing.map((e) => e.date));
     if (already.size === 0) return result;
     return {
