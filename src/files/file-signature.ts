@@ -23,7 +23,9 @@ const VIDEO_EXTENSIONS = ['.mp4', '.mov', '.m4v', '.webm'];
 // executable — an image upload is a raster image, nothing else.
 export const ALLOWED_EXTENSIONS: Record<string, string[]> = {
   documents: ['.pdf', ...IMAGE_EXTENSIONS, ...VIDEO_EXTENSIONS],
-  selfies: IMAGE_EXTENSIONS,
+  // JPEG and PNG only: every selfie is stamped with time and place (SelfieStampService), and the canvas library that
+  // does it cannot read HEIC/WEBP - such a selfie used to be stored unstamped.
+  selfies: ['.png', '.jpg', '.jpeg'],
   // Company logo, favicon, report/email logo, signatures and seal: JPEG and PNG only. Not WEBP/GIF/HEIC (not
   // reliably renderable in emails, PDFs and every browser) and never SVG (scriptable).
   branding: ['.png', '.jpg', '.jpeg'],
@@ -36,6 +38,7 @@ export const ALLOWED_EXTENSIONS: Record<string, string[]> = {
 export const ALLOWED_MIME_TYPES: Record<string, string[]> = {
   branding: ['image/png', 'image/jpeg'],
   'profile-photos': ['image/png', 'image/jpeg'],
+  selfies: ['image/png', 'image/jpeg'],
 };
 
 // Human-readable list of what a category accepts, used in the upload error message.
@@ -118,8 +121,9 @@ export function sniffKind(head: Buffer): 'pdf' | 'image' | 'video' | null {
   }
   const brand = head.subarray(4, 12).toString('ascii');
   if (brand.startsWith('ftyp')) {
-    // ISO base media: HEIC/HEIF/AVIF stills vs MP4/MOV video, told apart by the major brand.
-    return /ftyp(heic|heix|hevc|mif1|msf1|avif|avis)/.test(brand)
+    // ISO base media: HEIC/HEIF/AVIF stills vs MP4/MOV video, told apart by the major brand (hevx / heim / heis are
+    // HEIF variants too, and used to be refused as "video").
+    return /ftyp(heic|heix|hevc|hevx|heim|heis|mif1|msf1|avif|avis)/.test(brand)
       ? 'image'
       : 'video';
   }

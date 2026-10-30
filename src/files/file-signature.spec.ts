@@ -95,7 +95,9 @@ describe('branding is JPEG and PNG only', () => {
       'image/png',
       'image/jpeg',
     ]);
-    expect(hasAllowedExtension('selfies', 'me.heic')).toBe(true);
+    // Selfies are stamped by a library that cannot read HEIC, so only JPEG/PNG are taken.
+    expect(hasAllowedExtension('selfies', 'me.heic')).toBe(false);
+    expect(hasAllowedExtension('documents', 'scan.heic')).toBe(true);
     expect(hasAllowedExtension('documents', 'scan.webp')).toBe(true);
   });
   it('recognises only PNG and JPEG bytes', () => {
@@ -118,8 +120,8 @@ describe('branding is JPEG and PNG only', () => {
     expect(describeAllowedTypes('branding', ['image/'])).toBe(
       'JPEG and PNG images (.png, .jpg, .jpeg)',
     );
-    expect(describeAllowedTypes('selfies', ['image/'])).toContain(
-      'image files',
+    expect(describeAllowedTypes('selfies', ['image/'])).toBe(
+      'JPEG and PNG images (.png, .jpg, .jpeg)',
     );
   });
   it('derives the inline Content-Type from the extension, case-insensitively', () => {
@@ -161,5 +163,27 @@ describe('fileKindOf', () => {
     expect(fileKindOf('org/documents/DP-1-cheque.PNG')).toBe('image');
     expect(fileKindOf('org/documents/notes.docx')).toBe('other');
     expect(fileKindOf('org/documents/noextension')).toBe('other');
+  });
+});
+
+describe('HEIF variants', () => {
+  // An ISO base-media header: size, "ftyp", then the major brand.
+  const isoHeader = (brand: string) =>
+    Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from(`ftyp${brand}`)]);
+
+  it('reads every HEIF still-image brand as an image, and a movie brand as video', () => {
+    for (const brand of [
+      'heic',
+      'heix',
+      'hevc',
+      'hevx',
+      'heim',
+      'heis',
+      'mif1',
+    ]) {
+      expect(sniffKind(isoHeader(brand))).toBe('image');
+    }
+    expect(sniffKind(isoHeader('isom'))).toBe('video');
+    expect(sniffKind(isoHeader('qt  '))).toBe('video');
   });
 });
