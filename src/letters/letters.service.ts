@@ -80,6 +80,17 @@ function hiringLetterBlocked(
 
 type Actor = Omit<User, 'password'>;
 
+// Letters about a particular event in someone's employment. On the employee's own My Letters they are offered only
+// once that event is on record (a confirmed employee with no promotion used to see a "Ready" promotion letter); HR and
+// Admin can still prepare them for someone else beforehand.
+const EVENT_LETTER_REASON: Record<string, string> = {
+  promotionLetter: 'Available once a promotion is recorded for you.',
+  transferLetter: 'Available once a transfer is recorded for you.',
+  probationExtensionLetter: 'Available once your probation is extended.',
+  confirmationLetter: 'Available once you are confirmed.',
+  letterOfIntent: 'Issued before joining only.',
+};
+
 const MONTHS = [
   '',
   'January',
@@ -130,6 +141,60 @@ export class LettersService {
     private readonly brandingLookup: BrandingLookupService,
   ) {}
 
+  // Event letters are held back on the person's own view (and for an EMPLOYEE looking at anyone).
+  private isEventGated(actor: Actor, employeeId: string): boolean {
+    return actor.id === employeeId || actor.role === Role.EMPLOYEE;
+  }
+
+  // Which event letters have no event on record for this employee.
+  private async eventLettersMissing(
+    employeeId: string,
+    organizationId: string,
+    employee: { employmentStatus: EmploymentStatus },
+  ): Promise<Set<string>> {
+    const [movements, statuses] = await Promise.all([
+      this.scopedPrisma.employeeMovement.findMany({
+        where: {
+          organizationId,
+          employeeId,
+          type: { in: ['PROMOTION', 'TRANSFER'] },
+        },
+        select: { type: true },
+      }),
+      this.scopedPrisma.employmentStatusHistory.findMany({
+        where: {
+          organizationId,
+          employeeId,
+          newStatus: {
+            in: [
+              EmploymentStatus.EXTENDED_PROBATION,
+              EmploymentStatus.CONFIRMED,
+            ],
+          },
+        },
+        select: { newStatus: true },
+      }),
+    ]);
+    const moved = new Set(movements.map((m) => m.type));
+    const reached = new Set<EmploymentStatus>([
+      ...statuses.map((h) => h.newStatus),
+      employee.employmentStatus,
+    ]);
+    const missing = new Set<string>();
+    if (!moved.has('PROMOTION')) missing.add('promotionLetter');
+    if (!moved.has('TRANSFER')) missing.add('transferLetter');
+    if (!reached.has(EmploymentStatus.EXTENDED_PROBATION)) {
+      missing.add('probationExtensionLetter');
+    }
+    if (!reached.has(EmploymentStatus.CONFIRMED)) {
+      missing.add('confirmationLetter');
+    }
+    if (employee.employmentStatus !== EmploymentStatus.ONBOARDING) {
+      missing.add('letterOfIntent');
+    }
+    return missing;
+  }
+
   // Powers the Letters & Certificates tab's list — which of the org's
   // active templates this employee can actually see, given the real
   // prerequisite record each dataProfile needs. BASIC (Offer/Appointment)
@@ -163,6 +228,10 @@ export class LettersService {
       select: { departmentId: true, employmentStatus: true, isActive: true },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
+    const eventGated = this.isEventGated(actor, employeeId);
+    const eventsMissing = eventGated
+      ? await this.eventLettersMissing(employeeId, organizationId, employee)
+      : new Set<string>();
     // Self-view (My Letters) always bypasses the department check below —
     // a Manager with no department assigned (actor.departmentId === null)
     // would otherwise be forbidden from viewing their own letters, since
@@ -253,14 +322,18 @@ export class LettersService {
       const employeeGateBlocked =
         actor.role === Role.EMPLOYEE && !accessEnabled;
       const leavingBlocked = hiringLetterBlocked(t.key, employee);
+      const eventBlocked = eventsMissing.has(t.key);
       return {
         key: t.key,
         name: t.name,
         dataProfile: t.dataProfile,
-        unlocked: gate.unlocked && !employeeGateBlocked && !leavingBlocked,
+        unlocked:
+          gate.unlocked && !employeeGateBlocked && !leavingBlocked && !eventBlocked,
         reason: leavingBlocked
           ? HIRING_LETTER_BLOCKED_REASON
-          : employeeGateBlocked
+          : eventBlocked
+            ? EVENT_LETTER_REASON[t.key]
+            : employeeGateBlocked
             ? 'Not yet made available to you — contact HR.'
             : gate.unlocked
               ? null
@@ -339,6 +412,16 @@ export class LettersService {
     // display hint); without this an EMPLOYEE could still GET
     // /employees/:id/letters/:key directly for a key HR has hidden from
     // them (or never granted, for a restricted one).
+    // The event a letter is about has to be on record before the employee can download it themselves.
+    if (
+      EVENT_LETTER_REASON[key] &&
+      this.isEventGated(actor, employeeId) &&
+      (await this.eventLettersMissing(employeeId, organizationId, employee)).has(
+        key,
+      )
+    ) {
+      throw new BadRequestException(EVENT_LETTER_REASON[key]);
+    }
     if (actor.role === Role.EMPLOYEE) {
       const grant = await this.scopedPrisma.employeeLetterAccess.findFirst({
         where: { organizationId, employeeId, key },

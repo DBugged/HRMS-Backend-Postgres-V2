@@ -33,7 +33,11 @@ import { EmploymentStatus, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
-import { signPersonalDataFileUrls } from '../employees/personal-data';
+import { maskRevealable } from '../employees/personal-data-mask';
+import {
+  signPersonalDataFileUrls,
+  uanRequiredFor,
+} from '../employees/personal-data';
 import { UsersService } from '../users/users.service';
 import { sisterCompaniesOn } from '../module-access/module-gate';
 import { companyInitials, uniqueEmployeeIdPrefix } from '../common/employee-id-prefix';
@@ -689,8 +693,9 @@ export class AuthService {
       safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage, SESSION_ASSET_TTL_SECONDS)}`;
     }
     if (safe.personalData && typeof safe.personalData === 'object') {
+      // PAN / Aadhaar / UAN / bank account masked, as in every other response (see REVEALABLE_KEYS).
       safe.personalData = signPersonalDataFileUrls(
-        safe.personalData as Record<string, unknown>,
+        maskRevealable(safe.personalData as Record<string, unknown>),
         safe.organizationId,
       ) as unknown as typeof safe.personalData;
     }
@@ -701,7 +706,22 @@ export class AuthService {
           select: { id: true, name: true, employeeId: true },
         })
       : [];
-    return { ...safe, selfieRequired, locationMode, additionalReportingManagers };
+    // The profile form marks UAN required when PF applies to this person (company PF on, employment type covered).
+    const payrollSettings = await this.scopedPrisma.payrollSettings.findFirst({
+      where: { organizationId },
+      select: { pfEnabled: true },
+    });
+    const uanRequired = uanRequiredFor({
+      pfEnabled: payrollSettings?.pfEnabled ?? false,
+      employeeType: user.employeeType,
+    });
+    return {
+      ...safe,
+      selfieRequired,
+      locationMode,
+      additionalReportingManagers,
+      uanRequired,
+    };
   }
 
   // Never reveals whether the email exists — same response either way.

@@ -207,10 +207,17 @@ describe('Per-employee work location + personalData encryption (e2e)', () => {
     expect(stored.currentAddress).toBe('1 Test Street');
     expect(JSON.stringify(raw.personalData)).not.toContain('ABCDE1234F');
 
+    // Read back decrypted - masked in the response, in full from the reveal endpoint.
     const res = await admin(http().get(`/employees/${empId}`)).expect(200);
     const pd = (res.body as EmployeeBody).personalData;
-    expect(pd.panNumber).toBe('ABCDE1234F');
-    expect(pd.bankAccountNo).toBe('000123456789');
+    expect(pd.panNumber).toBe('******234F');
+    const full = await admin(
+      http().get(`/employees/${empId}/personal-data/sensitive`),
+    ).expect(200);
+    expect((full.body as Record<string, string>).panNumber).toBe('ABCDE1234F');
+    expect((full.body as Record<string, string>).bankAccountNo).toBe(
+      '000123456789',
+    );
   });
 
   it('legacy plaintext values already in the DB still read back', async () => {
@@ -218,9 +225,9 @@ describe('Per-employee work location + personalData encryption (e2e)', () => {
       where: { id: empId },
       data: { personalData: { panNumber: 'LEGACY1234Z' } },
     });
-    const res = await admin(http().get(`/employees/${empId}`)).expect(200);
-    expect((res.body as EmployeeBody).personalData.panNumber).toBe(
-      'LEGACY1234Z',
-    );
+    const res = await admin(
+      http().get(`/employees/${empId}/personal-data/sensitive`),
+    ).expect(200);
+    expect((res.body as Record<string, string>).panNumber).toBe('LEGACY1234Z');
   });
 });

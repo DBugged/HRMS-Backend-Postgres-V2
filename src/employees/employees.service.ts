@@ -80,6 +80,8 @@ import { assertAccountCanLeave } from '../common/account-guard';
 import { DEFAULT_EMPLOYEE_TYPES } from '../organizations/employee-types';
 import { normalizeEmail } from '../common/normalize-input';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
+import { dmyText } from '../payroll/format-date';
+import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // The original release's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
@@ -837,7 +839,8 @@ export class EmployeesService {
 
   // The company's reporting tree for the Org Chart: current employees only (no one who has left), with just the
   // fields a chart needs - name, designation, department and who they report to. Open to every role, like the
-  // employee list behind Reporting Structure; nothing personal is included.
+  // employee list behind Reporting Structure. Besides those, only the profile photo (signed, the same one the employee
+  // list already returns to every role) so the chart can show faces; nothing else personal is included.
   async orgChart(organizationId: string) {
     const rows = await this.scopedPrisma.user.findMany({
       where: {
@@ -851,6 +854,7 @@ export class EmployeesService {
         name: true,
         designation: true,
         reportingManagerId: true,
+        profileImage: true,
         department: { select: { name: true } },
       },
     });
@@ -862,6 +866,9 @@ export class EmployeesService {
         designation: r.designation,
         department: r.department?.name ?? '',
         reportingManagerId: r.reportingManagerId,
+        profileImage: r.profileImage
+          ? `/files/${signFileToken(organizationId, r.profileImage, SESSION_ASSET_TTL_SECONDS)}`
+          : null,
       })),
     );
   }
@@ -1183,6 +1190,40 @@ export class EmployeesService {
     const statusChanging =
       clean.employmentStatus !== undefined &&
       clean.employmentStatus !== before.employmentStatus;
+    // An exit in progress (an open offboarding case) is ended in Offboarding, not by editing the status: moving them to a
+    // working status here left the case, its last working day and the final settlement running behind a status that
+    // said they were staying.
+    if (
+      statusChanging &&
+      !LEAVING_STATUSES.includes(clean.employmentStatus as EmploymentStatus)
+    ) {
+      const openCase = await this.scopedPrisma.offboardingCase.findFirst({
+        where: {
+          organizationId,
+          employeeId: id,
+          status: { in: ['INITIATED', 'IN_PROGRESS'] },
+        },
+        select: { lastWorkingDay: true },
+      });
+      if (openCase) {
+        throw new BadRequestException(
+          `This employee's exit is in progress (last working day ${dmyText(openCase.lastWorkingDay.slice(0, 10))}). Cancel it in Offboarding to keep them - that also puts their status back.`,
+        );
+      }
+    }
+    // Onboarding is the status a new hire starts with; someone already on probation or confirmed does not go back to it
+    // (it undid their confirmation and re-sent letters on the way forward again).
+    if (
+      statusChanging &&
+      clean.employmentStatus === 'ONBOARDING' &&
+      ['PROBATION', 'EXTENDED_PROBATION', 'CONFIRMED'].includes(
+        before.employmentStatus,
+      )
+    ) {
+      throw new BadRequestException(
+        'An employee on probation or confirmed cannot be moved back to Onboarding.',
+      );
+    }
     // HR cannot move their own employment status (confirm their own probation, put themselves on hold or into
     // notice): another HR user or an Admin has to. An Admin is the top authority with no one above, so an Admin may -
     // same split as salary revision. The change is still in the status history and the audit log.

@@ -176,9 +176,16 @@ describe('Employee Rich Profile (e2e)', () => {
       const pan = await send(adminToken, { panNumber: 'ZZZZZ9999Z' }).expect(
         200,
       );
+      // Responses mask it; saving the masked value back keeps the real number.
       expect((pan.body as PersonalDataBody).personalData.panNumber).toBe(
-        'ZZZZZ9999Z',
+        '******999Z',
       );
+      await send(adminToken, { panNumber: '******999Z' }).expect(200);
+      const full = await request(app.getHttpServer())
+        .get(`/employees/${empId}/personal-data/sensitive`)
+        .set('Authorization', `Bearer ${empToken}`)
+        .expect(200);
+      expect((full.body as { panNumber: string }).panNumber).toBe('ZZZZZ9999Z');
       const fixed = await send(hrToken, {
         currentAddress: '99 Elsewhere Road, Pune, Maharashtra 411001',
       }).expect(200);
@@ -199,6 +206,20 @@ describe('Employee Rich Profile (e2e)', () => {
       expect((res.body as PersonalDataBody).personalData.bankName).toBe(
         'Employee Changed Bank',
       );
+    });
+
+    it('PAN is required: once given it can be corrected but not removed', async () => {
+      const send = (personalData: object) =>
+        request(app.getHttpServer())
+          .patch(`/employees/${empId}/personal-data`)
+          .set('Authorization', `Bearer ${empToken}`)
+          .send({ personalData });
+      await send({ panNumber: 'ABCDE1234F' }).expect(200);
+      const res = await send({ panNumber: '' }).expect(400);
+      expect((res.body as { message: string }).message).toMatch(
+        /PAN is required/,
+      );
+      await send({ panNumber: 'PQRST6789K' }).expect(200);
     });
 
     it('EMPLOYEE cannot change their own personalEmail (silently dropped, no error)', async () => {
@@ -383,6 +404,44 @@ describe('Employee Rich Profile (e2e)', () => {
       expect(body.id).toBe(empId);
       expect(Array.isArray(body.documents)).toBe(true);
       expect(Array.isArray(body.assets)).toBe(true);
+    });
+
+    it('asks for a UAN only while PF is on for the company (the employee is permanent)', async () => {
+      const flags = async () => {
+        const full = await request(app.getHttpServer())
+          .get(`/employees/${empId}/full-profile`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .expect(200);
+        const me = await request(app.getHttpServer())
+          .get('/auth/me')
+          .set('Authorization', `Bearer ${empToken}`)
+          .expect(200);
+        return [
+          (full.body as { uanRequired: boolean }).uanRequired,
+          (me.body as { uanRequired: boolean }).uanRequired,
+        ];
+      };
+      const emp = await prisma.user.findUniqueOrThrow({ where: { id: empId } });
+      // A new organisation has no payroll settings row until first used.
+      await prisma.payrollSettings.upsert({
+        where: { organizationId: emp.organizationId },
+        create: { organizationId: emp.organizationId },
+        update: {},
+      });
+      await prisma.payrollSettings.updateMany({
+        where: { organizationId: emp.organizationId },
+        data: { pfEnabled: false },
+      });
+      expect(await flags()).toEqual([false, false]);
+      await prisma.payrollSettings.updateMany({
+        where: { organizationId: emp.organizationId },
+        data: { pfEnabled: true },
+      });
+      expect(await flags()).toEqual([true, true]);
+      await prisma.payrollSettings.updateMany({
+        where: { organizationId: emp.organizationId },
+        data: { pfEnabled: false },
+      });
     });
 
     it('EMPLOYEE is forbidden from full-profile, role-history, and employment-status-history', async () => {

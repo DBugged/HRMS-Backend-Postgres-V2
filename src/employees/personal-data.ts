@@ -1,4 +1,5 @@
 import { isValidIndianMobile } from '../common/indian-mobile';
+import { statutoryDefaultsForType } from '../payroll/employee-type-statutory';
 import { BadRequestException } from '@nestjs/common';
 import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
@@ -81,12 +82,14 @@ const IDENTIFIER_PATTERNS: Record<
   },
 };
 
-const PHONE_KEYS = new Set([
+// The family and emergency phone numbers kept in personalData.
+export const CONTACT_NUMBER_KEYS = [
   'fatherContact',
   'motherContact',
   'emergencyContact1Number',
   'emergencyContact2Number',
-]);
+] as const;
+const PHONE_KEYS = new Set<string>(CONTACT_NUMBER_KEYS);
 
 // Throws on the first invalid identifier found in `patch` — called before
 // merging a personalData patch onto the stored blob. Only checks fields
@@ -143,6 +146,8 @@ export const KNOWN_PERSONAL_DATA_KEYS = new Set([
   'motherContact',
   'motherName',
   'motherOccupation',
+  // Ticked by someone in their first PF-covered job: no UAN yet (the employer gets one from EPFO), so it is not asked for.
+  'noUanYet',
   'panNumber',
   'passportNumber',
   'personalEmail',
@@ -415,15 +420,32 @@ const REQUIRED_FOR_COMPLETION = [
   'bankName',
   'bankAccountNo',
   'bankIFSC',
+  // Needed for TDS: without a PAN the tax is deducted at the higher rate (if the company switches that on).
+  'panNumber',
 ] as const;
 
 export function isProfileComplete(
   personalData: Record<string, unknown>,
+  opts: { uanRequired?: boolean } = {},
 ): boolean {
-  return REQUIRED_FOR_COMPLETION.every((field) => {
+  const filled = (field: string) => {
     const value = personalData[field];
     return typeof value === 'string' && value.trim().length > 0;
-  });
+  };
+  if (!REQUIRED_FOR_COMPLETION.every(filled)) return false;
+  // UAN only where PF applies, and not from someone who said they have none yet (first PF job).
+  return (
+    !opts.uanRequired || personalData.noUanYet === true || filled('uanNumber')
+  );
+}
+
+// PF applies to this person: the company has PF on and their employment type is covered by it (an intern, trainee or
+// consultant is not - see statutoryDefaultsForType). Then a UAN is asked for on the profile.
+export function uanRequiredFor(input: {
+  pfEnabled: boolean;
+  employeeType?: string | null;
+}): boolean {
+  return input.pfEnabled && statutoryDefaultsForType(input.employeeType).pf;
 }
 
 // A mandatory DocumentRequirement is satisfied by any uploaded
@@ -500,9 +522,11 @@ export function mergePersonalData(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
   mandatoryDocumentsUploaded: boolean,
+  opts: { uanRequired?: boolean } = {},
 ): Record<string, unknown> {
   const merged = { ...current, ...dropReSignedFileUrls(current, patch) };
-  const completed = isProfileComplete(merged) && mandatoryDocumentsUploaded;
+  const completed =
+    isProfileComplete(merged, opts) && mandatoryDocumentsUploaded;
   return {
     ...merged,
     profileCompleted: completed,

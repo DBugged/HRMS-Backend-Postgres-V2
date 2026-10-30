@@ -50,12 +50,19 @@ import { SetDocumentVisibilityDto } from './dto/set-document-visibility.dto';
 import { CreateEmployeeAssetDto } from './dto/create-employee-asset.dto';
 import { UpdateEmployeeAssetDto } from './dto/update-employee-asset.dto';
 import {
+  isMaskedEcho,
+  REVEALABLE_KEYS,
+  type RevealableKey,
+} from './personal-data-mask';
+import {
   areMandatoryDocumentsUploaded,
   assertValidDates,
   assertPersonalDataShape,
   assertValidIdentifiers,
   assertContactNumbersDistinct,
+  CONTACT_NUMBER_KEYS,
   mergePersonalData,
+  uanRequiredFor,
 } from './personal-data';
 import { assertNotSelfApproval } from '../common/dept-scope';
 
@@ -309,6 +316,21 @@ export class EmployeeProfileService {
   // completes the profile even without a subsequent Save Profile click; a
   // document getting rejected, or a required upload being deleted, can
   // un-complete it the same way).
+  // Whether this person's profile asks for a UAN: PF is on for the company and their employment type is covered.
+  private async uanRequired(
+    employee: { employeeType: string | null },
+    organizationId: string,
+  ): Promise<boolean> {
+    const settings = await this.scopedPrisma.payrollSettings.findFirst({
+      where: { organizationId },
+      select: { pfEnabled: true },
+    });
+    return uanRequiredFor({
+      pfEnabled: settings?.pfEnabled ?? false,
+      employeeType: employee.employeeType,
+    });
+  }
+
   private async refreshProfileCompletion(id: string, organizationId: string) {
     const employee = await this.findEmployeeOrThrow(id, organizationId);
     const mandatoryDocumentsUploaded =
@@ -317,6 +339,7 @@ export class EmployeeProfileService {
       employee.personalData as Record<string, unknown>,
       {},
       mandatoryDocumentsUploaded,
+      { uanRequired: await this.uanRequired(employee, organizationId) },
     );
     const current = employee.personalData as Record<string, unknown>;
     if (merged.profileCompleted === current.profileCompleted) return;
@@ -324,6 +347,32 @@ export class EmployeeProfileService {
       where: { id, organizationId },
       data: { personalData: merged as Prisma.InputJsonValue },
     });
+  }
+
+  // The full PAN / Aadhaar / UAN / bank account number, which every other response masks: for the eye button on a
+  // profile. The person themself, or HR/Admin. Every reveal is written to the privacy audit trail (field names only).
+  async revealSensitive(id: string, actor: Actor, organizationId: string) {
+    this.assertSelfOrHr(actor, id);
+    const employee = await this.findEmployeeOrThrow(id, organizationId);
+    const pd = (employee.personalData ?? {}) as Record<string, unknown>;
+    const out = {} as Record<RevealableKey, string>;
+    for (const key of REVEALABLE_KEYS) {
+      const value = pd[key];
+      out[key] = typeof value === 'string' ? value : '';
+    }
+    auditSensitive(
+      this.privacyAudit,
+      { id: actor.id, role: actor.role, organizationId },
+      {
+        action: 'SENSITIVE_IDENTIFIERS_REVEALED',
+        category: 'PERSONAL_DATA',
+        targetUserId: id,
+        entity: 'User',
+        entityId: id,
+        meta: { fields: REVEALABLE_KEYS.filter((k) => out[k] !== '') },
+      },
+    );
+    return out;
   }
 
   async updatePersonalData(
@@ -344,6 +393,21 @@ export class EmployeeProfileService {
     // whose record can be touched, not which fields on it). Frontend
     // disables the input for everyone else; this is the actual boundary.
     const patch = { ...dto.personalData };
+    // The form was given these numbers masked; sent back unchanged, they keep the stored value.
+    for (const key of REVEALABLE_KEYS) {
+      if (isMaskedEcho(patch[key], before[key])) delete patch[key];
+    }
+    // PAN is required (TDS); once given it can be corrected but not removed.
+    if (
+      typeof patch.panNumber === 'string' &&
+      patch.panNumber.trim() === '' &&
+      typeof before.panNumber === 'string' &&
+      before.panNumber.trim() !== ''
+    ) {
+      throw new BadRequestException(
+        'PAN is required and cannot be removed. Enter the correct PAN instead.',
+      );
+    }
     if (!HR_ROLES.includes(actor.role)) {
       delete patch.personalEmail;
       // The company, not the employee, decides what an employee's CTC is.
@@ -389,8 +453,14 @@ export class EmployeeProfileService {
         }
       }
     }
-    const merged = mergePersonalData(before, patch, mandatoryDocumentsUploaded);
-    assertContactNumbersDistinct(merged, employee.contactNumber);
+    const merged = mergePersonalData(before, patch, mandatoryDocumentsUploaded, {
+      uanRequired: await this.uanRequired(employee, organizationId),
+    });
+    // Only when this save touches a family or emergency number: an unrelated save (a cancelled cheque, an address)
+    // must not be refused over numbers stored earlier.
+    if (CONTACT_NUMBER_KEYS.some((k) => k in patch)) {
+      assertContactNumbersDistinct(merged, employee.contactNumber);
+    }
 
     await this.scopedPrisma.user.updateMany({
       where: { id, organizationId },
@@ -601,6 +671,8 @@ export class EmployeeProfileService {
       ...(safe as ReturnType<typeof toSafe>),
       documents: documents.map(withSignedFileUrl),
       assets,
+      // The profile form marks UAN required when PF applies to this person.
+      uanRequired: await this.uanRequired(employee, organizationId),
     };
   }
 

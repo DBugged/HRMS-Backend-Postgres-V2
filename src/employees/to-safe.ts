@@ -11,7 +11,7 @@
 import { User } from '@prisma/client';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { signPersonalDataFileUrls } from './personal-data';
-import { maskPersonalData } from './personal-data-mask';
+import { maskPersonalData, maskRevealable } from './personal-data-mask';
 
 const MASKED_INTERNAL_FIELDS = [
   'lastLoginAt',
@@ -43,10 +43,11 @@ export function toSafe(user: User, mask = false) {
     safe.profileImage = `/files/${signFileToken(safe.organizationId, safe.profileImage, SESSION_ASSET_TTL_SECONDS)}`;
   }
   if (safe.personalData && typeof safe.personalData === 'object') {
+    // PAN / Aadhaar / UAN / bank account are masked for everyone (see REVEALABLE_KEYS); `mask` masks the rest too.
     safe.personalData = signPersonalDataFileUrls(
       mask
         ? maskPersonalData(safe.personalData as Record<string, unknown>)
-        : (safe.personalData as Record<string, unknown>),
+        : maskRevealable(safe.personalData as Record<string, unknown>),
       safe.organizationId,
     ) as unknown as User['personalData'];
   }

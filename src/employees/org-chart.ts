@@ -9,6 +9,8 @@ export interface OrgChartPerson {
   designation: string;
   department: string;
   reportingManagerId: string | null;
+  /** Signed `/files/<token>` path of the profile photo, when there is one (the app builds the full URL). */
+  profileImage?: string | null;
 }
 
 export interface OrgChartNode extends OrgChartPerson {

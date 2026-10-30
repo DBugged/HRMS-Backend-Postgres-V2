@@ -212,6 +212,17 @@ export class EmployeesController {
     return this.employeesService.resendCredentials(id, caller.organizationId);
   }
 
+  // The full PAN / Aadhaar / UAN / bank account number (masked everywhere else), for the eye button. Self or HR/Admin;
+  // audited.
+  @Get(':id/personal-data/sensitive')
+  revealSensitive(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.employeeProfileService.revealSensitive(
+      id,
+      caller,
+      caller.organizationId,
+    );
+  }
+
   @Patch(':id/personal-data')
   updatePersonalData(
     @Param('id') id: string,

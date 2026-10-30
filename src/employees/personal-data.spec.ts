@@ -6,6 +6,7 @@ import {
   latestAllowedDateOfBirth,
   assertValidIdentifiers,
   isProfileComplete,
+  uanRequiredFor,
   signPersonalDataFileUrls,
   mergePersonalData,
 } from './personal-data';
@@ -32,6 +33,7 @@ const COMPLETE_FIELDS = {
   bankName: 'HDFC',
   bankAccountNo: '123456789',
   bankIFSC: 'HDFC0001234',
+  panNumber: 'ABCDE1234F',
 };
 
 describe('isProfileComplete', () => {
@@ -395,5 +397,38 @@ describe('assertContactNumbersDistinct', () => {
       ),
     ).not.toThrow();
     expect(() => assertContactNumbersDistinct({}, '')).not.toThrow();
+  });
+});
+
+describe('UAN on the profile', () => {
+  it('is asked for only where PF applies: company PF on and an employment type PF covers', () => {
+    expect(uanRequiredFor({ pfEnabled: true, employeeType: 'permanent' })).toBe(
+      true,
+    );
+    expect(uanRequiredFor({ pfEnabled: true, employeeType: 'intern' })).toBe(
+      false,
+    );
+    expect(
+      uanRequiredFor({ pfEnabled: true, employeeType: 'consultant' }),
+    ).toBe(false);
+    expect(
+      uanRequiredFor({ pfEnabled: false, employeeType: 'permanent' }),
+    ).toBe(false);
+  });
+
+  it('a profile needs it then, unless the person has none yet (first PF job)', () => {
+    const noUan: Record<string, unknown> = { ...COMPLETE_FIELDS };
+    delete noUan.uanNumber;
+    expect(isProfileComplete(noUan)).toBe(true);
+    expect(isProfileComplete(noUan, { uanRequired: true })).toBe(false);
+    expect(
+      isProfileComplete({ ...noUan, noUanYet: true }, { uanRequired: true }),
+    ).toBe(true);
+    expect(
+      isProfileComplete(
+        { ...noUan, uanNumber: '100123456789' },
+        { uanRequired: true },
+      ),
+    ).toBe(true);
   });
 });
