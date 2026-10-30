@@ -1,4 +1,9 @@
-import { finalizeEmailHtml, upgradePlainEmailHtml, wrapEmailShell } from './email-layout';
+import {
+  eyebrow,
+  finalizeEmailHtml,
+  upgradePlainEmailHtml,
+  wrapEmailShell,
+} from './email-layout';
 import { confirmEmailHtml, founderWelcomeHtml } from './founder-emails';
 
 const shell = (body: string) =>
@@ -44,13 +49,14 @@ describe('founder emails', () => {
 });
 
 describe('upgradePlainEmailHtml', () => {
-  it('turns bare paragraphs into styled ones and a lone link into a button, under a heading', () => {
+  it('turns bare paragraphs into styled ones and a lone link into a button, under a heading, without the category', () => {
     const out = upgradePlainEmailHtml(
       '<p>Hello A,</p><p>Reset it below.</p><p><a href="https://x.test/r?t=1">https://x.test/r?t=1</a></p>',
       { title: 'Password reset', category: 'Account & Access' },
     );
     expect(out).toContain('Password reset');
-    expect(out).toContain('Account &amp; Access'.replace('&amp;', '&'));
+    // The category groups templates on the settings screen; it is not printed in the email.
+    expect(out).not.toContain('Account & Access');
     expect(out).toContain('font-size:15px'); // paragraph styling
     expect(out).toContain('class="btn"');
     expect(out).toContain('Open the link');
@@ -65,5 +71,15 @@ describe('upgradePlainEmailHtml', () => {
   it('leaves HTML that already uses components alone', () => {
     const rich = '<h1>Already designed</h1><table><tr><td>x</td></tr></table>';
     expect(upgradePlainEmailHtml(rich, { title: 'Ignored' })).toBe(rich);
+  });
+});
+
+describe('category line saved in older templates', () => {
+  it('is taken out when the email is finalized', () => {
+    const saved =
+      eyebrow('General') + '<h1 style="x">Happy Birthday!</h1><p>Hi</p>';
+    const out = finalizeEmailHtml(saved);
+    expect(out).not.toMatch(/General/);
+    expect(out).toContain('Happy Birthday!');
   });
 });

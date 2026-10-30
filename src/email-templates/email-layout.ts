@@ -276,15 +276,20 @@ export function checkList(items: string[]): string {
   return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">${rows}</table>`;
 }
 
-// Composes the standard section order (eyebrow -> title -> greeting/message -> card -> CTA -> notice -> closing);
-// callers pass only the sections that apply.
+// Composes the standard section order (title -> greeting/message -> card -> CTA -> notice -> closing); callers pass only
+// the sections that apply. `category` (General, Leave & Comp-Off, ...) only groups templates on the settings screen: it
+// is not printed in the email, which used to open with it in capitals ("GENERAL" above "Happy Birthday!").
 export function emailBody(parts: {
   category: string;
   title: string;
   blocks: string[];
 }): string {
-  return eyebrow(parts.category) + title(parts.title) + parts.blocks.join('');
+  return title(parts.title) + parts.blocks.join('');
 }
+
+// The category line older templates were saved with (see eyebrow()): taken out when an email is sent.
+const SAVED_CATEGORY_LINE =
+  /<p style="margin:0 0 10px;[^"]*letter-spacing:0\.08em;text-transform:uppercase;[^"]*">[^<]*<\/p>/g;
 
 // A fallback body written as plain HTML in code (<p>, <a>) is upgraded to the same components every designed template
 // uses - paragraph spacing and type, a real button for a lone link, and a heading - so an email never goes out as
@@ -310,9 +315,8 @@ export function upgradePlainEmailHtml(
       blocks.push(paragraph(inner));
     }
   }
-  const head =
-    (opts.category ? eyebrow(opts.category) : '') +
-    (opts.title ? title(opts.title) : '');
+  // The category is not printed (see emailBody).
+  const head = opts.title ? title(opts.title) : '';
   return head + blocks.join('');
 }
 
@@ -423,6 +427,7 @@ export function wrapEmailShell(
 // marker is present (e.g. an org's own custom template).
 export function finalizeEmailHtml(html: string): string {
   return html
+    .replace(SAVED_CATEGORY_LINE, '')
     .replace(/<!--opt-->([\s\S]*?)<!--\/opt-->/g, (_m, inner: string) => {
       const marked = /<span data-opt[^>]*>([\s\S]*?)<\/span>/.exec(inner);
       const value = marked ? marked[1].replace(/<[^>]+>/g, '').trim() : '';
