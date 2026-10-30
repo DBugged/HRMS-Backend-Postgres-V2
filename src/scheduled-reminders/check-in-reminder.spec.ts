@@ -1,9 +1,11 @@
 import {
   DEFAULT_CHECK_IN_REMINDER,
+  isAfterEndMoment,
   isReminderMoment,
   minutesOfDay,
   resolveCheckInReminder,
   resolveCheckOutReminder,
+  resolveStillCheckedInReminder,
   shiftTimeLabel,
 } from './check-in-reminder';
 
@@ -83,5 +85,34 @@ describe('check-in reminder rules', () => {
     const end = minutesOfDay('18:30')!;
     expect(isReminderMoment(end, 18 * 60 + 15, 15)).toBe(true);
     expect(isReminderMoment(end, 18 * 60 + 20, 15)).toBe(false);
+  });
+});
+
+describe('still checked in reminder rules', () => {
+  it('is on, 30 minutes after the shift ends, unless the Admin says otherwise (5 to 240 minutes)', () => {
+    expect(resolveStillCheckedInReminder(undefined)).toEqual({
+      enabled: true,
+      minutesAfter: 30,
+    });
+    expect(
+      resolveStillCheckedInReminder({
+        stillCheckedInReminder: { enabled: false, minutesAfter: 45 },
+      }),
+    ).toEqual({ enabled: false, minutesAfter: 45 });
+    expect(
+      resolveStillCheckedInReminder({
+        stillCheckedInReminder: { minutesAfter: 1000 },
+      }).minutesAfter,
+    ).toBe(240);
+  });
+
+  it('fires on exactly one 5-minute run, N minutes after the end, also across midnight', () => {
+    const end = 18 * 60; // 18:00
+    expect(isAfterEndMoment(end, 18 * 60 + 30, 30)).toBe(true);
+    expect(isAfterEndMoment(end, 18 * 60 + 26, 30)).toBe(true);
+    expect(isAfterEndMoment(end, 18 * 60 + 25, 30)).toBe(false);
+    expect(isAfterEndMoment(end, 18 * 60 + 31, 30)).toBe(false);
+    expect(isAfterEndMoment(end, 17 * 60 + 30, 30)).toBe(false); // before the end
+    expect(isAfterEndMoment(23 * 60 + 45, 15, 30)).toBe(true); // 23:45 end, 00:15 now
   });
 });

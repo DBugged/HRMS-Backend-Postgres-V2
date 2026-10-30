@@ -262,7 +262,9 @@ function validatePolicies(p: Record<string, unknown>) {
     debitAccount !== undefined &&
     debitAccount !== null &&
     debitAccount !== '' &&
-    !(typeof debitAccount === 'string' && /^\d{9,18}$/.test(debitAccount.trim()))
+    !(
+      typeof debitAccount === 'string' && /^\d{9,18}$/.test(debitAccount.trim())
+    )
   ) {
     bad('policies.salaryDebitAccountNumber must be 9 to 18 digits.');
   }
@@ -271,7 +273,10 @@ function validatePolicies(p: Record<string, unknown>) {
     debitIfsc !== undefined &&
     debitIfsc !== null &&
     debitIfsc !== '' &&
-    !(typeof debitIfsc === 'string' && /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(debitIfsc.trim()))
+    !(
+      typeof debitIfsc === 'string' &&
+      /^[A-Za-z]{4}0[A-Za-z0-9]{6}$/.test(debitIfsc.trim())
+    )
   ) {
     bad('policies.salaryDebitAccountIfsc must look like HDFC0001234.');
   }
@@ -361,6 +366,22 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
     const days = (alt as { day: number }[]).map((a) => a.day);
     if (new Set(days).size !== days.length) {
       bad(`${path('alternateWeeklyOffs')} lists the same day more than once.`);
+    }
+  }
+  if (p.stillCheckedInReminder !== undefined) {
+    const c = p.stillCheckedInReminder;
+    if (!isPlainObject(c)) {
+      bad(`${path('stillCheckedInReminder')} must be an object.`);
+    } else {
+      if (c.enabled !== undefined && typeof c.enabled !== 'boolean') {
+        bad(`${path('stillCheckedInReminder')}.enabled must be true or false.`);
+      }
+      checkNumber(
+        c,
+        'minutesAfter',
+        `${path('stillCheckedInReminder')}.minutesAfter`,
+        { min: 5, max: 240, integer: true },
+      );
     }
   }
   for (const key of ['checkInReminder', 'checkOutReminder'] as const) {

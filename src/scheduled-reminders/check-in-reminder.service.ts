@@ -22,10 +22,12 @@ import {
   type OrganizationAttendancePrefs,
 } from '../attendance/attendance-shift-config';
 import {
+  isAfterEndMoment,
   isReminderMoment,
   minutesOfDay,
   resolveCheckInReminder,
   resolveCheckOutReminder,
+  resolveStillCheckedInReminder,
   shiftTimeLabel,
 } from './check-in-reminder';
 
@@ -45,12 +47,16 @@ export class CheckInReminderService {
       select: { id: true },
     });
     // Skip companies whose Super Admin switched this module off.
-    const organizations = await keepModuleEnabled(allOrganizations, 'module.attendance');
+    const organizations = await keepModuleEnabled(
+      allOrganizations,
+      'module.attendance',
+    );
     let sent = 0;
     for (const org of organizations) {
       try {
         sent += await this.remindForOrg(org.id);
         sent += await this.remindCheckOutForOrg(org.id);
+        sent += await this.remindStillCheckedInForOrg(org.id);
       } catch (err) {
         this.logger.error(
           `Check-in reminders failed for org ${org.id}: ${(err as Error).message}`,
@@ -285,6 +291,105 @@ export class CheckInReminderService {
         userId: row.employeeId,
         title,
         message: `Your shift ends at ${at}. Remember to check out when you leave.`,
+        category: NotificationCategory.ATTENDANCE,
+      });
+      sent += 1;
+    }
+    return sent;
+  }
+
+  // "You are still checked in": N minutes after the shift ended (30 by default), for people who checked in and have not
+  // checked out - a push on their phone as well as in-app. Time beyond the shift is not paid by itself: it becomes an
+  // overtime request that HR or the manager approves, which the message points to. A shift that ends late enough for the
+  // reminder to fall after midnight is looked up on the day before.
+  async remindStillCheckedInForOrg(
+    organizationId: string,
+    now = new Date(),
+  ): Promise<number> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        timezone: true,
+        policies: true,
+        attendancePayrollPrefs: true,
+        orgPayrollAttendancePrefs: true,
+      },
+    });
+    if (!org) return 0;
+    const settings = resolveStillCheckedInReminder(
+      org.orgPayrollAttendancePrefs,
+    );
+    if (!settings.enabled) return 0;
+
+    const timezone = org.timezone || 'Asia/Kolkata';
+    const today = dateStrInOrgTz(timezone, now);
+    const yesterday = yesterdayInOrgTz(timezone, now);
+    const clock = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+    }).format(now);
+    const nowMinutes = minutesOfDay(clock);
+    if (nowMinutes === null) return 0;
+    const hour12 =
+      (org.policies as { timeFormat?: string } | null)?.timeFormat === '12';
+    const orgPrefs =
+      org.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
+
+    const open = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        date: { in: [today, yesterday] },
+        inTime: { not: null },
+        outTime: null,
+        employee: { isActive: true, alwaysPresent: false },
+      },
+      select: {
+        employeeId: true,
+        date: true,
+        employee: { select: { department: true } },
+      },
+    });
+
+    let sent = 0;
+    for (const row of open) {
+      const shift = resolveShiftConfig(
+        row.employee.department,
+        orgPrefs,
+        timezone,
+      );
+      const end = minutesOfDay(shift.shiftEndTime);
+      if (
+        end === null ||
+        !isAfterEndMoment(end, nowMinutes, settings.minutesAfter)
+      ) {
+        continue;
+      }
+      // The shift's own day: it moves back one day when the shift ends after midnight, and one more when the reminder
+      // itself falls after midnight. Only today and yesterday are looked at.
+      const daysBack =
+        (shift.crossesMidnight ? 1 : 0) +
+        (end + settings.minutesAfter >= 24 * 60 ? 1 : 0);
+      if (daysBack > 1) continue;
+      if (row.date !== (daysBack === 1 ? yesterday : today)) continue;
+      const at = shiftTimeLabel(shift.shiftEndTime, hour12);
+      const title = `Still checked in - shift ended at ${at} (${dmyText(row.date)})`;
+      const already = await this.scopedPrisma.notification.findFirst({
+        where: {
+          organizationId,
+          userId: row.employeeId,
+          title,
+          createdAt: { gt: new Date(Date.now() - 20 * 3600_000) },
+        },
+        select: { id: true },
+      });
+      if (already) continue;
+      await this.notificationsService.create({
+        organizationId,
+        userId: row.employeeId,
+        title,
+        message: `Your shift ended at ${at} and you are still checked in. Check out when you leave. If you are working overtime, it needs approval from HR or your manager - request it under Attendance > Overtime if it is not already there.`,
         category: NotificationCategory.ATTENDANCE,
       });
       sent += 1;

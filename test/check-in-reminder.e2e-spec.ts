@@ -295,4 +295,60 @@ describe('Check-in reminder before the shift (e2e)', () => {
     await patch({ enabled: 'yes' }).expect(400);
     await patch({ enabled: true, minutesBefore: 20 }).expect(200);
   });
+
+  it('reminds someone still checked in 30 minutes after the shift ended, once, pointing to overtime approval', async () => {
+    await prisma.attendance.updateMany({
+      where: { employeeId: punchedId, date: '2026-11-04' },
+      data: { outTime: null },
+    });
+    await prisma.organization.update({
+      where: { id: organizationId },
+      data: { orgPayrollAttendancePrefs: {} },
+    });
+    const still = (userId: string) =>
+      prisma.notification.count({
+        where: { userId, title: { startsWith: 'Still checked in' } },
+      });
+    // The shift ends at 18:30: nothing at 18:50, one at 19:00, and not again on the next run.
+    await service.remindStillCheckedInForOrg(
+      organizationId,
+      at('2026-11-04', '18:50'),
+    );
+    expect(await still(punchedId)).toBe(0);
+    await service.remindStillCheckedInForOrg(
+      organizationId,
+      at('2026-11-04', '19:00'),
+    );
+    expect(await still(punchedId)).toBe(1);
+    const note = await prisma.notification.findFirstOrThrow({
+      where: { userId: punchedId, title: { startsWith: 'Still checked in' } },
+    });
+    expect(note.title).toMatch(/shift ended at 18:30/);
+    expect(note.message).toMatch(/overtime/i);
+    expect(note.message).toMatch(/HR or your manager/);
+    await service.remindStillCheckedInForOrg(
+      organizationId,
+      at('2026-11-04', '19:00'),
+    );
+    expect(await still(punchedId)).toBe(1);
+    expect(await still(plainId)).toBe(0); // never checked in
+
+    // Switched off, nobody is reminded; the setting is validated.
+    await prisma.notification.deleteMany({
+      where: { userId: punchedId, title: { startsWith: 'Still checked in' } },
+    });
+    const patch = (stillCheckedInReminder: object) =>
+      request(app.getHttpServer())
+        .patch('/organizations/settings/policies')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ orgPayrollAttendancePrefs: { stillCheckedInReminder } });
+    await patch({ minutesAfter: 2 }).expect(400);
+    await patch({ minutesAfter: 500 }).expect(400);
+    await patch({ enabled: false, minutesAfter: 30 }).expect(200);
+    await service.remindStillCheckedInForOrg(
+      organizationId,
+      at('2026-11-04', '19:00'),
+    );
+    expect(await still(punchedId)).toBe(0);
+  });
 });
