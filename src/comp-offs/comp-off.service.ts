@@ -34,6 +34,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateCompOffDto } from './dto/create-comp-off.dto';
 import { ReviewCompOffDto } from './dto/review-comp-off.dto';
+import { CancelCompOffDto } from './dto/cancel-comp-off.dto';
 import {
   consumeCompOff,
   releaseCompOff,
@@ -560,6 +561,68 @@ export class CompOffService {
       description: `Comp-off request ${dto.decision.toLowerCase()}.`,
     });
 
+    return this.findByIdOrThrow(id, organizationId);
+  }
+
+  // HR/Admin withdraw an approved comp-off that has not been used (none of it taken as leave) - for one approved by
+  // mistake, such as for a regular working day before the weekly-off / holiday rule. It becomes REJECTED with the reason,
+  // and the employee is told. A comp-off already (partly) taken cannot be withdrawn this way.
+  async cancel(
+    id: string,
+    dto: CancelCompOffDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const compOff = await this.findByIdOrThrow(id, organizationId);
+    assertNotSelfApproval(actor, compOff.employeeId);
+    if (
+      compOff.status !== CompOffStatus.APPROVED ||
+      Number(compOff.daysAvailed) > 0
+    ) {
+      throw new BadRequestException(
+        'Only an approved comp-off that has not been used can be withdrawn.',
+      );
+    }
+    const reason = dto.reason.trim();
+    // Guarded: still approved and still unused at the moment of writing (a leave could be approved meanwhile).
+    const { count } = await this.scopedPrisma.compOff.updateMany({
+      where: {
+        id,
+        organizationId,
+        status: CompOffStatus.APPROVED,
+        daysAvailed: 0,
+      },
+      data: {
+        status: CompOffStatus.REJECTED,
+        approvedById: actor.id,
+        approvedAt: new Date(),
+        decisionNote: `Withdrawn: ${reason}`,
+      },
+    });
+    if (count === 0) {
+      throw new ConflictException(
+        'This comp-off was just used or changed - reload and try again.',
+      );
+    }
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
+      this.scopedPrisma,
+      organizationId,
+    );
+    await this.notificationsService.create({
+      organizationId,
+      userId: compOff.employeeId,
+      title: 'Comp-Off Withdrawn',
+      message: `Your approved comp-off for ${formatDateDisplay(compOff.earnedForDate, '', dateFormat, timeZone)} has been withdrawn. Reason: ${reason}`,
+      category: NotificationCategory.LEAVE,
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'COMP_OFF_WITHDRAWN',
+      module: 'LEAVE',
+      organizationId,
+      targetId: id,
+      details: { earnedForDate: compOff.earnedForDate, reason },
+    });
     return this.findByIdOrThrow(id, organizationId);
   }
 

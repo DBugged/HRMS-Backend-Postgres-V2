@@ -499,4 +499,52 @@ describe('Comp-Offs (e2e)', () => {
       'regular working day',
     );
   });
+
+  it('HR/Admin can withdraw an approved, unused comp-off with a reason; the employee is told', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/comp-offs')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ earnedForDate: pastDate(7), reason: 'Sunday release' })
+      .expect(201);
+    const id = (created.body as { id: string }).id;
+    // Not before it is approved.
+    await request(app.getHttpServer())
+      .patch(`/comp-offs/${id}/cancel`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'Mistake' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch(`/comp-offs/${id}/review`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ decision: 'APPROVED' })
+      .expect(200);
+    // A manager cannot, and a reason is required.
+    await request(app.getHttpServer())
+      .patch(`/comp-offs/${id}/cancel`)
+      .set('Authorization', `Bearer ${managerToken}`)
+      .send({ reason: 'Mistake' })
+      .expect(403);
+    await request(app.getHttpServer())
+      .patch(`/comp-offs/${id}/cancel`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: '' })
+      .expect(400);
+    const res = await request(app.getHttpServer())
+      .patch(`/comp-offs/${id}/cancel`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'Approved by mistake' })
+      .expect(200);
+    expect((res.body as { status: string }).status).toBe('REJECTED');
+    expect(
+      await prisma.notification.count({
+        where: { userId: employeeId, title: 'Comp-Off Withdrawn' },
+      }),
+    ).toBe(1);
+    // Withdrawn once is enough.
+    await request(app.getHttpServer())
+      .patch(`/comp-offs/${id}/cancel`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ reason: 'Again' })
+      .expect(400);
+  });
 });

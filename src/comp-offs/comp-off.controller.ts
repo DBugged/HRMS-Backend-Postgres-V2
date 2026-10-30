@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { CompOffService } from './comp-off.service';
 import { CreateCompOffDto } from './dto/create-comp-off.dto';
+import { CancelCompOffDto } from './dto/cancel-comp-off.dto';
 import { ReviewCompOffDto } from './dto/review-comp-off.dto';
 import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
 import { Roles } from '../common/decorators/roles.decorator';
@@ -60,5 +61,17 @@ export class CompOffController {
     @CurrentUser() caller: Caller,
   ) {
     return this.compOffService.review(id, dto, caller, caller.organizationId);
+  }
+
+  // HR/Admin withdraw an approved comp-off that has not been used, with a reason.
+  @Patch(':id/cancel')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  cancel(
+    @Param('id') id: string,
+    @Body() dto: CancelCompOffDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.compOffService.cancel(id, dto, caller, caller.organizationId);
   }
 }
