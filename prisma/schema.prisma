@@ -1821,6 +1821,10 @@ model EmployeeTaxDeclaration {
 
   status TaxDeclarationStatus @default(DRAFT)
 
+  // Investment proofs the employee uploaded for HR to check before verifying: [{ section, fileUrl, fileName,
+  // uploadedAt }]. fileUrl is the stored file key (signed on read). Editable until the declaration is VERIFIED.
+  proofs Json @default("[]")
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

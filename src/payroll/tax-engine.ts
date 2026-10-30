@@ -375,13 +375,15 @@ export function calculateTax({
   }
 
   // 80CCD(2) — employer NPS contribution — is allowed under both regimes,
-  // capped at 10%/14% of Basic + DA (Old/New).
+  // capped at 10%/14% of Basic + DA (Old/New). Only what payroll actually
+  // pays as employer NPS counts: a figure the employee typed on their
+  // declaration is not the employer's contribution, so it is not used.
   const section80CCD2Cap = Math.round(
     (regime === TaxRegime.NEW ? 0.14 : 0.1) *
       (basicPlusDaAnnual ?? basicAnnual),
   );
   deductions.section80CCD2 = Math.min(
-    employerNps > 0 ? employerNps : declaration?.section80CCD2 || 0,
+    employerNps,
     section80CCD2Cap,
   );
 

@@ -1,6 +1,9 @@
 import { IsFinancialYear } from '../../common/is-financial-year.validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsEnum,
@@ -10,7 +13,9 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { HRA_CITY_OPTIONS } from '../../common/hra-cities';
 import { TaxDeclarationStatus, TaxRegime } from '@prisma/client';
@@ -28,6 +33,39 @@ const SECTION_80C_CAP = 150000;
 const SECTION_80CCD1B_CAP = 50000;
 // 25,000 self/family + 25,000 parents, each 50,000 for a senior citizen: 1,00,000 is the most any employee can claim.
 const SECTION_80D_CAP = 100000;
+
+// The deduction or exemption a proof supports.
+export const TAX_PROOF_SECTIONS = [
+  'HRA',
+  'LTA',
+  '80C',
+  '80CCD1B',
+  '80D',
+  '80E',
+  '80G',
+  '80TTA',
+  'HOME_LOAN',
+  'PREVIOUS_EMPLOYER',
+  'OTHER',
+] as const;
+
+export class TaxProofDto {
+  @ApiProperty({ enum: TAX_PROOF_SECTIONS })
+  @IsIn(TAX_PROOF_SECTIONS as unknown as string[])
+  section!: string;
+
+  @ApiProperty({ description: 'The uploaded file key (from /upload).' })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(500)
+  fileUrl!: string;
+
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(200)
+  fileName!: string;
+}
 
 export class UpsertTaxDeclarationDto {
   @ApiPropertyOptional({
@@ -180,4 +218,14 @@ export class UpsertTaxDeclarationDto {
   @IsOptional()
   @IsBoolean()
   submit?: boolean;
+
+  // The whole list of uploaded investment proofs (a save sends it back in full). Can still change after submitting,
+  // until HR verifies the declaration.
+  @ApiPropertyOptional({ type: () => [TaxProofDto] })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(30)
+  @ValidateNested({ each: true })
+  @Type(() => TaxProofDto)
+  proofs?: TaxProofDto[];
 }

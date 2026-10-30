@@ -132,7 +132,7 @@ describe('calculateTax', () => {
       ltaClaimed: 15000,
       section80C: 150000,
       section80CCD1B: 60000, // capped to 50,000
-      section80CCD2: 80000, // capped to 10% of basicAnnual (60,000)
+      section80CCD2: 80000, // typed by the employee: not used (only payroll's employer NPS counts)
       section80D: 100000, // capped to the 75,000 statutory ceiling
       section80E: 10000,
       section80G: 5000,
@@ -157,14 +157,14 @@ describe('calculateTax', () => {
     expect(result.exemptions.lta).toBe(15000);
     expect(result.deductions.section80C).toBe(150000);
     expect(result.deductions.section80CCD1B).toBe(50000);
-    expect(result.deductions.section80CCD2).toBe(60000);
+    expect(result.deductions.section80CCD2).toBe(0);
     expect(result.deductions.section80D).toBe(75000);
-    expect(result.taxableIncome).toBe(543000);
-    expect(result.taxBeforeCess).toBe(21100);
+    expect(result.taxableIncome).toBe(603000);
+    expect(result.taxBeforeCess).toBe(33100);
     expect(result.rebate).toBe(0); // taxable income exceeds the old-regime 87A limit (5L)
-    expect(result.cess).toBe(844);
-    expect(result.totalAnnualTax).toBe(21940); // 21,944 rounded to the nearest 10 (s.288B)
-    expect(result.monthlyTDS).toBe(1828);
+    expect(result.cess).toBe(1324);
+    expect(result.totalAnnualTax).toBe(34420); // 34,424 rounded to the nearest 10 (s.288B)
+    expect(result.monthlyTDS).toBe(2868); // 34,420 / 12
   });
 
   it('OLD regime with no declaration: no old-regime-only exemptions/deductions apply', () => {
@@ -810,7 +810,8 @@ describe('employer NPS deduction limit (80CCD(2))', () => {
       recurringMonthlyGross: 200000,
       basicAnnual: 600000,
       basicPlusDaAnnual,
-      declaration: { section80CCD2: 200000 },
+      employerNpsAnnual: 200000,
+      declaration: null,
       taxSlabConfig: {
         ...getDefaultTaxSlabConfig(TaxRegime.NEW),
         regime: TaxRegime.NEW,
@@ -823,6 +824,24 @@ describe('employer NPS deduction limit (80CCD(2))', () => {
 
   it('falls back to Basic when there is no DA figure', () => {
     expect(run().deductions.section80CCD2).toBe(84000);
+  });
+});
+
+describe('employer NPS typed on the declaration', () => {
+  it('is not deducted: only the employer NPS payroll pays counts under 80CCD(2)', () => {
+    const r = calculateTax({
+      month: 4,
+      year: 2026,
+      currentMonthGross: 100000,
+      recurringMonthlyGross: 100000,
+      basicAnnual: 600000,
+      declaration: { section80CCD2: 50000 },
+      taxSlabConfig: {
+        ...getDefaultTaxSlabConfig(TaxRegime.NEW),
+        regime: TaxRegime.NEW,
+      },
+    });
+    expect(r.deductions.section80CCD2).toBe(0);
   });
 });
 

@@ -249,4 +249,75 @@ describe('Tax Declarations (e2e)', () => {
     });
     expect(count).toBe(1);
   });
+
+  it('investment proofs: uploaded with the declaration, still changeable after submitting, final once verified', async () => {
+    const emp = await prisma.user.findUniqueOrThrow({
+      where: { id: employeeId },
+    });
+    const key = `${emp.organizationId}/tax-proofs/rent-receipts.pdf`;
+    const save = (body: object) =>
+      request(app.getHttpServer())
+        .post('/tax-declarations')
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ financialYear: '2026-27', ...body });
+    // Earlier tests left this declaration verified: HR reopens it first.
+    await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ employeeId, financialYear: '2026-27', status: 'DRAFT' })
+      .expect(201);
+    // Another organisation's file, or an unknown section, is refused.
+    await save({
+      proofs: [
+        {
+          section: 'HRA',
+          fileUrl: '11111111-2222-3333-4444-555555555555/x.pdf',
+          fileName: 'x.pdf',
+        },
+      ],
+    }).expect(400);
+    await save({
+      proofs: [{ section: 'NOPE', fileUrl: key, fileName: 'r.pdf' }],
+    }).expect(400);
+
+    const res = await save({
+      proofs: [{ section: 'HRA', fileUrl: key, fileName: 'Rent receipts.pdf' }],
+    }).expect(201);
+    const proofs = (
+      res.body as { proofs: { fileName: string; viewUrl: string }[] }
+    ).proofs;
+    expect(proofs).toHaveLength(1);
+    expect(proofs[0].fileName).toBe('Rent receipts.pdf');
+    expect(proofs[0].viewUrl).toMatch(/^\/files\//);
+
+    // After submitting, the figures are locked but proofs can still be added.
+    await save({ submit: true }).expect(201);
+    await save({
+      proofs: [
+        { section: 'HRA', fileUrl: key, fileName: 'Rent receipts.pdf' },
+        {
+          section: '80C',
+          fileUrl: `${emp.organizationId}/tax-proofs/ppf.pdf`,
+          fileName: 'PPF.pdf',
+        },
+      ],
+    }).expect(201);
+    await save({ section80C: 1 }).expect(400);
+
+    // Verified by HR: the proofs are final too.
+    await request(app.getHttpServer())
+      .post('/tax-declarations')
+      .set('Authorization', `Bearer ${hrToken}`)
+      .send({ employeeId, financialYear: '2026-27', status: 'VERIFIED' })
+      .expect(201);
+    await save({ proofs: [] }).expect(400);
+    const read = await request(app.getHttpServer())
+      .get('/tax-declarations')
+      .query({ financialYear: '2026-27' })
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    expect(
+      (read.body as { declaration: { proofs: unknown[] } }).declaration.proofs,
+    ).toHaveLength(2);
+  });
 });

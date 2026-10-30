@@ -17,11 +17,13 @@ import {
 import {
   EmployeeTaxDeclaration,
   NotificationCategory,
+  Prisma,
   Role,
   TaxDeclarationStatus,
   TaxRegime,
   User,
 } from '@prisma/client';
+import { isKeyAllowedForOrg, signFileToken } from '../files/file-token';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { UpsertTaxDeclarationDto } from './dto/upsert-tax-declaration.dto';
@@ -52,6 +54,32 @@ const MONTH_NAMES = [
   'November',
   'December',
 ];
+
+export interface StoredProof {
+  section: string;
+  fileUrl: string;
+  fileName: string;
+  uploadedAt?: string;
+}
+
+function proofList(value: unknown): StoredProof[] {
+  return Array.isArray(value) ? (value as StoredProof[]) : [];
+}
+
+// Proof files come back as short-lived signed links for viewing; `fileUrl` stays the stored key so a save can send
+// the list back unchanged.
+function withSignedProofs<T extends { proofs: unknown }>(
+  declaration: T,
+  organizationId: string,
+): T & { proofs: (StoredProof & { viewUrl: string })[] } {
+  return {
+    ...declaration,
+    proofs: proofList(declaration.proofs).map((p) => ({
+      ...p,
+      viewUrl: `/files/${signFileToken(organizationId, p.fileUrl)}`,
+    })),
+  };
+}
 
 @Injectable()
 export class TaxDeclarationsService {
@@ -190,7 +218,10 @@ export class TaxDeclarationsService {
         organizationId,
       ),
     );
-    return { declaration, regimeRule };
+    return {
+      declaration: declaration && withSignedProofs(declaration, organizationId),
+      regimeRule,
+    };
   }
 
   private async assertEmployeeInOrg(
@@ -305,8 +336,19 @@ export class TaxDeclarationsService {
         ).filter(
           ([k, v]) =>
             v !== undefined &&
-            !['employeeId', 'financialYear', 'regimeChosen'].includes(k),
+            !['employeeId', 'financialYear', 'regimeChosen', 'proofs'].includes(
+              k,
+            ),
         );
+        // Proofs are usually sent after submitting (the proof window); once HR has verified, they are final too.
+        if (
+          dto.proofs !== undefined &&
+          existing.status === TaxDeclarationStatus.VERIFIED
+        ) {
+          throw new BadRequestException(
+            `Your declaration for FY ${dto.financialYear} has been verified, so its proofs can no longer be changed. Ask HR to reopen it.`,
+          );
+        }
         if (otherEdits.length > 0) {
           throw new BadRequestException(
             `Your declaration for FY ${dto.financialYear} has already been submitted and can no longer be changed. Only your tax regime can still be changed, once a year.`,
@@ -367,7 +409,23 @@ export class TaxDeclarationsService {
         : undefined
       : dto.status;
 
+    // Only this organisation's own uploaded files can be attached as proofs.
+    if (dto.proofs?.some((p) => !isKeyAllowedForOrg(organizationId, p.fileUrl))) {
+      throw new BadRequestException('A proof file is not a valid upload.');
+    }
+    const priorProofs = proofList(existing?.proofs);
     const data = {
+      ...(dto.proofs !== undefined && {
+        proofs: dto.proofs.map((p) => ({
+          section: p.section,
+          fileUrl: p.fileUrl,
+          fileName: p.fileName.trim(),
+          // Kept from the earlier save when the same file is sent back; new uploads are stamped now.
+          uploadedAt:
+            priorProofs.find((q) => q.fileUrl === p.fileUrl)?.uploadedAt ??
+            new Date().toISOString(),
+        })) as unknown as Prisma.InputJsonValue,
+      }),
       ...(dto.regimeChosen !== undefined && { regimeChosen: dto.regimeChosen }),
       ...(usesRegimeChange && {
         regimeChangeCount: (existing?.regimeChangeCount ?? 0) + 1,
@@ -514,7 +572,7 @@ export class TaxDeclarationsService {
       }
     }
 
-    return declaration;
+    return withSignedProofs(declaration, organizationId);
   }
 
   // HR / Admin set the regime for one employee or many (a bulk change at the start of a year, or a correction). It never
