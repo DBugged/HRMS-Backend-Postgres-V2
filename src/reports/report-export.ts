@@ -87,49 +87,108 @@ function sanitizeWorkbookCells(workbook: ExcelJS.Workbook): void {
   );
 }
 
+// Excel limits: a sheet name is at most 31 characters and cannot hold : \\ / ? * [ ].
+function sheetNameOf(title: string): string {
+  return (
+    title
+      .replace(/[:\\/?*[\]]/g, ' ')
+      .slice(0, 31)
+      .trim() || 'Report'
+  );
+}
+
+// A column wide enough for its header and its longest value (in characters), within sensible limits.
+function fitWidth(
+  column: ReportColumn,
+  rows: Record<string, unknown>[],
+): number {
+  let longest = column.header.length;
+  for (const row of rows.slice(0, 500)) {
+    const value = row[column.key];
+    const text =
+      value instanceof Date
+        ? value.toISOString().slice(0, 10)
+        : typeof value === 'string' || typeof value === 'number'
+          ? String(value)
+          : '';
+    if (text.length > longest) longest = text.length;
+  }
+  return Math.min(50, Math.max(column.width ?? 10, longest + 2));
+}
+
 export function buildWorkbook(
   title: string,
   columns: ReportColumn[],
   rows: Record<string, unknown>[],
   subtitle?: string,
   logoBuffer?: Buffer | null,
+  // A CSV is the bare table (header on line 1); an .xlsx is laid out for reading: logo, title and subtitle each on
+  // their own row above the table, then a styled header that stays in view and filters, and columns sized to fit.
+  opts: { styled?: boolean } = {},
 ): ExcelJS.Workbook {
   const workbook = new ExcelJS.Workbook();
-  const sheet = workbook.addWorksheet(title);
-  sheet.columns = columns;
-  rows.forEach((row) => sheet.addRow(sanitizeRow(row)));
-  sheet.getRow(1).font = { bold: true };
+  const sheet = workbook.addWorksheet(sheetNameOf(title));
+  sheet.columns = columns.map((c) => ({
+    key: c.key,
+    width: opts.styled ? fitWidth(c, rows) : c.width,
+  }));
+
+  if (!opts.styled) {
+    sheet.addRow(columns.map((c) => c.header)).font = { bold: true };
+    rows.forEach((row) => sheet.addRow(sanitizeRow(row)));
+    return workbook;
+  }
+
+  let next = 1;
+  const extension = logoBuffer ? detectRasterExtension(logoBuffer) : null;
+  if (logoBuffer && extension) {
+    // The logo gets a row of its own: it used to float over the subtitle and the first header.
+    const imageId = workbook.addImage({
+      buffer: logoBuffer as unknown as ExcelJS.Buffer,
+      extension,
+    });
+    sheet.addImage(imageId, {
+      tl: { col: 0.1, row: 0.1 },
+      ext: { width: 48, height: 48 },
+    });
+    sheet.getRow(1).height = 42;
+    next = 2;
+  }
+  const titleCell = sheet.getCell(next, 1);
+  titleCell.value = sanitizeSpreadsheetValue(title);
+  titleCell.font = { bold: true, size: 14 };
+  sheet.getRow(next).height = 22;
+  next += 1;
   if (subtitle) {
-    // Inserted above the (already-written) header row — insertRow shifts
-    // the header and every data row down by one, same as the original release's
-    // report exports carrying a "which establishment this belongs to" line.
-    // Deliberately NOT merged across columns — mergeCells is an Excel-only
-    // concept, and this same worksheet also backs the CSV export, whose
-    // writer repeats a merged cell's value into every column instead of
-    // leaving them blank. A single-cell first column reads fine in Excel
-    // too, just without the visual merge.
-    sheet.insertRow(1, [sanitizeSpreadsheetValue(subtitle)]);
-    sheet.getRow(1).font = { italic: true, bold: false };
-    sheet.getRow(2).font = { bold: true };
+    const subtitleCell = sheet.getCell(next, 1);
+    subtitleCell.value = sanitizeSpreadsheetValue(subtitle);
+    subtitleCell.font = { italic: true, color: { argb: 'FF555555' } };
+    next += 1;
   }
-  if (logoBuffer) {
-    const extension = detectRasterExtension(logoBuffer);
-    if (extension) {
-      // Floating image anchored above the table, not in a cell — doesn't
-      // shift any row/column, so it has no effect on the CSV export (CSV
-      // has no concept of an embedded image; the same worksheet just
-      // renders without one).
-      const imageId = workbook.addImage({
-        buffer: logoBuffer as unknown as ExcelJS.Buffer,
-        extension,
-      });
-      sheet.addImage(imageId, {
-        tl: { col: 0, row: 0 },
-        ext: { width: 60, height: 60 },
-      });
-      sheet.getRow(1).height = 46;
-    }
-  }
+  next += 1; // a blank line before the table
+
+  const headerRowNo = next;
+  const headerRow = sheet.getRow(headerRowNo);
+  headerRow.values = columns.map((c) => c.header);
+  headerRow.height = 32;
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true };
+    cell.alignment = { vertical: 'middle', wrapText: true };
+    cell.fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFEFEFF5' },
+    };
+    cell.border = { bottom: { style: 'thin', color: { argb: 'FF9A9AB0' } } };
+  });
+  rows.forEach((row) => {
+    sheet.addRow(sanitizeRow(row)).alignment = { vertical: 'top' };
+  });
+  sheet.views = [{ state: 'frozen', ySplit: headerRowNo }];
+  sheet.autoFilter = {
+    from: { row: headerRowNo, column: 1 },
+    to: { row: headerRowNo, column: Math.max(1, columns.length) },
+  };
   return workbook;
 }
 
@@ -269,14 +328,13 @@ export async function sendReport(
     );
     return;
   }
-  // A CSV is for machines: the header must be line 1, so the descriptive subtitle line is left out of it.
-  const workbook = buildWorkbook(
-    title,
-    columns,
-    rows,
-    format === 'csv' ? undefined : subtitle,
-    logoBuffer,
-  );
+  // A CSV is for machines: the header must be line 1, so the title, subtitle and logo are left out of it.
+  const workbook =
+    format === 'csv'
+      ? buildWorkbook(title, columns, rows)
+      : buildWorkbook(title, columns, rows, subtitle, logoBuffer, {
+          styled: true,
+        });
   if (format === 'csv') {
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader(
