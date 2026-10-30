@@ -372,6 +372,11 @@ export class EmployeeSalaryComponentsService {
     organizationId: string,
   ) {
     await this.assertEmployeeExists(employeeId, organizationId);
+    // Whether this is the employee's first salary structure (checked before anything is saved; see the warning below).
+    const hadStructure =
+      (await this.scopedPrisma.employeeSalaryComponent.count({
+        where: { organizationId, employeeId },
+      })) > 0;
     const created: EmployeeSalaryComponent[] = [];
     // Matches the fail-but-continue + per-row `failed` report convention
     // used by HolidaysService.bulkImport: an unrecognized componentId/code
@@ -456,6 +461,22 @@ export class EmployeeSalaryComponentsService {
         organizationId,
       );
       if (warning) warnings.push(warning);
+    }
+    // A first structure that starts after the joining date leaves the months in between with no salary: payroll for
+    // them cannot be run. Fine when those months were paid outside the system (opening balances), so only a warning.
+    if (created.length > 0 && !hadStructure && dto.effectiveFrom) {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        select: { joiningDate: true },
+      });
+      const joined = employee?.joiningDate
+        ? dateOnly(employee.joiningDate)
+        : null;
+      if (joined && dto.effectiveFrom > joined) {
+        warnings.push(
+          `The salary starts on ${dmyText(dto.effectiveFrom)}, after the joining date ${dmyText(joined)}: there is no salary for the days in between, so payroll cannot be run for them. If that is not meant, revise it again with ${dmyText(joined)} as the effective date.`,
+        );
+      }
     }
 
     return { count: created.length, rows: created, failed, warnings };
@@ -698,18 +719,46 @@ export class EmployeeSalaryComponentsService {
 
     // A revision starts after the row it closes out. On the SAME day it corrects that row in place (a salary entered
     // by mistake can be fixed straight away, without waiting a day); a date before it would corrupt the history, so
-    // that is refused. Either way a month that is already paid is never touched.
+    // that is refused - except for the very first salary, whose start can be moved earlier (down to the joining date)
+    // when it was entered too late and left the first months with none. Either way a month that is already paid is
+    // never touched.
+    let moveFirstStart = false;
     if (current && from < current.effectiveFrom) {
-      throw new BadRequestException(
-        `The new salary cannot start before the current one (${dmyText(current.effectiveFrom)}) for ${component.code}. Use ${dmyText(current.effectiveFrom)} to correct it, or a later date to revise it.`,
-      );
+      const earlier = await this.scopedPrisma.employeeSalaryComponent.count({
+        where: {
+          organizationId,
+          employeeId,
+          componentCode: component.code,
+          effectiveFrom: { lt: current.effectiveFrom },
+        },
+      });
+      if (earlier > 0) {
+        throw new BadRequestException(
+          `The new salary cannot start before the current one (${dmyText(current.effectiveFrom)}) for ${component.code}. Use ${dmyText(current.effectiveFrom)} to correct it, or a later date to revise it.`,
+        );
+      }
+      // Moved earlier, but not before they joined.
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        select: { joiningDate: true },
+      });
+      const joined = employee?.joiningDate
+        ? dateOnly(employee.joiningDate)
+        : null;
+      if (joined && from < joined) {
+        throw new BadRequestException(
+          `The first salary can be moved earlier only down to the joining date (${dmyText(joined)}).`,
+        );
+      }
+      moveFirstStart = true;
     }
     // A deliberate backdated revision (to be paid as arrears) is allowed to start inside paid months; the locked
     // payslips are left alone and the difference is paid via PayrollService.createArrears.
     if (dto.backdateForArrears !== true) {
       await this.assertNoFinalizedPayrollFrom(employeeId, from, organizationId);
     }
-    const sameDay = !!current && from === current.effectiveFrom;
+    const sameDay =
+      !!current && (from === current.effectiveFrom || moveFirstStart);
 
     const values = {
       valueType: dto.valueType ?? component.calcType,
@@ -736,7 +785,7 @@ export class EmployeeSalaryComponentsService {
         if (sameDay && current) {
           await tx.employeeSalaryComponent.updateMany({
             where: { id: current.id, organizationId },
-            data: values,
+            data: moveFirstStart ? { ...values, effectiveFrom: from } : values,
           });
           return tx.employeeSalaryComponent.findFirstOrThrow({
             where: { id: current.id, organizationId },

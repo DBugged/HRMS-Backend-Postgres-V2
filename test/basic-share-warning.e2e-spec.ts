@@ -80,9 +80,10 @@ describe('Basic share warning on salary structure save (e2e)', () => {
     ]).expect(201);
     const body = res.body as { count: number; warnings: string[] };
     expect(body.count).toBe(2);
-    expect(body.warnings).toHaveLength(1);
-    expect(body.warnings[0]).toMatch(/Labour Code/);
-    expect(body.warnings[0]).toMatch(/at least 50%/);
+    // (A first salary starting after the joining date adds its own warning; this test is about the Basic share.)
+    const share = body.warnings.filter((w) => /Labour Code/.test(w));
+    expect(share).toHaveLength(1);
+    expect(share[0]).toMatch(/at least 50%/);
   });
 
   it('gives no warning once Basic is half or more', async () => {

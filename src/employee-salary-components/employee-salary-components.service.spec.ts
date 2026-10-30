@@ -96,6 +96,17 @@ function build(
       hits.forEach((x) => Object.assign(x, a.data));
       return { count: hits.length };
     },
+    count: async (a: Row) => {
+      const { effectiveFrom, ...rest } = (a?.where ?? {}) as Row;
+      return rows.filter(
+        (x) =>
+          match(x, rest) &&
+          (effectiveFrom === undefined ||
+            (typeof effectiveFrom === 'object' && effectiveFrom !== null
+              ? x.effectiveFrom < (effectiveFrom as { lt: string }).lt
+              : x.effectiveFrom === effectiveFrom)),
+      ).length;
+    },
   };
   const prisma: Row = {
     user: {
@@ -103,7 +114,13 @@ function build(
       findFirst: async () =>
         opts.employee === false
           ? null
-          : { id: 'e1', name: 'Emp One', email: 'e1@x.test', isActive: true },
+          : {
+              id: 'e1',
+              name: 'Emp One',
+              email: 'e1@x.test',
+              isActive: true,
+              joiningDate: new Date('2026-01-12T00:00:00.000Z'),
+            },
     },
     organization: {
       findFirst: async () => ({
@@ -250,8 +267,12 @@ describe('salary structure: setting a value', () => {
   });
 
   it('a date before the current row starts is refused, saying which date to use', async () => {
+    // Not the first salary (an earlier revision exists), so its start cannot be moved earlier.
     const { service, rows } = build({
-      rows: [open('BASIC', 30000, '2026-10-01')],
+      rows: [
+        { ...open('BASIC', 20000, '2026-04-01'), effectiveTo: '2026-09-30' },
+        open('BASIC', 30000, '2026-10-01'),
+      ],
     });
     await expect(
       service.setComponentValue(
@@ -267,7 +288,37 @@ describe('salary structure: setting a value', () => {
     ).rejects.toThrow(
       /cannot start before the current one \(01-10-2026\) for BASIC/,
     );
+    expect(rows).toHaveLength(2);
+  });
+
+  it('the first salary can be moved earlier, down to the joining date, without adding a row', async () => {
+    const { service, rows } = build({
+      rows: [open('BASIC', 30000, '2026-04-01')],
+    });
+    await service.setComponentValue(
+      'e1',
+      {
+        componentCode: 'BASIC',
+        fixedAmount: 30000,
+        effectiveFrom: '2026-01-12',
+      } as never,
+      'admin',
+      'org',
+    );
     expect(rows).toHaveLength(1);
+    expect(rows[0].effectiveFrom).toBe('2026-01-12');
+    await expect(
+      service.setComponentValue(
+        'e1',
+        {
+          componentCode: 'BASIC',
+          fixedAmount: 30000,
+          effectiveFrom: '2026-01-01',
+        } as never,
+        'admin',
+        'org',
+      ),
+    ).rejects.toThrow(/only down to the joining date \(12-01-2026\)/);
   });
 
   it('a revision effective in a month already locked or paid is refused', async () => {
@@ -414,7 +465,13 @@ describe('salary structure: setting many at once', () => {
   });
 
   it('when every line is refused it is an error, not a silent "saved"', async () => {
-    const { service } = build({ rows: [open('BASIC', 30000, '2026-10-01')] });
+    // An earlier revision exists, so a date before the current one is refused (the first salary could be moved).
+    const { service } = build({
+      rows: [
+        { ...open('BASIC', 20000, '2026-04-01'), effectiveTo: '2026-09-30' },
+        open('BASIC', 30000, '2026-10-01'),
+      ],
+    });
     await expect(
       service.bulkSetStructure(
         'e1',
