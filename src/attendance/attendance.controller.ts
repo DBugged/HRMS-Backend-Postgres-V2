@@ -20,6 +20,7 @@ import { Throttle } from '@nestjs/throttler';
 import { Role, User } from '@prisma/client';
 import { AttendanceService } from './attendance.service';
 import { IngestPunchDto } from './dto/ingest-punch.dto';
+import { BulkManualPunchDto } from './dto/bulk-manual-punch.dto';
 import { ManualPunchDto } from './dto/manual-punch.dto';
 import { SelfPunchDto } from './dto/self-punch.dto';
 import { SetWorkArrangementDto } from './dto/set-work-arrangement.dto';
@@ -71,6 +72,19 @@ export class AttendanceController {
   @ApiBearerAuth('access-token')
   manualPunch(@Body() dto: ManualPunchDto, @CurrentUser() caller: Caller) {
     return this.attendanceService.manualPunch(
+      dto,
+      caller.organizationId,
+      caller.id,
+    );
+  }
+
+  // The same In/Out for several employees on several days at once; the reply lists any person-day that was refused.
+  @Post('punch/manual/bulk')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @ApiBearerAuth('access-token')
+  manualPunchBulk(@Body() dto: BulkManualPunchDto, @CurrentUser() caller: Caller) {
+    return this.attendanceService.manualPunchBulk(
       dto,
       caller.organizationId,
       caller.id,

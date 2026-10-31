@@ -8,6 +8,8 @@
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
 import { keepModuleEnabled } from '../module-access/module-gate';
+import { BulkManualPunchDto } from './dto/bulk-manual-punch.dto';
+import { MAX_BULK_MANUAL_PUNCHES, runInBatches } from './manual-punch-batch';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import * as crypto from 'crypto';
 import {
@@ -1602,6 +1604,61 @@ export class AttendanceService {
     });
 
     return { punch, ...(outPunch && { outPunch }), attendance };
+  }
+
+  // The same In/Out for many people on many days, in one request (an HR back-entry). Each person-day goes through
+  // manualPunch, so every rule applies to it (active employee, joining and last working day, locked payroll, no future
+  // time); a day that is refused is listed with its reason and never stops the others.
+  async manualPunchBulk(
+    dto: BulkManualPunchDto,
+    organizationId: string,
+    actorId: string,
+  ) {
+    const total = dto.employeeIds.length * dto.punches.length;
+    if (total > MAX_BULK_MANUAL_PUNCHES) {
+      throw new BadRequestException(
+        `That is ${total} punches in one go. The most one request can add is ${MAX_BULK_MANUAL_PUNCHES} (people × days); please split it.`,
+      );
+    }
+    const people = await this.scopedPrisma.user.findMany({
+      where: { id: { in: dto.employeeIds }, organizationId },
+      select: { id: true, name: true, employeeId: true },
+    });
+    const byId = new Map(people.map((p) => [p.id, p]));
+    const jobs = dto.employeeIds.flatMap((employeeId) =>
+      dto.punches.map((p) => ({ employeeId, ...p })),
+    );
+    const outcomes = await runInBatches(jobs, (job) =>
+      this.manualPunch(
+        {
+          employeeId: job.employeeId,
+          punchTime: job.punchTime,
+          ...(job.outPunchTime ? { outPunchTime: job.outPunchTime } : {}),
+          ...(dto.location ? { location: dto.location } : {}),
+        },
+        organizationId,
+        actorId,
+      ),
+    );
+    const failures = outcomes.flatMap((o, i) =>
+      o.ok
+        ? []
+        : [
+            {
+              employeeId: jobs[i].employeeId,
+              employeeName: byId.get(jobs[i].employeeId)?.name ?? null,
+              employeeCode: byId.get(jobs[i].employeeId)?.employeeId ?? null,
+              punchTime: jobs[i].punchTime,
+              message: o.message,
+            },
+          ],
+    );
+    return {
+      total,
+      succeeded: total - failures.length,
+      failed: failures.length,
+      failures,
+    };
   }
 
   async selfPunch(dto: SelfPunchDto, actor: Actor, organizationId: string) {
