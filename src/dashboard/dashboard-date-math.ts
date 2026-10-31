@@ -83,3 +83,17 @@ export function daysUntilNextOccurrence(
   if (next < today) next = new Date(year + 1, month - 1, day);
   return Math.round((next.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
 }
+
+// How many leavers fall in each month, keyed "YYYY-M" (no zero pad, like the headcount rows). A leaver belongs to the
+// month of their LAST WORKING DAY (a plain YYYY-MM-DD) - not the day someone marked the exit complete in the portal,
+// which can be weeks later. Anything that is not a date is skipped.
+export function leaversByMonth(lastWorkingDays: string[]): Map<string, number> {
+  const byKey = new Map<string, number>();
+  for (const day of lastWorkingDays) {
+    const m = /^(\d{4})-(\d{2})-\d{2}/.exec(day ?? '');
+    if (!m) continue;
+    const key = `${Number(m[1])}-${Number(m[2])}`;
+    byKey.set(key, (byKey.get(key) ?? 0) + 1);
+  }
+  return byKey;
+}

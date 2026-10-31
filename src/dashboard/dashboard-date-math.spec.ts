@@ -1,6 +1,7 @@
 import {
   buildFyMonths,
   daysUntilNextOccurrence,
+  leaversByMonth,
   monthsForRange,
 } from './dashboard-date-math';
 
@@ -81,5 +82,19 @@ describe('daysUntilNextOccurrence', () => {
     const days = daysUntilNextOccurrence(1, 1, today);
     expect(days).toBeGreaterThan(0);
     expect(days).toBeLessThan(220);
+  });
+});
+
+describe('leaversByMonth', () => {
+  it('counts a leaver in the month of the last working day', () => {
+    // Left on 25 Sep even if the exit was closed in the portal in October.
+    const m = leaversByMonth(['2026-09-25', '2026-09-30', '2026-10-02']);
+    expect(m.get('2026-9')).toBe(2);
+    expect(m.get('2026-10')).toBe(1);
+  });
+  it('keys months without a zero pad and skips non-dates', () => {
+    const m = leaversByMonth(['2026-01-05', 'garbage', '']);
+    expect(m.get('2026-1')).toBe(1);
+    expect(m.size).toBe(1);
   });
 });

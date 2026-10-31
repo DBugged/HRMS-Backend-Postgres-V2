@@ -59,11 +59,10 @@ import {
   DashboardRange,
   MONTH_LABELS,
   daysUntilNextOccurrence,
+  leaversByMonth,
   monthsForRange,
 } from './dashboard-date-math';
 import {
-  dateStrInOrgTz,
-  startOfDayInOrgTzUtc,
   todayInOrgTz,
 } from '../common/org-date';
 import {
@@ -250,6 +249,7 @@ export class DashboardService {
       reimbApproved,
       reimbRejected,
       reimbAmountPendingAgg,
+      reimbAmountApprovedAgg,
       upcomingHolidays,
       leaveBalanceRows,
       deptLeaveSummaryRaw,
@@ -380,6 +380,11 @@ export class DashboardService {
       }), 0),
       gate(off, 'module.loans_reimbursements', async () => this.scopedPrisma.reimbursement.aggregate({
         where: { organizationId, status: ReimbursementStatus.PENDING },
+        _sum: { amount: true },
+      }), { _sum: { amount: 0 } } as never),
+      // Approved but not yet paid: money still owed to employees (a claim leaves APPROVED only when it is marked PAID).
+      gate(off, 'module.loans_reimbursements', async () => this.scopedPrisma.reimbursement.aggregate({
+        where: { organizationId, status: ReimbursementStatus.APPROVED },
         _sum: { amount: true },
       }), { _sum: { amount: 0 } } as never),
       this.scopedPrisma.holiday.findMany({
@@ -565,7 +570,11 @@ export class DashboardService {
         pendingClaims: reimbPending,
         approvedClaims: reimbApproved,
         rejectedClaims: reimbRejected,
-        amountPending: reimbAmountPendingAgg._sum.amount ?? 0,
+        // Money in claims still waiting for a decision, and money in approved claims still waiting to be paid.
+        amountAwaitingApproval: reimbAmountPendingAgg._sum.amount ?? 0,
+        amountAwaitingPayment: reimbAmountApprovedAgg._sum.amount ?? 0,
+        // Kept for older clients: everything not yet paid or rejected.
+        amountPending: (reimbAmountPendingAgg._sum.amount ?? 0) + (reimbAmountApprovedAgg._sum.amount ?? 0),
       },
       upcomingPayrun,
       upcomingHolidays,
@@ -1496,10 +1505,9 @@ export class DashboardService {
   // from the operational HR dashboard (today/this-month focused vs.
   // trend/company-health focused).
   //
-  // Headcount "leavers" are sourced from OffboardingCase.completedAt
-  // instead of an EMPLOYEE_DEACTIVATED audit-log action (the original release's
-  // source) — OffboardingCase is actually a more precise signal anyway (a
-  // dedicated event, not an inferred one). This deliberately does NOT
+  // Headcount "leavers" are sourced from completed OffboardingCases instead of an EMPLOYEE_DEACTIVATED audit-log action
+  // (the original release's source) — a dedicated event, not an inferred one. A leaver is counted in the month of
+  // their LAST WORKING DAY, not the day the exit was marked complete in the portal (which can be weeks later). This deliberately does NOT
   // attempt to reconstruct exact historical total headcount for each past
   // month — it reports joiners, leavers, and net change per month, which
   // is honest given what's actually recorded, plus the current live
@@ -1514,18 +1522,12 @@ export class DashboardService {
   // employee with no personalData at all).
   async computeHeadcountTrend(months: number, organizationId: string) {
     // "Now" is the organisation's calendar day, not the server clock. Joining dates are calendar dates stored at UTC
-    // midnight, so they are bucketed by their UTC fields; a completed offboarding is an instant, so it is bucketed by
-    // its date in the organisation's time zone.
-    const timezone = await this.getOrgTimezone(organizationId);
+    // midnight, so they are bucketed by their UTC fields; a last working day is a plain YYYY-MM-DD calendar date.
     const today = await this.orgNow(organizationId);
     const windowStart = new Date(
       Date.UTC(today.getFullYear(), today.getMonth() - (months - 1), 1),
     );
     const windowStartDateStr = windowStart.toISOString().slice(0, 10);
-    const windowStartInstant = startOfDayInOrgTzUtc(
-      windowStartDateStr,
-      timezone,
-    );
 
     const [
       joiners,
@@ -1542,9 +1544,9 @@ export class DashboardService {
         where: {
           organizationId,
           status: OffboardingStatus.COMPLETED,
-          completedAt: { gte: windowStartInstant },
+          lastWorkingDay: { gte: windowStartDateStr },
         },
-        select: { completedAt: true },
+        select: { lastWorkingDay: true },
       }),
       this.scopedPrisma.user.count({
         where: { organizationId, isActive: true },
@@ -1556,7 +1558,7 @@ export class DashboardService {
         where: {
           organizationId,
           status: OffboardingStatus.COMPLETED,
-          completedAt: { lt: windowStartInstant },
+          lastWorkingDay: { lt: windowStartDateStr },
         },
       }),
     ]);
@@ -1566,15 +1568,7 @@ export class DashboardService {
       const key = `${j.joiningDate.getUTCFullYear()}-${j.joiningDate.getUTCMonth() + 1}`;
       joinersByKey.set(key, (joinersByKey.get(key) ?? 0) + 1);
     }
-    const leaversByKey = new Map<string, number>();
-    for (const l of leavers) {
-      if (!l.completedAt) continue;
-      const [cy, cm] = dateStrInOrgTz(timezone, l.completedAt)
-        .split('-')
-        .map(Number);
-      const key = `${cy}-${cm}`;
-      leaversByKey.set(key, (leaversByKey.get(key) ?? 0) + 1);
-    }
+    const leaversByKey = leaversByMonth(leavers.map((l) => l.lastWorkingDay));
 
     const rows: {
       year: number;
@@ -1666,6 +1660,8 @@ export class DashboardService {
       name: string;
       employeeId: string;
       daysAway: number;
+      // YYYY-MM-DD of the coming anniversary.
+      date: string;
       years: number;
     }[] = [];
     const upcomingBirthdays: {
@@ -1673,7 +1669,15 @@ export class DashboardService {
       name: string;
       employeeId: string;
       daysAway: number;
+      // YYYY-MM-DD of the coming birthday.
+      date: string;
     }[] = [];
+    // The calendar day `days` after today, as YYYY-MM-DD.
+    const dateAfter = (days: number): string => {
+      const d = new Date(today);
+      d.setDate(today.getDate() + days);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    };
     for (const e of activeEmployees) {
       const jd = e.joiningDate;
       const days = daysUntilNextOccurrence(
@@ -1691,6 +1695,7 @@ export class DashboardService {
             name: e.name,
             employeeId: e.employeeId,
             daysAway: days,
+            date: dateAfter(days),
             years,
           });
         }
@@ -1711,6 +1716,7 @@ export class DashboardService {
             name: e.name,
             employeeId: e.employeeId,
             daysAway: birthdayDays,
+            date: dateAfter(birthdayDays),
           });
         }
       }
