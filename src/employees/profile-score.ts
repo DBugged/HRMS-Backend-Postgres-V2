@@ -22,7 +22,7 @@ export interface ProfileScore {
 type Field = MissingItem & { payroll?: boolean };
 
 const FIELDS: Field[] = [
-  { key: 'fullNameAsPerGovtId', label: 'Full name (as per government ID)', group: 'Personal' },
+  { key: 'fullNameAsPerGovtId', label: 'Full name (as per Govt ID)', group: 'Personal' },
   { key: 'dateOfBirth', label: 'Date of birth', group: 'Personal' },
   { key: 'gender', label: 'Gender', group: 'Personal' },
   { key: 'maritalStatus', label: 'Marital status', group: 'Personal' },
@@ -33,18 +33,18 @@ const FIELDS: Field[] = [
   { key: 'fatherContact', label: "Father's contact", group: 'Family' },
   { key: 'motherName', label: "Mother's name", group: 'Family' },
   { key: 'motherContact', label: "Mother's contact", group: 'Family' },
-  { key: 'emergencyContact1Name', label: 'Emergency contact 1 name', group: 'Emergency' },
-  { key: 'emergencyContact1Number', label: 'Emergency contact 1 number', group: 'Emergency' },
-  { key: 'emergencyContact2Name', label: 'Emergency contact 2 name', group: 'Emergency' },
-  { key: 'emergencyContact2Number', label: 'Emergency contact 2 number', group: 'Emergency' },
+  { key: 'emergencyContact1Name', label: 'Emergency contact 1 - name', group: 'Emergency' },
+  { key: 'emergencyContact1Number', label: 'Emergency contact 1 - number', group: 'Emergency' },
+  { key: 'emergencyContact2Name', label: 'Emergency contact 2 - name', group: 'Emergency' },
+  { key: 'emergencyContact2Number', label: 'Emergency contact 2 - number', group: 'Emergency' },
   { key: 'totalExperience', label: 'Total experience', group: 'Experience' },
   { key: 'currentOrganization', label: 'Last organization', group: 'Experience' },
-  { key: 'relevantExperience', label: 'Relevant experience', group: 'Experience' },
+  { key: 'relevantExperience', label: 'Relevant experience / skills summary', group: 'Experience' },
   { key: 'bankAccountHolderName', label: 'Bank account holder name', group: 'Bank & tax', payroll: true },
   { key: 'bankName', label: 'Bank name', group: 'Bank & tax', payroll: true },
   { key: 'bankAccountNo', label: 'Bank account number', group: 'Bank & tax', payroll: true },
-  { key: 'bankIFSC', label: 'Bank IFSC', group: 'Bank & tax', payroll: true },
-  { key: 'panNumber', label: 'PAN', group: 'Bank & tax', payroll: true },
+  { key: 'bankIFSC', label: 'Bank IFSC code', group: 'Bank & tax', payroll: true },
+  { key: 'panNumber', label: 'PAN card number', group: 'Bank & tax', payroll: true },
 ];
 
 const filled = (v: unknown) => typeof v === 'string' && v.trim().length > 0;
