@@ -71,6 +71,7 @@ function build(
     }),
     stub({ logEvent: async () => undefined }),
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
+    stub({ forBrand: async () => ({ brandId: null, companyName: 'Co', legalName: null, logoUrl: null, emailLogoUrl: null, address: null, contactEmail: null, phone: null, website: null }) }),
   );
   return { service, store, audit, notes };
 }

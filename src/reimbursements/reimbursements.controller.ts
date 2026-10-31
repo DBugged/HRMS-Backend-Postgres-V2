@@ -36,7 +36,7 @@ type Caller = Omit<User, 'password'>;
 export class ReimbursementsController {
   constructor(private readonly reimbursementsService: ReimbursementsService) {}
 
-  // The month's claims as the company's Expense Reimbursement Form (Excel). Anyone gets their own; Admin/HR can name
+  // The month's claims as the company's Expense Reimbursement Form (PDF by default, Excel with format=xlsx). Anyone gets their own; Admin/HR can name
   // employees or take every employee with claims. Declared before the other GET routes.
   @Get('form')
   async monthlyForm(
@@ -44,9 +44,9 @@ export class ReimbursementsController {
     @CurrentUser() caller: Caller,
     @Res() res: Response,
   ) {
-    const { buffer, filename } = await this.reimbursementsService.monthlyForm(query, caller, caller.organizationId);
+    const { buffer, filename, contentType } = await this.reimbursementsService.monthlyForm(query, caller, caller.organizationId);
     res.set({
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Type': contentType,
       'Content-Disposition': `attachment; filename="${filename}"`,
     });
     res.send(buffer);

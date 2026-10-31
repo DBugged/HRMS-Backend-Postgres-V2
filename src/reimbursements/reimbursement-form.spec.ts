@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import { renderReimbursementFormPdf } from './reimbursement-form-pdf';
 import {
   buildReimbursementFormWorkbook,
   sheetNameFor,
@@ -62,5 +63,17 @@ describe('reimbursement form workbook', () => {
     const taken = new Set<string>();
     expect(sheetNameFor('A/B:C?*[x]'.padEnd(50, 'z'), taken).length).toBeLessThanOrEqual(31);
     expect(sheetNameFor('A/B:C?*[x]', taken)).not.toMatch(/[\\/?*[\]:]/);
+  });
+});
+
+describe('reimbursement form PDF', () => {
+  it('renders one form per employee as a PDF, with extra pages for long tables', async () => {
+    const short = await renderReimbursementFormPdf([base([line(1)])]);
+    expect(short.subarray(0, 5).toString()).toBe('%PDF-');
+    const two = await renderReimbursementFormPdf([base([line(1)]), base([line(2)])]);
+    const long = await renderReimbursementFormPdf([base(Array.from({ length: 30 }, (_, i) => ({ ...line(1), description: `Long item ${i + 1} `.repeat(6), amount: 5 })))]);
+    // More forms or a longer table means a bigger document.
+    expect(two.length).toBeGreaterThan(short.length);
+    expect(long.length).toBeGreaterThan(short.length);
   });
 });

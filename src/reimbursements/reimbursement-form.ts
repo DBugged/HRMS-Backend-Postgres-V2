@@ -13,7 +13,18 @@ export interface ReimbursementFormLine {
 }
 
 export interface ReimbursementFormData {
-  company: { name: string; address: string; contactLine: string; city: string };
+  company: {
+    name: string;
+    address: string;
+    contactLine: string;
+    city: string;
+    // Used by the PDF letterhead: the logo (PNG/JPEG bytes) and the contact details on separate fields.
+    logo?: Buffer | null;
+    phone?: string;
+    email?: string;
+    website?: string;
+    gstin?: string;
+  };
   employee: { name: string; code: string; department: string; designation: string; email: string; mobile: string };
   number: string; // e.g. REIM-202610-DP-00002
   periodFrom: string; // DD-MM-YYYY

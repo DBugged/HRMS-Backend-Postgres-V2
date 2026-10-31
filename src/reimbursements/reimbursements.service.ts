@@ -32,6 +32,10 @@ import {
   CreateReimbursementDto,
 } from './dto/create-reimbursement.dto';
 import { ReimbursementFormQueryDto } from './dto/reimbursement-form-query.dto';
+import { renderReimbursementFormPdf } from './reimbursement-form-pdf';
+import { BrandingLookupService } from '../company-brands/branding-lookup.service';
+import { readStoredFile } from '../files/file-storage.config';
+import { detectRasterExtension } from '../reports/report-export';
 import {
   buildReimbursementFormWorkbook,
   type ReimbursementFormData,
@@ -64,6 +68,8 @@ export class ReimbursementsService {
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
     private readonly emailTemplatesService: EmailTemplatesService,
+    // The company name, logo and address that go on a person's documents (their sister company's, else the organization's).
+    private readonly brandingLookup: BrandingLookupService,
   ) {}
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
@@ -351,7 +357,7 @@ export class ReimbursementsService {
     query: ReimbursementFormQueryDto,
     actor: Actor,
     organizationId: string,
-  ): Promise<{ buffer: Buffer; filename: string }> {
+  ): Promise<{ buffer: Buffer; filename: string; contentType: string }> {
     const mm = String(query.month).padStart(2, '0');
     const from = `${query.year}-${mm}-01`;
     const lastDay = new Date(Date.UTC(query.year, query.month, 0)).getUTCDate();
@@ -384,6 +390,7 @@ export class ReimbursementsService {
             designation: true,
             email: true,
             contactNumber: true,
+            brandId: true,
             department: { select: { name: true } },
           },
         },
@@ -410,20 +417,36 @@ export class ReimbursementsService {
       },
     });
     const place = [org?.city, org?.state].filter(Boolean).join(', ');
-    const address = [org?.registeredAddress || org?.corporateAddress, [place, org?.pincode].filter(Boolean).join(' - ')]
+    const orgAddress = [org?.registeredAddress || org?.corporateAddress, [place, org?.pincode].filter(Boolean).join(' - ')]
       .filter(Boolean)
       .join('\n');
-    const contactLine = [
-      org?.contactEmail ? `Email: ${org.contactEmail}` : '',
-      org?.gstin ? `GST: ${org.gstin}` : '',
-    ]
-      .filter(Boolean)
-      .join('                       ');
-    const company = {
-      name: org?.legalName || org?.companyName || org?.name || '',
-      address,
-      contactLine,
-      city: org?.city ?? '',
+    // The letterhead is the employee's own company (a sister company's name, logo and address when they have one), read
+    // from Organization Settings - nothing is typed into the form. One lookup per company, shared by its employees.
+    const companyCache = new Map<string, Promise<ReimbursementFormData['company']>>();
+    const companyFor = (brandId: string | null): Promise<ReimbursementFormData['company']> => {
+      const key = brandId ?? '';
+      let found = companyCache.get(key);
+      if (!found) {
+        found = (async () => {
+          const b = await this.brandingLookup.forBrand(organizationId, brandId);
+          const logoBytes = b.logoUrl ? await readStoredFile(b.logoUrl).catch(() => null) : null;
+          // PDF logos must be PNG or JPEG; anything else is left off rather than breaking the form.
+          const logo = logoBytes && ['png', 'jpeg'].includes(detectRasterExtension(logoBytes) ?? '') ? logoBytes : null;
+          return {
+            name: b.legalName || b.companyName,
+            address: b.brandId ? b.address ?? '' : b.address ? [b.address, [place, org?.pincode].filter(Boolean).join(' - ')].filter(Boolean).join('\n') : orgAddress,
+            contactLine: [b.contactEmail ? `Email: ${b.contactEmail}` : '', org?.gstin ? `GST: ${org.gstin}` : ''].filter(Boolean).join('                       '),
+            city: org?.city ?? '',
+            logo,
+            phone: b.phone ?? '',
+            email: b.contactEmail ?? '',
+            website: b.website ?? '',
+            gstin: org?.gstin ?? '',
+          };
+        })();
+        companyCache.set(key, found);
+      }
+      return found;
     };
     const categoryLabel = (c: ReimbursementCategory) => c.charAt(0) + c.slice(1).toLowerCase();
 
@@ -433,9 +456,9 @@ export class ReimbursementsService {
       list.push(c);
       byEmployee.set(c.employeeId, list);
     }
-    const forms: ReimbursementFormData[] = [...byEmployee.values()]
-      .sort((a, b) => (a[0].employee.employeeId ?? '').localeCompare(b[0].employee.employeeId ?? ''))
-      .map((list) => {
+    const forms: ReimbursementFormData[] = [];
+    const groups = [...byEmployee.values()].sort((a, b) => (a[0].employee.employeeId ?? '').localeCompare(b[0].employee.employeeId ?? ''));
+    for (const list of groups) {
         const e = list[0].employee;
         const decided = list.filter((c) => c.status === ReimbursementStatus.APPROVED || c.status === ReimbursementStatus.PAID);
         const decision =
@@ -448,8 +471,8 @@ export class ReimbursementsService {
         const approvedOn = decided.map((c) => c.approvedDate ?? '').filter(Boolean).sort().pop() ?? '';
         const allPaid = list.every((c) => c.status === ReimbursementStatus.PAID);
         const paidOn = allPaid ? (list.map((c) => c.paidDate ?? '').filter(Boolean).sort().pop() ?? '') : '';
-        return {
-          company,
+        forms.push({
+          company: await companyFor(e.brandId ?? null),
           employee: {
             name: e.name,
             code: e.employeeId ?? '',
@@ -470,11 +493,16 @@ export class ReimbursementsService {
           })),
           approval: { decision, remarks, date: approvedOn ? dmyText(approvedOn) : '' },
           paymentProcessedOn: paidOn ? dmyText(paidOn) : '',
-        };
-      });
-    const buffer = await buildReimbursementFormWorkbook(forms);
+        });
+    }
+    const asExcel = query.format === 'xlsx';
+    const buffer = asExcel ? await buildReimbursementFormWorkbook(forms) : await renderReimbursementFormPdf(forms);
     const who = forms.length === 1 ? forms[0].employee.code || forms[0].employee.name : 'All_Employees';
-    return { buffer, filename: `Reimbursement_Form_${who}_${monthName.slice(0, 3)}-${query.year}.xlsx`.replace(/[^A-Za-z0-9._-]/g, '_') };
+    return {
+      buffer,
+      filename: `Reimbursement_Form_${who}_${monthName.slice(0, 3)}-${query.year}.${asExcel ? 'xlsx' : 'pdf'}`.replace(/[^A-Za-z0-9._-]/g, '_'),
+      contentType: asExcel ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf',
+    };
   }
 
   async review(
