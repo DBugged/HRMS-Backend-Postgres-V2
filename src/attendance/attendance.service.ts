@@ -8,6 +8,7 @@
 // for several other ported-behavior and concurrency-safety notes (e.g. sequential writes in
 // executeImportBatch even though Attendance has a unique constraint on (organizationId, employeeId, date)).
 import { keepModuleEnabled } from '../module-access/module-gate';
+import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { BulkManualPunchDto } from './dto/bulk-manual-punch.dto';
 import { MAX_BULK_MANUAL_PUNCHES, runInBatches } from './manual-punch-batch';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
@@ -3281,6 +3282,9 @@ export class AttendanceService {
         }
 
         let leaveTypeName: string | undefined;
+        // 'COMP_OFF' / 'LWP' when the leave on this day is a comp-off or Leave Without Pay, so clients can tell them
+        // apart from other leave (the Attendance Tracker grid and the mobile calendar do).
+        let leaveKind: 'COMP_OFF' | 'LWP' | undefined;
         if (
           record.status === AttendanceStatus.ON_LEAVE ||
           record.status === AttendanceStatus.HALF_DAY
@@ -3289,6 +3293,8 @@ export class AttendanceService {
             (l) => l.startDate <= record.date && l.endDate >= record.date,
           );
           leaveTypeName = matching?.leaveType.name;
+          if (matching?.leaveType.code === LEAVE_TYPE_CODES.COMPOFF) leaveKind = 'COMP_OFF';
+          else if (matching?.leaveType.code === 'LWP') leaveKind = 'LWP';
         }
 
         return {
@@ -3317,6 +3323,7 @@ export class AttendanceService {
             !record.outTime,
           ...(holidayName !== undefined && { holidayName }),
           ...(leaveTypeName !== undefined && { leaveTypeName }),
+          ...(leaveKind !== undefined && { leaveKind }),
         };
       }),
     };
