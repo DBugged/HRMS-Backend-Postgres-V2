@@ -31,6 +31,11 @@ import {
   CreateReimbursementBatchDto,
   CreateReimbursementDto,
 } from './dto/create-reimbursement.dto';
+import { ReimbursementFormQueryDto } from './dto/reimbursement-form-query.dto';
+import {
+  buildReimbursementFormWorkbook,
+  type ReimbursementFormData,
+} from './reimbursement-form';
 import { ReviewReimbursementDto } from './dto/review-reimbursement.dto';
 import { QueryReimbursementDto } from './dto/query-reimbursement.dto';
 import { paginate, skip } from '../common/pagination';
@@ -337,6 +342,139 @@ export class ReimbursementsService {
       category: NotificationCategory.PAYROLL,
     });
     return claims.map((c) => this.withSignedReceipt(c));
+  }
+
+  // The month's claims as the company's Expense Reimbursement Form (Excel): one sheet per employee, in claim-date order,
+  // rejected claims left out. Employees (and Managers) get their own form only; Admin/HR can name employees or get every
+  // employee who has claims that month.
+  async monthlyForm(
+    query: ReimbursementFormQueryDto,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<{ buffer: Buffer; filename: string }> {
+    const mm = String(query.month).padStart(2, '0');
+    const from = `${query.year}-${mm}-01`;
+    const lastDay = new Date(Date.UTC(query.year, query.month, 0)).getUTCDate();
+    const to = `${query.year}-${mm}-${String(lastDay).padStart(2, '0')}`;
+    const isHr = actor.role === Role.ADMIN || actor.role === Role.HR;
+    const requested = (query.employeeIds ?? '')
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean);
+    if (!isHr && requested.some((id) => id !== actor.id)) {
+      throw new ForbiddenException('You can only download your own reimbursement form.');
+    }
+    const claims = await this.scopedPrisma.reimbursement.findMany({
+      where: {
+        organizationId,
+        claimDate: { gte: from, lte: to },
+        status: { not: ReimbursementStatus.REJECTED },
+        ...(isHr
+          ? requested.length > 0
+            ? { employeeId: { in: requested } }
+            : {}
+          : { employeeId: actor.id }),
+      },
+      include: {
+        employee: {
+          select: {
+            id: true,
+            name: true,
+            employeeId: true,
+            designation: true,
+            email: true,
+            contactNumber: true,
+            department: { select: { name: true } },
+          },
+        },
+      },
+      orderBy: [{ claimDate: 'asc' }, { createdAt: 'asc' }],
+    });
+    const monthName = new Date(Date.UTC(query.year, query.month - 1, 1)).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+    if (claims.length === 0) {
+      throw new BadRequestException(`There are no reimbursement claims for ${monthName} ${query.year}.`);
+    }
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: {
+        name: true,
+        companyName: true,
+        legalName: true,
+        registeredAddress: true,
+        corporateAddress: true,
+        city: true,
+        state: true,
+        pincode: true,
+        contactEmail: true,
+        gstin: true,
+      },
+    });
+    const place = [org?.city, org?.state].filter(Boolean).join(', ');
+    const address = [org?.registeredAddress || org?.corporateAddress, [place, org?.pincode].filter(Boolean).join(' - ')]
+      .filter(Boolean)
+      .join('\n');
+    const contactLine = [
+      org?.contactEmail ? `Email: ${org.contactEmail}` : '',
+      org?.gstin ? `GST: ${org.gstin}` : '',
+    ]
+      .filter(Boolean)
+      .join('                       ');
+    const company = {
+      name: org?.legalName || org?.companyName || org?.name || '',
+      address,
+      contactLine,
+      city: org?.city ?? '',
+    };
+    const categoryLabel = (c: ReimbursementCategory) => c.charAt(0) + c.slice(1).toLowerCase();
+
+    const byEmployee = new Map<string, typeof claims>();
+    for (const c of claims) {
+      const list = byEmployee.get(c.employeeId) ?? [];
+      list.push(c);
+      byEmployee.set(c.employeeId, list);
+    }
+    const forms: ReimbursementFormData[] = [...byEmployee.values()]
+      .sort((a, b) => (a[0].employee.employeeId ?? '').localeCompare(b[0].employee.employeeId ?? ''))
+      .map((list) => {
+        const e = list[0].employee;
+        const decided = list.filter((c) => c.status === ReimbursementStatus.APPROVED || c.status === ReimbursementStatus.PAID);
+        const decision =
+          decided.length === list.length
+            ? 'Approved'
+            : decided.length === 0
+              ? 'Pending'
+              : `Partly approved (${decided.length} of ${list.length})`;
+        const remarks = [...new Set(list.map((c) => c.reviewComments.trim()).filter(Boolean))].join('; ');
+        const approvedOn = decided.map((c) => c.approvedDate ?? '').filter(Boolean).sort().pop() ?? '';
+        const allPaid = list.every((c) => c.status === ReimbursementStatus.PAID);
+        const paidOn = allPaid ? (list.map((c) => c.paidDate ?? '').filter(Boolean).sort().pop() ?? '') : '';
+        return {
+          company,
+          employee: {
+            name: e.name,
+            code: e.employeeId ?? '',
+            department: e.department?.name ?? '',
+            designation: e.designation ?? '',
+            email: e.email,
+            mobile: e.contactNumber ?? '',
+          },
+          number: `REIM-${query.year}${mm}-${e.employeeId ?? ''}`,
+          periodFrom: dmyText(from),
+          periodTo: dmyText(to),
+          lines: list.map((c) => ({
+            date: dmyText(c.claimDate),
+            category: categoryLabel(c.category),
+            description: c.description,
+            amount: c.amount,
+            receipt: !!c.receiptUrl,
+          })),
+          approval: { decision, remarks, date: approvedOn ? dmyText(approvedOn) : '' },
+          paymentProcessedOn: paidOn ? dmyText(paidOn) : '',
+        };
+      });
+    const buffer = await buildReimbursementFormWorkbook(forms);
+    const who = forms.length === 1 ? forms[0].employee.code || forms[0].employee.name : 'All_Employees';
+    return { buffer, filename: `Reimbursement_Form_${who}_${monthName.slice(0, 3)}-${query.year}.xlsx`.replace(/[^A-Za-z0-9._-]/g, '_') };
   }
 
   async review(
