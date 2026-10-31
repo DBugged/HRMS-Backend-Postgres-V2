@@ -38,7 +38,7 @@ const FIELDS: Field[] = [
   { key: 'emergencyContact2Name', label: 'Emergency contact 2 name', group: 'Emergency' },
   { key: 'emergencyContact2Number', label: 'Emergency contact 2 number', group: 'Emergency' },
   { key: 'totalExperience', label: 'Total experience', group: 'Experience' },
-  { key: 'currentOrganization', label: 'Current organization', group: 'Experience' },
+  { key: 'currentOrganization', label: 'Last organization', group: 'Experience' },
   { key: 'relevantExperience', label: 'Relevant experience', group: 'Experience' },
   { key: 'bankAccountHolderName', label: 'Bank account holder name', group: 'Bank & tax', payroll: true },
   { key: 'bankName', label: 'Bank name', group: 'Bank & tax', payroll: true },
