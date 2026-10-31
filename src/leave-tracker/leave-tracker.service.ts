@@ -6,6 +6,7 @@
 // whole scoped list.
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
+import { markPendingLeave } from './pending-leave-cells';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import {
@@ -158,7 +159,7 @@ export class LeaveTrackerService {
     // `in: []` is a no-op filter (Prisma/Postgres correctly return zero
     // rows for it) — no need to branch on employeeIds.length here, unlike
     // balances() below where the loop body itself must be skipped.
-    const [org, employees, attendanceRows, leaves, holidays] =
+    const [org, employees, attendanceRows, leaves, holidays, pendingLeaves] =
       await Promise.all([
         this.scopedPrisma.organization.findFirst({
           where: { id: organizationId },
@@ -212,6 +213,18 @@ export class LeaveTrackerService {
                 // not every department's (ADMIN/HR unfiltered = all).
                 actor.role === Role.MANAGER && { departmentId: null }),
           },
+        }),
+        // Leave that has been applied for and is waiting for a decision: shown in the grid as leave (marked pending),
+        // not as Absent, until it is approved or rejected.
+        this.scopedPrisma.leave.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: employeeIds },
+            status: LeaveStatus.PENDING,
+            startDate: { lte: end },
+            endDate: { gte: start },
+          },
+          include: { leaveType: true },
         }),
       ]);
     employees.sort(compareEmployees);
@@ -369,6 +382,25 @@ export class LeaveTrackerService {
       }
     }
 
+    // A day covered by a leave that is still pending reads as leave (marked pending) when it would otherwise be Absent
+    // or blank: the person has asked for it, so it is not an absence, but it is not approved leave either. A day
+    // worked, a weekly off or a holiday is left as it is.
+    const pending = markPendingLeave(
+      cells,
+      pendingLeaves.map((l) => ({
+        employeeId: l.employeeId,
+        startDate: l.startDate,
+        endDate: l.endDate,
+        kind: isCompOffType(l.leaveType)
+          ? ('COMP_OFF' as const)
+          : l.leaveType.code === LWP_CODE
+            ? ('LWP' as const)
+            : ('ON_LEAVE' as const),
+      })),
+      days,
+      onBooks,
+    );
+
     return {
       employees: employees.map((e) => ({
         id: e.id,
@@ -380,6 +412,8 @@ export class LeaveTrackerService {
       })),
       days,
       cells,
+      // Days whose leave cell is a pending application (employee id -> day numbers), so clients can mark them.
+      pending,
       hours,
       minutes,
     };
