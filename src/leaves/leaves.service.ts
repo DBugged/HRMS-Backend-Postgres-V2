@@ -43,6 +43,7 @@ import { CompOffService } from '../comp-offs/comp-off.service';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
+import { ManualLeaveDto } from './dto/manual-leave.dto';
 import { ImportLeavesDto } from './dto/import-leaves.dto';
 import { isValidCalendarDateString } from '../common/is-valid-calendar-date.validator';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
@@ -94,6 +95,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import {
   formatDateDisplay,
   resolveOrgDateTimeFormat,
+  dmyText,
 } from '../payroll/format-date';
 import { todayInOrgTz } from '../common/org-date';
 import {
@@ -2179,6 +2181,40 @@ export class LeavesService {
     return created;
   }
 
+  // An Admin / HR records a leave for employees who could not apply themselves (a phone call, a missed application): it is
+  // approved straight away. It goes through the leave-import code for each person, so the balance is deducted, attendance
+  // turns into On Leave / Half Day, payroll inputs are flagged, a locked payroll month is refused and overlapping leave is
+  // caught - minus the application-time rules (notice, backdating limits, documents), which an HR override does not apply.
+  // The reply lists each person's result; a refused one never stops the others. Only an Admin may do it for an HR/Admin.
+  async manualLeave(
+    dto: ManualLeaveDto,
+    actor: Actor,
+    organizationId: string,
+  ): Promise<ImportLeavesResult> {
+    if (dto.endDate < dto.startDate) {
+      throw new BadRequestException('The end date cannot be before the start date.');
+    }
+    const leaveType = await this.scopedPrisma.leaveType.findFirst({
+      where: { id: dto.leaveTypeId, organizationId, isActive: true },
+    });
+    if (!leaveType) throw new NotFoundException('Leave type not found.');
+    const people = await this.scopedPrisma.user.findMany({
+      where: { id: { in: dto.employeeIds }, organizationId },
+      select: { id: true, employeeId: true },
+    });
+    const codeById = new Map(people.map((p) => [p.id, p.employeeId]));
+    const rows = dto.employeeIds.map((id) => ({
+      employeeId: codeById.get(id) ?? '',
+      leaveType: leaveType.code,
+      startDate: dto.startDate,
+      endDate: dto.endDate,
+      halfDay: dto.isHalfDay ? 'yes' : 'no',
+      session: dto.halfDaySession === 'SECOND_HALF' ? 'second' : 'first',
+      reason: dto.remarks ?? '',
+    }));
+    return this.importLeaves({ rows, dryRun: false }, actor, organizationId, true);
+  }
+
   // Leave import (migration): records leave that already happened - and was approved on the old system - for many
   // employees at once. Each row goes through the same code as a real application and approval (balance deducted,
   // attendance days turned into On Leave / Half Day, payroll inputs flagged), minus what only makes sense for a live
@@ -2189,6 +2225,9 @@ export class LeavesService {
     dto: ImportLeavesDto,
     importer: Actor,
     organizationId: string,
+    // True when an Admin/HR records a live leave on an employee's behalf (see manualLeave): the same code runs, but the
+    // leave says who recorded it, the audit entry is its own, and the employee is told.
+    manual = false,
   ): Promise<ImportLeavesResult> {
     const dryRun = dto.dryRun !== false;
     const str = (v: unknown) =>
@@ -2243,7 +2282,7 @@ export class LeavesService {
           (employee.role === Role.ADMIN || employee.role === Role.HR)
         ) {
           throw new ForbiddenException(
-            'Only an Admin can import leave for an HR or Admin employee.',
+            'Only an Admin can record leave for an HR or Admin employee.',
           );
         }
         const leaveType = typeByKey.get(str(row.leaveType).toLowerCase());
@@ -2288,7 +2327,9 @@ export class LeavesService {
           endDate: out.endDate,
           isHalfDay,
           halfDaySession,
-          remarks: `Imported leave${str(row.reason) ? `: ${str(row.reason)}` : ''}`,
+          remarks: manual
+            ? `Recorded by ${importer.name} on behalf of the employee${str(row.reason) ? `: ${str(row.reason)}` : ''}`
+            : `Imported leave${str(row.reason) ? `: ${str(row.reason)}` : ''}`,
         };
         const extraRanges = rangesByEmployee.get(employee.id) ?? [];
         if (dryRun) {
@@ -2322,7 +2363,9 @@ export class LeavesService {
               created,
               leaveType,
               'APPROVED',
-              'Imported from the previous system.',
+              manual
+                ? `Recorded and approved by ${importer.name} on behalf of the employee.`
+                : 'Imported from the previous system.',
               importer.id,
               organizationId,
               true,
@@ -2342,9 +2385,20 @@ export class LeavesService {
           out.totalDays = created.totalDays;
           out.status = 'IMPORTED';
           out.message = `Recorded ${created.totalDays} day(s) of ${leaveType.name}.`;
+          if (manual) {
+            await this.notificationsService
+              .create({
+                organizationId,
+                userId: employee.id,
+                title: 'Leave Recorded for You',
+                message: `${importer.name} recorded and approved ${created.totalDays} day(s) of ${leaveType.name} for you, from ${dmyText(out.startDate)} to ${dmyText(out.endDate)}.`,
+                category: NotificationCategory.LEAVE,
+              })
+              .catch(() => undefined);
+          }
           await this.auditLogService.log({
             actorId: importer.id,
-            action: 'LEAVE_IMPORTED',
+            action: manual ? 'LEAVE_RECORDED_ON_BEHALF' : 'LEAVE_IMPORTED',
             module: 'LEAVE',
             organizationId,
             targetId: created.id,
@@ -2369,7 +2423,7 @@ export class LeavesService {
     const imported = results.filter((r) => r.status === 'IMPORTED').length;
     const ok = results.filter((r) => r.status === 'OK').length;
     const failed = results.filter((r) => r.status === 'ERROR').length;
-    if (!dryRun) {
+    if (!dryRun && !manual) {
       await this.auditLogService.log({
         actorId: importer.id,
         action: 'LEAVE_IMPORT_RUN',

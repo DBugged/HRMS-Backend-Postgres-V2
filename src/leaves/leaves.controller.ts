@@ -17,6 +17,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { LeavesService } from './leaves.service';
 import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
+import { ManualLeaveDto } from './dto/manual-leave.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
 import { ImportLeavesDto } from './dto/import-leaves.dto';
 import { UpdateLeaveDto } from './dto/update-leave.dto';
@@ -46,6 +47,15 @@ export class LeavesController {
   @UseGuards(RolesGuard)
   importLeaves(@Body() dto: ImportLeavesDto, @CurrentUser() caller: Caller) {
     return this.leavesService.importLeaves(dto, caller, caller.organizationId);
+  }
+
+  // An Admin/HR records and approves a leave for one or more employees who could not apply themselves. Declared before
+  // the parameterised routes.
+  @Post('manual')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  manualLeave(@Body() dto: ManualLeaveDto, @CurrentUser() caller: Caller) {
+    return this.leavesService.manualLeave(dto, caller, caller.organizationId);
   }
 
   @Post()
