@@ -5,7 +5,7 @@
 // but is also exposed for HR to record/adjust a repayment manually.
 // Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan and MANAGER-own-dept-only checks
 // independently of findAll's filter, since it's reached directly by loan id rather than through the pre-filtered list.
-import { isLoanEligible, LOAN_ELIGIBILITY_MESSAGE } from './loan-eligibility';
+import { canRequestDespiteEligibility, isLoanEligible, LOAN_ELIGIBILITY_MESSAGE } from './loan-eligibility';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -143,7 +143,8 @@ export class LoansService {
     excludeLoanId?: string;
   }): Promise<void> {
     const { employee, actor, emiAmount, organizationId } = params;
-    if (!isLoanEligible(employee)) throw new BadRequestException(LOAN_ELIGIBILITY_MESSAGE);
+    // Eligibility (confirmed and permanent) is checked when an employee applies; whoever sanctions or approves - Admin or HR -
+    // is the one who decides, so it does not stop them here.
     const startProblem = loanStartError(params.startMonth, params.startYear);
     if (startProblem) throw new BadRequestException(startProblem);
 
@@ -356,7 +357,7 @@ export class LoansService {
       select: { exitDate: true, employmentStatus: true, employeeType: true },
     });
     if (requester?.exitDate) throw new BadRequestException(EXIT_IN_PROGRESS_LOAN_MESSAGE);
-    if (requester && !isLoanEligible(requester)) throw new BadRequestException(LOAN_ELIGIBILITY_MESSAGE);
+    if (requester && !canRequestDespiteEligibility(actor.role) && !isLoanEligible(requester)) throw new BadRequestException(LOAN_ELIGIBILITY_MESSAGE);
     const now = new Date();
     const emiAmount = calculateEmi(dto.principal, 0, dto.tenureMonths);
 

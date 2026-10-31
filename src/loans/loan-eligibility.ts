@@ -6,6 +6,14 @@
 export const LOAN_ELIGIBILITY_MESSAGE =
   'Loans and advances are only for confirmed, permanent employees. Employees on probation, interns and other non-permanent staff are not eligible.';
 
+// Admin, HR and Managers may still ask for a loan or advance when they are not (yet) confirmed and permanent: the request goes
+// to an approver, who decides. Everyone else is held to the rule when they apply.
+export const LOAN_ELIGIBILITY_OVERRIDE_ROLES = ['ADMIN', 'HR', 'MANAGER'] as const;
+
+export function canRequestDespiteEligibility(role: string): boolean {
+  return (LOAN_ELIGIBILITY_OVERRIDE_ROLES as readonly string[]).includes(role);
+}
+
 export function isLoanEligible(employee: {
   employmentStatus?: string | null;
   employeeType?: string | null;
