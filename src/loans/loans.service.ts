@@ -5,7 +5,7 @@
 // but is also exposed for HR to record/adjust a repayment manually.
 // Important: getRepayments() re-applies the EMPLOYEE-can-only-see-own-loan and MANAGER-own-dept-only checks
 // independently of findAll's filter, since it's reached directly by loan id rather than through the pre-filtered list.
-import { canRequestDespiteEligibility, isLoanEligible, LOAN_ELIGIBILITY_MESSAGE } from './loan-eligibility';
+import { isLoanEligible, LOAN_ELIGIBILITY_NOTE } from './loan-eligibility';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -357,7 +357,7 @@ export class LoansService {
       select: { exitDate: true, employmentStatus: true, employeeType: true },
     });
     if (requester?.exitDate) throw new BadRequestException(EXIT_IN_PROGRESS_LOAN_MESSAGE);
-    if (requester && !canRequestDespiteEligibility(actor.role) && !isLoanEligible(requester)) throw new BadRequestException(LOAN_ELIGIBILITY_MESSAGE);
+    // Anyone can apply; whether they are confirmed and permanent is for the approver to weigh, so the approver is told below.
     const now = new Date();
     const emiAmount = calculateEmi(dto.principal, 0, dto.tenureMonths);
 
@@ -387,7 +387,7 @@ export class LoansService {
         organizationId,
         userId: u.id,
         title: 'Loan/Advance Request Pending Review',
-        message: `${actor.name} requested a ${loanKind(loan.loanType)} of ${dto.principal} over ${dto.tenureMonths} month(s).`,
+        message: `${actor.name} requested a ${loanKind(loan.loanType)} of ${dto.principal} over ${dto.tenureMonths} month(s).${requester && !isLoanEligible(requester) ? ` ${LOAN_ELIGIBILITY_NOTE}` : ''}`,
         category: NotificationCategory.GENERAL,
       })),
     );

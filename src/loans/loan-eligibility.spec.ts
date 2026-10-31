@@ -1,4 +1,4 @@
-import { canRequestDespiteEligibility, isLoanEligible } from './loan-eligibility';
+import { isLoanEligible } from './loan-eligibility';
 
 describe('loan eligibility', () => {
   it('a confirmed, permanent employee is eligible', () => {
@@ -12,14 +12,5 @@ describe('loan eligibility', () => {
   );
   it.each(['intern', 'trainee', 'contract', 'probation'])('a confirmed %s is not eligible', (employeeType) => {
     expect(isLoanEligible({ employmentStatus: 'CONFIRMED', employeeType })).toBe(false);
-  });
-});
-
-describe('who may apply despite the rule', () => {
-  it('Admin, HR and Manager may; an employee may not', () => {
-    expect(canRequestDespiteEligibility('ADMIN')).toBe(true);
-    expect(canRequestDespiteEligibility('HR')).toBe(true);
-    expect(canRequestDespiteEligibility('MANAGER')).toBe(true);
-    expect(canRequestDespiteEligibility('EMPLOYEE')).toBe(false);
   });
 });

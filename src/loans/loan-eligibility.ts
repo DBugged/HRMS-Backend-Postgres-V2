@@ -3,16 +3,11 @@
 //   (or on extended probation) are not eligible. Confirming someone on probation also turns their type into
 //   Permanent (see EmployeeProfileService), so both conditions hold for a normal confirmation.
 
+// Told to the approver when someone who is not confirmed and permanent applies: they are not blocked, the approver decides.
+export const LOAN_ELIGIBILITY_NOTE = 'Note: this employee is not a confirmed permanent employee.';
+
 export const LOAN_ELIGIBILITY_MESSAGE =
   'Loans and advances are only for confirmed, permanent employees. Employees on probation, interns and other non-permanent staff are not eligible.';
-
-// Admin, HR and Managers may still ask for a loan or advance when they are not (yet) confirmed and permanent: the request goes
-// to an approver, who decides. Everyone else is held to the rule when they apply.
-export const LOAN_ELIGIBILITY_OVERRIDE_ROLES = ['ADMIN', 'HR', 'MANAGER'] as const;
-
-export function canRequestDespiteEligibility(role: string): boolean {
-  return (LOAN_ELIGIBILITY_OVERRIDE_ROLES as readonly string[]).includes(role);
-}
 
 export function isLoanEligible(employee: {
   employmentStatus?: string | null;

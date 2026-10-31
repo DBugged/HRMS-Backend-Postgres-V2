@@ -89,7 +89,7 @@ function build(
     stub(prisma),
     stub({
       create: async (n: Row) => notes.push(n),
-      createMany: async () => undefined,
+      createMany: async (rows: Row[]) => { notes.push(...rows); },
     }),
     stub({ send: async () => undefined }),
     stub({
@@ -399,16 +399,16 @@ describe('loans: sanctioning', () => {
   });
 });
 
-describe('loans: eligibility', () => {
+describe('loans: who may apply', () => {
   it.each([
     ['PROBATION', 'permanent'],
     ['EXTENDED_PROBATION', 'permanent'],
     ['CONFIRMED', 'intern'],
-  ])('a %s / %s employee cannot request a loan or advance', async (employmentStatus, employeeType) => {
-    const { service } = build({ employee: EMP({ employmentStatus, employeeType }) });
-    await expect(
-      service.request({ loanType: 'ADVANCE', principal: 1000, tenureMonths: 1 } as never, { id: 'e1', name: 'Asha', role: Role.EMPLOYEE } as never, 'org'),
-    ).rejects.toThrow(/confirmed, permanent employees/);
+  ])('a %s / %s employee can still request a loan or advance, and the approver is told', async (employmentStatus, employeeType) => {
+    const { service, notes } = build({ employee: EMP({ employmentStatus, employeeType }) });
+    const loan = await service.request({ loanType: 'ADVANCE', principal: 1000, tenureMonths: 1 } as never, { id: 'e1', name: 'Asha', role: Role.EMPLOYEE } as never, 'org');
+    expect(loan.status).toBe('PENDING');
+    expect(notes.some((n) => /not a confirmed permanent employee/.test(String(n.message)))).toBe(true);
   });
 });
 
