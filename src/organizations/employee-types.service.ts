@@ -52,20 +52,31 @@ export class EmployeeTypesService {
   }
 
   async findAll(organizationId: string) {
-    const [custom, inactiveBuiltins] = await Promise.all([
+    const [custom, inactiveBuiltins, usage] = await Promise.all([
       this.getCustomTypes(organizationId),
       this.getInactiveBuiltins(organizationId),
+      // Same population delete() checks, so the count shown in the list is
+      // exactly what blocks a delete.
+      this.prisma.user.groupBy({
+        by: ['employeeType'],
+        where: { organizationId },
+        _count: { _all: true },
+      }),
     ]);
+    const countOf = (value: string) =>
+      usage.find((u) => u.employeeType === value)?._count._all ?? 0;
     return [
       ...DEFAULT_EMPLOYEE_TYPES.map((t) => ({
         ...t,
         isActive: !inactiveBuiltins.includes(t.value),
         isCustom: false,
+        employeeCount: countOf(t.value),
       })),
       ...custom.map((t) => ({
         ...t,
         isActive: t.isActive ?? true,
         isCustom: true,
+        employeeCount: countOf(t.value),
       })),
     ];
   }
