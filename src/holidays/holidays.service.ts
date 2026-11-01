@@ -113,6 +113,44 @@ export class HolidaysService {
     return [...new Set([...rows.map((r) => r.year), year, year + 1])].sort((a, b) => a - b);
   }
 
+  // The company's weekly off days (0 = Sunday ... 6 = Saturday), so the calendar can say when a holiday falls on one.
+  async weeklyOffs(organizationId: string): Promise<number[]> {
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { orgPayrollAttendancePrefs: true },
+    });
+    const days = (org?.orgPayrollAttendancePrefs as { weekendDays?: unknown } | null)?.weekendDays;
+    const list = Array.isArray(days) ? days.map(Number).filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : [];
+    return list.length > 0 ? list : [0];
+  }
+
+  // Copies one year's holidays into another on the same day and month (e.g. 26-01-2026 -> 26-01-2027), for HR to adjust: fixed-date
+  // holidays are right, movable festivals need their new dates. Skips a day that has passed, 29 February in a non-leap year, and
+  // anything already there with the same name and date.
+  async copyYear(fromYear: number, toYear: number, organizationId: string, actorId?: string) {
+    if (!Number.isInteger(fromYear) || !Number.isInteger(toYear) || fromYear === toYear) {
+      throw new BadRequestException('Pick two different years.');
+    }
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const source = await this.scopedPrisma.holiday.findMany({ where: { organizationId, year: fromYear } });
+    let created = 0;
+    let skipped = 0;
+    for (const h of source) {
+      const date = `${toYear}${h.date.slice(4)}`;
+      const valid = !Number.isNaN(new Date(`${date}T00:00:00Z`).getTime()) && new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) === date;
+      const exists = valid && (await this.scopedPrisma.holiday.findFirst({ where: { organizationId, date, name: h.name } }));
+      if (!valid || date < today || exists) { skipped++; continue; }
+      await this.scopedPrisma.holiday.create({
+        data: { organizationId, name: h.name, date, departmentId: h.departmentId, year: toYear, isOptional: h.isOptional, type: h.type, state: h.state, description: h.description, isActive: h.isActive },
+      });
+      created++;
+    }
+    if (actorId) {
+      await this.auditLogService.log({ actorId, action: 'HOLIDAYS_COPIED', module: 'HOLIDAY', organizationId, details: { fromYear, toYear, created, skipped } });
+    }
+    return { created, skipped };
+  }
+
   async create(
     dto: CreateHolidayDto,
     organizationId: string,

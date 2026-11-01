@@ -47,6 +47,19 @@ export class HolidaysController {
     return this.holidaysService.years(caller.organizationId);
   }
 
+  // The company's weekly off days (0 = Sunday), for any signed-in user.
+  @Get('weekly-offs')
+  weeklyOffs(@CurrentUser() caller: Caller) {
+    return this.holidaysService.weeklyOffs(caller.organizationId);
+  }
+
+  @Post('copy')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  copy(@Body() body: { fromYear: number; toYear: number }, @CurrentUser() caller: Caller) {
+    return this.holidaysService.copyYear(Number(body.fromYear), Number(body.toYear), caller.organizationId, caller.id);
+  }
+
   @Get('calendar-status')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)
