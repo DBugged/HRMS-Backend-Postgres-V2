@@ -1233,7 +1233,12 @@ export class DashboardService {
     organizationId: string,
     monthPrefix: string,
     today: string,
-  ): Promise<{ total: number; elapsed: number }> {
+  ): Promise<{
+    total: number;
+    elapsed: number;
+    holidayDays: string[];
+    weeklyOffDays: string[];
+  }> {
     const [employee, org] = await Promise.all([
       this.scopedPrisma.user.findFirst({
         where: { id: employeeId, organizationId },
@@ -1269,16 +1274,22 @@ export class DashboardService {
     );
     const joined = employee?.joiningDate?.toISOString().slice(0, 10) ?? '';
     const exit = employee?.exitDate ?? null;
-    const working = dates.filter(
-      (d) =>
-        d >= joined &&
-        (!exit || d <= exit) &&
-        !holidayDates.has(d) &&
-        !isWeeklyOff(d, shiftConfig.weeklyOffs),
+    const inService = dates.filter((d) => d >= joined && (!exit || d <= exit));
+    const working = inService.filter(
+      (d) => !holidayDates.has(d) && !isWeeklyOff(d, shiftConfig.weeklyOffs),
     );
     return {
       total: working.length,
       elapsed: working.filter((d) => d <= today).length,
+      // The days the calendar makes non-working for this person, up to and including today (a holiday wins over a
+      // weekly off): what the attendance card lists as "Holiday" and "Weekly Off".
+      holidayDays: inService.filter((d) => d <= today && holidayDates.has(d)),
+      weeklyOffDays: inService.filter(
+        (d) =>
+          d <= today &&
+          !holidayDates.has(d) &&
+          isWeeklyOff(d, shiftConfig.weeklyOffs),
+      ),
     };
   }
 
@@ -1454,25 +1465,45 @@ export class DashboardService {
       WEEKLY_OFF: 0,
       INCOMPLETE: 0,
     };
+    // The calendar's holidays and weekly offs up to today are listed whether or not a row has been written for them yet
+    // (the nightly job writes them after the day), except where the person actually worked or took leave that day.
+    const calendar = await gate(
+      off,
+      'module.attendance',
+      async () =>
+        this.workingDaysThisMonth(actor.id, organizationId, monthPrefix, today),
+      { total: 0, elapsed: 0, holidayDays: [], weeklyOffDays: [] },
+    );
+    const offKind = new Map<string, AttendanceStatus>([
+      ...calendar.weeklyOffDays.map((d) => [d, AttendanceStatus.WEEKLY_OFF] as const),
+      ...calendar.holidayDays.map((d) => [d, AttendanceStatus.HOLIDAY] as const),
+    ]);
     for (const row of attendanceThisMonth) {
+      const calendarOff = offKind.get(row.date);
+      if (
+        calendarOff &&
+        (row.status === AttendanceStatus.ABSENT ||
+          row.status === AttendanceStatus.WEEKLY_OFF ||
+          row.status === AttendanceStatus.HOLIDAY)
+      ) {
+        // Counted below, once, as the calendar's own kind of off day.
+        offKind.set(row.date, calendarOff);
+        continue;
+      }
+      if (calendarOff) offKind.delete(row.date); // worked / on leave that day: it is that, not an off day
       // A row dated after today is something planned (an approved Work From Home day is stored as an empty row until the
       // day happens), not an absence: it must not read as "Absent" on a day that has not come yet. Upcoming approved
       // leave and holidays still count, as the card is "present, off days and leave this month".
       if (row.status === AttendanceStatus.ABSENT && row.date > today) continue;
       summary[row.status] = (summary[row.status] ?? 0) + 1;
     }
+    for (const kind of offKind.values()) summary[kind] = (summary[kind] ?? 0) + 1;
 
     return {
       attendanceSummary: summary,
       // Working days in this month for the employee's own schedule (weekly offs + holidays excluded), and how many
       // of them have passed — the "x / working days" figure on the attendance card.
-      attendanceWorkingDays: await gate(
-        off,
-        'module.attendance',
-        async () =>
-          this.workingDaysThisMonth(actor.id, organizationId, monthPrefix, today),
-        { total: 0, elapsed: 0 },
-      ),
+      attendanceWorkingDays: { total: calendar.total, elapsed: calendar.elapsed },
       leaveBalances,
       compOffAvailable,
       payrollSnapshot: latestPayroll,

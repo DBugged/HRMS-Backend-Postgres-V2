@@ -618,6 +618,54 @@ describe('Dashboard (e2e)', () => {
     }
   });
 
+  it("This Month's Attendance lists holidays and weekly offs from the calendar, never as Absent", async () => {
+    const summary = async () =>
+      (
+        await request(app.getHttpServer())
+          .get('/dashboard/employee')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .expect(200)
+      ).body as { attendanceSummary: Record<string, number> };
+    const before = (await summary()).attendanceSummary;
+    const firstOfMonth = `${todayStr().slice(0, 7)}-01`; // always today or earlier
+    await prisma.holiday.create({
+      data: {
+        organizationId,
+        name: 'Dashboard Test Holiday',
+        date: firstOfMonth,
+        year: Number(firstOfMonth.slice(0, 4)),
+      },
+    });
+    // An empty Absent row on that holiday (what a migration import leaves) must not read as Absent.
+    await prisma.attendance.upsert({
+      where: {
+        organizationId_employeeId_date: {
+          organizationId,
+          employeeId,
+          date: firstOfMonth,
+        },
+      },
+      update: { status: 'ABSENT' },
+      create: {
+        organizationId,
+        employeeId,
+        date: firstOfMonth,
+        status: 'ABSENT',
+        source: 'EXCEL_IMPORT',
+      },
+    });
+    const after = (await summary()).attendanceSummary;
+    expect(after.HOLIDAY).toBeGreaterThanOrEqual((before.HOLIDAY ?? 0) + 1);
+    expect(after.ABSENT ?? 0).toBeLessThanOrEqual(before.ABSENT ?? 0);
+    expect(after.WEEKLY_OFF).toEqual(expect.any(Number));
+    await prisma.attendance.deleteMany({
+      where: { employeeId, date: firstOfMonth },
+    });
+    await prisma.holiday.deleteMany({
+      where: { organizationId, name: 'Dashboard Test Holiday' },
+    });
+  });
+
   it('EMPLOYEE dashboard rolls up pending requests, reimbursements, active loan, and tax declaration status', async () => {
     // beforeAll already applied one PENDING leave AND one PENDING ₹1000
     // reimbursement for this employee (used by the HR-dashboard
