@@ -1,12 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsArray,
-  IsBoolean,
-  IsEnum,
-  IsOptional,
-  IsString,
-  IsUUID,
-} from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, IsDateString } from 'class-validator';
 import { PolicyDocType, PolicyVisibility } from '@prisma/client';
 
 export class CreatePolicyDocumentDto {
@@ -68,6 +61,12 @@ export class CreatePolicyDocumentDto {
   @IsArray()
   @IsUUID('4', { each: true })
   visibleEmployees?: string[];
+
+  // YYYY-MM-DD; null clears it.
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsDateString()
+  reviewDate?: string | null;
 
   // Publishing a new version of an existing document rather than a brand
   // new one — chains via previousVersionId and retires the old row.

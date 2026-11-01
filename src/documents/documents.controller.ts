@@ -109,6 +109,20 @@ export class DocumentsController {
     );
   }
 
+  @Get('policies/:id/pending-acknowledgments')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  listPending(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.documentsService.listPendingAcknowledgments(id, caller.organizationId);
+  }
+
+  @Post('policies/:id/remind')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  remind(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.documentsService.remindPending(id, caller.organizationId, caller.id);
+  }
+
   @Get('policies/:id/acknowledgments')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

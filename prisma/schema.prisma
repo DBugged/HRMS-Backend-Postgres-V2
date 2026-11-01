@@ -3114,6 +3114,9 @@ model PolicyDocument {
   // view/download only. Carried over to each new version.
   requiresAcknowledgment Boolean @default(false)
 
+  // When this document is next due for a look; past it, the library marks it "Due for review".
+  reviewDate DateTime?
+
   uploadedById String?
   uploadedBy   User?   @relation("PolicyDocumentUploadedBy", fields: [uploadedById], references: [id])
 

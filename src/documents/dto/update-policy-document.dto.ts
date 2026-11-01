@@ -1,12 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import {
-  IsArray,
-  IsBoolean,
-  IsEnum,
-  IsOptional,
-  IsString,
-  IsUUID,
-} from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, IsDateString } from 'class-validator';
 import { PolicyVisibility } from '@prisma/client';
 
 // Metadata-only edit — never touches the file itself. Also used for the
@@ -38,6 +31,12 @@ export class UpdatePolicyDocumentDto {
   @IsArray()
   @IsUUID('4', { each: true })
   visibleEmployees?: string[];
+
+  // YYYY-MM-DD; null clears it.
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @IsDateString()
+  reviewDate?: string | null;
 
   @ApiPropertyOptional()
   @IsOptional()

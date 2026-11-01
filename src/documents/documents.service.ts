@@ -16,6 +16,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  NotificationCategory,
   Prisma,
   PolicyDocument,
   PolicyDocType,
@@ -37,6 +38,7 @@ import { BulkImportDocumentRequirementsDto } from './dto/bulk-import-document-re
 import { wrapAll } from '../common/pagination';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 type Actor = Omit<User, 'password'>;
 
@@ -68,6 +70,7 @@ export class DocumentsService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
     private readonly timelineService: EmployeeTimelineService,
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // Registration-time seed (same integration point as LeaveTypesService/OrgListItemsService
@@ -263,6 +266,42 @@ export class DocumentsService {
   // this specific version. Only meaningful for a document that's actually
   // targeted at specific people (EVERYONE-visibility docs don't have a
   // fixed roster to diff against, so this just returns who signed).
+  // The people who should acknowledge a document (those it is visible to) and have not yet.
+  async listPendingAcknowledgments(id: string, organizationId: string) {
+    const policy = await this.scopedPrisma.policyDocument.findFirst({ where: { id, organizationId } });
+    if (!policy) throw new NotFoundException('Document not found.');
+    const signed = new Set(
+      (await this.scopedPrisma.policyDocumentAcknowledgment.findMany({ where: { organizationId, policyDocumentId: id }, select: { employeeId: true } })).map((a) => a.employeeId),
+    );
+    const people = await this.scopedPrisma.user.findMany({
+      where: { organizationId, isActive: true },
+      select: { id: true, name: true, employeeId: true, role: true, departmentId: true },
+    });
+    const pending = people.filter((u) => !signed.has(u.id) && this.canView(policy, u as unknown as Actor));
+    return { total: pending.length, data: pending.map((u) => ({ id: u.id, name: u.name, employeeId: u.employeeId })) };
+  }
+
+  // Sends each person who has not signed an in-app reminder (the same list as above).
+  async remindPending(id: string, organizationId: string, actorId: string) {
+    const policy = await this.scopedPrisma.policyDocument.findFirst({ where: { id, organizationId } });
+    if (!policy) throw new NotFoundException('Document not found.');
+    if (!policy.requiresAcknowledgment || !policy.isPublished) {
+      throw new BadRequestException('Only a published document that requires acknowledgment can be reminded.');
+    }
+    const { data } = await this.listPendingAcknowledgments(id, organizationId);
+    for (const u of data) {
+      await this.notificationsService.create({
+        organizationId,
+        userId: u.id,
+        title: `Please acknowledge: ${policy.title}`,
+        message: `Read "${policy.title}" and acknowledge it in Company Policy Documents.`,
+        category: NotificationCategory.GENERAL,
+      });
+    }
+    await this.auditLogService.log({ actorId, action: 'POLICY_ACK_REMINDER_SENT', module: 'DOCUMENT', organizationId, targetId: id, details: { reminded: data.length } });
+    return { reminded: data.length };
+  }
+
   async listAcknowledgments(id: string, organizationId: string) {
     const policy = await this.scopedPrisma.policyDocument.findFirst({
       where: { id, organizationId },
@@ -314,6 +353,7 @@ export class DocumentsService {
         organizationId,
         title,
         category: dto.category ?? previousVersion?.category ?? 'General',
+        reviewDate: dto.reviewDate ? new Date(dto.reviewDate) : (previousVersion?.reviewDate ?? null),
         docType,
         fileUrl: dto.fileUrl,
         fileName: dto.fileName,
@@ -403,6 +443,7 @@ export class DocumentsService {
       data: {
         ...(dto.title !== undefined && { title: dto.title }),
         ...(dto.category !== undefined && { category: dto.category }),
+        ...(dto.reviewDate !== undefined && { reviewDate: dto.reviewDate ? new Date(dto.reviewDate) : null }),
         ...(dto.visibility !== undefined && { visibility: dto.visibility }),
         ...(dto.visibleDepartments !== undefined && {
           visibleDepartments: dto.visibleDepartments,
