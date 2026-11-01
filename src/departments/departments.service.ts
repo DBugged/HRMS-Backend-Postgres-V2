@@ -170,12 +170,25 @@ export class DepartmentsService {
   }
 
   async findAll(organizationId: string) {
-    const data = await this.scopedPrisma.department.findMany({
-      where: { organizationId, isActive: true },
-      orderBy: { name: 'asc' },
-      include: DEPARTMENT_INCLUDE,
-    });
-    return wrapAll(data);
+    const [data, headcount] = await Promise.all([
+      this.scopedPrisma.department.findMany({
+        where: { organizationId, isActive: true },
+        orderBy: { name: 'asc' },
+        include: DEPARTMENT_INCLUDE,
+      }),
+      // Same people remove() counts, so the number on the list is what blocks a delete.
+      this.scopedPrisma.user.groupBy({
+        by: ['departmentId'],
+        where: { organizationId, departmentId: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    return wrapAll(
+      data.map((d) => ({
+        ...d,
+        employeeCount: headcount.find((h) => h.departmentId === d.id)?._count._all ?? 0,
+      })),
+    );
   }
 
   // The org-level defaults a department starts from; the Manage Department form shows them and can reset to them.
