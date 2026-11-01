@@ -267,14 +267,27 @@ export class AssetsService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     return paginate(
-      () =>
-        this.scopedPrisma.asset.findMany({
+      async () => {
+        const rows = await this.scopedPrisma.asset.findMany({
           where,
-          include: { category: { select: { id: true, name: true } } },
+          include: {
+            category: { select: { id: true, name: true } },
+            // Who holds it right now: the open allocation, if any.
+            allocations: {
+              where: { status: 'ALLOCATED', isActive: true },
+              take: 1,
+              select: { employee: { select: { id: true, name: true, employeeId: true } } },
+            },
+          },
           orderBy: { createdAt: 'desc' },
           skip: skip(page, limit),
           take: limit,
-        }),
+        });
+        return rows.map(({ allocations, ...asset }) => ({
+          ...asset,
+          assignedTo: allocations[0]?.employee ?? null,
+        }));
+      },
       () => this.scopedPrisma.asset.count({ where }),
       page,
       limit,
