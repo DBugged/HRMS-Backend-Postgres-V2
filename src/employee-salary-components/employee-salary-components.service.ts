@@ -21,6 +21,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { SetComponentValueDto } from './dto/set-component-value.dto';
 import { BulkSetStructureDto } from './dto/bulk-set-structure.dto';
+import { EditRevisionDto } from './dto/edit-revision.dto';
 import {
   dayBefore,
   localDateStr,
@@ -590,6 +591,139 @@ export class EmployeeSalaryComponentsService {
       }
     }
     return { asOf, total: employees.length, employees: rows };
+  }
+
+  // Corrects one revision (every component row that starts on `effectiveFrom`) in place: amounts, note and, when
+  // asked, the start date. The date can only move between the previous revision's start and this one's end, so the
+  // history stays in order, and never into a month whose payroll is locked or paid.
+  async editRevision(
+    employeeId: string,
+    dto: EditRevisionDto,
+    actorId: string,
+    organizationId: string,
+  ) {
+    await this.assertEmployeeExists(employeeId, organizationId);
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
+      where: { organizationId, employeeId, effectiveFrom: dto.effectiveFrom },
+    });
+    if (rows.length === 0) {
+      throw new NotFoundException(
+        `No salary revision starts on ${dmyText(dto.effectiveFrom)}.`,
+      );
+    }
+    const oldFrom = dto.effectiveFrom;
+    const newFrom = dto.newEffectiveFrom ?? oldFrom;
+    const moved = newFrom !== oldFrom;
+    const lines = new Map((dto.lines ?? []).map((l) => [l.componentCode, l]));
+    for (const code of lines.keys()) {
+      if (!rows.some((r) => r.componentCode === code)) {
+        throw new BadRequestException(
+          `${code} is not part of the revision dated ${dmyText(oldFrom)}.`,
+        );
+      }
+    }
+
+    const previous = new Map<string, EmployeeSalaryComponent>();
+    if (moved) {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: employeeId, organizationId },
+        select: { joiningDate: true },
+      });
+      const joined = employee?.joiningDate
+        ? dateOnly(employee.joiningDate)
+        : null;
+      for (const row of rows) {
+        const prev = await this.scopedPrisma.employeeSalaryComponent.findFirst({
+          where: {
+            organizationId,
+            employeeId,
+            componentCode: row.componentCode,
+            effectiveTo: dayBefore(oldFrom),
+          },
+        });
+        if (prev) {
+          previous.set(row.componentCode, prev);
+          if (newFrom <= prev.effectiveFrom) {
+            throw new BadRequestException(
+              `The revision cannot start on or before the earlier one (${dmyText(prev.effectiveFrom)}) for ${row.componentCode}.`,
+            );
+          }
+        } else if (joined && newFrom < joined) {
+          throw new BadRequestException(
+            `The first salary can start no earlier than the joining date (${dmyText(joined)}).`,
+          );
+        }
+        if (row.effectiveTo && newFrom > row.effectiveTo) {
+          throw new BadRequestException(
+            `The revision cannot start after it ends (${dmyText(row.effectiveTo)}) for ${row.componentCode}.`,
+          );
+        }
+      }
+    }
+    await this.assertNoFinalizedPayrollFrom(
+      employeeId,
+      moved && newFrom < oldFrom ? newFrom : oldFrom,
+      organizationId,
+    );
+
+    try {
+      await this.scopedPrisma.$transaction(async (tx) => {
+        for (const row of rows) {
+          const line = lines.get(row.componentCode);
+          await tx.employeeSalaryComponent.updateMany({
+            where: { id: row.id, organizationId },
+            data: {
+              ...(line?.fixedAmount !== undefined && {
+                fixedAmount: line.fixedAmount,
+              }),
+              ...(line?.percentageValue !== undefined && {
+                percentageValue: line.percentageValue,
+              }),
+              ...(line?.amountBasis && { amountBasis: line.amountBasis }),
+              ...(line?.isEnabled !== undefined && {
+                isEnabled: line.isEnabled,
+              }),
+              ...(dto.revisionNote !== undefined && {
+                revisionNote: dto.revisionNote,
+              }),
+              ...(moved && { effectiveFrom: newFrom }),
+            },
+          });
+          const prev = previous.get(row.componentCode);
+          if (moved && prev) {
+            await tx.employeeSalaryComponent.updateMany({
+              where: { id: prev.id, organizationId },
+              data: { effectiveTo: dayBefore(newFrom) },
+            });
+          }
+        }
+      });
+    } catch (err) {
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        throw new BadRequestException(
+          `A revision already starts on ${dmyText(newFrom)}.`,
+        );
+      }
+      throw err;
+    }
+
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMPLOYEE_SALARY_REVISION_EDITED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: employeeId,
+      details: {
+        effectiveFrom: oldFrom,
+        newEffectiveFrom: moved ? newFrom : undefined,
+        selfRevision: actorId === employeeId,
+        components: [...lines.keys()],
+      },
+    });
+    return { effectiveFrom: newFrom, updated: rows.length };
   }
 
   // Shared revision logic — close out the current open row (effectiveTo

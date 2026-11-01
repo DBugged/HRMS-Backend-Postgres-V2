@@ -9,6 +9,7 @@
 // afterLock() marks approved-unprocessed leave encashments PROCESSED so a future run can't double-count
 // them. afterPay()'s notification/email failures are swallowed deliberately — the payment transition has
 // already committed by that point and must not be rolled back by a PDF/email failure.
+import { employeeDob, missingPastMonths } from './fy-employment';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import {
   EMPLOYEE_ORDER_BY,
@@ -1301,7 +1302,7 @@ export class PayrollService {
           return ytdProfessionalTax + ptThisMonth * months;
         })(),
         ageAtFYEnd: ageOnFYEnd(
-          (employee.personalData as Record<string, unknown> | null)?.dob,
+          employeeDob(employee.personalData),
           financialYear,
         ),
         // Remaining months are projected from the regular monthly structure,
@@ -1545,8 +1546,7 @@ export class PayrollService {
                   : {}),
                 epsEligible: !(
                   (ageOnDate(
-                    (employee.personalData as Record<string, unknown> | null)
-                      ?.dob,
+                    employeeDob(employee.personalData),
                     periodDate,
                   ) ?? 0) >= EPS_PENSION_AGE
                 ),
@@ -1749,6 +1749,7 @@ export class PayrollService {
       select: {
         id: true,
         personalData: true,
+        joiningDate: true,
         workLocation: { select: { cityClass: true } },
         department: {
           select: { workLocation: { select: { cityClass: true } } },
@@ -1789,22 +1790,34 @@ export class PayrollService {
       await this.scopedPrisma.employeeTaxDeclaration.findFirst({
         where: { organizationId, employeeId, financialYear },
       });
-    const { ytdGross, ytdTDS, ytdMonths, ytdProfessionalTax } =
-      await this.getYtdFigures(
-        employeeId,
-        financialYear,
-        todayMonth,
-        todayYear,
-        organizationId,
-      );
+    const ytdFigures = await this.getYtdFigures(
+      employeeId,
+      financialYear,
+      todayMonth,
+      todayYear,
+      organizationId,
+    );
+    const { ytdTDS, ytdProfessionalTax } = ytdFigures;
     const remaining = monthsRemainingInFY(
       todayMonth,
       todayYear,
       settingsRow.financialYearStartMonth,
     );
+    // This is a what-if for the whole year, so months the system holds no pay for (they pre-date it) are taken at today's
+    // monthly salary instead of being left out - otherwise someone who joined in April would see only the months from now on.
+    const missing = missingPastMonths({
+      joiningDate: employee.joiningDate,
+      fyStartYear: Number(financialYear.slice(0, 4)),
+      fyStartMonth: settingsRow.financialYearStartMonth,
+      currentMonth: todayMonth,
+      currentYear: todayYear,
+      monthsAlreadyCounted: ytdFigures.ytdMonths,
+    });
+    const ytdMonths = ytdFigures.ytdMonths + missing;
+    const ytdGross = ytdFigures.ytdGross + missing * figures.gross;
     const employmentMonths = Math.min(12, ytdMonths + remaining);
     const ageAtFYEnd = ageOnFYEnd(
-      (employee.personalData as Record<string, unknown> | null)?.dob,
+      employeeDob(employee.personalData),
       financialYear,
     );
 
@@ -1902,6 +1915,13 @@ export class PayrollService {
       available: true as const,
       financialYear,
       current: declaration?.regimeChosen ?? TaxRegime.NEW,
+      // The salary the comparison starts from: what the employee earns in a month, and over a full year.
+      salary: {
+        monthlyGross: Math.round(figures.gross),
+        yearlyFixed: Math.round(figures.gross * 12),
+        yearlyVariable: Math.round(variableAnnual),
+        yearlyGross: Math.round(figures.gross * 12 + variableAnnual),
+      },
       old: oldRegime,
       new: newRegime,
       better,
