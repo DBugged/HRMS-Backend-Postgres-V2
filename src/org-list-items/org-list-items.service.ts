@@ -192,6 +192,14 @@ export class OrgListItemsService implements OnApplicationBootstrap {
     return wrapAll(withUsage);
   }
 
+  // Grades are a hierarchy the admin orders by hand, so a new one joins the end of that order. The other lists stay
+  // alphabetical (sortOrder 0), which is why only GRADE gets a position here.
+  private async nextSortOrder(type: OrgListType, organizationId: string): Promise<number> {
+    if (type !== OrgListType.GRADE) return 0;
+    const last = await this.scopedPrisma.orgListItem.aggregate({ where: { organizationId, type }, _max: { sortOrder: true } });
+    return (last._max.sortOrder ?? 0) + 1;
+  }
+
   async create(
     dto: CreateOrgListItemDto,
     organizationId: string,
@@ -199,7 +207,7 @@ export class OrgListItemsService implements OnApplicationBootstrap {
   ) {
     const name = dto.name.trim();
     const item = await this.scopedPrisma.orgListItem.create({
-      data: { organizationId, type: dto.type, name },
+      data: { organizationId, type: dto.type, name, sortOrder: await this.nextSortOrder(dto.type, organizationId) },
     });
 
     await this.auditLogService.log({
@@ -363,12 +371,13 @@ export class OrgListItemsService implements OnApplicationBootstrap {
     organizationId: string,
     actor: Actor,
   ) {
+    const base = await this.nextSortOrder(dto.type, organizationId);
     const results = await Promise.allSettled(
-      dto.rows.map((row) => {
+      dto.rows.map((row, idx) => {
         const name = row.name?.trim();
         if (!name) return Promise.reject(new Error('Row has no name.'));
         return this.scopedPrisma.orgListItem.create({
-          data: { organizationId, type: dto.type, name },
+          data: { organizationId, type: dto.type, name, sortOrder: dto.type === OrgListType.GRADE ? base + idx : 0 },
         });
       }),
     );
