@@ -1312,6 +1312,8 @@ export class EmployeeProfileService {
       where: { organizationId, isActive: true },
       include: {
         employee: { select: { id: true, name: true, employeeId: true } },
+        // The Asset Inventory record this allocation is for (null for older, hand-typed allocations): its id links to the asset page.
+        asset: { select: { id: true, assetCode: true } },
       },
       orderBy: { createdAt: 'desc' },
       take: 500,
