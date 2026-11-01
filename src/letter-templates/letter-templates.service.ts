@@ -11,6 +11,8 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
+  OnApplicationBootstrap,
   NotFoundException,
 } from '@nestjs/common';
 import { AuditModule, LetterDataProfile, Prisma } from '@prisma/client';
@@ -57,7 +59,9 @@ function seededNumberingEntry(name: string): DocumentNumberingEntry {
 }
 
 @Injectable()
-export class LetterTemplatesService {
+export class LetterTemplatesService implements OnApplicationBootstrap {
+  private readonly logger = new Logger(LetterTemplatesService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
@@ -87,6 +91,52 @@ export class LetterTemplatesService {
         },
       });
     }
+  }
+
+  // Letters added to the built-in set after a company was set up (e.g. No Dues Certificate) reach it at start-up: insert-only
+  // and idempotent - a template the company already has (edited or not) is never touched - and each new key also gets its
+  // Document Numbering entry.
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      await this.ensureMissingDefaults();
+    } catch (err) {
+      this.logger.warn(`Backfilling missing letter templates failed: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+
+  async ensureMissingDefaults(): Promise<number> {
+    const organizations = await this.scopedPrisma.organization.findMany({ select: { id: true, documentNumbering: true } });
+    let created = 0;
+    for (const org of organizations) {
+      const have = new Set(
+        (await this.scopedPrisma.letterTemplate.findMany({ where: { organizationId: org.id }, select: { key: true } })).map((t) => t.key),
+      );
+      const missing = LETTER_TEMPLATE_DEFAULTS.filter((d) => !have.has(d.key));
+      if (missing.length === 0) continue;
+      const result = await this.scopedPrisma.letterTemplate.createMany({
+        data: missing.map((d) => ({
+          organizationId: org.id,
+          key: d.key,
+          name: d.name,
+          title: d.title,
+          addressedToEmployee: d.addressedToEmployee,
+          dataProfile: d.dataProfile,
+          bodyText: d.bodyText,
+          isCustom: false,
+        })),
+        skipDuplicates: true,
+      });
+      created += result.count;
+      const numbering = (org.documentNumbering ?? {}) as Record<string, unknown>;
+      const additions = Object.fromEntries(missing.filter((d) => !(d.key in numbering)).map((d) => [d.key, seededNumberingEntry(d.name)]));
+      if (Object.keys(additions).length > 0) {
+        await this.scopedPrisma.organization.update({
+          where: { id: org.id },
+          data: { documentNumbering: { ...numbering, ...additions } as unknown as Prisma.InputJsonValue },
+        });
+      }
+    }
+    return created;
   }
 
   async findAll(organizationId: string) {
