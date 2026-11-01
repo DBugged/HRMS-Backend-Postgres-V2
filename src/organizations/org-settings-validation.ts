@@ -200,6 +200,13 @@ function validatePolicies(p: Record<string, unknown>) {
     max: 365,
     integer: true,
   });
+  // Default probation length in months (joining date + this = the probation end date). Blank = 6.
+  checkNumber(p, 'defaultProbationMonths', 'policies.defaultProbationMonths', {
+    min: 1,
+    max: 24,
+    integer: true,
+    allowEmpty: true,
+  });
   // Work From Home days an employee may have per month - shown on the profile as "used / allowed". Blank = no limit.
   checkNumber(p, 'wfhDaysPerMonth', 'policies.wfhDaysPerMonth', {
     min: 0,

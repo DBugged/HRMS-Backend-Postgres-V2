@@ -20,6 +20,7 @@ import {
   probationBucket,
   probationDaysLeft,
 } from './probation-tracker';
+import { addMonthsYmd, probationMonthsOf } from '../organizations/org-probation-policy';
 import { EMPLOYEE_ORDER_BY } from '../common/employee-order';
 import { AttendanceService } from '../attendance/attendance.service';
 import { PayrollService } from '../payroll/payroll.service';
@@ -204,6 +205,7 @@ export class EmployeesService {
         : await this.cleanExtraManagers(dto.additionalReportingManagerIds, dto.reportingManagerId, undefined, organizationId);
     await this.assertContactNumberUnique(dto.contactNumber, organizationId);
 
+    const probationMonths = await this.probationMonths(organizationId);
     const generatedPassword = generatePolicyPassword();
     const hashedPassword = await bcrypt.hash(generatedPassword, SALT_ROUNDS);
 
@@ -246,6 +248,10 @@ export class EmployeesService {
             employeeType: dto.employeeType ?? 'permanent',
             employmentStatus:
               dto.employeeType === 'probation' ? 'PROBATION' : 'ONBOARDING',
+            // A probation hire gets the end date worked out from the joining date and the company's probation length.
+            ...(dto.employeeType === 'probation' && dto.joiningDate
+              ? { probationEndDate: addMonthsYmd(String(dto.joiningDate), probationMonths) }
+              : {}),
             // personalEmail rides along at creation (rather than only via the
             // later personal-data PATCH) specifically so the welcome email
             // below always has somewhere to go on the interactive Add
@@ -785,6 +791,12 @@ export class EmployeesService {
     } as unknown as T;
   }
 
+  // The company's default probation length, in months (Organization Settings > Policies; 6 when not set).
+  private async probationMonths(organizationId: string): Promise<number> {
+    const org = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { policies: true } });
+    return probationMonthsOf((org?.policies as { defaultProbationMonths?: unknown } | null)?.defaultProbationMonths);
+  }
+
   // Everyone currently on probation (or an extended one), with days left to the end date and how urgent the decision
   // is, most urgent first - the Probation Tracker. ADMIN/HR see the whole organization; a MANAGER only their department.
   async probationTracker(actor: Actor, organizationId: string) {
@@ -793,6 +805,7 @@ export class EmployeesService {
       select: { timezone: true },
     });
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const months = await this.probationMonths(organizationId);
     const departmentId = resolveDepartmentFilter(actor);
     const noDeptScope = noDepartmentManagerScope(actor);
     const rows = await this.scopedPrisma.user.findMany({
@@ -819,7 +832,11 @@ export class EmployeesService {
     });
     return rows
       .map((r) => {
-        const daysLeft = probationDaysLeft(today, r.probationEndDate);
+        // No end date saved yet: show the expected one (joining date + the company's probation length) so the list is never blank.
+        const joined = r.joiningDate.toISOString().slice(0, 10);
+        const estimated = !r.probationEndDate;
+        const effectiveEnd = r.probationEndDate ?? addMonthsYmd(joined, months);
+        const daysLeft = probationDaysLeft(today, effectiveEnd);
         return {
           id: r.id,
           employeeId: r.employeeId,
@@ -827,7 +844,8 @@ export class EmployeesService {
           designation: r.designation,
           department: r.department?.name ?? '',
           joiningDate: r.joiningDate.toISOString().slice(0, 10),
-          probationEndDate: r.probationEndDate,
+          probationEndDate: effectiveEnd,
+          estimated,
           extended: r.employmentStatus === 'EXTENDED_PROBATION',
           reportingManager: r.reportingManager?.name ?? null,
           daysLeft,
@@ -1284,6 +1302,10 @@ export class EmployeesService {
       // Moving a Permanent employee onto probation puts them on the Probation type, so leave types set for probation apply.
       if (statusChanging && ['PROBATION', 'EXTENDED_PROBATION'].includes(resultingStatus) && before.employeeType === 'permanent' && (clean.employeeType === undefined || clean.employeeType === 'permanent')) {
         Object.assign(clean, { employeeType: 'probation' });
+      }
+      // Moving onto probation with no end date saved: work it out from the joining date and the company's probation length.
+      if (statusChanging && resultingStatus === 'PROBATION' && clean.probationEndDate === undefined && !before.probationEndDate) {
+        Object.assign(clean, { probationEndDate: addMonthsYmd(before.joiningDate.toISOString().slice(0, 10), await this.probationMonths(organizationId)) });
       }
       if (typeof clean.probationEndDate === 'string') {
         if (!['PROBATION', 'EXTENDED_PROBATION'].includes(resultingStatus)) {
