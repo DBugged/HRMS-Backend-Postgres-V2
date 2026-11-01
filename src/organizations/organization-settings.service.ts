@@ -292,6 +292,22 @@ export class OrganizationSettingsService {
     private readonly emailTemplatesService: EmailTemplatesService,
   ) {}
 
+  // The company's public contact details and primary signatory, to prefill a new payslip template. HR may read these (they
+  // print on every payslip) without being given the whole Admin-only settings document.
+  async getContactForTemplates(organizationId: string) {
+    const org = await this.findOrThrow(organizationId);
+    const signatories = (org.signatories ?? []) as { name?: string; designation?: string; isPrimary?: boolean }[];
+    const primary = signatories.find((s) => s.isPrimary) ?? signatories[0];
+    return {
+      contactEmail: org.contactEmail ?? '',
+      website: org.website ?? '',
+      phone: org.phone ?? '',
+      registeredAddress: org.registeredAddress ?? '',
+      signatoryName: primary?.name ?? '',
+      signatoryDesignation: primary?.designation ?? '',
+    };
+  }
+
   private async findOrThrow(organizationId: string) {
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },

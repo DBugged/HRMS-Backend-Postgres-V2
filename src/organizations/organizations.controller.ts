@@ -95,6 +95,15 @@ export class OrganizationsController {
   // here first, not as section="auto-approval" on the generic ADMIN-only
   // route.
 
+  @Get('settings/template-contact')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  getTemplateContact(@CurrentUser() caller: Caller) {
+    return this.organizationSettingsService.getContactForTemplates(
+      caller.organizationId,
+    );
+  }
+
   @Get('settings/auto-approval')
   @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
   @UseGuards(RolesGuard)
