@@ -2,6 +2,8 @@ import { Inject, Injectable, NotFoundException } from '@nestjs/common';
 import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import * as QRCode from 'qrcode';
+import { backendPublicUrl } from '../common/backend-url';
+import { signPayslipToken } from './payslip-verify-token';
 import { PayrollRunStatus, PayrollTemplate } from '@prisma/client';
 import type { TaxDetails } from './tax-engine';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -161,6 +163,8 @@ interface YtdTotals {
 // (Prisma-fetched) PayrollRun+employee and the dummy preview run below.
 interface PayslipRun {
   id: string;
+  // Present on real runs (a full row); the dummy preview has none, and its QR simply will not verify.
+  organizationId?: string;
   payslipNumber: string | null;
   month: number;
   year: number;
@@ -521,16 +525,20 @@ export class PayslipPdfService {
     const tableRowH = rowCount > 10 ? 11 : rowCount > 6 ? 13 : 15;
     const tableFontSize = rowCount > 10 ? 6.5 : 7.5;
 
-    const qrBuffer = template.showQRCode
-      ? await QRCode.toBuffer(
-          `PAYSLIP|${run.id}|${run.employee.employeeId}|${run.month}-${run.year}|NET:${run.netPay}`,
-          {
-            type: 'png',
-            margin: 0,
-            width: 200,
-            color: { dark: secondary, light: '#FFFFFFFF' },
-          },
-        ).catch(() => null)
+    // The QR opens the public verification page (GET /verify/payslip/:token): a signed link, not the figures themselves.
+    let qrLink: string | null = null;
+    try {
+      qrLink = `${backendPublicUrl()}/verify/payslip/${signPayslipToken(run.organizationId ?? '', run.id)}`;
+    } catch {
+      /* no signing secret configured: the payslip is still produced, just without the QR */
+    }
+    const qrBuffer = template.showQRCode && qrLink
+      ? await QRCode.toBuffer(qrLink, {
+          type: 'png',
+          margin: 0,
+          width: 200,
+          color: { dark: secondary, light: '#FFFFFFFF' },
+        }).catch(() => null)
       : null;
 
     const buffer = await new Promise<Buffer>((resolve, reject) => {

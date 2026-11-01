@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PrivacyModule } from '../privacy/privacy.module';
 import { PayrollController } from './payroll.controller';
+import { PayslipVerifyController } from './payslip-verify.controller';
 import { PayrollService } from './payroll.service';
 import { CompanyBrandsModule } from '../company-brands/company-brands.module';
 import { PayslipPdfService } from './payslip-pdf.service';
@@ -28,7 +29,7 @@ import { LoansModule } from '../loans/loans.module';
     PrivacyModule,
     CompanyBrandsModule,
   ],
-  controllers: [PayrollController, OpeningBalancesController],
+  controllers: [PayrollController, OpeningBalancesController, PayslipVerifyController],
   providers: [
     PayrollService,
     OpeningBalancesService,
