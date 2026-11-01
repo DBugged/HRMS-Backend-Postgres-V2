@@ -4,6 +4,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -179,6 +180,24 @@ export class EmployeeSalaryComponentsController {
     return this.employeeSalaryComponentsService.editRevision(
       id,
       dto,
+      caller.id,
+      caller.organizationId,
+    );
+  }
+
+  // Same rule as editing: Admin/HR only, HR cannot delete a revision of their own salary.
+  @Delete(':id/revisions')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  deleteRevision(
+    @Param('id') id: string,
+    @Query('effectiveFrom') effectiveFrom: string,
+    @CurrentUser() caller: Caller,
+  ) {
+    assertMayChangeSalaryOf(caller, id);
+    return this.employeeSalaryComponentsService.deleteRevision(
+      id,
+      effectiveFrom,
       caller.id,
       caller.organizationId,
     );

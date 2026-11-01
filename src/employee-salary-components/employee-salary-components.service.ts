@@ -726,6 +726,75 @@ export class EmployeeSalaryComponentsService {
     return { effectiveFrom: newFrom, updated: rows.length };
   }
 
+  // Removes one revision (every component row that starts on `effectiveFrom`). The revision before it is reopened
+  // up to where this one ended, so the earlier salary applies again. The first salary cannot be deleted (the
+  // employee would be left with none), and nothing in a locked or paid month can be.
+  async deleteRevision(
+    employeeId: string,
+    effectiveFrom: string,
+    actorId: string,
+    organizationId: string,
+  ) {
+    await this.assertEmployeeExists(employeeId, organizationId);
+    const rows = await this.scopedPrisma.employeeSalaryComponent.findMany({
+      where: { organizationId, employeeId, effectiveFrom },
+    });
+    if (rows.length === 0) {
+      throw new NotFoundException(
+        `No salary revision starts on ${dmyText(effectiveFrom)}.`,
+      );
+    }
+    const previous = new Map<string, EmployeeSalaryComponent>();
+    for (const row of rows) {
+      const prev = await this.scopedPrisma.employeeSalaryComponent.findFirst({
+        where: {
+          organizationId,
+          employeeId,
+          componentCode: row.componentCode,
+          effectiveTo: dayBefore(effectiveFrom),
+        },
+      });
+      if (prev) previous.set(row.componentCode, prev);
+    }
+    if (previous.size === 0) {
+      throw new BadRequestException(
+        'The first salary cannot be deleted. Edit it instead.',
+      );
+    }
+    await this.assertNoFinalizedPayrollFrom(
+      employeeId,
+      effectiveFrom,
+      organizationId,
+    );
+    await this.scopedPrisma.$transaction(async (tx) => {
+      await tx.employeeSalaryComponent.deleteMany({
+        where: { id: { in: rows.map((r) => r.id) }, organizationId },
+      });
+      for (const row of rows) {
+        const prev = previous.get(row.componentCode);
+        if (prev) {
+          await tx.employeeSalaryComponent.updateMany({
+            where: { id: prev.id, organizationId },
+            data: { effectiveTo: row.effectiveTo },
+          });
+        }
+      }
+    });
+    await this.auditLogService.log({
+      actorId,
+      action: 'EMPLOYEE_SALARY_REVISION_DELETED',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: employeeId,
+      details: {
+        effectiveFrom,
+        selfRevision: actorId === employeeId,
+        components: rows.map((r) => r.componentCode),
+      },
+    });
+    return { deleted: rows.length };
+  }
+
   // Shared revision logic — close out the current open row (effectiveTo
   // only, never mutating value fields), then insert a brand-new row. Used
   // by both setComponentValue and bulkSetStructure so the two entry
