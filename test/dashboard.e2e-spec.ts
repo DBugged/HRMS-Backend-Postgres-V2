@@ -584,6 +584,40 @@ describe('Dashboard (e2e)', () => {
     expect(body.payrollSnapshot).toBeNull();
   });
 
+  it('a planned future day (an approved Work From Home day is an empty ABSENT row until it happens) is not counted as Absent', async () => {
+    const dashboard = async () =>
+      (
+        await request(app.getHttpServer())
+          .get('/dashboard/employee')
+          .set('Authorization', `Bearer ${employeeToken}`)
+          .expect(200)
+      ).body as { attendanceSummary: Record<string, number> };
+    const before = (await dashboard()).attendanceSummary.ABSENT ?? 0;
+    // The last day of the month is always after the earlier days; if today IS the last day there is nothing later in
+    // the month to plant, so only the "counted before" half applies.
+    const now = new Date();
+    const last = new Date(
+      Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
+    );
+    const lastStr = last.toISOString().slice(0, 10);
+    if (lastStr > todayStr()) {
+      await prisma.attendance.create({
+        data: {
+          organizationId,
+          employeeId,
+          date: lastStr,
+          status: 'ABSENT',
+          source: 'FACE_API',
+          workArrangement: 'WFH',
+        },
+      });
+      expect((await dashboard()).attendanceSummary.ABSENT ?? 0).toBe(before);
+      await prisma.attendance.deleteMany({
+        where: { employeeId, date: lastStr },
+      });
+    }
+  });
+
   it('EMPLOYEE dashboard rolls up pending requests, reimbursements, active loan, and tax declaration status', async () => {
     // beforeAll already applied one PENDING leave AND one PENDING ₹1000
     // reimbursement for this employee (used by the HR-dashboard

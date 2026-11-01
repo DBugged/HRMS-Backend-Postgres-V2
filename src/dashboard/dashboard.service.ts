@@ -1455,6 +1455,10 @@ export class DashboardService {
       INCOMPLETE: 0,
     };
     for (const row of attendanceThisMonth) {
+      // A row dated after today is something planned (an approved Work From Home day is stored as an empty row until the
+      // day happens), not an absence: it must not read as "Absent" on a day that has not come yet. Upcoming approved
+      // leave and holidays still count, as the card is "present, off days and leave this month".
+      if (row.status === AttendanceStatus.ABSENT && row.date > today) continue;
       summary[row.status] = (summary[row.status] ?? 0) + 1;
     }
 
