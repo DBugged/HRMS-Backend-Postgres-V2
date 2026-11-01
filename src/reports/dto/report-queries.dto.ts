@@ -44,6 +44,16 @@ export class LeaveReportQueryDto extends FormatQueryDto {
   @IsOptional()
   @IsEnum(LeaveStatus)
   status?: LeaveStatus;
+
+  @ApiPropertyOptional({ example: '2026-06-01', description: 'Leave overlapping this date or later' })
+  @IsOptional()
+  @IsValidCalendarDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-30', description: 'Leave overlapping this date or earlier' })
+  @IsOptional()
+  @IsValidCalendarDateString()
+  to?: string;
 }
 
 export class LeaveBalanceReportQueryDto extends FormatQueryDto {
@@ -60,6 +70,16 @@ export class EmployeeLeaveHistoryReportQueryDto extends FormatQueryDto {
   @ApiProperty()
   @IsUUID()
   employeeId!: string;
+
+  @ApiPropertyOptional({ example: '2026-06-01', description: 'Leave overlapping this date or later' })
+  @IsOptional()
+  @IsValidCalendarDateString()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-06-30', description: 'Leave overlapping this date or earlier' })
+  @IsOptional()
+  @IsValidCalendarDateString()
+  to?: string;
 }
 
 export class DepartmentLeaveSummaryReportQueryDto extends FormatQueryDto {

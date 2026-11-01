@@ -189,8 +189,12 @@ export class ReportsService {
     actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
+    assertValidDateRange(query.from, query.to);
     const where: Prisma.LeaveWhereInput = { organizationId };
     if (query.status) where.status = query.status;
+    // Leave that overlaps the window, same rule as the department summary.
+    if (query.from) where.endDate = { gte: query.from };
+    if (query.to) where.startDate = { lte: query.to };
     if (actor.role === Role.MANAGER) {
       where.employeeId = {
         in: await deptScopedEmployeeIds(
@@ -322,6 +326,7 @@ export class ReportsService {
     actor: Actor,
     organizationId: string,
   ): Promise<ReportPayload> {
+    assertValidDateRange(query.from, query.to);
     if (actor.role === Role.MANAGER) {
       await assertManagerDeptScope(
         this.scopedPrisma,
@@ -332,7 +337,12 @@ export class ReportsService {
     }
 
     const leaves = await this.scopedPrisma.leave.findMany({
-      where: { organizationId, employeeId: query.employeeId },
+      where: {
+        organizationId,
+        employeeId: query.employeeId,
+        ...(query.from && { endDate: { gte: query.from } }),
+        ...(query.to && { startDate: { lte: query.to } }),
+      },
       include: { leaveType: { select: { name: true } } },
       orderBy: { startDate: 'desc' },
     });
