@@ -192,6 +192,31 @@ export class PrivacyMeService {
     });
   }
 
+  // The person the employee names to exercise their privacy rights for them if they die or cannot act (DPDP right to nominate).
+  async getNominee(actor: Caller) {
+    const row = await this.scopedPrisma.privacyNominee.findFirst({
+      where: { organizationId: actor.organizationId, userId: actor.id },
+    });
+    return row
+      ? { name: row.name, relationship: row.relationship, email: row.email, phone: row.phone }
+      : { name: '', relationship: '', email: '', phone: '' };
+  }
+
+  async saveNominee(
+    dto: { name: string; relationship?: string; email?: string; phone?: string },
+    actor: Caller,
+    ctx: ReqCtx,
+  ) {
+    const data = { name: dto.name.trim(), relationship: dto.relationship?.trim() ?? '', email: dto.email?.trim() ?? '', phone: dto.phone?.trim() ?? '' };
+    await this.scopedPrisma.privacyNominee.upsert({
+      where: { organizationId_userId: { organizationId: actor.organizationId, userId: actor.id } },
+      create: { organizationId: actor.organizationId, userId: actor.id, ...data },
+      update: data,
+    });
+    await this.log(actor, ctx, 'NOMINEE_SAVED', 'CONSENT', { entity: 'PrivacyNominee', entityId: actor.id });
+    return this.getNominee(actor);
+  }
+
   async listConsents(actor: Caller) {
     const purposes = await this.consentPurposes(actor.organizationId);
     const records = await this.scopedPrisma.consentRecord.findMany({

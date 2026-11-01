@@ -10,6 +10,7 @@ import {
   Param,
   ParseUUIDPipe,
   Post,
+  Put,
   Req,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
@@ -22,6 +23,7 @@ import type { Caller } from './privacy.types';
 import { AcknowledgeNoticeDto } from './dto/privacy-notice.dto';
 import { CreateDataRequestDto } from './dto/data-request.dto';
 import { ConsentActionDto } from './dto/consent.dto';
+import { SavePrivacyNomineeDto } from './dto/privacy-nominee.dto';
 
 @ApiTags('privacy')
 @ApiBearerAuth('access-token')
@@ -94,6 +96,16 @@ export class PrivacyMeController {
     @Req() req: Request,
   ) {
     return this.requests.downloadMine(id, caller, reqCtx(req));
+  }
+
+  @Get('nominee')
+  nominee(@CurrentUser() caller: Caller) {
+    return this.me.getNominee(caller);
+  }
+
+  @Put('nominee')
+  saveNominee(@Body() dto: SavePrivacyNomineeDto, @CurrentUser() caller: Caller, @Req() req: Request) {
+    return this.me.saveNominee(dto, caller, reqCtx(req));
   }
 
   @Get('consents')

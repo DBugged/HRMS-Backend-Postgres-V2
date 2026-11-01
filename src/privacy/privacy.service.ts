@@ -512,6 +512,74 @@ export class PrivacyService {
     return { openBreaches, overdueBreaches, processors };
   }
 
+  // The consent register for HR/Admin: each employee's latest consent decision per purpose (the notice acknowledgement is not a
+  // consent). `status` filters to GIVEN or WITHDRAWN.
+  async consentRegister(organizationId: string, status?: string) {
+    const settings = await this.ensureSettings(organizationId);
+    const purposes = ((settings.processingPurposes as unknown as { key: string; label: string }[]) ?? []);
+    const labelOf = new Map(purposes.map((p) => [p.key, p.label]));
+    const records = await this.scopedPrisma.consentRecord.findMany({
+      where: { organizationId, purposeKey: { not: 'notice_acknowledgement' } },
+      orderBy: { at: 'desc' },
+    });
+    const latest = new Map<string, (typeof records)[number]>();
+    for (const r of records) {
+      const k = `${r.userId}:${r.purposeKey}`;
+      if (!latest.has(k)) latest.set(k, r);
+    }
+    const rows = [...latest.values()].filter((r) => !status || r.status === status);
+    const users = await this.scopedPrisma.user.findMany({
+      where: { organizationId, id: { in: [...new Set(rows.map((r) => r.userId))] } },
+      select: { id: true, name: true, employeeId: true },
+    });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    const data = rows.map((r) => ({
+      id: r.id,
+      employeeId: byId.get(r.userId)?.employeeId ?? '',
+      employeeName: byId.get(r.userId)?.name ?? 'Former employee',
+      purposeKey: r.purposeKey,
+      purpose: labelOf.get(r.purposeKey) ?? r.purposeKey,
+      status: r.status,
+      source: r.source,
+      at: r.at,
+    }));
+    return { data, total: data.length, page: 1, limit: data.length || 1 };
+  }
+
+  // The overview strip and the yearly checklist on the Data Privacy page (Admin): what is published, what is overdue, and which
+  // routine duties are covered. Everything is read from what is already stored.
+  async overview(organizationId: string, overdueRequests: number) {
+    const [settings, notice, pendingDpa, overdueBreaches] = await Promise.all([
+      this.ensureSettings(organizationId),
+      this.scopedPrisma.privacyNoticeVersion.findFirst({
+        where: { organizationId, status: 'PUBLISHED' },
+        orderBy: { version: 'desc' },
+        select: { version: true, publishedAt: true },
+      }),
+      this.scopedPrisma.dataProcessor.count({ where: { organizationId, status: 'ACTIVE', dpaStatus: 'PENDING' } }),
+      this.scopedPrisma.breachIncident.count({
+        where: {
+          organizationId,
+          status: BreachStatus.OPEN,
+          notificationStatus: { not: BreachNotificationStatus.NOT_REQUIRED },
+          boardReportedAt: null,
+          detectedAt: { lt: new Date(Date.now() - BOARD_REPORT_HOURS * 60 * 60 * 1000) },
+        },
+      }),
+    ]);
+    const yearAgo = Date.now() - 365 * 24 * 60 * 60 * 1000;
+    const rules = (settings.retentionRules as unknown as { periodMonths?: number | null }[]) ?? [];
+    const checklist = [
+      { key: 'officer', label: 'Privacy officer named', done: !!settings.privacyOfficerName && !!settings.privacyOfficerEmail, hint: 'Add a name and email on the Configuration tab.' },
+      { key: 'notice', label: 'Privacy notice published in the last 12 months', done: !!notice?.publishedAt && notice.publishedAt.getTime() > yearAgo, hint: 'Review and publish the notice.' },
+      { key: 'retention', label: 'Retention period set for every data type', done: rules.length > 0 && rules.every((r) => !!r.periodMonths), hint: 'Set a period on the Retention tab.' },
+      { key: 'dpa', label: 'Agreements signed with every processor', done: pendingDpa === 0, hint: `${pendingDpa} processor(s) still have a pending agreement.` },
+      { key: 'requests', label: 'No data request past its due date', done: overdueRequests === 0, hint: `${overdueRequests} request(s) are overdue.` },
+      { key: 'breaches', label: 'No breach report overdue', done: overdueBreaches === 0, hint: `${overdueBreaches} breach report(s) are overdue.` },
+    ];
+    return { noticeVersion: notice?.version ?? null, noticePublishedAt: notice?.publishedAt ?? null, overdueRequests, checklist };
+  }
+
   async listProcessors(organizationId: string) {
     await this.ensureProcessorsSeeded(organizationId);
     const rows = await this.scopedPrisma.dataProcessor.findMany({

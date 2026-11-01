@@ -88,6 +88,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'PrivacySettings',
   'PrivacyNoticeVersion',
   'ConsentRecord',
+  'PrivacyNominee',
   'DataRequest',
   'DataProcessor',
   'DataSharingRecord',

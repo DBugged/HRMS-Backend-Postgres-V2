@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PrivacyRecordStatus } from '@prisma/client';
 import {
+  IsBoolean,
   IsDateString,
   IsEnum,
   IsOptional,
@@ -30,6 +31,8 @@ export class CreateDataSharingDto {
   @IsOptional()
   @IsEnum(PrivacyRecordStatus)
   status?: PrivacyRecordStatus;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() crossBorder?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) crossBorderCountry?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() sharedAt?: string;
 }
 
@@ -60,5 +63,7 @@ export class UpdateDataSharingDto {
   @IsOptional()
   @IsEnum(PrivacyRecordStatus)
   status?: PrivacyRecordStatus;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() crossBorder?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) crossBorderCountry?: string;
   @ApiPropertyOptional() @IsOptional() @IsDateString() sharedAt?: string;
 }

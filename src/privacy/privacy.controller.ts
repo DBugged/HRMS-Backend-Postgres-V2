@@ -72,8 +72,21 @@ export class PrivacyController {
   @UseGuards(RolesGuard)
   async summary(@CurrentUser() caller: Caller) {
     const openRequests = await this.requests.countOpen(caller.organizationId);
-    if (caller.role !== Role.ADMIN) return { openRequests };
-    return { openRequests, ...(await this.privacy.summaryCounts(caller.organizationId)) };
+    const overdueRequests = await this.requests.countOverdue(caller.organizationId);
+    if (caller.role !== Role.ADMIN) return { openRequests, overdueRequests };
+    return {
+      openRequests,
+      ...(await this.privacy.summaryCounts(caller.organizationId)),
+      ...(await this.privacy.overview(caller.organizationId, overdueRequests)),
+    };
+  }
+
+  // Everyone's latest consent decision per purpose (HR and Admin).
+  @Get('consents')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  consents(@Query('status') status: string | undefined, @CurrentUser() caller: Caller) {
+    return this.privacy.consentRegister(caller.organizationId, status === 'GIVEN' || status === 'WITHDRAWN' ? status : undefined);
   }
 
   // -- settings (ADMIN) --

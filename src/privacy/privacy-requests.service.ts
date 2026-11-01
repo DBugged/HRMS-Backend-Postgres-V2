@@ -440,6 +440,13 @@ export class PrivacyRequestsService {
     });
   }
 
+  /** Open requests whose due date has passed. */
+  countOverdue(organizationId: string): Promise<number> {
+    return this.scopedPrisma.dataRequest.count({
+      where: { organizationId, status: { in: ['SUBMITTED', 'UNDER_REVIEW', 'ACTION_REQUIRED', 'APPROVED'] }, dueDate: { lt: new Date() } },
+    });
+  }
+
   async listAll(query: ListDataRequestsQueryDto, organizationId: string) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 50;

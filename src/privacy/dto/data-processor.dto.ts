@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { DpaStatus, PrivacyRecordStatus } from '@prisma/client';
 import {
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
@@ -35,6 +36,8 @@ export class CreateDataProcessorDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() crossBorder?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) crossBorderCountry?: string;
 }
 
 export class UpdateDataProcessorDto {
@@ -73,4 +76,6 @@ export class UpdateDataProcessorDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+  @ApiPropertyOptional() @IsOptional() @IsBoolean() crossBorder?: boolean;
+  @ApiPropertyOptional() @IsOptional() @IsString() @MaxLength(100) crossBorderCountry?: string;
 }
