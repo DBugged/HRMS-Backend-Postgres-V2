@@ -73,6 +73,7 @@ import { CompanyBrandsModule } from './company-brands/company-brands.module';
 import { LetterTemplatesModule } from './letter-templates/letter-templates.module';
 import { LeaveTrackerModule } from './leave-tracker/leave-tracker.module';
 import { PrivacyModule } from './privacy/privacy.module';
+import { AccessControlModule } from './access-control/access-control.module';
 import { AssetsModule } from './assets/assets.module';
 import { PlatformInternalModule } from './platform-internal/platform-internal.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
@@ -175,6 +176,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     LetterTemplatesModule,
     LeaveTrackerModule,
     PrivacyModule,
+    AccessControlModule,
     AssetsModule,
     PlatformInternalModule,
   ],
