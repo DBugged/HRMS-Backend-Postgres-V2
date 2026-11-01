@@ -2982,10 +2982,17 @@ model AuditLog {
 
   createdAt DateTime @default(now())
 
+  // Tamper evidence: each row stores the hash of the one before it (per organization), so an edited or removed row breaks the chain.
+  // Rows written before this was added have an empty hash and sit outside the chain.
+  seq      Int    @default(autoincrement())
+  prevHash String @default("")
+  hash     String @default("")
+
   @@index([organizationId, module])
   @@index([organizationId, actorId])
   @@index([organizationId, module, createdAt])
   @@index([organizationId, targetId])
+  @@index([organizationId, seq])
   @@map("audit_logs")
 }
 

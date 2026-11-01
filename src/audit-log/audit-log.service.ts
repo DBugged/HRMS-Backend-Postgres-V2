@@ -14,6 +14,8 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { QueryAuditLogDto } from './dto/query-audit-log.dto';
 import { currentRequest } from '../common/request-context';
 import { paginate } from '../common/pagination';
+import { randomUUID } from 'crypto';
+import { computeHash, verifyChain, type ChainRow } from '../privacy/audit-chain';
 
 type Actor = Omit<User, 'password'>;
 
@@ -92,25 +94,95 @@ export class AuditLogService {
                 select: { role: true },
               })
             )?.role ?? null));
-      await this.scopedPrisma.auditLog.create({
-        data: {
-          organizationId: input.organizationId,
-          actorId: input.actorId,
-          action: input.action,
-          module: input.module,
-          targetId: input.targetId ?? null,
-          details: (input.details ?? {}) as Prisma.InputJsonValue,
-          ipAddress: input.ipAddress ?? request?.ip ?? '',
-          actorRole,
-          outcome: input.outcome ?? 'SUCCESS',
-          requestId: request?.requestId ?? null,
-        },
+      const id = randomUUID();
+      const createdAt = new Date();
+      const details = (input.details ?? {}) as Prisma.InputJsonValue;
+      const ipAddress = input.ipAddress ?? request?.ip ?? '';
+      const outcome = input.outcome ?? 'SUCCESS';
+      // Chained: each row carries the hash of the previous one for this organization, written under a lock per organization so
+      // two writers cannot fork the chain.
+      await this.scopedPrisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'audit-log:' + input.organizationId}))`;
+        const last = await tx.auditLog.findFirst({
+          where: { organizationId: input.organizationId, hash: { not: '' } },
+          orderBy: { seq: 'desc' },
+          select: { hash: true },
+        });
+        const prevHash = last?.hash ?? '';
+        await tx.auditLog.create({
+          data: {
+            id,
+            createdAt,
+            organizationId: input.organizationId,
+            actorId: input.actorId,
+            action: input.action,
+            module: input.module,
+            targetId: input.targetId ?? null,
+            details,
+            ipAddress,
+            actorRole,
+            outcome,
+            requestId: request?.requestId ?? null,
+            prevHash,
+            hash: computeHash(prevHash, this.chainRow({ id, organizationId: input.organizationId, actorId: input.actorId, actorRole, action: input.action, module: input.module, targetId: input.targetId ?? null, outcome, ipAddress, details, createdAt })),
+          },
+        });
       });
     } catch (err) {
       this.logger.error(
         `Failed to write audit log: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
+  }
+
+  // The fields that are hashed. Request id is left out on purpose: it is a trace aid, not part of what happened.
+  private chainRow(r: { id: string; organizationId: string; actorId: string | null; actorRole: string | null; action: string; module: string; targetId: string | null; outcome: string; ipAddress: string; details: unknown; createdAt: Date }): ChainRow {
+    return {
+      id: r.id,
+      organizationId: r.organizationId,
+      actorId: r.actorId,
+      actorRole: r.actorRole ?? '',
+      action: r.action,
+      category: r.module,
+      targetUserId: r.targetId,
+      entity: null,
+      entityId: null,
+      result: r.outcome,
+      ip: r.ipAddress,
+      userAgent: '',
+      meta: r.details ?? {},
+      createdAt: r.createdAt,
+    };
+  }
+
+  // Recomputes the chain for the organization (oldest first) and reports the first row that does not match. Rows written before
+  // the chain existed have no hash and are counted separately, not as a break.
+  async verifyChain(organizationId: string) {
+    const BATCH = 1000;
+    let lastSeq: number | undefined;
+    let prev = '';
+    let processed = 0;
+    for (;;) {
+      const rows = await this.scopedPrisma.auditLog.findMany({
+        where: { organizationId, hash: { not: '' }, ...(lastSeq !== undefined ? { seq: { gt: lastSeq } } : {}) },
+        orderBy: { seq: 'asc' },
+        take: BATCH,
+      });
+      if (rows.length === 0) break;
+      const res = verifyChain(rows.map((r) => ({ ...this.chainRow(r), prevHash: r.prevHash, hash: r.hash })), prev, processed);
+      if (!res.intact) {
+        return { intact: false, checked: processed + res.checked, unchained: await this.countUnchained(organizationId), brokenRowId: res.brokenRowId, reason: res.reason };
+      }
+      prev = res.lastHash;
+      lastSeq = rows[rows.length - 1].seq;
+      processed += rows.length;
+      if (rows.length < BATCH) break;
+    }
+    return { intact: true, checked: processed, unchained: await this.countUnchained(organizationId), brokenRowId: null, reason: null };
+  }
+
+  private countUnchained(organizationId: string) {
+    return this.scopedPrisma.auditLog.count({ where: { organizationId, hash: '' } });
   }
 
   // Deletes every AuditLog row for the org, then writes a fresh one
@@ -128,6 +200,9 @@ export class AuditLogService {
       if (query.from) where.createdAt.gte = new Date(query.from);
       if (query.to) where.createdAt.lte = new Date(query.to);
     }
+    if (query.outcome) where.outcome = query.outcome;
+    // Sign-ins are the bulk of the trail and bury the changes people look for.
+    if (query.hideSignIns) where.NOT = { module: AuditModule.AUTH, action: 'LOGIN' };
     if (actor.role === Role.HR) {
       where.actor = { role: { notIn: HR_HIDDEN_ACTOR_ROLES } };
     }

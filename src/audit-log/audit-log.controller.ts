@@ -22,6 +22,13 @@ type Caller = Omit<User, 'password'>;
 export class AuditLogController {
   constructor(private readonly auditLogService: AuditLogService) {}
 
+  // Re-checks the tamper-evident chain (Admin). HR can read the log but not run the check.
+  @Get('verify')
+  @Roles(Role.ADMIN)
+  verify(@CurrentUser() caller: Caller) {
+    return this.auditLogService.verifyChain(caller.organizationId);
+  }
+
   @Get()
   findAll(@Query() query: QueryAuditLogDto, @CurrentUser() caller: Caller) {
     return this.auditLogService.findAll(query, caller, caller.organizationId);
