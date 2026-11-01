@@ -584,38 +584,58 @@ describe('Dashboard (e2e)', () => {
     expect(body.payrollSnapshot).toBeNull();
   });
 
-  it('a planned future day (an approved Work From Home day is an empty ABSENT row until it happens) is not counted as Absent', async () => {
-    const dashboard = async () =>
+  it('planned future days (approved Work From Home, approved leave still to come) are not counted yet', async () => {
+    const summary = async () =>
       (
         await request(app.getHttpServer())
           .get('/dashboard/employee')
           .set('Authorization', `Bearer ${employeeToken}`)
           .expect(200)
       ).body as { attendanceSummary: Record<string, number> };
-    const before = (await dashboard()).attendanceSummary.ABSENT ?? 0;
-    // The last day of the month is always after the earlier days; if today IS the last day there is nothing later in
-    // the month to plant, so only the "counted before" half applies.
+    const before = (await summary()).attendanceSummary;
+    // The last two days of the month are after today unless today is among them, in which case only the days that are
+    // really still to come are planted.
     const now = new Date();
-    const last = new Date(
+    const lastDay = new Date(
       Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0),
     );
-    const lastStr = last.toISOString().slice(0, 10);
-    if (lastStr > todayStr()) {
+    const ymd = (offset: number) => {
+      const d = new Date(lastDay);
+      d.setUTCDate(d.getUTCDate() - offset);
+      return d.toISOString().slice(0, 10);
+    };
+    const planted: string[] = [];
+    if (ymd(0) > todayStr()) {
       await prisma.attendance.create({
         data: {
           organizationId,
           employeeId,
-          date: lastStr,
+          date: ymd(0),
           status: 'ABSENT',
           source: 'FACE_API',
           workArrangement: 'WFH',
         },
       });
-      expect((await dashboard()).attendanceSummary.ABSENT ?? 0).toBe(before);
-      await prisma.attendance.deleteMany({
-        where: { employeeId, date: lastStr },
-      });
+      planted.push(ymd(0));
     }
+    if (ymd(1) > todayStr()) {
+      await prisma.attendance.create({
+        data: {
+          organizationId,
+          employeeId,
+          date: ymd(1),
+          status: 'ON_LEAVE',
+          source: 'SYSTEM',
+        },
+      });
+      planted.push(ymd(1));
+    }
+    const after = (await summary()).attendanceSummary;
+    expect(after.ABSENT ?? 0).toBe(before.ABSENT ?? 0);
+    expect(after.ON_LEAVE ?? 0).toBe(before.ON_LEAVE ?? 0);
+    await prisma.attendance.deleteMany({
+      where: { employeeId, date: { in: planted } },
+    });
   });
 
   it("This Month's Attendance lists holidays and weekly offs from the calendar, never as Absent", async () => {

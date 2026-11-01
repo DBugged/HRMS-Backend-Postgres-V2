@@ -1491,10 +1491,10 @@ export class DashboardService {
         continue;
       }
       if (calendarOff) offKind.delete(row.date); // worked / on leave that day: it is that, not an off day
-      // A row dated after today is something planned (an approved Work From Home day is stored as an empty row until the
-      // day happens), not an absence: it must not read as "Absent" on a day that has not come yet. Upcoming approved
-      // leave and holidays still count, as the card is "present, off days and leave this month".
-      if (row.status === AttendanceStatus.ABSENT && row.date > today) continue;
+      // "This month so far": a row dated after today is something planned - an approved Work From Home day (kept as an
+      // empty ABSENT row until it happens), approved leave still to come - not attendance yet. It is counted on the day
+      // it arrives, not before, so it neither reads as Absent nor as On Leave ahead of time.
+      if (row.date > today) continue;
       summary[row.status] = (summary[row.status] ?? 0) + 1;
     }
     for (const kind of offKind.values()) summary[kind] = (summary[kind] ?? 0) + 1;
