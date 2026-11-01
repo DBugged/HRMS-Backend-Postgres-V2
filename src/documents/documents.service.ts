@@ -16,6 +16,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  EmployeeDocumentCategory,
   NotificationCategory,
   Prisma,
   PolicyDocument,
@@ -518,7 +519,9 @@ export class DocumentsService {
     return { success: true, message: 'Policy deleted' };
   }
 
-  async findRequirements(organizationId: string) {
+  // `withCounts` (HR/Admin only) adds, per requirement, how many active employees have uploaded it (a rejected upload does not
+  // count - same rule as profile completion) out of how many there are.
+  async findRequirements(organizationId: string, withCounts = false) {
     const data = await this.scopedPrisma.documentRequirement.findMany({
       where: { organizationId },
       // Built-in baseline documents always sort ahead of custom ones.
@@ -528,7 +531,20 @@ export class DocumentsService {
         { createdAt: 'asc' },
       ],
     });
-    return wrapAll(data);
+    if (!withCounts) return wrapAll(data);
+    const [employees, uploads] = await Promise.all([
+      this.scopedPrisma.user.count({ where: { organizationId, isActive: true } }),
+      this.scopedPrisma.employeeDocument.findMany({
+        where: { organizationId, category: EmployeeDocumentCategory.DOCUMENT, status: { not: 'REJECTED' }, employee: { isActive: true } },
+        select: { employeeId: true, docType: true },
+      }),
+    ]);
+    const byType = new Map<string, Set<string>>();
+    for (const u of uploads) {
+      if (!byType.has(u.docType)) byType.set(u.docType, new Set());
+      byType.get(u.docType)!.add(u.employeeId);
+    }
+    return wrapAll(data.map((r) => ({ ...r, uploadedCount: byType.get(r.name)?.size ?? 0, employeeCount: employees })));
   }
 
   async createRequirement(

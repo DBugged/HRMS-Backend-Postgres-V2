@@ -136,7 +136,7 @@ export class DocumentsController {
   // No @Roles() — any authenticated caller can see what's expected of them.
   @Get('requirements')
   findRequirements(@CurrentUser() caller: Caller) {
-    return this.documentsService.findRequirements(caller.organizationId);
+    return this.documentsService.findRequirements(caller.organizationId, caller.role === Role.ADMIN || caller.role === Role.HR);
   }
 
   @Post('requirements')
