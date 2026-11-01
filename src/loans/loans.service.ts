@@ -47,6 +47,8 @@ import {
 } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
+import { dmyText } from '../payroll/format-date';
+import { sendOccasionEmail } from '../email-templates/send-occasion-email';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 
 type Actor = Omit<User, 'password'>;
@@ -735,6 +737,10 @@ export class LoansService {
           message,
           category: NotificationCategory.GENERAL,
         });
+        if (dto.status === LoanStatus.CLOSED && loan.outstandingBalance === 0) {
+          void this.emailLoanClosed(organizationId, loan);
+          return updated;
+        }
         const rendered = await this.emailTemplatesService.renderOccasion(
           organizationId,
           'LOAN_STATUS_UPDATE',
@@ -875,6 +881,9 @@ export class LoansService {
       return { repayment, loan: updatedLoan };
     });
 
+    if (result.loan.status === LoanStatus.CLOSED ) {
+      void this.emailLoanClosed(organizationId, loan);
+    }
     await this.auditLogService.log({
       actorId: actorId ?? loan.approvedById ?? loan.employeeId,
       action: 'LOAN_REPAYMENT_RECORDED',
@@ -896,6 +905,34 @@ export class LoansService {
     });
 
     return result;
+  }
+
+  // "Your loan is fully repaid" (template LOAN_CLOSED). Best-effort.
+  private async emailLoanClosed(
+    organizationId: string,
+    loan: { employeeId: string; loanType: string; principal: number },
+  ) {
+    try {
+      const employee = await this.scopedPrisma.user.findFirst({
+        where: { id: loan.employeeId, organizationId },
+        select: { name: true, email: true, notificationPreferences: true },
+      });
+      if (!employee) return;
+      await sendOccasionEmail(this.emailService, this.emailTemplatesService, {
+        organizationId,
+        to: employee.email,
+        occasionKey: 'LOAN_CLOSED',
+        notificationPreferences: employee.notificationPreferences,
+        variables: {
+          employeeName: employee.name,
+          loanType: loanKind(loan.loanType as never),
+          amount: `₹${loan.principal}`,
+          closedOn: dmyText(new Date().toISOString().slice(0, 10)),
+        },
+      });
+    } catch {
+      /* best-effort */
+    }
   }
 
   async getRepayments(id: string, actor: Actor, organizationId: string) {

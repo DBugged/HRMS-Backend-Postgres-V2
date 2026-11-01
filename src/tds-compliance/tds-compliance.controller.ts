@@ -34,6 +34,8 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { sendReportBranded } from '../reports/report-branding';
 import { TdsComplianceService } from './tds-compliance.service';
 import { renderForm130 } from './form130-pdf';
+import { sendOccasionEmail } from '../email-templates/send-occasion-email';
+import { frontendUrl } from '../common/frontend-url';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { EmailService } from '../notifications/email.service';
 import { escapeHtml } from '../email-templates/email-layout';
@@ -232,6 +234,32 @@ export class TdsComplianceController {
       'Content-Length': String(pdf.length),
     });
     res.end(pdf);
+  }
+
+  // Tells every employee with finalized pay in the year that their Form 16 can be downloaded (template FORM16_AVAILABLE). No
+  // attachment: the certificate itself is still downloaded from Tax Declaration or issued per person below.
+  @Post('form130/notify')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async notifyForm130Ready(@Body() q: Form130QueryDto, @CurrentUser() c: Caller) {
+    const ids = await this.service.form130Recipients(q.financialYear, c.organizationId);
+    const users = await this.scopedPrisma.user.findMany({
+      where: { organizationId: c.organizationId, id: { in: ids }, isActive: true },
+      select: { name: true, email: true, notificationPreferences: true },
+    });
+    let sent = 0;
+    for (const u of users) {
+      const ok = await sendOccasionEmail(this.emailService, this.emailTemplatesService, {
+        organizationId: c.organizationId,
+        to: u.email,
+        occasionKey: 'FORM16_AVAILABLE',
+        notificationPreferences: u.notificationPreferences,
+        variables: { employeeName: u.name, financialYear: q.financialYear, downloadUrl: `${frontendUrl()}/tax-declaration` },
+      });
+      if (ok) sent++;
+    }
+    return { financialYear: q.financialYear, eligible: ids.length, sent };
   }
 
   // Issues the employee's Form 130 / Form 16 by e-mail: the PDF goes to their personal address (the company mailbox

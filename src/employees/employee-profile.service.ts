@@ -40,6 +40,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { sendOccasionEmail } from '../email-templates/send-occasion-email';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EXIT_STATUSES } from './employees.service';
 import { UpdatePersonalDataDto } from './dto/update-personal-data.dto';
@@ -920,6 +921,25 @@ export class EmployeeProfileService {
         : {}),
     });
 
+    // A short notice of the outcome to the employee (the letter below carries the formal wording). Best-effort.
+    const decisionDate =
+      dto.decision === 'confirmed'
+        ? (dto.effectiveDate ?? new Date().toISOString().slice(0, 10))
+        : (dto.newProbationEndDate as string);
+    void sendOccasionEmail(this.emailService, this.emailTemplatesService, {
+      organizationId,
+      to: employee.email,
+      occasionKey: 'PROBATION_DECISION',
+      notificationPreferences: employee.notificationPreferences,
+      variables: {
+        employeeName: employee.name,
+        outcome: dto.decision === 'confirmed' ? 'Confirmed' : 'Extended',
+        dateLabel: dto.decision === 'confirmed' ? 'Confirmed on' : 'New probation end date',
+        decisionDate: dmyText(decisionDate),
+        note: dto.note ?? '',
+      },
+    });
+
     // The outcome letter goes out with the decision (confirmation letter, or the extension notice) unless the caller asked to
     // skip it, so HR does not have to generate it. Quiet on failure - the decision stands and HR can still send it from the
     // Letters tab; `letterSent` tells the caller which happened (null when it was not asked for).
@@ -1419,6 +1439,27 @@ export class EmployeeProfileService {
       performedById: actor.id,
       description: `${asset.assetType}: ${asset.assetName}${asset.assetTag ? ` (${asset.assetTag})` : ''}`,
     });
+
+    // Tell the employee what was handed to them. Best-effort - the allocation is already saved.
+    const holder = await this.scopedPrisma.user.findFirst({
+      where: { id, organizationId },
+      select: { name: true, email: true, notificationPreferences: true },
+    });
+    if (holder) {
+      void sendOccasionEmail(this.emailService, this.emailTemplatesService, {
+        organizationId,
+        to: holder.email,
+        occasionKey: 'ASSET_ALLOCATED',
+        notificationPreferences: holder.notificationPreferences,
+        variables: {
+          employeeName: holder.name,
+          assetName: asset.assetName,
+          assetType: asset.assetType,
+          assetTag: asset.assetTag ?? '-',
+          allocatedDate: dmyText(asset.allocatedDate),
+        },
+      });
+    }
 
     return asset;
   }

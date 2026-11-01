@@ -13,6 +13,7 @@ import { assertAccountCanLeave } from '../common/account-guard';
 import { findResignationApprovers } from './resignation-approvers';
 import { channelAllowed } from '../notifications/notification-preferences';
 import { frontendUrl } from '../common/frontend-url';
+import { sendOccasionEmail } from '../email-templates/send-occasion-email';
 import { managerIdsOf, reportsToWhere } from '../common/managers';
 import {
   BadRequestException,
@@ -580,6 +581,7 @@ export class ResignationsService {
       eventKey: 'RESIGNATION_WITHDRAWN',
       performedById: actor.id,
     });
+    await this.emailDecision(organizationId, actor.id, 'Withdrawn', 'You have withdrawn your resignation, so your exit is cancelled.', '-', '');
     // HR/Admin and the manager would otherwise keep an approval open for a request that no longer exists.
     await this.notifyApprovers(
       organizationId,
@@ -768,6 +770,16 @@ export class ResignationsService {
       targetId: record.employeeId,
       details: { resignationId: id, note },
     });
+    await this.emailDecision(
+      organizationId,
+      record.employeeId,
+      approve ? 'Withdrawal approved' : 'Withdrawal declined',
+      approve
+        ? 'HR approved your request: your resignation is withdrawn and your exit is cancelled.'
+        : 'HR declined your request to withdraw your resignation.',
+      '-',
+      approve ? '' : String(note ?? ''),
+    );
     await this.notify(
       organizationId,
       record.employeeId,
@@ -983,42 +995,49 @@ export class ResignationsService {
         : 'Your resignation request was not approved. Please speak to HR for details.',
     );
     // Also by email: an in-app notice alone is easy to miss for a decision this important. Best-effort.
+    await this.emailDecision(
+      organizationId,
+      employeeId,
+      outcome === 'APPROVED' ? 'Approved' : 'Declined',
+      outcome === 'APPROVED'
+        ? 'Your resignation has been approved.'
+        : 'Your resignation request was not approved. Please speak to HR for details.',
+      extra.approvedLwd ? String(extra.approvedLwd) : '-',
+      '',
+    );
+  }
+
+  // The resignation outcome as an email to the employee (template RESIGNATION_DECISION): approved, declined, withdrawn, or the
+  // outcome of a withdrawal request. Best-effort - the decision itself has already been saved.
+  private async emailDecision(
+    organizationId: string,
+    employeeId: string,
+    decision: string,
+    detail: string,
+    lastWorkingDay: string,
+    note: string,
+  ) {
     try {
       const employee = await this.scopedPrisma.user.findFirst({
         where: { id: employeeId, organizationId },
-        select: { name: true, email: true },
+        select: { name: true, email: true, notificationPreferences: true },
       });
-      if (employee?.email) {
-        const approved = outcome === 'APPROVED';
-        const company = (
-          await this.scopedPrisma.organization.findFirst({
-            where: { id: organizationId },
-            select: { companyName: true },
-          })
-        )?.companyName;
-        // Through the shared email shell (organization header and footer, styled body).
-        const rendered = await this.emailTemplatesService.renderOccasion(
-          organizationId,
-          'RESIGNATION_DECISION',
-          { employeeName: employee.name, companyName: company ?? '' },
-          {
-            subject: `Your resignation has been ${approved ? 'approved' : 'declined'}`,
-            html: `<p>Hi ${escapeHtml(employee.name)},</p><p>${
-              approved
-                ? `Your resignation has been approved. Your last working day is <strong>${escapeHtml(String(extra.approvedLwd))}</strong>.`
-                : 'Your resignation request was not approved. Please speak to HR for details.'
-            }</p>`,
-          },
-        );
-        await this.emailService.send({
-          organizationId,
-          to: employee.email,
-          subject: rendered.subject,
-          html: rendered.html,
-        });
-      }
+      if (!employee) return;
+      await sendOccasionEmail(this.emailService, this.emailTemplatesService, {
+        organizationId,
+        to: employee.email,
+        occasionKey: 'RESIGNATION_DECISION',
+        notificationPreferences: employee.notificationPreferences,
+        variables: {
+          employeeName: employee.name,
+          decision,
+          detail,
+          lastWorkingDay: lastWorkingDay === '-' ? '-' : /^\d{4}-\d{2}-\d{2}/.test(lastWorkingDay) ? dmyText(lastWorkingDay) : lastWorkingDay,
+          note,
+        },
+      });
     } catch {
-      // best-effort — the decision itself has already been saved
+      /* best-effort */
     }
   }
 

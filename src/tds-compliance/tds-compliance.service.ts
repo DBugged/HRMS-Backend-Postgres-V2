@@ -935,6 +935,13 @@ export class TdsComplianceService {
 
   // For HR before issuing: can this employee's certificate be produced, and is there anything to look at first. The
   // same checks form130Data() enforces, without building the certificate.
+  // Everyone with finalized pay in the tax year - the people a "your Form 16 is ready" notice goes to.
+  async form130Recipients(taxYear: string, organizationId: string): Promise<string[]> {
+    this.assertTaxYear(taxYear);
+    const runs = await this.annualRuns(organizationId, taxYear);
+    return [...new Set(runs.map((r) => r.employeeId))];
+  }
+
   async form130Readiness(
     employeeId: string,
     taxYear: string,
