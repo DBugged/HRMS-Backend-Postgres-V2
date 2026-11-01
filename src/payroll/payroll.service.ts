@@ -1891,7 +1891,21 @@ export class PayrollService {
         grossIncome: Math.round(t.grossAnnualIncome),
         deductionsAndExemptions: Math.round(deductionsTotal),
         rebate: Math.round(t.rebate),
-        monthlyTDS: t.monthlyTDS,
+        // A past month with no payroll yet is still to be processed, so its deduction is still to come: it counts as one of
+        // the pay months left (the run for it will find the same remaining tax and months).
+        monthlyTDS: Math.round(
+          Math.max(0, t.totalAnnualTax - t.ytdTDS - t.previousEmployerTDS) /
+            (t.remainingMonths + missing),
+        ),
+        // How the monthly figure is reached: tax for the year, less tax already withheld (payroll, opening balance and the
+        // previous employer), spread over the pay months still to come. They always add back up to the annual tax.
+        tdsDeducted: Math.round(t.ytdTDS + t.previousEmployerTDS),
+        remainingTax: Math.max(
+          0,
+          Math.round(t.totalAnnualTax - t.ytdTDS - t.previousEmployerTDS),
+        ),
+        remainingMonths: t.remainingMonths + missing,
+        averageMonthlyTax: Math.round(t.totalAnnualTax / 12),
       };
     };
     const [oldRegime, newRegime] = await Promise.all([
@@ -1929,6 +1943,20 @@ export class PayrollService {
       // The Old regime only has figures to work with once something has been declared.
       hasDeclaration: !!declaration,
       tdsSoFar: ytdTDS,
+      remainingMonths: remaining + missing,
+      // Shown instead of silently guessing when the figures rest on an assumption.
+      warnings: [
+        ...(missing > 0
+          ? [
+              `${missing} earlier month${missing > 1 ? 's' : ''} of this year ${missing > 1 ? 'have' : 'has'} no payroll yet: ${missing > 1 ? 'they are' : 'it is'} counted at today's salary and ${missing > 1 ? 'their' : 'its'} TDS is still to be deducted, so ${missing > 1 ? 'they count' : 'it counts'} among the pay months left. If that tax was already deducted elsewhere, ask HR to add an opening balance.`,
+            ]
+          : []),
+        ...(ytdTDS === 0 && ytdMonths > 0
+          ? [
+              'No tax has been deducted so far this year, so the remaining tax is spread over the months left.',
+            ]
+          : []),
+      ],
     };
   }
 
