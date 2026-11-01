@@ -1335,10 +1335,12 @@ describe('Leaves (e2e)', () => {
       );
       // The pending request is not shown to anyone.
       expect(asHr.data).toHaveLength(2);
-      const asEmployee = (await get(employeeToken)).body as {
-        data: { employeeId: string }[];
-      };
-      expect(asEmployee.data.map((r) => r.employeeId)).toEqual([employeeId]);
+      // Plain employees do not see who else is away.
+      await request(app.getHttpServer())
+        .get('/leaves/whos-out')
+        .query({ from: '2031-09-01', to: '2031-09-05' })
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
     });
   });
 });

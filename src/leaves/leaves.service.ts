@@ -759,10 +759,10 @@ export class LeavesService {
     });
   }
 
-  // Who is away in a window - open to every employee, so people can see who is out before planning a meeting. Only what
-  // that needs: the person, the dates and whether it is a half-day. Never the leave type, the remarks or any document
-  // (a sick or maternity leave is nobody else's business), and only approved leave. HR and Admin see the whole
-  // organisation; everyone else sees their own department (an employee with no department sees only themself).
+  // Who is away in a window - for Admin, HR and Managers (the controller rejects plain employees), so they can see who is
+  // out before planning. Only what that needs: the person, the dates and whether it is a half-day. Never the leave type,
+  // the remarks or any document (a sick or maternity leave is nobody else's business), and only approved leave. HR and
+  // Admin see the whole organisation; a manager sees their own department.
   async getWhosOut(
     query: TeamCalendarQueryDto,
     actor: Actor,

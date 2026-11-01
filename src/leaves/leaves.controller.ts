@@ -139,8 +139,11 @@ export class LeavesController {
     );
   }
 
-  // No @Roles(): every employee may see who is away (approved leave only, no type or remarks - see the service).
+  // Admin, HR and Manager only: employees do not see who else is away. Approved leave only, no type or remarks (see the
+  // service); HR/Admin get the whole organisation, a manager their own department.
   @Get('whos-out')
+  @Roles(Role.ADMIN, Role.HR, Role.MANAGER)
+  @UseGuards(RolesGuard)
   whosOut(@Query() query: TeamCalendarQueryDto, @CurrentUser() caller: Caller) {
     return this.leavesService.getWhosOut(query, caller, caller.organizationId);
   }
