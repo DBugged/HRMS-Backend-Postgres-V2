@@ -13,6 +13,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { AuditModule, OrgListType, Prisma } from '@prisma/client';
+import { OnApplicationBootstrap } from '@nestjs/common';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -37,17 +38,22 @@ export const BUILTIN_EMPLOYEE_CATEGORIES = [
 // "Specify Asset" field whenever the selected category is named exactly
 // this, so it must exist (and, being isSystemDefault, can't be renamed out
 // from under that check).
-// Offboarding exit interview's "Reason for Leaving" starting list (the
-// values that used to be hardcoded). Seeded as ordinary items — not
-// isSystemDefault — so HR can rename or delete any of them.
-export const DEFAULT_REASONS_FOR_LEAVING = [
+// The exit interview's built-in "Reason for Leaving" options, in the order they are offered. Built-in means isSystemDefault: the name
+// is locked and it cannot be deleted, only switched off; HR can still add its own and reorder them all.
+export const BUILTIN_REASONS_FOR_LEAVING = [
   'Better Opportunity',
-  'Compensation',
   'Career Growth',
-  'Relocation',
-  'Personal Reasons',
+  'Compensation',
   'Work Environment',
+  'Manager Relationship',
+  'Performance',
+  'Higher Studies',
+  'Relocation',
   'Health',
+  'Family Reasons',
+  'Personal Reasons',
+  'Contract Ended',
+  'Retirement',
   'Other',
 ];
 
@@ -79,7 +85,7 @@ const ORG_LIST_TYPE_LABELS: Record<OrgListType, string> = {
 };
 
 @Injectable()
-export class OrgListItemsService {
+export class OrgListItemsService implements OnApplicationBootstrap {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
@@ -114,14 +120,48 @@ export class OrgListItemsService {
         },
       });
     }
-    for (const name of DEFAULT_REASONS_FOR_LEAVING) {
+    for (const [i, name] of BUILTIN_REASONS_FOR_LEAVING.entries()) {
       await tx.orgListItem.create({
-        data: {
-          organizationId,
-          type: OrgListType.REASON_FOR_LEAVING,
-          name,
-        },
+        data: { organizationId, type: OrgListType.REASON_FOR_LEAVING, name, isSystemDefault: true, sortOrder: i + 1 },
       });
+    }
+  }
+
+  // Saves a new order for one list: ids[0] first. Only ids of this type in this organization are touched.
+  async reorder(type: OrgListType, ids: string[], organizationId: string) {
+    await this.scopedPrisma.$transaction(
+      ids.map((id, index) =>
+        this.scopedPrisma.orgListItem.updateMany({ where: { id, organizationId, type }, data: { sortOrder: index + 1 } }),
+      ),
+    );
+    return { ok: true };
+  }
+
+  // Companies set up before a reason became built-in get it at start-up: a missing one is added, and one the company already has
+  // (same name) is marked built-in. Existing order and on/off state are never changed.
+  async onApplicationBootstrap(): Promise<void> {
+    try {
+      const orgs = await this.scopedPrisma.organization.findMany({ select: { id: true } });
+      for (const org of orgs) {
+        const have = await this.scopedPrisma.orgListItem.findMany({
+          where: { organizationId: org.id, type: OrgListType.REASON_FOR_LEAVING },
+          select: { id: true, name: true, isSystemDefault: true },
+        });
+        const byName = new Map(have.map((r) => [r.name.toLowerCase(), r]));
+        for (const [i, name] of BUILTIN_REASONS_FOR_LEAVING.entries()) {
+          const existing = byName.get(name.toLowerCase());
+          if (!existing) {
+            await this.scopedPrisma.orgListItem.createMany({
+              data: [{ organizationId: org.id, type: OrgListType.REASON_FOR_LEAVING, name, isSystemDefault: true, sortOrder: name === 'Other' ? 9999 : 100 + i }],
+              skipDuplicates: true,
+            });
+          } else if (!existing.isSystemDefault) {
+            await this.scopedPrisma.orgListItem.updateMany({ where: { id: existing.id, organizationId: org.id }, data: { isSystemDefault: true } });
+          }
+        }
+      }
+    } catch {
+      /* best-effort: the list still works without the backfill */
     }
   }
 
@@ -138,7 +178,7 @@ export class OrgListItemsService {
       // form, which just render this list order as-is with no client
       // sort of their own. Designations/Grades have no built-ins (all
       // isSystemDefault: false), so this is a no-op there.
-      orderBy: [{ isSystemDefault: 'desc' }, { name: 'asc' }],
+      orderBy: [{ isSystemDefault: 'desc' }, { sortOrder: 'asc' }, { name: 'asc' }],
     });
     // The management screens (not the dropdowns, which ask for activeOnly) also need to know which entries are in
     // use, so Edit / Delete can be offered only where the server would accept them.

@@ -19,6 +19,12 @@ export class SubmitExitInterviewDto {
   @IsNotEmpty()
   reasonForLeaving!: string;
 
+  // The leaver's own words when they chose "Other".
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reasonOther?: string;
+
   @ApiProperty({ minimum: 1, maximum: 5 })
   // A form posts the choice as text ("3"); read it as the number it stands for before checking the range.
   @Type(() => Number)

@@ -15,7 +15,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
-import { Role, User } from '@prisma/client';
+import { OrgListType, Role, User } from '@prisma/client';
 import { OrgListItemsService } from './org-list-items.service';
 import { CreateOrgListItemDto } from './dto/create-org-list-item.dto';
 import { UpdateOrgListItemDto } from './dto/update-org-list-item.dto';
@@ -50,6 +50,14 @@ export class OrgListItemsController {
   @UseGuards(RolesGuard)
   create(@Body() dto: CreateOrgListItemDto, @CurrentUser() caller: Caller) {
     return this.orgListItemsService.create(dto, caller.organizationId, caller);
+  }
+
+  // Declared before ':id' so these are not read as an id.
+  @Patch('reorder')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  reorder(@Body() body: { type: OrgListType; ids: string[] }, @CurrentUser() caller: Caller) {
+    return this.orgListItemsService.reorder(body.type, Array.isArray(body.ids) ? body.ids.filter((i) => typeof i === 'string') : [], caller.organizationId);
   }
 
   @Patch(':id')

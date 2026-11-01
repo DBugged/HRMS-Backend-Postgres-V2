@@ -3238,6 +3238,8 @@ model OrgListItem {
   // that depends on a specific one of those existing. A built-in
   // category's name is locked and it can't be deleted; isActive still is.
   isSystemDefault Boolean @default(false)
+  // Position within its list (lower first); 0 for every list nobody has reordered.
+  sortOrder Int @default(0)
 
   // Only ever populated for type=ASSET_CATEGORY — the Asset Inventory
   // master is the one OrgListType consumer holding a real FK back here

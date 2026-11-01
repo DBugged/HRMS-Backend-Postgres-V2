@@ -1,0 +1,1 @@
+ALTER TABLE "org_list_items" ADD COLUMN "sortOrder" INTEGER NOT NULL DEFAULT 0;

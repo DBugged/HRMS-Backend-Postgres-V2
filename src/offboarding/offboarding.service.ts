@@ -221,7 +221,7 @@ export class OffboardingService {
         ? (
             await this.scopedPrisma.orgListItem.findMany({
               where: { organizationId: actor.organizationId, type: OrgListType.REASON_FOR_LEAVING, isActive: true },
-              orderBy: { name: 'asc' },
+              orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
               select: { name: true },
             })
           ).map((r) => r.name)
@@ -722,7 +722,10 @@ export class OffboardingService {
         wouldRecommend: !!dto.wouldRecommend,
         likedMost: dto.likedMost ?? '',
         improvementAreas: dto.improvementAreas ?? '',
-        additionalComments: dto.additionalComments ?? '',
+        additionalComments:
+          dto.reasonForLeaving.toLowerCase() === 'other' && dto.reasonOther?.trim()
+            ? `Other reason: ${dto.reasonOther.trim()}${dto.additionalComments ? `\n${dto.additionalComments}` : ''}`
+            : (dto.additionalComments ?? ''),
       } satisfies Prisma.InputJsonValue,
       exitInterviewDone: true,
     };
