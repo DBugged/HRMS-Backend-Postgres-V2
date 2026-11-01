@@ -2636,6 +2636,8 @@ model Loan {
 
   approvedById String?
   approvedBy   User?   @relation("LoanApprovedBy", fields: [approvedById], references: [id])
+  // The approver's optional note on the decision (shown to the employee).
+  decisionNote String?
 
   closureReason String    @default("")
   closedAt      DateTime?

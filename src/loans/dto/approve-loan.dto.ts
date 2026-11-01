@@ -4,7 +4,9 @@ import {
   IsNumber,
   IsOptional,
   IsPositive,
+  IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 
@@ -39,4 +41,10 @@ export class ApproveLoanDto {
   @IsPositive()
   @Max(MAX_LOAN_TENURE_MONTHS)
   tenureMonths?: number;
+
+  @ApiPropertyOptional({ maxLength: 1000, description: 'A note on the approval; shown to the employee.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
+  comments?: string;
 }

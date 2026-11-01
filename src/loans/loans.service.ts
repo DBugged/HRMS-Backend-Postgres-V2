@@ -478,6 +478,7 @@ export class LoansService {
         startYear: dto.startYear,
         outstandingBalance: loan.principal,
         approvedById: actor.id,
+        decisionNote: dto.comments?.trim() || null,
       },
     });
     if (count === 0) {
@@ -489,7 +490,7 @@ export class LoansService {
 
     if (employee) {
       const title = 'Loan Request Approved';
-      const message = `Your ${loanKind(loan.loanType)} request of ${loan.principal} has been approved, repayable as ${emiAmount}/month over ${tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.`;
+      const message = `Your ${loanKind(loan.loanType)} request of ${loan.principal} has been approved, repayable as ${emiAmount}/month over ${tenureMonths} month(s) starting ${dto.startMonth}/${dto.startYear}.${dto.comments?.trim() ? ` Comments: ${dto.comments.trim()}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,
