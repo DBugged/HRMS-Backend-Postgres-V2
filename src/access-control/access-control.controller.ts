@@ -1,4 +1,4 @@
-// Purpose: Admin-only endpoint behind the Access Control page's "Actions" view.
+// Purpose: Admin-only endpoint behind the People view of the Access Control page.
 import { Controller, Get, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
@@ -19,14 +19,5 @@ export class AccessControlController {
   @UseGuards(RolesGuard)
   people(@CurrentUser() caller: { organizationId: string }) {
     return this.service.people(caller.organizationId);
-  }
-
-  // Every API route with who may call it, read from the route decorators themselves.
-  @Get('actions')
-  @Roles(Role.ADMIN)
-  @UseGuards(RolesGuard)
-  actions() {
-    const routes = this.service.routes();
-    return { total: routes.length, data: routes };
   }
 }
