@@ -100,7 +100,31 @@ export class WorkLocationsService {
   }
 
   async findAll(query: ListWorkLocationsQueryDto, organizationId: string) {
-    const data = await this.scopedPrisma.workLocation.findMany({
+    const [data, employeeUse, departmentUse] = await Promise.all([
+      this.findManyForList(query, organizationId),
+      // Same two counts remove() checks, so the list shows exactly what blocks a delete.
+      this.scopedPrisma.user.groupBy({
+        by: ['workLocationId'],
+        where: { organizationId, workLocationId: { not: null } },
+        _count: { _all: true },
+      }),
+      this.scopedPrisma.department.groupBy({
+        by: ['workLocationId'],
+        where: { organizationId, workLocationId: { not: null } },
+        _count: { _all: true },
+      }),
+    ]);
+    return wrapAll(
+      data.map((loc) => ({
+        ...loc,
+        employeeCount: employeeUse.find((u) => u.workLocationId === loc.id)?._count._all ?? 0,
+        departmentCount: departmentUse.find((u) => u.workLocationId === loc.id)?._count._all ?? 0,
+      })),
+    );
+  }
+
+  private findManyForList(query: ListWorkLocationsQueryDto, organizationId: string) {
+    return this.scopedPrisma.workLocation.findMany({
       where: {
         organizationId,
         ...(query.activeOnly && { isActive: true }),
@@ -118,7 +142,6 @@ export class WorkLocationsService {
       },
       orderBy: { name: 'asc' },
     });
-    return wrapAll(data);
   }
 
   async findOne(id: string, organizationId: string) {
