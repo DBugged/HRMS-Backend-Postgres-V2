@@ -68,4 +68,11 @@ export class AdjustPayrollDto {
   @IsNumber()
   @Min(0)
   lopDaysOverride?: number;
+  // Manual correction to this one run's Leave Without Pay day count (unpaid leave), for the same real-world reasons as
+  // the LOP correction above: an LWP never logged as a leave, or one logged by mistake. payableDays follows it.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  lwpDaysOverride?: number;
 }

@@ -81,6 +81,10 @@ export interface AttendanceSummary {
   // days in the month. Absent on runs calculated before they were recorded.
   daysBeforeJoining?: number;
   daysNotElapsed?: number;
+  // How much of the month's earnings was taken out for each kind of day not paid, so a payslip can show it under Deductions
+  // even though the earnings are already shown reduced. Absent on runs calculated before they were recorded.
+  lwpPayCut?: number;
+  lopPayCut?: number;
 }
 
 export function computeAttendanceSummary(

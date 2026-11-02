@@ -549,6 +549,8 @@ export class PayrollService {
     // still read fresh, exactly as a normal calculate() would.
     options?: {
       lopDaysOverride?: number;
+      // The same for Leave Without Pay days (unpaid leave): a manual correction made when editing the run.
+      lwpDaysOverride?: number;
       // Final settlement: the pending-salary preview is allowed to be negative (the settlement nets it against
       // recoveries), tax is trued up on actual income (no projection of months that will not be worked), and
       // one-off taxable settlement payments (leave encashment, bonus) are taxed with it.
@@ -756,12 +758,20 @@ export class PayrollService {
     // Payable days before a manual LOP correction replaces them (a month split by a mid-month revision is paid
     // segment by segment from raw attendance, so the correction has to be carried into the segments as well).
     const computedPayableDays = attendanceSummary.payableDays;
-    if (options?.lopDaysOverride !== undefined) {
+    if (
+      options?.lopDaysOverride !== undefined ||
+      options?.lwpDaysOverride !== undefined
+    ) {
       // Inverse of computeAttendanceSummary's own lopDays formula —
-      // payableDays moves opposite LOP so everything downstream (formula
+      // payableDays moves opposite LOP and LWP so everything downstream (formula
       // proration, LOP_DAYS/PAYABLE_DAYS in formula-context.ts, statutory
       // and tax calculations) sees a fully consistent corrected summary.
-      attendanceSummary.lopDays = round(options.lopDaysOverride, 'nearest', 2);
+      if (options?.lopDaysOverride !== undefined) {
+        attendanceSummary.lopDays = round(options.lopDaysOverride, 'nearest', 2);
+      }
+      if (options?.lwpDaysOverride !== undefined) {
+        attendanceSummary.unpaidLeaveDays = round(options.lwpDaysOverride, 'nearest', 2);
+      }
       attendanceSummary.payableDays = Math.max(
         0,
         round(
@@ -903,13 +913,34 @@ export class PayrollService {
             totalDaysInMonth,
             roundAmount,
             payableDaysOverride:
-              options?.lopDaysOverride !== undefined
+              options?.lopDaysOverride !== undefined ||
+              options?.lwpDaysOverride !== undefined
                 ? {
                     computed: computedPayableDays,
                     corrected: attendanceSummary.payableDays,
                   }
                 : undefined,
           });
+
+    // What the days not paid took out of the earnings, split between Leave Without Pay and Absent / unmarked days by their
+    // share of the unpaid days, so the payslip can show it under Deductions (the earnings above are already reduced).
+    // The same earnings are resolved once more at full attendance; a month split by a mid-month revision is left out.
+    if (segments.length === 1 && attendanceProration < 1) {
+      const fullEarnings = this.resolveGroup(
+        earningComponents,
+        overridesByCode,
+        baseContext,
+        1,
+        roundAmount,
+      ).results;
+      const sum = (lines: { amount: number }[]) => lines.reduce((t, l) => t + l.amount, 0);
+      const cut = Math.max(0, sum(fullEarnings) - sum(earningsResults));
+      const unpaid = attendanceSummary.unpaidLeaveDays + attendanceSummary.lopDays;
+      if (cut > 0 && unpaid > 0) {
+        attendanceSummary.lwpPayCut = roundAmount((cut * attendanceSummary.unpaidLeaveDays) / unpaid);
+        attendanceSummary.lopPayCut = roundAmount(cut - attendanceSummary.lwpPayCut);
+      }
+    }
 
     const financialYear = getFinancialYear(
       month,
@@ -2881,12 +2912,14 @@ export class PayrollService {
       try {
         const lop = (run.attendanceSummary as { lopDays?: number } | null)
           ?.lopDays;
+        const lwp = (run.attendanceSummary as { unpaidLeaveDays?: number } | null)
+          ?.unpaidLeaveDays;
         const recalculated = await this.calculatePayroll(
           dto.employeeId,
           run.month,
           run.year,
           organizationId,
-          lop === undefined ? undefined : { lopDaysOverride: lop },
+          lop === undefined ? undefined : { lopDaysOverride: lop, lwpDaysOverride: lwp },
         );
         const paidGross = recurring(run.earnings as never);
         const revisedGross = recurring(recalculated.earnings as never);
@@ -3566,13 +3599,23 @@ export class PayrollService {
     // apply on top of that recalculation, same as they would on top of the
     // run's existing figures below.
     const recalculated =
-      dto.lopDaysOverride !== undefined
+      dto.lopDaysOverride !== undefined || dto.lwpDaysOverride !== undefined
         ? await this.calculatePayroll(
             run.employeeId,
             run.month,
             run.year,
             organizationId,
-            { lopDaysOverride: dto.lopDaysOverride },
+            {
+              // Whichever one was not corrected keeps the run's own figure.
+              lopDaysOverride:
+                dto.lopDaysOverride ??
+                (run.attendanceSummary as { lopDays?: number } | null)?.lopDays,
+              lwpDaysOverride:
+                dto.lwpDaysOverride ??
+                (dto.lopDaysOverride !== undefined
+                  ? undefined
+                  : (run.attendanceSummary as { unpaidLeaveDays?: number } | null)?.unpaidLeaveDays),
+            },
           )
         : null;
     const baselineEarnings = (recalculated?.earnings ??
@@ -3755,6 +3798,9 @@ export class PayrollService {
         ),
         ...(dto.lopDaysOverride !== undefined
           ? { lopDaysOverride: dto.lopDaysOverride }
+          : {}),
+        ...(dto.lwpDaysOverride !== undefined
+          ? { lwpDaysOverride: dto.lwpDaysOverride }
           : {}),
       },
     });

@@ -915,7 +915,21 @@ export class PayslipPdfService {
         fonts,
         money,
       });
-      y = Math.max(earnEndY, dedEndY) + 18;
+      // The days not paid are already taken out of the earnings; say where the reduction came from, below the deductions
+      // (not part of Total Deductions).
+      const cut = (run.attendanceSummary ?? {}) as Record<string, number | undefined>;
+      let noteEndY = dedEndY;
+      const cutLines: string[] = [];
+      if ((cut.lwpPayCut ?? 0) > 0) cutLines.push(`Leave without pay (LWP) - ${cut.unpaidLeaveDays ?? 0} day(s): - ${money(cut.lwpPayCut as number)}`);
+      if ((cut.lopPayCut ?? 0) > 0) cutLines.push(`Absent / unmarked (LOP) - ${cut.lopDays ?? 0} day(s): - ${money(cut.lopPayCut as number)}`);
+      if (cutLines.length > 0) {
+        doc.font(fonts.bold).fontSize(6.8).fillColor('#6b7280');
+        text('Pay already reduced in the earnings:', rightX, noteEndY + 6, { width: colW });
+        doc.font(fonts.regular).fontSize(6.8).fillColor('#6b7280');
+        cutLines.forEach((line, i) => text(line, rightX, noteEndY + 16 + i * 9, { width: colW }));
+        noteEndY += 16 + cutLines.length * 9;
+      }
+      y = Math.max(earnEndY, noteEndY) + 18;
 
       // ── Net Payable highlighted band ──────────────────────────────────
       const bandH = 42;
