@@ -4,6 +4,12 @@
 // COMPOFF-type Leave is approved or cancelled, rather than duplicating comp-off math there.
 // Important: consumeForLeave() throws on insufficient balance rather than partially consuming — callers
 // must check availability before approving. sweepExpired() runs inline before reads, not on a cron.
+import {
+  AUTO_APPROVAL_NOTE,
+  findAutoApprover,
+  loadAutoApproval,
+  compOffQualifies,
+} from '../common/auto-approval';
 import { isEmployedOn } from '../common/managers';
 import { todayInOrgTz } from '../common/org-date';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
@@ -232,6 +238,12 @@ export class CompOffService {
       performedById: actor.id,
       description: `Comp-off earned for ${formatDateDisplay(dto.earnedForDate, '', dateFormat, timeZone)}.`,
     });
+    // Companies that turned on automatic approval: a self-raised request for a day off that the punches confirm was worked
+    // (checked above), within the allowed days, is approved right away through the normal review path.
+    if (targetEmployeeId === actor.id && compOff.status === 'PENDING') {
+      const approved = await this.tryAutoApprove(compOff.id, compOff.daysEarned, actor, organizationId);
+      if (approved) return approved;
+    }
     // Only a request the employee raised for themselves is waiting on someone; one a reviewer logged on their behalf
     // is not.
     if (targetEmployeeId === actor.id && compOff.status === 'PENDING') {
@@ -431,6 +443,19 @@ export class CompOffService {
       throw new BadRequestException(
         `${dmyText(date)} is a regular working day, so it does not earn a comp-off. Comp-off is only for work on a weekly off or a holiday - if this day was a public holiday, add it to the Holiday calendar first.`,
       );
+    }
+  }
+
+  // Returns the approved comp-off, or null when the request does not qualify (or anything goes wrong: it then stays pending).
+  private async tryAutoApprove(id: string, daysEarned: number, requester: Actor, organizationId: string) {
+    try {
+      const rules = await loadAutoApproval(this.scopedPrisma, organizationId);
+      if (!compOffQualifies(rules.compOff, Number(daysEarned))) return null;
+      const approver = await findAutoApprover(this.scopedPrisma, organizationId, requester.id);
+      if (!approver) return null;
+      return await this.review(id, { decision: CompOffStatus.APPROVED, comments: AUTO_APPROVAL_NOTE } as never, approver as never, organizationId);
+    } catch {
+      return null;
     }
   }
 

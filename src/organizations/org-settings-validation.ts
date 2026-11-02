@@ -295,9 +295,21 @@ function validatePolicies(p: Record<string, unknown>) {
     'autoPrepareFnf',
     'autoCompleteExit',
     'autoConfirmProbation',
+    'autoApproveOvertime',
+    'autoApproveCompOff',
+    'autoApproveReimbursement',
   ]) {
     if (p[key] !== undefined && typeof p[key] !== 'boolean') {
       bad(`policies.${key} must be true or false.`);
+    }
+  }
+  for (const key of [
+    'autoApproveOvertimeMonthlyCapHours',
+    'autoApproveCompOffMaxDays',
+    'autoApproveReimbursementMaxAmount',
+  ]) {
+    if (p[key] !== undefined && p[key] !== null && (typeof p[key] !== 'number' || !Number.isFinite(p[key]) || (p[key] as number) < 0)) {
+      bad(`policies.${key} must be a number of 0 or more.`);
     }
   }
   if (

@@ -3,6 +3,11 @@
 // DocumentsService.withSignedUrl) on every read, and department-scoped review authorization via
 // assertManagerDeptScope.
 import * as path from 'path';
+import {
+  findAutoApprover,
+  loadAutoApproval,
+  reimbursementQualifies,
+} from '../common/auto-approval';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
 import {
   BadRequestException,
@@ -253,6 +258,10 @@ export class ReimbursementsService {
       performedById: actor.id,
       description: `Submitted a reimbursement claim of ${dto.amount} for ${dto.category}.`,
     });
+    // Companies that turned on automatic approval: a claim within the amount limit that carries a receipt is approved right
+    // away through the normal review path (paying it is still a separate step).
+    const autoApproved = await this.tryAutoApprove(claim.id, Number(dto.amount), !!dto.receiptUrl, actor, organizationId);
+    if (autoApproved) return autoApproved;
     // Reimbursements are reviewed by HR/Admin only, so they are told directly (no manager step).
     await this.notificationsService.notifyReviewers({
       organizationId,
@@ -503,6 +512,19 @@ export class ReimbursementsService {
       filename: `Reimbursement_Form_${who}_${monthName.slice(0, 3)}-${query.year}.${asExcel ? 'xlsx' : 'pdf'}`.replace(/[^A-Za-z0-9._-]/g, '_'),
       contentType: asExcel ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' : 'application/pdf',
     };
+  }
+
+  // Returns the approved claim, or null when it does not qualify (or anything goes wrong: it then stays pending).
+  private async tryAutoApprove(id: string, amount: number, hasReceipt: boolean, requester: Actor, organizationId: string) {
+    try {
+      const rules = await loadAutoApproval(this.scopedPrisma, organizationId);
+      if (!reimbursementQualifies(rules.reimbursement, amount, hasReceipt)) return null;
+      const approver = await findAutoApprover(this.scopedPrisma, organizationId, requester.id);
+      if (!approver) return null;
+      return await this.review(id, { status: ReimbursementStatus.APPROVED } as never, approver as never, organizationId);
+    } catch {
+      return null;
+    }
   }
 
   async review(

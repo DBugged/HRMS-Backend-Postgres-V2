@@ -4,6 +4,12 @@
 // assertManagerDeptScope.
 // Important: rateMultiplier is fixed per type at creation and not recalculated later, so a later change to
 // RATE_MULTIPLIERS only affects new records, not historical ones.
+import {
+  AUTO_APPROVAL_NOTE,
+  findAutoApprover,
+  loadAutoApproval,
+  overtimeQualifies,
+} from '../common/auto-approval';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import {
   assertPayrollMonthsUnlocked,
@@ -264,6 +270,10 @@ export class OvertimeService {
       performedById: actor.id,
       description: `Logged ${hours} hour(s) of ${type.toLowerCase()} overtime on ${formatDateDisplay(dto.date, '', dateFormat, timeZone)}.`,
     });
+    // Companies that turned on automatic approval: regular/night overtime within the monthly cap is approved right away
+    // through the normal review path (weekend/holiday work needs a compensation choice, so it always waits for a person).
+    const autoApproved = await this.tryAutoApprove(record.id, type, hours, usedThisMonth, actor, organizationId);
+    if (autoApproved) return autoApproved;
     await this.notificationsService.notifyReviewers({
       organizationId,
       requester: actor,
@@ -275,6 +285,27 @@ export class OvertimeService {
 
     // WARN mode: saved, but the person is told the cap was passed.
     return capProblem.warn ? { ...record, warning: capProblem.warn } : record;
+  }
+
+  // Returns the approved record, or null when the request does not qualify (or anything goes wrong: it then stays pending).
+  private async tryAutoApprove(
+    id: string,
+    type: OvertimeType,
+    hours: number,
+    usedThisMonth: number,
+    requester: Actor,
+    organizationId: string,
+  ) {
+    try {
+      if (type !== OvertimeType.REGULAR && type !== OvertimeType.NIGHT) return null;
+      const rules = await loadAutoApproval(this.scopedPrisma, organizationId);
+      if (!overtimeQualifies(rules.overtime, hours, usedThisMonth)) return null;
+      const approver = await findAutoApprover(this.scopedPrisma, organizationId, requester.id);
+      if (!approver) return null;
+      return await this.review(id, { status: OvertimeStatus.APPROVED, comments: AUTO_APPROVAL_NOTE } as never, approver as never, organizationId);
+    } catch {
+      return null;
+    }
   }
 
   // Overtime already logged (pending or approved) in the month of `date`, and on that day.
