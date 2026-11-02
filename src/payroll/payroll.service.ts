@@ -156,6 +156,7 @@ import {
   BulkTransitionPayrollDto,
   type PayrollTransitionAction,
 } from './dto/bulk-transition-payroll.dto';
+import { BulkUnlockPayrollDto } from './dto/bulk-unlock-payroll.dto';
 import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
@@ -4305,6 +4306,29 @@ export class PayrollService {
       ...advice,
       payer: payerAccount ? { accountNumber: payerAccount, ifsc: payerIfsc } : null,
     };
+  }
+
+  // Several locked or paid runs, one reason. Each goes through unlock() itself, so every rule of the single unlock holds for
+  // each run; the ones that cannot be unlocked are listed with why, and never stop the rest.
+  async bulkUnlock(
+    dto: BulkUnlockPayrollDto,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const unlocked: PayrollRun[] = [];
+    const skipped: TransitionSkip[] = [];
+    for (const id of [...new Set(dto.ids)]) {
+      try {
+        unlocked.push(
+          (await this.unlock(id, { reason: dto.reason }, actor, organizationId)) as PayrollRun,
+        );
+      } catch (err) {
+        const response = (err as { response?: { message?: string | string[] } }).response;
+        const message = Array.isArray(response?.message) ? response.message.join(' ') : response?.message;
+        skipped.push({ id, status: 'unlock_refused', reason: message ?? (err as Error).message });
+      }
+    }
+    return { updatedCount: unlocked.length, skipped, runs: unlocked };
   }
 
   async unlock(

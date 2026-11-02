@@ -31,6 +31,7 @@ import { CalculatePayrollDto } from './dto/calculate-payroll.dto';
 import { QueryPayrollDto } from './dto/query-payroll.dto';
 import { AdjustPayrollDto } from './dto/adjust-payroll.dto';
 import { BulkTransitionPayrollDto } from './dto/bulk-transition-payroll.dto';
+import { BulkUnlockPayrollDto } from './dto/bulk-unlock-payroll.dto';
 import { UnlockPayrollDto } from './dto/unlock-payroll.dto';
 import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import { CreateSupplementaryPayrollDto } from './dto/create-supplementary-payroll.dto';
@@ -429,6 +430,19 @@ export class PayrollController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // Unlock several locked or paid runs at once with one reason. Each is unlocked exactly as the single unlock would be (a paid
+  // run needs an Admin, a loan repayment that cannot be reversed blocks that run); one failing never stops the others.
+  @Post('bulk-unlock')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  bulkUnlock(
+    @Body() dto: BulkUnlockPayrollDto,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.payrollService.bulkUnlock(dto, caller, caller.organizationId);
   }
 
   @Post(':id/verify')
