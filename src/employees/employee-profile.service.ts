@@ -6,7 +6,7 @@
 // Important: assertSelfOrHr() gates personal-data/document/asset self-service so a non-HR actor can only
 // touch their own profile; getFullProfile() is the HR/Admin-only variant that returns everything, unlike
 // the password-stripped-only view elsewhere.
-import { profileScore } from './profile-score';
+import { profileScore, withAccountFields, withRootGender } from './profile-score';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly } from '../letters/auto-letter';
 import { todayInOrgTz } from '../common/org-date';
@@ -190,21 +190,30 @@ export class EmployeeProfileService {
         select: { docType: true, status: true },
       }),
     ]);
-    return profileScore(employee.personalData as Record<string, unknown>, requirements, documents);
+    return profileScore(
+      withAccountFields(withRootGender(employee.personalData as Record<string, unknown>, employee.gender), employee),
+      requirements,
+      documents,
+      { uanRequired: await this.uanRequired(employee, organizationId) },
+    );
   }
 
   // The score of every active employee who is not leaving, lowest first - so HR sees who to chase. Same visibility rule as the
   // onboarding document list: an HR/Admin colleague's row is shown to an Admin (or to themselves) only.
   async profileScores(actor: Actor, organizationId: string) {
-    const [requirements, employees] = await Promise.all([
+    const [requirements, employees, payrollSettings] = await Promise.all([
       this.scopedPrisma.documentRequirement.findMany({
         where: { organizationId, isMandatory: true, isActive: true },
         select: { name: true, isMandatory: true, isActive: true },
       }),
       this.scopedPrisma.user.findMany({
         where: { organizationId, isActive: true, exitDate: null },
-        select: { id: true, name: true, employeeId: true, role: true, personalData: true },
+        select: {
+          id: true, name: true, employeeId: true, role: true, gender: true, personalData: true, employeeType: true,
+          contactNumber: true, profileImage: true, designation: true, departmentId: true, employeeCategory: true, workLocationId: true,
+        },
       }),
+      this.scopedPrisma.payrollSettings.findFirst({ where: { organizationId }, select: { pfEnabled: true } }),
     ]);
     const visible = employees.filter(
       (e) => actor.id === e.id || actor.role === Role.ADMIN || !(e.role === Role.ADMIN || e.role === Role.HR),
@@ -222,7 +231,12 @@ export class EmployeeProfileService {
       byEmployee.set(d.employeeId, list);
     }
     const data = visible.map((e) => {
-      const score = profileScore(e.personalData as Record<string, unknown>, requirements, byEmployee.get(e.id) ?? []);
+      const score = profileScore(
+        withAccountFields(withRootGender(e.personalData as Record<string, unknown>, e.gender), e),
+        requirements,
+        byEmployee.get(e.id) ?? [],
+        { uanRequired: uanRequiredFor({ pfEnabled: payrollSettings?.pfEnabled ?? false, employeeType: e.employeeType }) },
+      );
       return {
         employeeId: e.id,
         name: e.name,
@@ -337,7 +351,7 @@ export class EmployeeProfileService {
     const mandatoryDocumentsUploaded =
       await this.computeMandatoryDocumentsUploaded(id, organizationId);
     const merged = mergePersonalData(
-      employee.personalData as Record<string, unknown>,
+      withRootGender(employee.personalData as Record<string, unknown>, employee.gender),
       {},
       mandatoryDocumentsUploaded,
       { uanRequired: await this.uanRequired(employee, organizationId) },

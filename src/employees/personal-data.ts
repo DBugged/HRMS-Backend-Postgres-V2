@@ -422,6 +422,9 @@ const REQUIRED_FOR_COMPLETION = [
   'bankIFSC',
   // Needed for TDS: without a PAN the tax is deducted at the higher rate (if the company switches that on).
   'panNumber',
+  // The Aadhaar number and the cancelled cheque (the bank proof) are asked for as well.
+  'aadharNumber',
+  'cancelledChequeUrl',
 ] as const;
 
 export function isProfileComplete(

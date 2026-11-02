@@ -1,3 +1,4 @@
+process.env.JWT_ACCESS_SECRET ??= 'test-secret-for-file-tokens';
 import {
   assertContactNumbersDistinct,
   areMandatoryDocumentsUploaded,
@@ -34,6 +35,8 @@ const COMPLETE_FIELDS = {
   bankAccountNo: '123456789',
   bankIFSC: 'HDFC0001234',
   panNumber: 'ABCDE1234F',
+  aadharNumber: '123412341234',
+  cancelledChequeUrl: 'orgs/o/cheque.png',
 };
 
 describe('isProfileComplete', () => {
