@@ -101,6 +101,7 @@ import { todayInOrgTz } from '../common/org-date';
 import {
   leaveCancelWindowDaysOf,
   ownerCancelOptions,
+  adminCanCancelOthers,
   leaveTaken,
   ownerCanCancel,
 } from './leave-cancel-rules';
@@ -556,7 +557,11 @@ export class LeavesService {
           ...l,
           ...(l.employeeId === actor.id
             ? ownerCancelOptions(l, today, windowDays, CANCEL_OVERRIDE_ROLES.includes(actor.role))
-            : { canCancel: false, canRequestCancel: false }),
+            : {
+                // An Admin / HR can cancel a colleague's leave that has not started yet, even when it is approved.
+                canCancel: CANCEL_OVERRIDE_ROLES.includes(actor.role) && adminCanCancelOthers(l, today),
+                canRequestCancel: false,
+              }),
         })),
       () => this.scopedPrisma.leave.count({ where }),
       query.page,
@@ -1416,6 +1421,10 @@ export class LeavesService {
       }
     }
     const result = await this.performCancel(id, leave, actor, organizationId, !isSelf);
+    // Someone else cancelled it: the employee is told, with the dates, so a booked leave does not just vanish.
+    if (!isSelf) {
+      await this.notifyLeaveCancelledForEmployee(leave, actor, organizationId).catch(() => undefined);
+    }
     // Cancelling an approved leave undoes something an approver signed off, so they are told (a pending leave was never
     // approved, and a request an approver decides themselves needs no extra alert).
     if (isSelf && leave.status === LeaveStatus.APPROVED) {
@@ -1424,6 +1433,18 @@ export class LeavesService {
       );
     }
     return result;
+  }
+
+  // Tells the employee that an Admin / HR cancelled their leave.
+  private async notifyLeaveCancelledForEmployee(leave: Leave, actor: Actor, organizationId: string) {
+    const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
+    await this.notificationsService.create({
+      organizationId,
+      userId: leave.employeeId,
+      title: 'Leave Cancelled',
+      message: `${actor.name} cancelled your leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}. Your leave balance was restored.`,
+      category: NotificationCategory.LEAVE,
+    });
   }
 
   // Tells the employee's reporting manager(s) and every HR/Admin that an approved leave was cancelled by its owner.

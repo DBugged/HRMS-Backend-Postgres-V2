@@ -47,6 +47,18 @@ export function ownerCanCancel(
   return today < addDays(leave.startDate, windowDays);
 }
 
+/**
+ * Whether an Admin / HR may cancel someone else's leave from the leave list: it is still waiting or approved and it has not
+ * started (today or later), so nothing has been taken yet. The server still lets them cancel any time through the API.
+ */
+export function adminCanCancelOthers(leave: CancelSubject, today: string): boolean {
+  const cancellable =
+    leave.status === LeaveStatus.PENDING ||
+    leave.status === LeaveStatus.RETURNED ||
+    leave.status === LeaveStatus.APPROVED;
+  return cancellable && leave.startDate >= today;
+}
+
 /** What the owner is offered on a leave: cancel it now, or ask for it to be cancelled. */
 export function ownerCancelOptions(
   leave: CancelSubject,

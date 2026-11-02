@@ -51,3 +51,21 @@ describe('leave cancel rules', () => {
     expect(leaveTaken(approved, '2026-11-26')).toBe(true);
   });
 });
+
+import { adminCanCancelOthers } from './leave-cancel-rules';
+import { LeaveStatus as LS } from '@prisma/client';
+
+describe('adminCanCancelOthers', () => {
+  const leave = (status: LS, startDate: string, endDate = startDate) => ({ status, startDate, endDate });
+  it('offers cancel for a waiting or approved leave that has not started', () => {
+    expect(adminCanCancelOthers(leave(LS.APPROVED, '2026-11-10', '2026-11-12'), '2026-11-02')).toBe(true);
+    expect(adminCanCancelOthers(leave(LS.PENDING, '2026-11-02'), '2026-11-02')).toBe(true);
+    expect(adminCanCancelOthers(leave(LS.RETURNED, '2026-12-01'), '2026-11-02')).toBe(true);
+  });
+  it('does not offer it once the leave has started, or for a leave that is already closed', () => {
+    expect(adminCanCancelOthers(leave(LS.APPROVED, '2026-11-01', '2026-11-05'), '2026-11-02')).toBe(false);
+    expect(adminCanCancelOthers(leave(LS.APPROVED, '2026-10-20'), '2026-11-02')).toBe(false);
+    expect(adminCanCancelOthers(leave(LS.CANCELLED, '2026-11-10'), '2026-11-02')).toBe(false);
+    expect(adminCanCancelOthers(leave(LS.REJECTED, '2026-11-10'), '2026-11-02')).toBe(false);
+  });
+});
