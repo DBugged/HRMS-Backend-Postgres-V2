@@ -6,6 +6,7 @@ import { PrivacyRequestsService } from './privacy-requests.service';
 import { PrivacyMeService } from './privacy-me.service';
 import { PrivacyAuditService } from './privacy-audit.service';
 import { BreachReminderService } from './breach-reminder.service';
+import { RetentionReminderService } from './retention-reminder.service';
 import { NotificationsModule } from '../notifications/notifications.module';
 
 // PrivacyAuditService is exported so other modules (documents, files, exports) can log to the hash-chained privacy
@@ -19,6 +20,7 @@ import { NotificationsModule } from '../notifications/notifications.module';
     PrivacyMeService,
     PrivacyAuditService,
     BreachReminderService,
+    RetentionReminderService,
   ],
   exports: [PrivacyAuditService, PrivacyService],
 })
