@@ -1959,7 +1959,9 @@ export class EmployeesService {
 
     // This year's leave was credited for the old joining date: someone created with a wrong date (e.g. 01-01-2000) got
     // the whole annual quota, and moving the date to this year has to cut it to the prorated share (and the other way
-    // round). Same rule as a leave-type edit (reconcileUpfrontCredit): never below what is already used or pending.
+    // round). Unlike a leave-type edit, this sets the credit to exactly what the new date earns, even when leave already
+    // taken or booked exceeds it (the balance then shows the shortfall) - keeping the higher figure left days the new
+    // joining date had not earned.
     const leaveTypes = await this.scopedPrisma.leaveType.findMany({
       where: { organizationId, isActive: true },
     });
@@ -1969,7 +1971,7 @@ export class EmployeesService {
           tx,
           leaveType,
           organizationId,
-          { employeeIds: [before.id] },
+          { employeeIds: [before.id], exact: true },
         );
       }
     });

@@ -73,6 +73,19 @@ describe('reconcileUpfrontCredit', () => {
     expect(r.changes[0].to).toBe(9);
   });
 
+  it('with exact (a corrected joining date) sets what the date earns even below what was taken', async () => {
+    // Joined 1 July: 6 of the 12 months count, so 12 x 6 / 12 = 6, while 9 days were already taken.
+    const { tx, updates } = fakeTx(
+      [row({ credited: 12, availed: 9 })],
+      new Date(Date.UTC(year, 6, 1)),
+    );
+    const r = await service.reconcileUpfrontCredit(tx, type(), 'org', {
+      exact: true,
+    });
+    expect(r.changes[0].to).toBe(6);
+    expect(updates[0]).toMatchObject({ credited: 6, closing: -3 });
+  });
+
   it('dry run reports but writes nothing', async () => {
     const { tx, updates } = fakeTx([row()], new Date(Date.UTC(year, 6, 10)));
     const r = await service.reconcileUpfrontCredit(tx, type(), 'org', {
