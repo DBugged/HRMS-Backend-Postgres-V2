@@ -6,6 +6,7 @@
 // Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the original release exactly);
 // the optional accompanying email is gated per-recipient by their own emailEnabled preference — the only
 // place that flag is actually consulted.
+import { withLink } from './notification-link-rules';
 import { managerIdsOf } from '../common/managers';
 import {
   BadRequestException,
@@ -206,7 +207,8 @@ export class NotificationsService {
       }),
     ]);
 
-    return { ...result, unreadCount };
+    // Each row carries the page it opens: the one the sender set, else the one its title implies.
+    return { ...result, data: result.data.map((n: any) => withLink(n)), unreadCount };
   }
 
   // Lightweight badge count — same muted-category filtering as findMine's
