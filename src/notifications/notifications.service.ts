@@ -55,6 +55,9 @@ export interface CreateNotificationInput {
   category: NotificationCategory;
   // Marks a notification that asks the recipient to decide on something (see push-messages.ts).
   pushKind?: 'APPROVAL';
+  // A page inside the web app (starting with "/") that opening the notification goes to, when its kind alone does not say
+  // where (e.g. one person's Documents tab). Stored on the notification; the web app follows it.
+  link?: string;
 }
 
 @Injectable()
@@ -78,6 +81,7 @@ export class NotificationsService {
         title: input.title,
         message: input.message,
         category: input.category,
+        ...(input.link ? { link: input.link } : {}),
       },
     });
     // The same event also goes to the user's phone(s); never allowed to fail the caller.
@@ -165,6 +169,7 @@ export class NotificationsService {
         title: input.title,
         message: input.message,
         category: input.category,
+        ...(input.link ? { link: input.link } : {}),
       })),
     });
     this.pushService.notify(inputs);

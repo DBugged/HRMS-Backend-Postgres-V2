@@ -1107,6 +1107,8 @@ export class EmployeeProfileService {
             title,
             message: `${owner.name} uploaded ${docType} and it is waiting for your review. Open their profile > Documents.`,
             category: NotificationCategory.GENERAL,
+            // Opening the notice goes straight to that person's Documents tab.
+            link: `/employee-profile?id=${encodeURIComponent(owner.id)}&tab=documents`,
           })),
       );
     } catch (err) {
