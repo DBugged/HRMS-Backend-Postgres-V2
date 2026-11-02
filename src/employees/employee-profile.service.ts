@@ -1167,9 +1167,13 @@ export class EmployeeProfileService {
     // having existed. HR/Admin can still delete an approved document
     // (e.g. to fix a mis-filed upload); only a plain self-service delete
     // of one's own already-approved document is blocked.
+    // HR does not remove their own approved document either (another HR user or an Admin does); an Admin, with nobody
+    // above them, may.
     if (
       doc.status === EmployeeDocumentStatus.APPROVED &&
-      !HR_ROLES.includes(actor.role)
+      (actor.id === id
+        ? actor.role !== Role.ADMIN
+        : !HR_ROLES.includes(actor.role))
     ) {
       throw new ForbiddenException(
         'This document has already been approved and can no longer be removed. Contact HR if it needs to be replaced.',
