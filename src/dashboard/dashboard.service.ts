@@ -40,6 +40,7 @@ import {
   StatutoryModule,
   User,
   WfhApprovalStatus,
+  WorkArrangement,
 } from '@prisma/client';
 import { leaveDaysInRange } from '../leaves/leave-days-in-range';
 import { EXPORTABLE_RUN_STATUSES } from '../payroll/exportable-runs';
@@ -1499,8 +1500,23 @@ export class DashboardService {
     }
     for (const kind of offKind.values()) summary[kind] = (summary[kind] ?? 0) + 1;
 
+    // Work From Home this month. It is where the day was worked, not a status of its own (a day worked from home is
+    // still Present above), so it is counted separately: approved days so far, approved days still to come, and
+    // requests waiting for a decision.
+    const wfhThisMonth = { approved: 0, upcoming: 0, pending: 0 };
+    for (const row of attendanceThisMonth) {
+      if (row.workArrangement !== WorkArrangement.WFH) continue;
+      if (row.workArrangementStatus === WfhApprovalStatus.PENDING) {
+        wfhThisMonth.pending += 1;
+      } else if (row.workArrangementStatus === WfhApprovalStatus.APPROVED) {
+        if (row.date > today) wfhThisMonth.upcoming += 1;
+        else wfhThisMonth.approved += 1;
+      }
+    }
+
     return {
       attendanceSummary: summary,
+      wfhThisMonth,
       // Working days in this month for the employee's own schedule (weekly offs + holidays excluded), and how many
       // of them have passed — the "x / working days" figure on the attendance card.
       attendanceWorkingDays: { total: calendar.total, elapsed: calendar.elapsed },

@@ -638,6 +638,43 @@ describe('Dashboard (e2e)', () => {
     });
   });
 
+  it("This Month's Attendance counts Work From Home days (approved so far, and waiting) apart from Present", async () => {
+    const wfh = async () =>
+      (
+        (
+          await request(app.getHttpServer())
+            .get('/dashboard/employee')
+            .set('Authorization', `Bearer ${employeeToken}`)
+            .expect(200)
+        ).body as {
+          wfhThisMonth: { approved: number; upcoming: number; pending: number };
+        }
+      ).wfhThisMonth;
+    const before = await wfh();
+    const row = await prisma.attendance.findFirstOrThrow({
+      where: { employeeId, date: todayStr() },
+    });
+    await prisma.attendance.update({
+      where: { id: row.id },
+      data: { workArrangement: 'WFH', workArrangementStatus: 'APPROVED' },
+    });
+    expect((await wfh()).approved).toBe(before.approved + 1);
+    await prisma.attendance.update({
+      where: { id: row.id },
+      data: { workArrangementStatus: 'PENDING' },
+    });
+    const waiting = await wfh();
+    expect(waiting.approved).toBe(before.approved);
+    expect(waiting.pending).toBe(before.pending + 1);
+    await prisma.attendance.update({
+      where: { id: row.id },
+      data: {
+        workArrangement: row.workArrangement,
+        workArrangementStatus: row.workArrangementStatus,
+      },
+    });
+  });
+
   it("This Month's Attendance lists holidays and weekly offs from the calendar, never as Absent", async () => {
     const summary = async () =>
       (
