@@ -927,6 +927,7 @@ export class EmployeesService {
         AND: [noDeptScope, employeeDirectoryScope(actor)].filter(Boolean) as object[],
       }),
       ...(query.role && { role: query.role }),
+      ...(query.isActive !== undefined && { isActive: query.isActive }),
       ...(query.search && {
         OR: [
           { name: { contains: query.search, mode: 'insensitive' as const } },
@@ -1354,11 +1355,13 @@ export class EmployeesService {
       );
     }
 
-    // Joining date: a one-time correction, never after payroll has been processed for the employee.
+    // Joining date: HR gets a one-time correction, an Admin can correct it as often as needed; never after payroll has
+    // been processed for the employee.
     const joiningDateChange = await this.assertJoiningDateChangeAllowed(
       before,
       clean.joiningDate,
       organizationId,
+      actor.role,
     );
 
     // Deactivating (not reactivating) someone who's still another active
@@ -1824,8 +1827,8 @@ export class EmployeesService {
   }
 
   // Returns the change descriptor when joiningDate really changes (null when it is absent/unchanged).
-  // Allowed once per employee, and only while no payroll for them is past the editable
-  // draft/calculated stage - a verified/approved/locked/paid run is final, so the date is frozen.
+  // Allowed once per employee for HR, any number of times for an Admin, and only while no payroll for them is past the
+  // editable draft/calculated stage - a verified/approved/locked/paid run is final, so the date is frozen for everyone.
   private async assertJoiningDateChangeAllowed(
     before: {
       id: string;
@@ -1834,13 +1837,14 @@ export class EmployeesService {
     },
     newDateStr: string | undefined,
     organizationId: string,
+    actorRole: Role,
   ): Promise<{ newDate: string } | null> {
     if (!newDateStr) return null;
     const newDate = newDateStr.slice(0, 10);
     if (newDate === before.joiningDate.toISOString().slice(0, 10)) return null;
-    if (before.joiningDateChangedAt) {
+    if (before.joiningDateChangedAt && actorRole !== Role.ADMIN) {
       throw new BadRequestException(
-        'The joining date has already been changed once and cannot be changed again.',
+        'The joining date has already been changed once. Only an Admin can change it again.',
       );
     }
     const processed = await this.scopedPrisma.payrollRun.findFirst({
