@@ -1343,4 +1343,50 @@ describe('Leaves (e2e)', () => {
         .expect(403);
     });
   });
+
+  it('a leave already taken in full offers no cancellation request, and one sent is refused; a running one still can be', async () => {
+    const emp = await prisma.user.findUniqueOrThrow({
+      where: { id: employeeId },
+    });
+    const make = (startDate: string, endDate: string) =>
+      prisma.leave.create({
+        data: {
+          organizationId: emp.organizationId,
+          employeeId,
+          leaveTypeId: elLeaveTypeId,
+          startDate,
+          endDate,
+          totalDays: 1,
+          status: 'APPROVED',
+        },
+      });
+    const taken = await make(offsetDate(-40), offsetDate(-40));
+    const running = await make(offsetDate(-1), offsetDate(1));
+    const list = await request(app.getHttpServer())
+      .get('/leaves')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const rows = (
+      list.body as { data: (LeaveBody & { canRequestCancel?: boolean })[] }
+    ).data;
+    expect(rows.find((l) => l.id === taken.id)?.canRequestCancel).toBe(false);
+    expect(rows.find((l) => l.id === running.id)?.canRequestCancel).toBe(true);
+
+    const refused = await request(app.getHttpServer())
+      .post(`/leaves/${taken.id}/cancel-request`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ reason: 'Came back early' })
+      .expect(400);
+    expect((refused.body as { message: string }).message).toMatch(
+      /already been taken/,
+    );
+    await request(app.getHttpServer())
+      .post(`/leaves/${running.id}/cancel-request`)
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ reason: 'Came back early' })
+      .expect(201);
+    await prisma.leave.deleteMany({
+      where: { id: { in: [taken.id, running.id] } },
+    });
+  });
 });

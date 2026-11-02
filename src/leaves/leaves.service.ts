@@ -101,6 +101,7 @@ import { todayInOrgTz } from '../common/org-date';
 import {
   leaveCancelWindowDaysOf,
   ownerCancelOptions,
+  leaveTaken,
   ownerCanCancel,
 } from './leave-cancel-rules';
 import {
@@ -2487,6 +2488,11 @@ export class LeavesService {
     if (ownerCanCancel(leave, today, windowDays)) {
       throw new BadRequestException(
         'This leave has not started yet - cancel it directly instead of sending a request.',
+      );
+    }
+    if (leaveTaken(leave, today)) {
+      throw new BadRequestException(
+        'This leave has already been taken, so it can no longer be cancelled. Ask HR if it needs correcting.',
       );
     }
     const reason = dto.reason.trim();
