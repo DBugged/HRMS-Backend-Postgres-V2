@@ -2082,11 +2082,19 @@ describe('Attendance (e2e)', () => {
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
       const data = (
-        res.body as { data: { status: string; leaveTypeName?: string }[] }
+        res.body as {
+          data: {
+            status: string;
+            leaveTypeName?: string;
+            leavePaid?: boolean;
+          }[];
+        }
       ).data;
       expect(data.length).toBe(1);
       expect(data[0].status).toBe('ON_LEAVE');
       expect(data[0].leaveTypeName).toBe('List Endpoint Leave');
+      // A paid leave type, so the day is paid leave (not an absent / unpaid day).
+      expect(data[0].leavePaid).toBe(true);
     });
 
     it('a PRESENT row carries neither holidayName nor leaveTypeName', async () => {

@@ -3285,6 +3285,9 @@ export class AttendanceService {
         // 'COMP_OFF' / 'LWP' when the leave on this day is a comp-off or Leave Without Pay, so clients can tell them
         // apart from other leave (the Attendance Tracker grid and the mobile calendar do).
         let leaveKind: 'COMP_OFF' | 'LWP' | undefined;
+        // Whether that leave is paid (Leave Without Pay and other unpaid types are not), so a summary can count unpaid
+        // days as absent days, the way payroll does.
+        let leavePaid: boolean | undefined;
         if (
           record.status === AttendanceStatus.ON_LEAVE ||
           record.status === AttendanceStatus.HALF_DAY
@@ -3293,6 +3296,10 @@ export class AttendanceService {
             (l) => l.startDate <= record.date && l.endDate >= record.date,
           );
           leaveTypeName = matching?.leaveType.name;
+          if (matching) {
+            leavePaid =
+              matching.leaveType.isPaid && matching.leaveType.code !== 'LWP';
+          }
           if (matching?.leaveType.code === LEAVE_TYPE_CODES.COMPOFF) leaveKind = 'COMP_OFF';
           else if (matching?.leaveType.code === 'LWP') leaveKind = 'LWP';
         }
@@ -3324,6 +3331,7 @@ export class AttendanceService {
           ...(holidayName !== undefined && { holidayName }),
           ...(leaveTypeName !== undefined && { leaveTypeName }),
           ...(leaveKind !== undefined && { leaveKind }),
+          ...(leavePaid !== undefined && { leavePaid }),
         };
       }),
     };
