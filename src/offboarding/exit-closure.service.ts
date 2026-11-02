@@ -159,7 +159,7 @@ export class ExitClosureService {
       this.emailTemplates.defaultFor('EXIT_DOCUMENTS_PACK', variables),
       { brandId: employee.brandId },
     );
-    await this.emailService.send({ organizationId, to, subject: rendered.subject, html: rendered.html, attachments });
+    await this.emailService.send({ organizationId, to, subject: rendered.subject, html: rendered.html, attachments, allowInactive: true });
     await this.scopedPrisma.offboardingCase.updateMany({ where: { id: c.id, organizationId }, data: { exitPackSentAt: new Date() } });
     await this.record(organizationId, actor, c, 'EXIT_PACK_EMAILED', `The last ${attachments.length} payslip(s) were emailed to the personal email address.`);
     return true;

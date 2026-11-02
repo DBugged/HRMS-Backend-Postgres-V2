@@ -604,6 +604,7 @@ export class OffboardingService {
     );
     await this.emailService.send({
       organizationId,
+      allowInactive: true, // addressed to the leaver on purpose
       to: employee.email,
       subject: rendered.subject,
       html: rendered.html,
@@ -1130,6 +1131,7 @@ export class OffboardingService {
       );
       await this.emailService.send({
         organizationId,
+        allowInactive: true, // addressed to the leaver on purpose
         to: personalEmail,
         subject: rendered.subject,
         html: rendered.html,

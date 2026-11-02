@@ -107,6 +107,7 @@ export class PayslipEmailWorker implements OnModuleInit, OnModuleDestroy {
     );
     await this.emailService.send({
       organizationId,
+      allowInactive: true, // addressed to a leaver on purpose
       to: employee.email,
       subject: rendered.subject,
       html: rendered.html,

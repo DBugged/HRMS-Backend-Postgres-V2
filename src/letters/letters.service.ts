@@ -1072,6 +1072,7 @@ export class LettersService {
 
     await this.emailService.send({
       organizationId,
+      allowInactive: true, // addressed to a leaver on purpose
       to: recipient,
       subject: rendered.subject,
       html: rendered.html,
