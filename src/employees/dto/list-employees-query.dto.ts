@@ -86,4 +86,11 @@ export class ListEmployeesQueryDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   myTeam?: boolean;
+  @ApiPropertyOptional({
+    description: 'true: only people who still work here (for pickers); false: only inactive. Absent: everyone.',
+  })
+  @IsOptional()
+  @Transform(({ value }) => (value === 'true' || value === true ? true : value === 'false' || value === false ? false : value))
+  @IsBoolean()
+  isActive?: boolean;
 }

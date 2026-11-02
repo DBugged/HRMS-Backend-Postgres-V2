@@ -57,7 +57,7 @@ export class LeaveBalanceAdjustmentService {
     const [employee, leaveType, org] = await Promise.all([
       this.scopedPrisma.user.findFirst({
         where: { id: dto.employeeId, organizationId },
-        select: { id: true, name: true, employeeId: true },
+        select: { id: true, name: true, employeeId: true, isActive: true },
       }),
       this.scopedPrisma.leaveType.findFirst({
         where: { id: dto.leaveTypeId, organizationId },
@@ -68,6 +68,10 @@ export class LeaveBalanceAdjustmentService {
       }),
     ]);
     if (!employee) throw new NotFoundException('Employee not found.');
+    // A balance is adjusted for someone who works here; an inactive employee is not offered in the picker either.
+    if (!employee.isActive) {
+      throw new BadRequestException('This employee is inactive, so their leave balance cannot be adjusted.');
+    }
     if (!leaveType) throw new NotFoundException('Leave type not found.');
     if (!ADJUSTABLE.includes(leaveType.allocationType)) {
       throw new BadRequestException(
