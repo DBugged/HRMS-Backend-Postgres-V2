@@ -14,6 +14,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
 
 import { LettersModule } from '../letters/letters.module';
 import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
+import { ProbationAutoConfirmService } from './probation-auto-confirm.service';
 
 @Module({
   imports: [
@@ -29,7 +30,7 @@ import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
     LeaveBalancesModule,
   ],
   controllers: [EmployeesController],
-  providers: [EmployeesService, EmployeeProfileService, EmployeeIdService],
+  providers: [EmployeesService, EmployeeProfileService, EmployeeIdService, ProbationAutoConfirmService],
   // EmployeeIdService is exported specifically so AuthModule can reuse it
   // for founder-account creation (the founder is Employee #1 of their own
   // org) instead of duplicating the row-locked counter logic.
