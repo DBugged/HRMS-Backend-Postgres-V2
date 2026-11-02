@@ -1,7 +1,7 @@
 // Purpose: Exposes endpoints to fetch and upsert an employee's investment/tax declaration for a financial year.
 // Responsibilities: Validates DTOs and delegates all logic to TaxDeclarationsService.
 // Important: No @Roles() anywhere — access is identity-based (self-vs-other) in the service, not role-based.
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { TaxDeclarationsService } from './tax-declarations.service';
@@ -10,6 +10,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { SetTaxRegimeDto } from './dto/set-tax-regime.dto';
+import { isFinancialYear } from '../common/is-financial-year.validator';
 
 type Caller = Omit<User, 'password'>;
 
@@ -37,6 +38,10 @@ export class TaxDeclarationsController {
     @Query('financialYear') financialYear: string | undefined,
     @CurrentUser() caller: Caller,
   ) {
+    // A label like "junk" used to fall through and answer 200; leaving it out still means the current year.
+    if (financialYear && !isFinancialYear(financialYear)) {
+      throw new BadRequestException('financialYear must be a financial year such as 2026-27.');
+    }
     return this.taxDeclarationsService.get(
       employeeId,
       financialYear,

@@ -1564,6 +1564,18 @@ export class DashboardService {
     );
     const windowStartDateStr = windowStart.toISOString().slice(0, 10);
 
+    // Someone whose account was switched off without a completed exit (an onboarding cancelled, a duplicate, a test
+    // account) never worked here as far as headcount goes: counting them as a joiner with no matching leaver left the
+    // figures unable to add up (15 joiners, 0 leavers, but 6 active). Only people who are active, or who left through
+    // a completed exit, count on either side.
+    const exited = await this.scopedPrisma.offboardingCase.findMany({
+      where: { organizationId, status: OffboardingStatus.COMPLETED },
+      select: { employeeId: true },
+    });
+    const countedPeople = {
+      OR: [{ isActive: true }, { id: { in: exited.map((e) => e.employeeId) } }],
+    };
+
     const [
       joiners,
       leavers,
@@ -1572,7 +1584,7 @@ export class DashboardService {
       leftBeforeWindow,
     ] = await Promise.all([
       this.scopedPrisma.user.findMany({
-        where: { organizationId, joiningDate: { gte: windowStart } },
+        where: { organizationId, joiningDate: { gte: windowStart }, ...countedPeople },
         select: { joiningDate: true },
       }),
       this.scopedPrisma.offboardingCase.findMany({
@@ -1587,7 +1599,7 @@ export class DashboardService {
         where: { organizationId, isActive: true },
       }),
       this.scopedPrisma.user.count({
-        where: { organizationId, joiningDate: { lt: windowStart } },
+        where: { organizationId, joiningDate: { lt: windowStart }, ...countedPeople },
       }),
       this.scopedPrisma.offboardingCase.count({
         where: {

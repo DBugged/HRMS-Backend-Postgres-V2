@@ -73,6 +73,8 @@ import {
   collectReportingChain,
   noDepartmentManagerScope,
   resolveDepartmentFilter,
+  employeeDirectoryScope,
+  slimForEmployeeViewer,
 } from './employee-query-scope';
 import { PrivacyAuditService } from '../privacy/privacy-audit.service';
 import { auditSensitive } from '../common/sensitive-audit';
@@ -921,7 +923,9 @@ export class EmployeesService {
       organizationId,
       ...(teamIds && { id: { in: teamIds } }),
       ...(departmentId && { departmentId }),
-      ...(noDeptScope && { AND: [noDeptScope] }),
+      ...((noDeptScope || employeeDirectoryScope(actor)) && {
+        AND: [noDeptScope, employeeDirectoryScope(actor)].filter(Boolean) as object[],
+      }),
       ...(query.role && { role: query.role }),
       ...(query.search && {
         OR: [
@@ -971,7 +975,9 @@ export class EmployeesService {
 
     return {
       data: rows.map((r) => ({
-        ...this.forViewer(toSafe(r, maskFor(actor, r.id)), r.id, actor),
+        ...(actor.role === Role.EMPLOYEE && r.id !== actor.id
+          ? slimForEmployeeViewer(this.forViewer(toSafe(r, maskFor(actor, r.id)), r.id, actor))
+          : this.forViewer(toSafe(r, maskFor(actor, r.id)), r.id, actor)),
         ...(review.has(r.id) ? { documentReview: review.get(r.id) } : {}),
       })),
       total,

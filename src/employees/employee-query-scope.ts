@@ -94,3 +94,25 @@ export function collectReportingChain(
   }
   return chain;
 }
+
+/**
+ * What an EMPLOYEE may see of a colleague in the directory list (it feeds the Reporting Structure org view): who they are and where
+ * they sit in the reporting line - never email, phone, gender, probation or anything else from their record. The caller's own row
+ * is not trimmed.
+ */
+const EMPLOYEE_VISIBLE_FIELDS = [
+  'id', 'organizationId', 'name', 'employeeId', 'role', 'departmentId', 'designation', 'profileImage',
+  'reportingManagerId', 'additionalReportingManagerIds', 'isActive', 'employmentStatus',
+] as const;
+
+export function slimForEmployeeViewer<T extends Record<string, unknown>>(row: T): Partial<T> {
+  const out: Record<string, unknown> = {};
+  for (const key of EMPLOYEE_VISIBLE_FIELDS) if (key in row) out[key] = row[key];
+  return out as Partial<T>;
+}
+
+/** An EMPLOYEE sees only people who still work here (plus their own record, whatever its state). */
+export function employeeDirectoryScope(actor: Actor & { id?: string }): { OR: Array<{ isActive: true } | { id: string }> } | undefined {
+  if (actor.role !== Role.EMPLOYEE) return undefined;
+  return { OR: [{ isActive: true }, { id: actor.id ?? '' }] };
+}

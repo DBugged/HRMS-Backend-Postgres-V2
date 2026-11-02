@@ -308,6 +308,13 @@ export class OrganizationSettingsService {
     };
   }
 
+  // Only the shift and weekly-off defaults (orgPayrollAttendancePrefs): what Work Schedules and Departments start new schedules
+  // and departments from. HR needs these to do their job, without being given the whole Admin-only settings document.
+  async getAttendancePrefs(organizationId: string) {
+    const org = await this.findOrThrow(organizationId);
+    return { orgPayrollAttendancePrefs: org.orgPayrollAttendancePrefs ?? {} };
+  }
+
   private async findOrThrow(organizationId: string) {
     const org = await this.prisma.organization.findUnique({
       where: { id: organizationId },
