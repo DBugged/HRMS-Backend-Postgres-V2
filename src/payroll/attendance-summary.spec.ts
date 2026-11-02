@@ -187,9 +187,9 @@ describe('payableDaysInRange', () => {
   ];
 
   it('counts only the days inside the range', () => {
-    // 1 present + 0.5 half + 1 weekly off; no leave overlaps 1-10.
+    // 1 present + 1 half (paid as a full day) + 1 weekly off; no leave overlaps 1-10.
     expect(payableDaysInRange(rows, leaves, '2026-04-01', '2026-04-10')).toBe(
-      2.5,
+      3,
     );
   });
 
@@ -364,5 +364,39 @@ describe('a half-day leave pays one day only when the other half was worked (B8)
       2026,
     );
     expect(s.payableDays).toBe(1);
+  });
+});
+
+describe('pay is cut only for LWP and Absent days', () => {
+  const day = (n: number, status: AttendanceStatus) => ({ date: `2026-10-${String(n).padStart(2, '0')}`, status, isLate: false });
+  const month = (over: Record<number, AttendanceStatus> = {}) =>
+    Array.from({ length: 31 }, (_, i) => day(i + 1, over[i + 1] ?? AttendanceStatus.PRESENT));
+  const paid = { isPaid: true, salaryImpactPercent: 100 };
+  const lwp = { isPaid: false, salaryImpactPercent: 0 };
+  const leave = (d: number, isHalfDay: boolean, leaveType: typeof paid) => ({ startDate: `2026-10-${String(d).padStart(2, '0')}`, endDate: `2026-10-${String(d).padStart(2, '0')}`, isHalfDay, leaveType });
+
+  it('a half-day attendance row costs nothing', () => {
+    const s = computeAttendanceSummary(month({ 5: AttendanceStatus.HALF_DAY }), [], [], 10, 2026);
+    expect(s.payableDays).toBe(31);
+    expect(s.lopDays).toBe(0);
+  });
+  it('paid leave costs nothing', () => {
+    const s = computeAttendanceSummary(month({ 6: AttendanceStatus.ON_LEAVE }), [leave(6, false, paid)], [], 10, 2026);
+    expect(s.payableDays).toBe(31);
+    expect(s.lopDays).toBe(0);
+  });
+  it('an LWP day costs a day, shown as unpaid leave', () => {
+    const s = computeAttendanceSummary(month({ 7: AttendanceStatus.ON_LEAVE }), [leave(7, false, lwp)], [], 10, 2026);
+    expect(s.payableDays).toBe(30);
+    expect(s.unpaidLeaveDays).toBe(1);
+  });
+  it('a half day of LWP costs only that half', () => {
+    const s = computeAttendanceSummary(month({ 7: AttendanceStatus.HALF_DAY }), [leave(7, true, lwp)], [], 10, 2026);
+    expect(s.payableDays).toBe(30.5);
+  });
+  it('an Absent day costs a day, shown as LOP', () => {
+    const s = computeAttendanceSummary(month({ 8: AttendanceStatus.ABSENT }), [], [], 10, 2026);
+    expect(s.payableDays).toBe(30);
+    expect(s.lopDays).toBe(1);
   });
 });

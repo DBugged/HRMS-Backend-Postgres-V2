@@ -164,7 +164,7 @@ export function computeAttendanceSummary(
   } else {
     payableDays = Math.min(
       totalDaysInMonth,
-      presentDays + halfDays * 0.5 + holidays + weeklyOffs + paidLeaveDays,
+      presentDays + halfDays + holidays + weeklyOffs + paidLeaveDays,
     );
   }
   const lopDays = Math.max(
@@ -203,14 +203,15 @@ export interface DatedAttendanceRowLike {
   leaveOverriddenStatus?: AttendanceStatus | null;
 }
 
+// A half-day attendance row (a short day) is paid as a full day: pay is cut only for Leave Without Pay and for Absent,
+// unmarked or incomplete days. A half day of unpaid leave still costs its half, through the leave's own unpaid share.
 const rowPay = (status: AttendanceStatus): number =>
   status === AttendanceStatus.PRESENT ||
+  status === AttendanceStatus.HALF_DAY ||
   status === AttendanceStatus.HOLIDAY ||
   status === AttendanceStatus.WEEKLY_OFF
     ? 1
-    : status === AttendanceStatus.HALF_DAY
-      ? 0.5
-      : 0;
+    : 0;
 
 function* datesBetween(from: string, to: string): Generator<string> {
   const end = new Date(`${to}T00:00:00.000Z`).getTime();

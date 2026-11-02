@@ -90,12 +90,22 @@ describe('payroll engine: attendance, leave and proration', () => {
     expect(r.grossSalary).toBe(37800);
   });
 
-  it('a half day counts as half a day of pay', async () => {
+  it('a half-day attendance row is paid as a full day: pay is cut only for LWP and Absent days', async () => {
     const r = await run({
       attendance: monthRows(2026, 9, { '2026-09-02': S.HALF_DAY }),
     });
-    expect(r.attendanceSummary.payableDays).toBe(29.5);
-    expect(r.grossSalary).toBe(Math.round((42000 * 29.5) / 30));
+    expect(r.attendanceSummary.payableDays).toBe(30);
+    expect(r.attendanceSummary.lopDays).toBe(0);
+    expect(r.grossSalary).toBe(42000);
+  });
+
+  it('an Absent day still cuts a full day of pay', async () => {
+    const r = await run({
+      attendance: monthRows(2026, 9, { '2026-09-02': S.ABSENT }),
+    });
+    expect(r.attendanceSummary.payableDays).toBe(29);
+    expect(r.attendanceSummary.lopDays).toBe(1);
+    expect(r.grossSalary).toBe(Math.round((42000 * 29) / 30));
   });
 
   it('weekly offs and holidays are paid even with no attendance row for them', async () => {

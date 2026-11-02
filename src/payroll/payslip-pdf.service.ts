@@ -813,11 +813,8 @@ export class PayslipPdfService {
       >;
       // Weekly Offs and Holidays are the days actually paid as such (attendance rows plus the calendar's weekly offs and
       // holidays, see payroll/off-days.ts). Older runs saved before those counts existed show the figures they have.
-      // A half day is worth half a day's pay: the other half shows as "Half-day deduction" instead of being folded into
-      // LOP, so LOP is only the full days lost (absent, unmarked, unpaid leave not counted here).
-      const halfDayDeduction = (a.halfDays ?? 0) * 0.5;
-      const lopFullDays =
-        a.lopDays != null ? Math.max(0, a.lopDays - halfDayDeduction) : null;
+      // A half-day attendance row is paid as a full day, so LOP is only the days lost to Absent / unmarked days.
+      const lopFullDays = a.lopDays ?? null;
       const attFields: [string, string | number][] = [
         ['Working Days', a.workingDays ?? '-'],
         ['Present Days', a.presentDays ?? '-'],
@@ -827,9 +824,6 @@ export class PayslipPdfService {
         ['Paid Leave', a.paidLeaveDays ?? '-'],
         ['Unpaid Leave', a.unpaidLeaveDays ?? '-'],
         ['LOP Days', lopFullDays ?? '-'],
-        ...(halfDayDeduction > 0
-          ? ([['Half-day deduction', halfDayDeduction]] as [string, number][])
-          : []),
         ['OT Hours', a.overtimeHours ?? '-'],
         [
           'Payable Days',
