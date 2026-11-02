@@ -63,6 +63,15 @@ export function productionConfigWarnings(
     w.push(
       'WARNING: BACKEND_PUBLIC_URL is unset, localhost or not https - the email logo (and other emailed asset URLs) will not load in mail clients.',
     );
+  // Control Panel sign-in is on only when CC_JWT_SECRET is set; its password-reset emails link to CC_FRONTEND_URL and fall
+  // back to localhost when it is unset, so the emailed link would not open for anyone.
+  if (env.CC_JWT_SECRET) {
+    const cc = env.CC_FRONTEND_URL;
+    if (!cc || LOCAL_RE.test(cc))
+      w.push(
+        'WARNING: CC_FRONTEND_URL is unset or localhost - Control Center password-reset emails will link to a page nobody can open. Set it to the live Control Panel URL and add that origin to CORS_ORIGIN.',
+      );
+  }
   return w;
 }
 

@@ -43,6 +43,21 @@ describe('production config', () => {
     assertProductionConfig(good, warn);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('SMTP'));
   });
+  it('warns when Control Center sign-in is on but CC_FRONTEND_URL is unset or localhost', () => {
+    const on = { ...good, CC_JWT_SECRET: 'c'.repeat(40) };
+    const unset = jest.fn();
+    assertProductionConfig(on, unset);
+    expect(unset).toHaveBeenCalledWith(expect.stringContaining('CC_FRONTEND_URL'));
+    const local = jest.fn();
+    assertProductionConfig({ ...on, CC_FRONTEND_URL: 'http://localhost:3101' }, local);
+    expect(local).toHaveBeenCalledWith(expect.stringContaining('CC_FRONTEND_URL'));
+    const set = jest.fn();
+    assertProductionConfig({ ...on, CC_FRONTEND_URL: 'https://cp.example.com' }, set);
+    expect(set).not.toHaveBeenCalledWith(expect.stringContaining('CC_FRONTEND_URL'));
+    const off = jest.fn();
+    assertProductionConfig(good, off);
+    expect(off).not.toHaveBeenCalledWith(expect.stringContaining('CC_FRONTEND_URL'));
+  });
   it('secure cookie defaults on in production with env override', () => {
     expect(cookieSecure(good)).toBe(true);
     expect(cookieSecure({ ...good, COOKIE_SECURE: 'false' })).toBe(false);
