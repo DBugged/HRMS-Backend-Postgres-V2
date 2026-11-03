@@ -439,6 +439,9 @@ export class EmployeesService {
   // pass on in person. They must change it at their next sign-in. Shown once; never stored in the clear.
   async resetPassword(id: string, actor: Actor & { id: string; role: Role }, organizationId: string) {
     const employee = await this.findByIdOrThrow(id, organizationId);
+    if (id === actor.id) {
+      throw new BadRequestException('Use Change password in your own profile to change your own password.');
+    }
     if (employee.role === Role.ADMIN && actor.role !== Role.ADMIN) {
       throw new ForbiddenException('Only an Admin can reset an Admin account\'s password.');
     }
