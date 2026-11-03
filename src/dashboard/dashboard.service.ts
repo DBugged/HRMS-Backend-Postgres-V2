@@ -743,10 +743,9 @@ export class DashboardService {
   // The ONE definition of "waiting for a decision" for each request type. The Approvals list (pendingItems) and the
   // sidebar badge counts (pendingCounts) both use it, so a badge can never disagree with the list behind it.
   //
-  // A request is not waiting for a person's decision when they are not allowed to decide it: nobody, Admin included,
-  // may review their own leave, comp-off or encashment (assertNotOwnRequest), and only an Admin may review their own
-  // other requests (assertNotSelfApproval). Those are left out of the count and the list when the viewer is known, so
-  // the badge never promises an action the person cannot take.
+  // A request is not waiting for a person's decision when they are not allowed to decide it: only an Admin may decide
+  // their own requests (assertNotSelfApproval), so HR's and a manager's own are left out of their count and list when
+  // the viewer is known - the badge never promises an action the person cannot take. An Admin's own stay in.
   private pendingWhere(
     scope: {
       organizationId: string;
@@ -754,8 +753,8 @@ export class DashboardService {
     },
     viewer?: { id: string; role: Role },
   ) {
-    const withoutOwn = (strict: boolean) => {
-      if (!viewer || (!strict && viewer.role === Role.ADMIN)) return scope;
+    const withoutOwn = () => {
+      if (!viewer || viewer.role === Role.ADMIN) return scope;
       return {
         ...scope,
         employeeId: { ...(scope.employeeId ?? {}), not: viewer.id },
@@ -765,7 +764,7 @@ export class DashboardService {
       // Pending leave requests, plus approved leaves the employee has asked to have cancelled (the approver decides
       // those too, from the same list).
       leaves: {
-        ...withoutOwn(true),
+        ...withoutOwn(),
         OR: [
           { status: LeaveStatus.PENDING },
           {
@@ -775,27 +774,27 @@ export class DashboardService {
         ],
       },
       regularizations: {
-        ...withoutOwn(false),
+        ...withoutOwn(),
         regularization: { path: ['status'], equals: 'pending' },
       },
       wfh: {
-        ...withoutOwn(false),
+        ...withoutOwn(),
         workArrangementStatus: WfhApprovalStatus.PENDING,
       },
-      overtime: { ...withoutOwn(false), status: OvertimeStatus.PENDING },
-      compOffs: { ...withoutOwn(true), status: CompOffStatus.PENDING },
+      overtime: { ...withoutOwn(), status: OvertimeStatus.PENDING },
+      compOffs: { ...withoutOwn(), status: CompOffStatus.PENDING },
       reimbursements: {
-        ...withoutOwn(false),
+        ...withoutOwn(),
         status: ReimbursementStatus.PENDING,
       },
-      loans: { ...withoutOwn(false), status: LoanStatus.PENDING },
+      loans: { ...withoutOwn(), status: LoanStatus.PENDING },
       encashments: {
-        ...withoutOwn(true),
+        ...withoutOwn(),
         status: LeaveEncashmentStatus.PENDING,
       },
       // Pending resignations, plus approved ones whose employee asked to withdraw (HR/Admin answer those too).
       resignations: {
-        ...withoutOwn(false),
+        ...withoutOwn(),
         OR: [
           { status: ResignationStatus.PENDING },
           {

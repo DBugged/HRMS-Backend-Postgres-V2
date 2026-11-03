@@ -90,19 +90,6 @@ export function assertNotSelfApproval(
   }
 }
 
-// Stricter than assertNotSelfApproval: nobody, ADMIN included, may review their own leave, comp-off or encashment
-// request. The request has to be decided by someone else (another Admin, or HR).
-export function assertNotOwnRequest(
-  actor: DeptScopeActor,
-  targetEmployeeId: string,
-): void {
-  if (actor.id === targetEmployeeId) {
-    throw new ForbiddenException(
-      'You cannot approve or review your own request. Ask another approver (HR or Admin) to decide it.',
-    );
-  }
-}
-
 // Guards a single-record action (review/approve/view) so a scoped reviewer (see reviewerScope: a MANAGER, or an HR
 // user who heads departments) can only act on an employee they look after, and no one but ADMIN can act on their own
 // request. EMPLOYEE never reaches this — those actions are self-scoped upstream.
