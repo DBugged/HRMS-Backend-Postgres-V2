@@ -46,6 +46,7 @@ const RULES: Array<[RegExp, string]> = [
   [/employee\(s\) have required documents missing/, '/pending-onboarding'],
   [/^Document (Approved|Rejected)/, '/profile'],
   [/^Address Updated/, '/profile'],
+  [/^Complete your profile/, '/profile'],
   // Company housekeeping
   [/^Warranty ends|^Warranty ending/, '/asset-inventory'],
   [/^Add \d{4}'s holidays/, '/holidays'],

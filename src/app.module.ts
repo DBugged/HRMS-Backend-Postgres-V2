@@ -1,3 +1,4 @@
+import { HealthController } from './health.controller';
 import {
   MiddlewareConsumer,
   Module,
@@ -180,7 +181,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     AssetsModule,
     PlatformInternalModule,
   ],
-  controllers: [AppController],
+  controllers: [AppController, HealthController],
   providers: [
     AppService,
     // Every route requires a valid access token by default; @Public()

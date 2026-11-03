@@ -252,6 +252,35 @@ export class EmployeeProfileService {
     return { data };
   }
 
+  // "Finish your profile" reminder, in the app and as a push, to the chosen employees or to everyone below 100%. Anyone reminded in the
+  // last 24 hours is skipped, so pressing the button twice does not nag.
+  async sendProfileReminders(employeeIds: string[] | undefined, actor: Actor, organizationId: string) {
+    const { data } = await this.profileScores(actor, organizationId);
+    const chosen = employeeIds ? new Set(employeeIds) : null;
+    const due = data.filter((r) => r.percent < 100 && (!chosen || chosen.has(r.employeeId)));
+    const title = 'Complete your profile';
+    const recent = due.length
+      ? await this.scopedPrisma.notification.findMany({
+          where: { organizationId, title, userId: { in: due.map((r) => r.employeeId) }, createdAt: { gte: new Date(Date.now() - 24 * 3600_000) } },
+          select: { userId: true },
+        })
+      : [];
+    const already = new Set(recent.map((n) => n.userId));
+    const toSend = due.filter((r) => !already.has(r.employeeId));
+    if (toSend.length > 0) {
+      await this.notificationsService.createMany(
+        toSend.map((r) => ({
+          organizationId,
+          userId: r.employeeId,
+          title,
+          message: `Your profile is ${r.percent}% complete. Still missing: ${r.missingPreview.join(', ')}${r.missingCount > r.missingPreview.length ? ` and ${r.missingCount - r.missingPreview.length} more` : ''}.`,
+          category: NotificationCategory.GENERAL,
+        })),
+      );
+    }
+    return { sent: toSend.length, skipped: due.length - toSend.length };
+  }
+
   // One row per active employee still onboarding (Onboarding / Probation / Extended Probation): how far their
   // mandatory documents are. Drives the Documents column on the Pending Onboarding list so HR sees who needs a
   // review or an upload without opening every profile. Each active mandatory requirement counts once, by the best

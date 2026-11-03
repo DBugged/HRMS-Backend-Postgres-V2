@@ -30,6 +30,7 @@ describe('resolveNotificationLink', () => {
     ['Exit task assigned: Laptop', '/offboarding'],
     ['Please acknowledge: Code of Conduct', '/documents'],
     ['Document Rejected', '/profile'],
+    ['Complete your profile', '/profile'],
     ['Warranty ends this week: LAP-1', '/asset-inventory'],
     ['Happy Birthday!', null],
     ['', null],

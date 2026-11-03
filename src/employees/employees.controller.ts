@@ -21,6 +21,8 @@ import { BulkCreateEmployeesDto } from './dto/bulk-create-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { BulkSetAlwaysPresentDto } from './dto/bulk-set-always-present.dto';
 import { BulkSetCompanyDto } from './dto/bulk-set-company.dto';
+import { BulkUpdateEmployeesDto } from './dto/bulk-update-employees.dto';
+import { SendProfileRemindersDto } from './dto/send-profile-reminders.dto';
 import { ReassignReportsDto } from './dto/reassign-reports.dto';
 import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
@@ -118,6 +120,23 @@ export class EmployeesController {
   @UseGuards(RolesGuard)
   bulkSetAlwaysPresent(@Body() dto: BulkSetAlwaysPresentDto, @CurrentUser() caller: Caller) {
     return this.employeesService.bulkSetAlwaysPresent(dto.employeeIds, dto.alwaysPresent, dto.from, caller, caller.organizationId);
+  }
+
+  // Moves several employees to the same department / reporting manager / work location / designation in one step. Each one goes
+  // through the normal single-employee update, so every rule (and the history entry) still applies; failures are listed, not fatal.
+  @Post('bulk-update')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkUpdate(@Body() dto: BulkUpdateEmployeesDto, @CurrentUser() caller: Caller) {
+    return this.employeesService.bulkUpdate(dto, caller, caller.organizationId);
+  }
+
+  // Sends the "finish your profile" reminder to the chosen employees, or to everyone below 100%. Before the :id routes.
+  @Post('profile-reminders')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  sendProfileReminders(@Body() dto: SendProfileRemindersDto, @CurrentUser() caller: Caller) {
+    return this.employeeProfileService.sendProfileReminders(dto.employeeIds, caller, caller.organizationId);
   }
 
   // How complete every active employee's profile is, lowest first (HR/Admin). Before the :id routes so "profile-scores" is not read as an id.

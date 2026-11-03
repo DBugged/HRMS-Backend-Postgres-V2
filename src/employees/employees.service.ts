@@ -36,7 +36,8 @@ import {
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { generatePolicyPassword } from '../common/password-policy';
-import { isEmail, isDateString } from 'class-validator';
+import { isEmail, isDateString, validateSync } from 'class-validator';
+import { plainToInstance } from 'class-transformer';
 import {
   EmploymentStatus,
   Gender,
@@ -62,6 +63,7 @@ import { escapeHtml } from '../email-templates/email-layout';
 import { mapWithConcurrency } from '../common/concurrency';
 import { skip } from '../common/pagination';
 import { CreateEmployeeDto } from './dto/create-employee.dto';
+import { BulkUpdateEmployeesDto } from './dto/bulk-update-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { DeactivateEmployeeDto } from './dto/deactivate-employee.dto';
 import { ListEmployeesQueryDto } from './dto/list-employees-query.dto';
@@ -730,24 +732,38 @@ export class EmployeesService {
         return;
       }
 
+      // The Add Employee form requires a contact number, so a row without one is refused here too.
+      if (!contactNumber) {
+        failed.push({ row, error: 'Contact number is required.' });
+        return;
+      }
+      const dto = {
+        name,
+        email,
+        personalEmail,
+        departmentId: department.id,
+        workLocationId: workLocation.id,
+        brandId: company?.id,
+        designation,
+        employeeCategory: employeeCategory.name,
+        contactNumber,
+        gender,
+        joiningDate: joiningDate || undefined,
+        selfieRequirement,
+        role,
+        employeeType: employeeType.value,
+      };
+      // The same field rules the form's API enforces (name pattern and length, phone and email formats, lengths): an imported
+      // row is held to exactly what a person typing it into the form would be.
+      const problems = validateSync(plainToInstance(CreateEmployeeDto, dto), { whitelist: false });
+      if (problems.length > 0) {
+        failed.push({ row, error: problems.flatMap((p) => Object.values(p.constraints ?? {}))[0] ?? 'A field is not valid.' });
+        return;
+      }
+
       try {
         const { employee, generatedPassword } = await this.create(
-          {
-            name,
-            email,
-            personalEmail,
-            departmentId: department.id,
-            workLocationId: workLocation.id,
-            brandId: company?.id,
-            designation,
-            employeeCategory: employeeCategory.name,
-            contactNumber: contactNumber || undefined,
-            gender,
-            joiningDate: joiningDate || undefined,
-            selfieRequirement,
-            role,
-            employeeType: employeeType.value,
-          },
+          dto,
           actor,
           organizationId,
           { sendWelcomeEmail },
@@ -2211,6 +2227,31 @@ export class EmployeesService {
       details: { brandId, employeeIds: allowed.map((t) => t.id) },
     });
     return { updated: allowed.length, skipped: employeeIds.length - allowed.length };
+  }
+
+  async bulkUpdate(
+    dto: BulkUpdateEmployeesDto,
+    actor: Actor & { id: string; role: Role },
+    organizationId: string,
+  ) {
+    const { employeeIds, ...changes } = dto;
+    const patch = Object.fromEntries(Object.entries(changes).filter(([, v]) => v !== undefined && v !== '')) as Partial<UpdateEmployeeDto>;
+    if (Object.keys(patch).length === 0) throw new BadRequestException('Choose at least one thing to change.');
+    if (patch.reportingManagerId && employeeIds.includes(patch.reportingManagerId)) {
+      throw new BadRequestException('A person cannot be moved under themselves. Remove them from the selection or pick another manager.');
+    }
+    const updated: string[] = [];
+    const failed: { employeeId: string; name: string; error: string }[] = [];
+    for (const id of employeeIds) {
+      try {
+        await this.update(id, patch as UpdateEmployeeDto, actor, organizationId);
+        updated.push(id);
+      } catch (err) {
+        const target = await this.scopedPrisma.user.findFirst({ where: { id, organizationId }, select: { name: true } });
+        failed.push({ employeeId: id, name: target?.name ?? 'Unknown', error: err instanceof Error ? err.message : 'Could not be updated.' });
+      }
+    }
+    return { updated: updated.length, failed };
   }
 
   // Marks several employees always-present (or normal) in one go. HR cannot change an Admin's record, so those are skipped and counted.
