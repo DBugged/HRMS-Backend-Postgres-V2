@@ -8,6 +8,7 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { placeholderEmailFor, readLoginPolicy } from '../common/no-email';
 import { inReviewerScope, reviewerScope } from '../common/dept-scope';
 import { summarizeDocumentReview, type DocumentReview } from './document-review';
 import { sisterCompaniesOn } from '../module-access/module-gate';
@@ -189,7 +190,16 @@ export class EmployeesService {
       );
     }
 
-    const existing = await this.usersService.findByEmail(dto.email);
+    // A person with no email gets an undeliverable placeholder login address, but only where the company allows it
+    // (Policies > Sign-in); everyone else must have a real one.
+    const hasEmail = !!dto.email;
+    if (!hasEmail) {
+      const orgPolicies = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { policies: true } });
+      if (!readLoginPolicy(orgPolicies?.policies).allowNoEmail) {
+        throw new BadRequestException('An email address is required. Switch on "People may have no email" in Organization Settings to add someone without one.');
+      }
+    }
+    const existing = hasEmail ? await this.usersService.findByEmail(dto.email as string) : null;
     if (existing) {
       throw new ConflictException('An account with this email already exists.');
     }
@@ -224,7 +234,7 @@ export class EmployeesService {
             employeeId,
             brandId,
             ...(dto.alwaysPresent ? { alwaysPresent: true, alwaysPresentFrom: dto.alwaysPresentFrom ?? null } : {}),
-            email: dto.email,
+            email: dto.email || placeholderEmailFor(employeeId),
             password: hashedPassword,
             name: dto.name,
             role: requestedRole,
@@ -425,6 +435,30 @@ export class EmployeesService {
   // original password can't literally be "resent" since it's hashed
   // immediately and never stored in plaintext, so this issues a fresh one
   // and invalidates the old one, same generation path as create().
+  // For someone with no email (or no personal email on file) there is nowhere to send a link, so HR gets a fresh one-time password to
+  // pass on in person. They must change it at their next sign-in. Shown once; never stored in the clear.
+  async resetPassword(id: string, actor: Actor & { id: string; role: Role }, organizationId: string) {
+    const employee = await this.findByIdOrThrow(id, organizationId);
+    if (employee.role === Role.ADMIN && actor.role !== Role.ADMIN) {
+      throw new ForbiddenException('Only an Admin can reset an Admin account\'s password.');
+    }
+    const temporaryPassword = generatePolicyPassword();
+    const hashedPassword = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
+    await this.scopedPrisma.user.updateMany({
+      where: { id, organizationId },
+      data: { password: hashedPassword, mustChangePassword: true, failedLoginAttempts: 0, lockedUntil: null },
+    });
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_PASSWORD_RESET_BY_HR',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: id,
+      details: { employeeId: employee.employeeId },
+    });
+    return { temporaryPassword, employeeId: employee.employeeId };
+  }
+
   async resendCredentials(id: string, organizationId: string) {
     const employee = await this.findByIdOrThrow(id, organizationId);
     const personalEmail = (
@@ -536,6 +570,9 @@ export class EmployeesService {
     // batch is checked against the same org-wide lists.
     // The Company column is read only when sister companies is switched on; otherwise it is ignored.
     const brandsOn = await sisterCompaniesOn(organizationId);
+    const allowNoEmail = readLoginPolicy(
+      (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { policies: true } }))?.policies,
+    ).allowNoEmail;
     const [departments, workLocationItems, employeeCategoryItems, org, brandItems] =
       await Promise.all([
         this.scopedPrisma.department.findMany({
@@ -601,7 +638,7 @@ export class EmployeesService {
         failed.push({ row, error: 'Name is required.' });
         return;
       }
-      if (!email || !isEmail(email)) {
+      if (email ? !isEmail(email) : !allowNoEmail) {
         failed.push({ row, error: 'A valid email is required.' });
         return;
       }
@@ -643,7 +680,7 @@ export class EmployeesService {
       // five fields — personalEmail is also what makes the welcome email
       // actually go out for bulk-imported rows (it was previously never
       // collected, so bulk-imported employees never got one).
-      if (!personalEmail || !isEmail(personalEmail)) {
+      if (personalEmail ? !isEmail(personalEmail) : !(allowNoEmail && !email)) {
         failed.push({ row, error: 'A valid personal email is required.' });
         return;
       }
@@ -739,8 +776,8 @@ export class EmployeesService {
       }
       const dto = {
         name,
-        email,
-        personalEmail,
+        email: email || undefined,
+        personalEmail: personalEmail || undefined,
         departmentId: department.id,
         workLocationId: workLocation.id,
         brandId: company?.id,

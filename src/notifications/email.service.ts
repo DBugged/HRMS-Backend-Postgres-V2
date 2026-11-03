@@ -4,6 +4,7 @@
 // Important: send() never throws — any provider failure (or missing credentials) degrades to a console
 // dry-run log rather than propagating, so a bad SMTP/Resend config can never fail the caller's business
 // action. Only an explicit EMAIL_DRIVER=resend switches off the default SMTP path.
+import { isPlaceholderEmail } from '../common/no-email';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import * as nodemailer from 'nodemailer';
 import { Resend } from 'resend';
@@ -162,6 +163,13 @@ export class EmailService {
   async send(input: SendEmailInput): Promise<{ dryRun: boolean }> {
     const { subject, html, attachments, organizationId } = input;
     let { to, cc, bcc } = input;
+    // A person with no email has a placeholder login address that can never receive mail: nothing is sent to it.
+    if (isPlaceholderEmail(to)) {
+      this.logger.log(`[Email - SKIPPED, recipient has no email] Subject: ${subject}`);
+      return { dryRun: true };
+    }
+    cc = cc?.filter((a) => !isPlaceholderEmail(a));
+    bcc = bcc?.filter((a) => !isPlaceholderEmail(a));
     if (organizationId && !input.allowInactive) {
       const inactive = await this.inactiveAddresses(organizationId, [to, ...(cc ?? []), ...(bcc ?? [])]);
       if (inactive.size > 0) {

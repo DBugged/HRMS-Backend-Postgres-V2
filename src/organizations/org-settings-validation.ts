@@ -312,6 +312,13 @@ function validatePolicies(p: Record<string, unknown>) {
       bad(`policies.${key} must be a number of 0 or more.`);
     }
   }
+  if (p.loginMethod !== undefined && !['EMAIL', 'EMAIL_OR_ID', 'ID_ONLY'].includes(p.loginMethod as string)) {
+    bad('policies.loginMethod must be EMAIL, EMAIL_OR_ID or ID_ONLY.');
+  }
+  if (p.allowNoEmail !== undefined && typeof p.allowNoEmail !== 'boolean') bad('policies.allowNoEmail must be true or false.');
+  if (p.allowNoEmail === true && p.loginMethod === 'EMAIL') {
+    bad('People without an email cannot sign in with an email. Choose "Email or employee ID" or "Employee ID only", or switch "People may have no email" off.');
+  }
   if (p.eventLetters !== undefined) {
     const e = p.eventLetters;
     if (!e || typeof e !== 'object' || Array.isArray(e)) bad('policies.eventLetters must be an object.');

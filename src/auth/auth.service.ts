@@ -9,6 +9,7 @@
 // rotate on every use (revoke-and-reissue) to limit replay of a leaked token. forgotPassword() and
 // findRefreshTokenByHash() deliberately return the same response/bypass tenant scoping for tenant-unknown
 // lookups by design, not by oversight.
+import { isPlaceholderEmail, loginRefusal, readLoginPolicy } from '../common/no-email';
 import { EXIT_ACCESS_ENDED_MESSAGE, exitAccessEnded } from '../common/exit-access';
 import {
   BadRequestException,
@@ -453,6 +454,10 @@ export class AuthService {
     if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
       throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
     }
+    // The company's sign-in method (Policies > Sign-in): only someone who proved the password is told which way to sign in.
+    const orgRow = await this.scopedPrisma.organization.findFirst({ where: { id: user.organizationId }, select: { policies: true } });
+    const refusal = loginRefusal(readLoginPolicy(orgRow?.policies), dto.email.includes('@'), !isPlaceholderEmail(user.email));
+    if (refusal) throw new UnauthorizedException(refusal);
     // Only someone who proved the password learns that the address is still unconfirmed.
     if (!user.emailVerified) {
       throw new UnauthorizedException(
@@ -684,6 +689,7 @@ export class AuthService {
       user.locationRequirement,
       org?.orgPayrollAttendancePrefs,
     );
+    (safe as Record<string, unknown>).hasEmail = !isPlaceholderEmail(safe.email);
     // profileImage is a durable relativeKey (never a signed URL — see
     // file-token.ts), so it's signed fresh on every read. This is what
     // AuthContext's `user` (and so the header avatar) holds for the whole

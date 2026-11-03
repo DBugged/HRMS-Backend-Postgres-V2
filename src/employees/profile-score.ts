@@ -4,6 +4,8 @@
 // Important: the personal fields are the same list that decides profileCompleted (REQUIRED_FOR_COMPLETION in personal-data.ts) plus the
 //   personal email (where the final documents go after an exit) and the PAN (needed for tax); a mandatory document counts once an
 //   upload exists that is not rejected. "payrollReady" is stricter and narrower: bank details and PAN only.
+import { isPlaceholderEmail } from '../common/no-email';
+
 export interface MissingItem {
   key: string;
   label: string;
@@ -78,11 +80,14 @@ export function withAccountFields(
     departmentId?: string | null;
     employeeCategory?: string | null;
     workLocationId?: string | null;
+    // The login address: a placeholder means the person has no email, so a personal email is not expected of them.
+    email?: string | null;
   },
 ): Record<string, unknown> {
   const pd = personalData ?? {};
   return {
     ...pd,
+    ...(isPlaceholderEmail(employee.email) && !pd.personalEmail ? { personalEmail: 'none (no email)' } : {}),
     contactNumber: employee.contactNumber ?? '',
     profileImage: employee.profileImage ?? '',
     designation: employee.designation ?? '',

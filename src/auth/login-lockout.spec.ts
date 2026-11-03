@@ -27,6 +27,7 @@ async function build(opts: { locked: boolean; knownIps: string[] }) {
         opts.knownIps.includes(a.where.ipAddress) ? { id: 'l1' } : null,
     },
     refreshToken: { create: async () => ({}) },
+    organization: { findFirst: async () => ({ policies: {} }) },
   };
   const usersService = {
     findByEmail: async () => user,

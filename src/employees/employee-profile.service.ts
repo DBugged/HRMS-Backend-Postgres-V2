@@ -209,7 +209,7 @@ export class EmployeeProfileService {
       this.scopedPrisma.user.findMany({
         where: { organizationId, isActive: true, exitDate: null },
         select: {
-          id: true, name: true, employeeId: true, role: true, gender: true, personalData: true, employeeType: true,
+          id: true, name: true, employeeId: true, role: true, gender: true, personalData: true, employeeType: true, email: true,
           contactNumber: true, profileImage: true, designation: true, departmentId: true, employeeCategory: true, workLocationId: true,
         },
       }),

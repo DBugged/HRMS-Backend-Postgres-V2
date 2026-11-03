@@ -46,7 +46,7 @@ export class ProfileCompletionReminderService {
       p.payrollSettings.findFirst({ where: { organizationId }, select: { pfEnabled: true } }),
       p.user.findMany({
         where: { organizationId, isActive: true, exitDate: null },
-        select: { id: true, gender: true, personalData: true, employeeType: true, contactNumber: true, profileImage: true, designation: true, departmentId: true, employeeCategory: true, workLocationId: true },
+        select: { id: true, email: true, gender: true, personalData: true, employeeType: true, contactNumber: true, profileImage: true, designation: true, departmentId: true, employeeCategory: true, workLocationId: true },
       }),
     ]);
     const docsBy = new Map<string, { docType: string; status: string }[]>();

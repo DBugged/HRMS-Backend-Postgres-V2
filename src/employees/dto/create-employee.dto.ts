@@ -19,10 +19,13 @@ export class CreateEmployeeDto {
   @Matches(PERSON_NAME_PATTERN, { message: `name ${PERSON_NAME_MESSAGE}` })
   name!: string;
 
-  @ApiProperty({ example: 'jane@acme.test' })
+  // Optional only for a company that allows people with no email (Policies > Sign-in); create() refuses it otherwise.
+  @ApiPropertyOptional({ example: 'jane@acme.test' })
   @NormalizeEmail()
+  @IsOptional()
+  @ValidateIf((o: CreateEmployeeDto) => o.email !== '')
   @IsEmail()
-  email!: string;
+  email?: string;
 
   // Optional at this DTO/type level so bulkCreate's row shape (no
   // per-row personalEmail column in the Excel import) keeps working

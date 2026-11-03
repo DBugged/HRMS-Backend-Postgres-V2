@@ -6,6 +6,7 @@
 // Important: regenerateFaceApiKey() replaces the old single process-wide FACE_API_KEY that let anyone
 // holding it forge attendance webhooks for ANY organization; the generated key is shown once and never
 // exposed again on a read path, same as a generated employee password.
+import { readLoginPolicy } from '../common/no-email';
 import { wfhDaysPerMonthOf } from './org-wfh-policy';
 import {
   netWorkingHours,
@@ -430,6 +431,7 @@ export class OrganizationSettingsService {
   async getPublicBranding(organizationId: string) {
     const org = await this.findOrThrow(organizationId);
     const signed = this.withSignedUrls(org);
+    const loginPolicy = readLoginPolicy(org.policies);
     const policies = (org.policies ?? {}) as {
       currencySymbol?: string;
       defaultNoticeDays?: number;
@@ -445,6 +447,9 @@ export class OrganizationSettingsService {
     };
     return {
       isInitialized: org.isInitialized,
+      // How people sign in, and whether someone may have no email (Policies > Sign-in); the Add Employee form follows them.
+      loginMethod: loginPolicy.method,
+      allowNoEmail: loginPolicy.allowNoEmail,
       companyName: org.companyName,
       tagline: org.tagline,
       companyLogoUrl: signed.companyLogoUrl,

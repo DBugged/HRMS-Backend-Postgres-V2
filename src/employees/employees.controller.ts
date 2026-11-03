@@ -224,6 +224,14 @@ export class EmployeesController {
     return this.employeesService.reassignAllReports(id, dto.newManagerId, caller, caller.organizationId);
   }
 
+  // A one-time password for someone with no email to receive a link, shown once to HR / Admin.
+  @Post(':id/reset-password')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  resetPassword(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.employeesService.resetPassword(id, caller, caller.organizationId);
+  }
+
   @Post(':id/resend-credentials')
   @Roles(Role.ADMIN, Role.HR)
   @UseGuards(RolesGuard)

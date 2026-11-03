@@ -12,6 +12,7 @@ import { User } from '@prisma/client';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
 import { signPersonalDataFileUrls } from './personal-data';
 import { maskPersonalData, maskRevealable } from './personal-data-mask';
+import { isPlaceholderEmail } from '../common/no-email';
 
 const MASKED_INTERNAL_FIELDS = [
   'lastLoginAt',
@@ -37,6 +38,8 @@ export function toSafe(user: User, mask = false) {
     const internal = safe as Record<string, unknown>;
     for (const k of MASKED_INTERNAL_FIELDS) delete internal[k];
   }
+  // The placeholder login address of someone with no email is never shown; the screens read this instead.
+  (safe as Record<string, unknown>).hasEmail = !isPlaceholderEmail(safe.email);
   if (safe.profileImage) {
     // Held in AuthContext for the whole session, not re-fetched on every
     // navigation — see SESSION_ASSET_TTL_SECONDS' comment.
