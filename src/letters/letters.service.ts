@@ -53,6 +53,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { inReviewerScope } from '../common/dept-scope';
+import { isPlaceholderEmail } from '../common/no-email';
 
 // Hiring-stage letters are for someone joining or working with the company. Once an employee is serving notice or has
 // left (resigned, released, terminated, absconded - or their account is inactive) they can no longer be issued one.
@@ -1033,10 +1034,13 @@ export class LettersService {
     // Someone who has left (or is leaving) loses the company mailbox, so their letters - relieving, experience - go to the
     // personal address on file when there is one.
     const leaving = !employee.isActive || !!employee.exitDate;
-    const recipient = (leaving ? personalEmailOf(employee.personalData) : null) ?? employee.email;
+    let recipient = (leaving ? personalEmailOf(employee.personalData) : null) ?? employee.email;
+    // Someone with no email has only an undeliverable placeholder address: use a personal address if one was ever added, else
+    // refuse - the letter is never "sent" to nowhere. HR downloads it and hands it over.
+    if (isPlaceholderEmail(recipient)) recipient = personalEmailOf(employee.personalData) ?? '';
     if (!recipient) {
       throw new BadRequestException(
-        'This employee has no email address on file to send the letter to.',
+        `${employee.name} has no email address, so this letter cannot be emailed. Download it and hand it over.`,
       );
     }
 

@@ -8,6 +8,8 @@ export class AuthUserDto {
   @ApiProperty({ enum: Role }) role!: Role;
   @ApiProperty() organizationId!: string;
   @ApiProperty() mustChangePassword!: boolean;
+  // How this company signs in (Policies > Sign-in): the login screen words its field by it the next time on this device.
+  @ApiProperty({ enum: ['EMAIL', 'EMAIL_OR_ID', 'ID_ONLY'] }) loginMethod!: string;
 }
 
 // Documents the dual-delivery contract: web clients rely on the httpOnly

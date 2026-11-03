@@ -456,7 +456,8 @@ export class AuthService {
     }
     // The company's sign-in method (Policies > Sign-in): only someone who proved the password is told which way to sign in.
     const orgRow = await this.scopedPrisma.organization.findFirst({ where: { id: user.organizationId }, select: { policies: true } });
-    const refusal = loginRefusal(readLoginPolicy(orgRow?.policies), dto.email.includes('@'), !isPlaceholderEmail(user.email));
+    const loginPolicy = readLoginPolicy(orgRow?.policies);
+    const refusal = loginRefusal(loginPolicy, dto.email.includes('@'), !isPlaceholderEmail(user.email));
     if (refusal) throw new UnauthorizedException(refusal);
     // Only someone who proved the password learns that the address is still unconfirmed.
     if (!user.emailVerified) {
@@ -489,6 +490,7 @@ export class AuthService {
         role: user.role,
         organizationId: user.organizationId,
         mustChangePassword: user.mustChangePassword,
+        loginMethod: loginPolicy.method,
       },
     };
   }
@@ -677,8 +679,9 @@ export class AuthService {
     // setting, else the org's) — the mobile app uses it to skip the camera.
     const org = await this.scopedPrisma.organization.findFirst({
       where: { id: organizationId },
-      select: { orgPayrollAttendancePrefs: true },
+      select: { orgPayrollAttendancePrefs: true, policies: true },
     });
+    (safe as Record<string, unknown>).loginMethod = readLoginPolicy(org?.policies).method;
     const selfieRequired = isSelfieRequired(
       user.selfieRequirement,
       org?.orgPayrollAttendancePrefs,
