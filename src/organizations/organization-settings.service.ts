@@ -587,6 +587,15 @@ export class OrganizationSettingsService {
     if (incomingPolicies && typeof incomingPolicies === 'object') {
       incomingPolicies.dateFormat = 'DD-MM-YYYY';
     }
+    // "Email only" would lock out anyone who has no email (they sign in with the employee ID): refuse it while such people exist.
+    if (section === 'policies' && (incomingPolicies as { loginMethod?: unknown } | undefined)?.loginMethod === 'EMAIL') {
+      const noEmail = await this.prisma.user.count({ where: { organizationId, isActive: true, email: { endsWith: '.invalid' } } });
+      if (noEmail > 0) {
+        throw new BadRequestException(
+          `${noEmail} active ${noEmail === 1 ? 'person has' : 'people have'} no email and sign in with the employee ID, so "Email only" would lock them out. Give them an email address first, or choose "Email or employee ID".`,
+        );
+      }
+    }
     // The financial year decides how every payslip, declaration and tax figure is grouped: once payroll has been run it
     // cannot move without re-labelling years already processed.
     const newFyStart = (incomingPolicies as { financialYearStartMonth?: unknown } | undefined)?.financialYearStartMonth;
