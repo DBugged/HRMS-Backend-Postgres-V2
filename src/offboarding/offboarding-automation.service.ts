@@ -86,7 +86,8 @@ export class OffboardingAutomationService {
         }
 
         // 1. The final settlement: link the one made for this last working day, or prepare the draft.
-        if (workingHours && c.lastWorkingDay < today && !c.settlementId) {
+        // (A provisional draft made when the resignation was approved is refreshed here once the last working day has passed.)
+        if (workingHours && c.lastWorkingDay < today && (!c.settlementId || this.isStaleProvisional(c.settlement, c.lastWorkingDay))) {
           if (await this.settleOrPrepare(c, actor, organizationId, switches.autoPrepareFnf)) prepared++;
         }
 
@@ -115,6 +116,41 @@ export class OffboardingAutomationService {
   }
 
   // True when a draft was prepared (a settlement already made for this last working day is just linked).
+  // A draft the system made before the last working day was over and nobody has touched since: its figures are an estimate, so it is
+  // recalculated once the day has passed. A draft HR calculated or processed is never overwritten.
+  private isStaleProvisional(s: { status: string; calculatedById: string | null; updatedAt: Date } | null | undefined, lastWorkingDay: string): boolean {
+    return !!s && s.status === 'DRAFT' && s.calculatedById === null && s.updatedAt.toISOString().slice(0, 10) <= lastWorkingDay.slice(0, 10);
+  }
+
+  // Called when a resignation is approved: figures the final settlement now, as a provisional draft linked to the exit, so HR can see
+  // it at once. Quiet on failure (the approval stands; the normal draft after the last working day still happens).
+  async prepareProvisional(caseId: string, organizationId: string): Promise<boolean> {
+    try {
+      const org = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { policies: true } });
+      if (!readExitAutomation(org?.policies).autoPrepareFnf) return false;
+      const c = await this.scopedPrisma.offboardingCase.findFirst({
+        where: { id: caseId, organizationId },
+        include: { employee: { select: { id: true, name: true, employeeId: true } } },
+      });
+      if (!c || c.settlementId) return false;
+      const actor = (await this.scopedPrisma.user.findFirst({ where: { id: c.initiatedById, organizationId } })) as Actor | null;
+      if (!actor) return false;
+      const draft = await this.settlements.calculate({ employeeId: c.employeeId, lastWorkingDay: c.lastWorkingDay } as never, actor, organizationId, { system: true, provisional: true });
+      await this.scopedPrisma.offboardingCase.updateMany({ where: { id: c.id, organizationId }, data: { fnfPreparedAt: new Date(), settlementId: draft.id } });
+      await this.recordAutomatic(organizationId, actor, c.employeeId, c.id, 'FNF_PROVISIONAL_PREPARED', `A provisional final settlement for ${dmyText(c.lastWorkingDay)} was prepared when the resignation was approved. It is recalculated after the last working day.`);
+      await this.offboarding.notifyHr(
+        organizationId,
+        [c.initiatedById],
+        `Provisional final settlement ready: ${c.employee.name}`,
+        `A first estimate of ${c.employee.name}'s final settlement (${c.employee.employeeId}) is in Settlements. It is recalculated automatically after the last working day (${dmyText(c.lastWorkingDay)}); review it then.`,
+      );
+      return true;
+    } catch (err) {
+      this.logger.warn(`Provisional settlement for case ${caseId} not prepared: ${(err as Error).message}`);
+      return false;
+    }
+  }
+
   private async settleOrPrepare(
     c: { id: string; employeeId: string; lastWorkingDay: string; initiatedById: string; employee: { name: string; employeeId: string } },
     actor: Actor,
@@ -125,7 +161,8 @@ export class OffboardingAutomationService {
       where: { organizationId, employeeId: c.employeeId },
       orderBy: { createdAt: 'desc' },
     });
-    if (existing && existing.lastWorkingDay.slice(0, 10) === c.lastWorkingDay.slice(0, 10)) {
+    const sameLwd = !!existing && existing.lastWorkingDay.slice(0, 10) === c.lastWorkingDay.slice(0, 10);
+    if (existing && sameLwd && !(autoPrepare && this.isStaleProvisional(existing, c.lastWorkingDay))) {
       await this.scopedPrisma.offboardingCase.updateMany({ where: { id: c.id, organizationId }, data: { settlementId: existing.id } });
       return false;
     }

@@ -105,6 +105,8 @@ export class ExportAuditInterceptor implements NestInterceptor {
       tap(() => {
         const user = req.user;
         if (!user?.organizationId) return;
+        // Asking which columns a report has is not an export.
+        if ((req as unknown as { res?: { locals?: { reportColumns?: { list: boolean } } } }).res?.locals?.reportColumns?.list) return;
         // Route path only (no query string values), e.g. /reports/payroll/pf
         const route = String(req.path ?? '').replace(/\/+$/, '');
         const last = route.split('/').pop() ?? '';

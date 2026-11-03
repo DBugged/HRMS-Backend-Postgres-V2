@@ -435,3 +435,18 @@ describe('UAN on the profile', () => {
     ).toBe(true);
   });
 });
+
+describe('profile complete needs a contact number and a photo', () => {
+  it('is not complete without either, when told', () => {
+    expect(isProfileComplete(COMPLETE_FIELDS, { hasContactNumber: true, hasProfilePhoto: true })).toBe(true);
+    expect(isProfileComplete(COMPLETE_FIELDS, { hasContactNumber: false, hasProfilePhoto: true })).toBe(false);
+    expect(isProfileComplete(COMPLETE_FIELDS, { hasContactNumber: true, hasProfilePhoto: false })).toBe(false);
+    expect(isProfileComplete(COMPLETE_FIELDS)).toBe(true);
+  });
+  it('downgrades a stored "complete" flag when the record has no photo or number', () => {
+    const stored = { ...COMPLETE_FIELDS, profileCompleted: true };
+    expect(signPersonalDataFileUrls(stored, 'o', { contactNumber: '+91 98765 43210', profileImage: 'p.png' }).profileCompleted).toBe(true);
+    expect(signPersonalDataFileUrls(stored, 'o', { contactNumber: '+91 98765 43210', profileImage: '' }).profileCompleted).toBe(false);
+    expect(signPersonalDataFileUrls(stored, 'o', { contactNumber: '', profileImage: 'p.png' }).profileCompleted).toBe(false);
+  });
+});

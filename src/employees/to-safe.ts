@@ -49,6 +49,7 @@ export function toSafe(user: User, mask = false) {
         ? maskPersonalData(safe.personalData as Record<string, unknown>)
         : maskRevealable(safe.personalData as Record<string, unknown>),
       safe.organizationId,
+      { contactNumber: safe.contactNumber, profileImage: safe.profileImage },
     ) as unknown as User['personalData'];
   }
   return safe;

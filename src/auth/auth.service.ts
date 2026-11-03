@@ -697,6 +697,7 @@ export class AuthService {
       safe.personalData = signPersonalDataFileUrls(
         maskRevealable(safe.personalData as Record<string, unknown>),
         safe.organizationId,
+        { contactNumber: safe.contactNumber, profileImage: safe.profileImage },
       ) as unknown as typeof safe.personalData;
     }
     // The extra reporting managers' names, for the profile screens (the primary is `reportingManager`).

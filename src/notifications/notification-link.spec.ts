@@ -11,7 +11,7 @@ function build() {
     },
   };
   const push: any = { notify: jest.fn() };
-  const svc = new NotificationsService(prisma, null as never, null as never, push as never, null as never);
+  const svc = new NotificationsService(prisma, null as never, null as never, push as never);
   return { svc, created };
 }
 const base = { organizationId: 'o', userId: 'u', title: 't', message: 'm', category: NotificationCategory.GENERAL };

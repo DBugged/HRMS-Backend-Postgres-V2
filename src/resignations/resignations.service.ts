@@ -34,6 +34,7 @@ import {
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { OffboardingService } from '../offboarding/offboarding.service';
+import { OffboardingAutomationService } from '../offboarding/offboarding-automation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -82,6 +83,7 @@ export class ResignationsService {
     private readonly emailService: EmailService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly lettersService: LettersService,
+    private readonly exitAutomation: OffboardingAutomationService,
   ) {}
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
@@ -895,6 +897,8 @@ export class ResignationsService {
       where: { id, organizationId },
       data: { offboardingCaseId },
     });
+    // The final settlement is estimated now, so HR sees it from the day of approval (recalculated after the last working day).
+    await this.exitAutomation.prepareProvisional(offboardingCaseId, organizationId);
     await this.afterDecision(record.employeeId, id, 'APPROVED', actor, {
       approvedLwd,
       ...(earlyRelease ? { earlyRelease: true, noticeEndsOn } : {}),

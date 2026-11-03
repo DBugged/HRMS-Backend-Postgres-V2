@@ -358,11 +358,16 @@ export function assertValidDates(patch: Record<string, unknown>): void {
 export function signPersonalDataFileUrls(
   personalData: Record<string, unknown>,
   organizationId: string,
+  // The employee's contact number and photo (on the record, not in the personal data): without them the profile is not complete.
+  account?: { contactNumber?: string | null; profileImage?: string | null },
 ): Record<string, unknown> {
   const signed = { ...personalData };
   // A stored "complete" flag can be stale (saved before the required-field list grew, or a field was cleared since):
   // what is shown must reflect the data as it is now.
-  if (signed.profileCompleted === true && !isProfileComplete(signed)) {
+  if (
+    signed.profileCompleted === true &&
+    !isProfileComplete(signed, account ? { hasContactNumber: !!account.contactNumber, hasProfilePhoto: !!account.profileImage } : {})
+  ) {
     signed.profileCompleted = false;
   }
   if (
@@ -429,8 +434,11 @@ const REQUIRED_FOR_COMPLETION = [
 
 export function isProfileComplete(
   personalData: Record<string, unknown>,
-  opts: { uanRequired?: boolean } = {},
+  // hasContactNumber / hasProfilePhoto: facts about the employee record (not the personal data). When given and false, the
+  // profile is not complete - the same two things the completeness percentage counts.
+  opts: { uanRequired?: boolean; hasContactNumber?: boolean; hasProfilePhoto?: boolean } = {},
 ): boolean {
+  if (opts.hasContactNumber === false || opts.hasProfilePhoto === false) return false;
   const filled = (field: string) => {
     const value = personalData[field];
     return typeof value === 'string' && value.trim().length > 0;
@@ -525,7 +533,7 @@ export function mergePersonalData(
   current: Record<string, unknown>,
   patch: Record<string, unknown>,
   mandatoryDocumentsUploaded: boolean,
-  opts: { uanRequired?: boolean } = {},
+  opts: { uanRequired?: boolean; hasContactNumber?: boolean; hasProfilePhoto?: boolean } = {},
 ): Record<string, unknown> {
   const merged = { ...current, ...dropReSignedFileUrls(current, patch) };
   const completed =

@@ -1,3 +1,4 @@
+import { reportColumnsParam } from './common/report-columns-param';
 import 'dotenv/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -77,6 +78,7 @@ async function bootstrap() {
     }),
   );
   app.use(cookieParser());
+  app.use(reportColumnsParam);
 
   // whitelist/forbidNonWhitelisted: DTOs are the single source of truth for
   // both validation and Swagger schema (see class-validator + @ApiProperty

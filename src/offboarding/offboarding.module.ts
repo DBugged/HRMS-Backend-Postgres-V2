@@ -28,6 +28,6 @@ import { ExitClosureService } from './exit-closure.service';
   controllers: [OffboardingController],
   providers: [OffboardingService, OffboardingAutomationService, ExitClosureService],
   // Exported so ResignationsService can auto-initiate the exit when a resignation is approved.
-  exports: [OffboardingService],
+  exports: [OffboardingService, OffboardingAutomationService],
 })
 export class OffboardingModule {}

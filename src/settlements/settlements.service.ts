@@ -227,7 +227,9 @@ export class SettlementsService {
     organizationId: string,
     // system: the draft is prepared automatically (see OffboardingAutomationService). It is recorded as calculated by nobody, so
     // the maker-checker rule is met by whoever reviews and processes it; `actor` is only who the audit / timeline entries name.
-    opts: { system?: boolean } = {},
+    // provisional: the draft is figured before the last working day (when a resignation is approved) as an early estimate; it is
+    // recalculated automatically once the last working day has passed (see OffboardingAutomationService).
+    opts: { system?: boolean; provisional?: boolean } = {},
   ) {
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: dto.employeeId, organizationId },
@@ -291,7 +293,7 @@ export class SettlementsService {
       select: { timezone: true },
     });
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
-    if (lwdDate > today) {
+    if (lwdDate > today && !opts.provisional) {
       throw new BadRequestException(
         `The last working day (${dmyText(lwdDate)}) has not come yet. Calculate the final settlement on or after the last working day.`,
       );
@@ -671,6 +673,9 @@ export class SettlementsService {
 
     // Heads-up (never blocks): things HR should look at before processing.
     const warnings: string[] = [];
+    if (opts.provisional && lwdDate > today) {
+      warnings.push('Provisional: figured before the last working day. It is recalculated automatically after that day, so check the final figures then.');
+    }
     if (leaveDaysNotPaid > 0) {
       const days = Math.round(leaveDaysNotPaid * 100) / 100;
       warnings.push(
@@ -1373,6 +1378,13 @@ export class SettlementsService {
     if (settlement.status !== SettlementStatus.DRAFT) {
       throw new BadRequestException(
         'Only a draft settlement can be processed.',
+      );
+    }
+    // An early estimate (made when the resignation was approved) cannot be paid out before the last working day has passed.
+    const orgTz = (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } }))?.timezone ?? 'Asia/Kolkata';
+    if (settlement.lastWorkingDay.slice(0, 10) > todayInOrgTz(orgTz)) {
+      throw new BadRequestException(
+        `The last working day (${dmyText(settlement.lastWorkingDay.slice(0, 10))}) has not come yet. This settlement is an estimate until then - recalculate it on or after that day, then process it.`,
       );
     }
     // Leave still waiting on a decision (an application or an encashment request) holds days this settlement is about

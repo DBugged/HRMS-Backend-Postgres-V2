@@ -383,7 +383,7 @@ export class EmployeeProfileService {
       withRootGender(employee.personalData as Record<string, unknown>, employee.gender),
       {},
       mandatoryDocumentsUploaded,
-      { uanRequired: await this.uanRequired(employee, organizationId) },
+      { uanRequired: await this.uanRequired(employee, organizationId), hasContactNumber: !!employee.contactNumber, hasProfilePhoto: !!employee.profileImage },
     );
     const current = employee.personalData as Record<string, unknown>;
     if (merged.profileCompleted === current.profileCompleted) return;
@@ -499,6 +499,8 @@ export class EmployeeProfileService {
     }
     const merged = mergePersonalData(before, patch, mandatoryDocumentsUploaded, {
       uanRequired: await this.uanRequired(employee, organizationId),
+      hasContactNumber: !!employee.contactNumber,
+      hasProfilePhoto: !!employee.profileImage,
     });
     // Only when this save touches a family or emergency number: an unrelated save (a cancelled cheque, an address)
     // must not be refused over numbers stored earlier.

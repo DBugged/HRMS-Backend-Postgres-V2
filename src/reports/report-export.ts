@@ -315,6 +315,16 @@ export async function sendReport(
     format,
   }: SendReportInput,
 ): Promise<void> {
+  // The report's own columns are the menu for the column picker: ?listColumns=1 answers with them instead of a file, and ?cols=a,b
+  // keeps only those (in the report's own order). Unknown keys are ignored; if none match, every column is kept.
+  const asked = (res as { locals?: { reportColumns?: { cols: string[]; list: boolean } } }).locals?.reportColumns;
+  if (asked?.list) {
+    res.json({ columns: columns.map((c) => ({ key: c.key, header: c.header })) });
+    return;
+  }
+  const picked = asked?.cols ?? [];
+  const chosen = columns.filter((c) => picked.includes(c.key));
+  if (chosen.length > 0) columns = chosen;
   if (format === 'pdf') {
     renderPdfTable(
       res,
