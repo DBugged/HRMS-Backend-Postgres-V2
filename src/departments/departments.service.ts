@@ -1,8 +1,8 @@
 // Purpose: CRUD for Department records, department-head assignment, and employee-to-department mapping.
 // Responsibilities: Owns department lifecycle including deletion guard (blocks delete while employees are
 // mapped); assignHead() folds a role promotion (to MANAGER) into the same call as head assignment.
-// Important: assignHead() refuses to promote a user who already holds ADMIN/HR (NON_DEMOTABLE_ROLES) since
-// that would silently demote their real role to MANAGER — mirrors the frontend's own NON_DEMOTABLE_ROLES list.
+// Important: the department head is who looks after that department's people and requests (common/dept-scope.ts).
+// An HR user can head departments and keeps the HR role; an ADMIN cannot (an Admin already sees everyone).
 import { shiftConsistencyError } from '../attendance/shift-hours';
 import { orgAttendanceDefaults } from './org-attendance-sync';
 import {
@@ -28,10 +28,8 @@ import {
 } from '../attendance/attendance-shift-config';
 import type { AlternateWeeklyOffDto } from '../work-schedules/dto/create-work-schedule.dto';
 
-// Mirrors the frontend's own NON_DEMOTABLE_ROLES — these roles already
-// carry broader-than-department authority, so assigning one of these users
-// as a department head must never overwrite their real role with MANAGER
-// (that would silently demote them). Only a plain employee gets promoted.
+// Assigning a department head never overwrites these roles with MANAGER (that would silently demote them). Only a
+// plain employee gets promoted.
 const NON_DEMOTABLE_ROLES: Role[] = [Role.ADMIN, Role.HR];
 
 const DEPARTMENT_INCLUDE = {
@@ -358,9 +356,9 @@ export class DepartmentsService {
       where: { id: userId, organizationId },
     });
     if (!user) throw new NotFoundException('User not found.');
-    if (NON_DEMOTABLE_ROLES.includes(user.role)) {
+    if (user.role === Role.ADMIN) {
       throw new BadRequestException(
-        `${user.name} already has the ${user.role} role, which already covers every department — assign a regular employee as department head instead.`,
+        `${user.name} is an Admin, who already sees every department — assign a manager, HR user or employee as department head instead.`,
       );
     }
 
@@ -369,10 +367,15 @@ export class DepartmentsService {
         where: { id, organizationId },
         data: { departmentHeadId: userId },
       }),
-      this.scopedPrisma.user.updateMany({
-        where: { id: userId, organizationId },
-        data: { role: Role.MANAGER, departmentId: id },
-      }),
+      // An HR user heads the department as HR: their role and their own department stay as they are.
+      ...(NON_DEMOTABLE_ROLES.includes(user.role)
+        ? []
+        : [
+            this.scopedPrisma.user.updateMany({
+              where: { id: userId, organizationId },
+              data: { role: Role.MANAGER, departmentId: id },
+            }),
+          ]),
     ]);
 
     return this.scopedPrisma.department.findFirstOrThrow({

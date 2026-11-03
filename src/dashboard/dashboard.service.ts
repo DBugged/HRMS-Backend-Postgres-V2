@@ -6,6 +6,7 @@
 // Important: departmentHeadDashboard() intentionally ports a quirk from the original release — a manager with no
 // department matches every other no-department user via departmentId: null, not zero rows.
 // computeHeadcountTrend() is shared with the Reports module so headcount numbers stay consistent everywhere.
+import { reviewerScope } from '../common/dept-scope';
 import { employedOnWhere } from '../common/managers';
 import { REQUEST_TYPE_MODULE, disabledModulesOf, gate } from '../module-access/module-gate';
 import {
@@ -560,7 +561,13 @@ export class DashboardService {
         offToday,
         notPunchedInToday,
       },
-      pendingItems: await this.pendingItems(organizationId, null, true, viewer),
+      // An HR user who heads departments sees only their people's requests here (see reviewerScope).
+      pendingItems: await this.pendingItems(
+        organizationId,
+        viewer ? await reviewerScope(this.scopedPrisma, viewer, organizationId) : null,
+        true,
+        viewer,
+      ),
       pendingApprovals: {
         leaves: pendingLeaves,
         regularizations: pendingRegularizationCount,
@@ -593,16 +600,14 @@ export class DashboardService {
   // elsewhere), but worth knowing before wiring a frontend "my team" widget
   // to this endpoint for a non-manager caller.
   async departmentHeadDashboard(actor: Actor, organizationId: string) {
-    // A department-less MANAGER has no team: scope to nobody rather than to every unassigned user.
-    // (Other roles keep the documented null-department behaviour above.)
-    const deptEmployees =
-      actor.departmentId === null && actor.role === Role.MANAGER
-        ? []
-        : await this.scopedPrisma.user.findMany({
+    // The team is the departments they head and their reporting line (see reviewerScope); someone unscoped keeps the
+    // documented own-department behaviour above.
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
+    const deptEmployees = await this.scopedPrisma.user.findMany({
             // Active people only: a deactivated colleague is not part of the team any more (the manager still counts).
             where: {
               organizationId,
-              departmentId: actor.departmentId,
+              ...(scope ? { id: { in: scope } } : { departmentId: actor.departmentId }),
               isActive: true,
               ...employedOnWhere(todayInOrgTz(await this.getOrgTimezone(organizationId))),
             },
@@ -837,20 +842,15 @@ export class DashboardService {
     const isHr = actor.role === Role.ADMIN || actor.role === Role.HR;
     if (!isHr && actor.role !== Role.MANAGER) return empty;
 
+    // Same team the department-head dashboard uses: a MANAGER, or an HR user who heads departments, counts only the
+    // people they look after (see reviewerScope); Admin and an HR user heading no department count everyone.
     let employeeIds: string[] | null = null;
-    if (!isHr) {
-      // Same team the manager's dashboard uses: active people in their department (none when they have no department).
-      const team =
-        actor.departmentId === null
-          ? []
-          : await this.scopedPrisma.user.findMany({
-              where: {
-                organizationId,
-                departmentId: actor.departmentId,
-                isActive: true,
-              },
-              select: { id: true },
-            });
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
+    if (scope) {
+      const team = await this.scopedPrisma.user.findMany({
+        where: { organizationId, id: { in: scope }, isActive: true },
+        select: { id: true },
+      });
       employeeIds = team.map((e) => e.id);
     }
     const where = this.pendingWhere(
@@ -913,28 +913,19 @@ export class DashboardService {
     const viewer = { id: actor.id, role: actor.role };
     const page = pageRequest(paging?.offset, paging?.limit);
     const options = { type, limit: 50, page: paging ? page : undefined };
-    if (actor.role === Role.MANAGER) {
-      // Same team as the department-head dashboard: a department-less manager has no team.
-      const team =
-        actor.departmentId === null
-          ? []
-          : await this.scopedPrisma.user.findMany({
-              where: {
-                organizationId,
-                departmentId: actor.departmentId,
-                isActive: true,
-              },
-              select: { id: true },
-            });
-      return this.pendingItems(
-        organizationId,
-        team.map((e) => e.id),
-        false,
-        viewer,
-        options,
-      );
-    }
-    return this.pendingItems(organizationId, null, true, viewer, options);
+    // Same team as the department-head dashboard (see reviewerScope).
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
+    const team = scope
+      ? (
+          await this.scopedPrisma.user.findMany({
+            where: { organizationId, id: { in: scope }, isActive: true },
+            select: { id: true },
+          })
+        ).map((e) => e.id)
+      : null;
+    // HR keeps its own queues (reimbursements, loans, ...) for the people it looks after; a manager only the ones a
+    // manager reviews.
+    return this.pendingItems(organizationId, team, actor.role !== Role.MANAGER, viewer, options);
   }
 
   // The Work From Home rows of the waiting requests, newest request first: single days one row each, and a multi-day

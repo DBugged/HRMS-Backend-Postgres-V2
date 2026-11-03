@@ -43,6 +43,7 @@ import {
   assertManagerDeptScope,
   assertNotSelfApproval,
   deptScopedEmployeeIds,
+  isScopedReviewer,
 } from '../common/dept-scope';
 import { NotificationsService } from '../notifications/notifications.service';
 import { EmailService } from '../notifications/email.service';
@@ -84,7 +85,7 @@ export class LeaveEncashmentsService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
+    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       const deptIds = await deptScopedEmployeeIds(
         this.scopedPrisma,
         actor,

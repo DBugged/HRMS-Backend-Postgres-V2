@@ -26,6 +26,8 @@ function build(
     });
   const prisma: Row = {
     organization: { findFirst: async () => ({ timezone: 'Asia/Kolkata' }) },
+    // Which departments the reviewer heads (common/dept-scope.ts): none here.
+    department: { findMany: async () => [] },
     user: {
       findFirst: async (a: Row) =>
         employees.find((e) => e.id === a?.where?.id) ?? null,

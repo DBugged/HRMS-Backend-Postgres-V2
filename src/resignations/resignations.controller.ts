@@ -70,7 +70,11 @@ export class ResignationsController {
     @Query() query: ListResignationsQueryDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.resignationsService.findAll(query, caller.organizationId);
+    return this.resignationsService.findAll(
+      query,
+      caller.organizationId,
+      caller,
+    );
   }
 
   @Get(':id')

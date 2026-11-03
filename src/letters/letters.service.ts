@@ -52,6 +52,7 @@ import { LetterTemplatesService } from '../letter-templates/letter-templates.ser
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
+import { inReviewerScope } from '../common/dept-scope';
 
 // Hiring-stage letters are for someone joining or working with the company. Once an employee is serving notice or has
 // left (resigned, released, terminated, absconded - or their account is inactive) they can no longer be issued one.
@@ -240,9 +241,9 @@ export class LettersService {
     // as canAccessDocuments elsewhere in the app.
     if (
       employeeId !== actor.id &&
-      actor.role === Role.MANAGER &&
-      (actor.departmentId === null ||
-        actor.departmentId !== employee.departmentId)
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.EMPLOYEE &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employeeId))
     ) {
       throw new ForbiddenException('Not authorized to view this employee.');
     }
@@ -400,9 +401,9 @@ export class LettersService {
     // letter shouldn't be blocked by a department check).
     if (
       employeeId !== actor.id &&
-      actor.role === Role.MANAGER &&
-      (actor.departmentId === null ||
-        actor.departmentId !== employee.departmentId)
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.EMPLOYEE &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
     ) {
       throw new ForbiddenException('Not authorized to view this employee.');
     }

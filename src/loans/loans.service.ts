@@ -42,8 +42,10 @@ import { RecordRepaymentDto } from './dto/record-repayment.dto';
 import { QueryLoanDto } from './dto/query-loan.dto';
 import { paginate, skip } from '../common/pagination';
 import {
+  assertManagerDeptScope,
   deptScopedEmployeeIds,
-  assertNotSelfApproval,
+  inReviewerScope,
+  isScopedReviewer,
 } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
@@ -186,7 +188,7 @@ export class LoansService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
+    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       // A manager's own loans (My Loans / Advances) - they borrow like any employee - or one person, or the whole
       // department they manage.
       const scope = await deptScopedEmployeeIds(
@@ -380,14 +382,12 @@ export class LoansService {
       },
     });
 
-    const hrUsers = await this.scopedPrisma.user.findMany({
-      where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
-      select: { id: true },
-    });
+    // The HR assigned to the employee (see NotificationsService.reviewersFor), not every HR user.
+    const hrUsers = await this.notificationsService.reviewersFor(organizationId, actor, false);
     await this.notificationsService.createMany(
-      hrUsers.map((u) => ({
+      hrUsers.map((userId) => ({
         organizationId,
-        userId: u.id,
+        userId,
         title: 'Loan/Advance Request Pending Review',
         message: `${actor.name} requested a ${loanKind(loan.loanType)} of ${dto.principal} over ${dto.tenureMonths} month(s).${requester && !isLoanEligible(requester) ? ` ${LOAN_ELIGIBILITY_NOTE}` : ''}`,
         category: NotificationCategory.GENERAL,
@@ -429,7 +429,7 @@ export class LoansService {
     // An HR/Admin can't approve their own loan request — same self-review
     // gate as document/probation reviews elsewhere; ADMIN is exempt since
     // there's no one above an Admin to approve it instead.
-    assertNotSelfApproval(actor, loan.employeeId);
+    await assertManagerDeptScope(this.scopedPrisma, actor, organizationId, loan.employeeId);
     await this.auditLogService.logSelfApproval(actor, {
       module: 'PAYROLL',
       targetId: id,
@@ -552,7 +552,7 @@ export class LoansService {
     if (loan.status !== LoanStatus.PENDING) {
       throw new BadRequestException('Only a pending request can be rejected.');
     }
-    assertNotSelfApproval(actor, loan.employeeId);
+    await assertManagerDeptScope(this.scopedPrisma, actor, organizationId, loan.employeeId);
     await this.auditLogService.logSelfApproval(actor, {
       module: 'PAYROLL',
       targetId: id,
@@ -951,9 +951,9 @@ export class LoansService {
     }
     // A manager with no department has no team: two null departments are not "the same department".
     if (
-      actor.role === Role.MANAGER &&
-      (actor.departmentId === null ||
-        loan.employee.departmentId !== actor.departmentId)
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.EMPLOYEE &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, loan.employeeId))
     ) {
       throw new ForbiddenException('Not authorized to view this loan.');
     }

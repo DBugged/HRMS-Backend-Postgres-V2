@@ -72,7 +72,8 @@ import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
   assertManagerDeptScope,
   assertManagerScopeOrDelegate,
-  deptScopedEmployeeIds,
+  inReviewerScope,
+  reviewerScope,
 } from '../common/dept-scope';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
 import { ImportWfhDto } from './dto/import-wfh.dto';
@@ -2737,18 +2738,9 @@ export class AttendanceService {
       workArrangementStatus: WfhApprovalStatus.PENDING,
     };
 
-    if (actor.role === Role.MANAGER) {
-      // deptScopedEmployeeIds scopes a departmentless manager to nobody —
-      // a raw `departmentId: actor.departmentId` filter would turn into
-      // `IS NULL` and match every unassigned employee in the org.
-      where.employeeId = {
-        in: await deptScopedEmployeeIds(
-          this.scopedPrisma,
-          actor,
-          organizationId,
-        ),
-      };
-    }
+    // A department head (MANAGER, or HR who heads departments) sees only the people they look after.
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
+    if (scope) where.employeeId = { in: scope };
 
     return this.scopedPrisma.attendance.findMany({
       where,
@@ -2777,15 +2769,8 @@ export class AttendanceService {
       workArrangementStatus: { in: statuses },
     };
     if (query.from) where.date = { gte: query.from };
-    if (actor.role === Role.MANAGER) {
-      where.employeeId = {
-        in: await deptScopedEmployeeIds(
-          this.scopedPrisma,
-          actor,
-          organizationId,
-        ),
-      };
-    }
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
+    if (scope) where.employeeId = { in: scope };
     const rows = await this.scopedPrisma.attendance.findMany({
       where,
       include: {
@@ -3039,9 +3024,8 @@ export class AttendanceService {
   async getDayDetail(employeeId: string, date: string, actor: Actor, organizationId: string) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BadRequestException('date must be YYYY-MM-DD.');
     if (actor.role === Role.EMPLOYEE && actor.id !== employeeId) throw new ForbiddenException('You can only view your own attendance.');
-    if (actor.role === Role.MANAGER && actor.id !== employeeId) {
-      const ids = new Set(await deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId));
-      if (!ids.has(employeeId)) throw new ForbiddenException('You can only view attendance for your own department.');
+    if (actor.role !== Role.EMPLOYEE && !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employeeId))) {
+      throw new ForbiddenException('You can only view attendance for the people you look after.');
     }
     const employee = await this.scopedPrisma.user.findFirst({ where: { id: employeeId, organizationId }, include: { department: true } });
     if (!employee) throw new NotFoundException('Employee not found.');
@@ -3063,18 +3047,25 @@ export class AttendanceService {
 
   async list(query: QueryAttendanceDto, actor: Actor, organizationId: string) {
     const where: Prisma.AttendanceWhereInput = { organizationId };
+    const scope = actor.role === Role.EMPLOYEE ? null : await reviewerScope(this.scopedPrisma, actor, organizationId);
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
-      // Same null-department guard as listPendingWfhRequests.
-      const deptEmployeeIds = new Set(
-        await deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId),
-      );
+    } else if (scope) {
+      const scoped = new Set(scope);
+      // A department picked in the filter narrows the reviewer's own people; it never widens them.
+      const inDept = query.department
+        ? (
+            await this.scopedPrisma.user.findMany({
+              where: { organizationId, departmentId: query.department, id: { in: scope } },
+              select: { id: true },
+            })
+          ).map((e) => e.id)
+        : scope;
       where.employeeId =
-        query.employeeId && deptEmployeeIds.has(query.employeeId)
+        query.employeeId && scoped.has(query.employeeId)
           ? query.employeeId
-          : { in: [...deptEmployeeIds] };
+          : { in: inDept };
     } else if (query.employeeId) {
       // Not an employee of this organisation: "not found", like every other employee endpoint, rather than an empty list.
       const exists = await this.scopedPrisma.user.findFirst({
@@ -4166,6 +4157,12 @@ export class AttendanceService {
     });
     if (!row) throw new NotFoundException('Attendance record not found.');
     if (actor.role === Role.EMPLOYEE && row.employeeId !== actor.id) {
+      throw new ForbiddenException('Not authorized to view this record.');
+    }
+    if (
+      actor.role === Role.HR &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, row.employeeId))
+    ) {
       throw new ForbiddenException('Not authorized to view this record.');
     }
     if (actor.role === Role.MANAGER && row.employeeId !== actor.id) {

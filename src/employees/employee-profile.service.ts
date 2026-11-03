@@ -65,7 +65,7 @@ import {
   mergePersonalData,
   uanRequiredFor,
 } from './personal-data';
-import { assertNotSelfApproval } from '../common/dept-scope';
+import { assertNotSelfApproval, inReviewerScope } from '../common/dept-scope';
 
 import { dmyText } from '../payroll/format-date';
 type Actor = Omit<User, 'password'>;
@@ -611,10 +611,10 @@ export class EmployeeProfileService {
     // for someone in their own department — same "own team only" scope
     // MANAGER already gets everywhere else (attendance, leave review, etc).
     if (
-      actor.role === Role.MANAGER &&
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.EMPLOYEE &&
       actor.id !== id &&
-      (actor.departmentId === null ||
-        employee.departmentId !== actor.departmentId)
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
     ) {
       throw new ForbiddenException(
         'You can only view profiles of employees in your own department.',

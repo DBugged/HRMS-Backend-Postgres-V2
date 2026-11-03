@@ -6,6 +6,7 @@
 // Important: sendBroadcast() always writes category=GENERAL (hardcoded, matching the original release exactly);
 // the optional accompanying email is gated per-recipient by their own emailEnabled preference — the only
 // place that flag is actually consulted.
+import { reviewerScope } from '../common/dept-scope';
 import { withLink } from './notification-link-rules';
 import { managerIdsOf } from '../common/managers';
 import {
@@ -90,10 +91,14 @@ export class NotificationsService {
     return row;
   }
 
-  // Tells whoever has to decide on a request that it is waiting: the requester's reporting manager when managerFirst
-  // is set and they have one, otherwise every active HR and Admin user (never the requester). Used for request types
-  // that otherwise reach no one until a reviewer happens to open the pending list (overtime, comp-off, leave
-  // encashment, reimbursement). Best-effort — a notification problem must never fail the request itself.
+  // Tells whoever has to decide on a request that it is waiting. Only the people assigned to the requester hear of it:
+  // - managerFirst: the requester's reporting managers and the head of their department (Organization > Departments).
+  // - otherwise (an HR/Admin queue), or when there is nobody for managerFirst: the HR users who look after the requester
+  //   (they head the requester's department, or the requester is in their reporting line). Only when no HR user is
+  //   assigned does it go to every Admin and every HR user who heads no department.
+  // An Admin's request goes to the other Admins only. Never the requester. Used for request types that otherwise reach
+  // no one until a reviewer happens to open the pending list (overtime, comp-off, leave encashment, reimbursement).
+  // Best-effort — a notification problem must never fail the request itself.
   async notifyReviewers(input: {
     organizationId: string;
     requester: Pick<User, 'id' | 'reportingManagerId'> & { additionalReportingManagerIds?: string[] | null };
@@ -104,61 +109,62 @@ export class NotificationsService {
   }) {
     try {
       const { organizationId, requester, title, message, category } = input;
-      const managerCandidates = managerIdsOf(requester).filter((m) => m !== requester.id);
-      // Only managers who still work here: a request must not be addressed to someone whose account is closed or whose
-      // last working day has passed (it would reach nobody). With none left it falls back to HR/Admin below.
-      const managers = managerCandidates.length
-        ? (
-            await this.scopedPrisma.user.findMany({
-              where: {
-                organizationId,
-                id: { in: managerCandidates },
-                isActive: true,
-                OR: [{ exitDate: null }, { exitDate: { gte: new Date().toISOString().slice(0, 10) } }],
-              },
-              select: { id: true },
-            })
-          ).map((m) => m.id)
-        : [];
-      if (input.managerFirst && managers.length > 0) {
-        // Every reporting manager (primary and additional) is told.
-        await this.createMany(
-          managers.map((userId) => ({ organizationId, userId, title, message, category, pushKind: 'APPROVAL' as const })),
-        );
-        return;
-      }
-      // An Admin's request goes to the other Admins only: it never falls back to HR.
-      const requesterRow = await this.scopedPrisma.user.findFirst({
-        where: { id: requester.id, organizationId },
-        select: { role: true },
-      });
-      const reviewers = await this.scopedPrisma.user.findMany({
-        where: {
-          organizationId,
-          isActive: true,
-          id: { not: requester.id },
-          role: {
-            in:
-              requesterRow?.role === Role.ADMIN
-                ? [Role.ADMIN]
-                : [Role.HR, Role.ADMIN],
-          },
-        },
-        select: { id: true },
-      });
+      const recipients = await this.reviewersFor(organizationId, requester, !!input.managerFirst);
       await this.createMany(
-        reviewers.map((u) => ({
-          organizationId,
-          userId: u.id,
-          title,
-          message,
-          category,
-          pushKind: 'APPROVAL',
-        })),
+        recipients.map((userId) => ({ organizationId, userId, title, message, category, pushKind: 'APPROVAL' as const })),
       );
     } catch {
       // Intentionally swallowed — see above.
     }
+  }
+
+  // The user ids notifyReviewers tells (see there). Exposed so other "please decide" messages can follow the same rule.
+  async reviewersFor(
+    organizationId: string,
+    requester: Pick<User, 'id' | 'reportingManagerId'> & { additionalReportingManagerIds?: string[] | null },
+    managerFirst: boolean,
+  ): Promise<string[]> {
+    const today = new Date().toISOString().slice(0, 10);
+    // Only people who still work here: a request must not be addressed to someone whose account is closed or whose
+    // last working day has passed (it would reach nobody).
+    const working = { isActive: true, OR: [{ exitDate: null }, { exitDate: { gte: today } }] };
+    const requesterRow = await this.scopedPrisma.user.findFirst({
+      where: { id: requester.id, organizationId },
+      select: { role: true, departmentId: true, department: { select: { departmentHeadId: true } } },
+    });
+    if (requesterRow?.role === Role.ADMIN) {
+      const admins = await this.scopedPrisma.user.findMany({
+        where: { organizationId, ...working, id: { not: requester.id }, role: Role.ADMIN },
+        select: { id: true },
+      });
+      return admins.map((u) => u.id);
+    }
+    if (managerFirst) {
+      const headId = requesterRow?.department?.departmentHeadId;
+      const candidates = [...new Set([...managerIdsOf(requester), ...(headId ? [headId] : [])])].filter(
+        (m) => m !== requester.id,
+      );
+      const managers = candidates.length
+        ? await this.scopedPrisma.user.findMany({
+            where: { organizationId, ...working, id: { in: candidates } },
+            select: { id: true },
+          })
+        : [];
+      if (managers.length > 0) return managers.map((m) => m.id);
+    }
+    const hrAndAdmins = await this.scopedPrisma.user.findMany({
+      where: { organizationId, ...working, id: { not: requester.id }, role: { in: [Role.HR, Role.ADMIN] } },
+      select: { id: true, role: true },
+    });
+    const assignedHr: string[] = [];
+    const unassignedHr: string[] = [];
+    for (const u of hrAndAdmins.filter((x) => x.role === Role.HR)) {
+      const scope = await reviewerScope(this.scopedPrisma, u, organizationId);
+      if (scope === null) unassignedHr.push(u.id);
+      else if (scope.includes(requester.id)) assignedHr.push(u.id);
+    }
+    if (assignedHr.length > 0) return assignedHr;
+    return [...hrAndAdmins.filter((x) => x.role === Role.ADMIN).map((u) => u.id), ...unassignedHr];
   }
 
   async createMany(inputs: CreateNotificationInput[]) {

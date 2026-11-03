@@ -58,6 +58,7 @@ import {
   assertManagerScopeOrDelegate,
   assertNotSelfApproval,
   deptScopedEmployeeIds,
+  isScopedReviewer,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -270,7 +271,7 @@ export class CompOffService {
     const where: Prisma.CompOffWhereInput = { organizationId };
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
+    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       const deptIds = await deptScopedEmployeeIds(
         this.scopedPrisma,
         actor,

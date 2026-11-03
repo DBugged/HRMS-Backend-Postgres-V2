@@ -10,7 +10,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { deptScopedEmployeeIds } from '../common/dept-scope';
+import { deptScopedEmployeeIds, isScopedReviewer } from '../common/dept-scope';
 import { ReportColumn } from './report-export';
 import { OpsReportQueryDto } from './dto/ops-report-queries.dto';
 import {
@@ -44,7 +44,7 @@ export class OpsReportsService {
     actor: Actor,
     organizationId: string,
   ): Promise<string[] | undefined> {
-    if (actor.role === Role.MANAGER) {
+    if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       return deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId);
     }
     if (query.department) {

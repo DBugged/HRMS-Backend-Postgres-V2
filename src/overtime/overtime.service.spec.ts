@@ -87,6 +87,8 @@ function build(
         return row;
       },
     },
+    // Which departments the reviewer heads (common/dept-scope.ts): none here.
+    department: { findMany: async () => [] },
     user: {
       findFirst: async () => ({
         id: 'e1',

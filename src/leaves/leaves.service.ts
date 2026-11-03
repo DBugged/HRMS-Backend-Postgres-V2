@@ -86,6 +86,7 @@ import {
   assertManagerDeptScope,
   assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
+  isScopedReviewer,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -492,7 +493,7 @@ export class LeavesService {
     const where: Prisma.LeaveWhereInput = { organizationId };
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
+    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       const deptIds = await deptScopedEmployeeIds(
         this.scopedPrisma,
         actor,
@@ -745,7 +746,7 @@ export class LeavesService {
       startDate: { lte: query.to },
       endDate: { gte: query.from },
     };
-    if (actor.role === Role.MANAGER) {
+    if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       where.employeeId = {
         in: await deptScopedEmployeeIds(
           this.scopedPrisma,
@@ -1317,17 +1318,19 @@ export class LeavesService {
   }
 
   private async notifyLevel1Approved(leave: Leave, organizationId: string) {
+    // Final approval is HR's: the HR assigned to the employee (see NotificationsService.reviewersFor).
     const [hrUsers, { dateFormat, timeZone }] = await Promise.all([
-      this.scopedPrisma.user.findMany({
-        where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
-        select: { id: true },
-      }),
+      this.notificationsService.reviewersFor(
+        organizationId,
+        { id: leave.employeeId, reportingManagerId: null },
+        false,
+      ),
       resolveOrgDateTimeFormat(this.scopedPrisma, organizationId),
     ]);
     await this.notificationsService.createMany(
-      hrUsers.map((u) => ({
+      hrUsers.map((userId) => ({
         organizationId,
-        userId: u.id,
+        userId,
         title: 'Leave Application Pending Final Approval',
         message: `A leave request (${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}) has been level-1 approved and needs your final decision.`,
         category: NotificationCategory.LEAVE,
@@ -1457,15 +1460,10 @@ export class LeavesService {
       this.scopedPrisma,
       organizationId,
     );
-    const hrAdmins = await this.scopedPrisma.user.findMany({
-      where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
-      select: { id: true },
-    });
+    // The HR assigned to the employee (see NotificationsService.reviewersFor), not every HR user.
+    const hrAdmins = await this.notificationsService.reviewersFor(organizationId, actor, false);
     const recipients = [
-      ...new Set([
-        ...managerIdsOf(actor),
-        ...hrAdmins.map((u) => u.id),
-      ]),
+      ...new Set([...managerIdsOf(actor), ...hrAdmins]),
     ].filter((id) => id !== actor.id);
     if (recipients.length === 0) return;
     const message = `${actor.name} cancelled their approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.`;
@@ -2620,15 +2618,7 @@ export class LeavesService {
     );
     const title = 'Leave Cancellation Request';
     const message = `${actor.name} asked to cancel the approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}. Reason: ${reason}`;
-    const managerRecipients = managerIdsOf(actor).filter((m) => m !== actor.id);
-    const recipients = managerRecipients.length > 0
-      ? managerRecipients
-      : (
-          await this.scopedPrisma.user.findMany({
-            where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
-            select: { id: true },
-          })
-        ).map((u) => u.id);
+    const recipients = await this.notificationsService.reviewersFor(organizationId, actor, true);
     await this.notificationsService.createMany(
       recipients.map((userId) => ({
         organizationId,
@@ -2672,34 +2662,17 @@ export class LeavesService {
     const title = 'New Leave Application';
     const message = `${actor.name} applied for leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.`;
 
-    // Every reporting manager (primary and additional) is told.
-    const managersToTell = managerIdsOf(actor).filter((m) => m !== actor.id);
-    if (managersToTell.length > 0) {
-      await this.notificationsService.createMany(
-        managersToTell.map((userId) => ({
-          organizationId,
-          userId,
-          title,
-          message,
-          category: NotificationCategory.LEAVE,
-          pushKind: 'APPROVAL' as const,
-        })),
-      );
-      return;
-    }
-
-    const hrUsers = await this.scopedPrisma.user.findMany({
-      where: { organizationId, role: { in: [Role.HR, Role.ADMIN] } },
-      select: { id: true },
-    });
+    // The reporting managers and the department head; with none, the HR assigned to the employee (see
+    // NotificationsService.reviewersFor).
+    const recipients = await this.notificationsService.reviewersFor(organizationId, actor, true);
     await this.notificationsService.createMany(
-      hrUsers.map((u) => ({
+      recipients.map((userId) => ({
         organizationId,
-        userId: u.id,
+        userId,
         title,
         message,
         category: NotificationCategory.LEAVE,
-        pushKind: 'APPROVAL',
+        pushKind: 'APPROVAL' as const,
       })),
     );
   }

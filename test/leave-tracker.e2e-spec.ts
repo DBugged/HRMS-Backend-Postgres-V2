@@ -416,12 +416,13 @@ describe('Leave Tracker (e2e)', () => {
       expect(ids).not.toContain(outsideEmployeeId);
     });
 
-    it('MANAGER passing a departmentId that is not their own is rejected', async () => {
-      await request(app.getHttpServer())
+    it('MANAGER passing a departmentId that is not their own gets nobody (a filter narrows, never widens)', async () => {
+      const res = await request(app.getHttpServer())
         .get('/leave-tracker/grid')
         .query({ month: MONTH, year: YEAR, departmentId: otherDepartmentId })
         .set('Authorization', `Bearer ${managerToken}`)
-        .expect(403);
+        .expect(200);
+      expect((res.body as GridResponse).employees).toEqual([]);
     });
 
     it("MANAGER passing their own departmentId is accepted (doesn't widen or narrow)", async () => {
@@ -844,12 +845,13 @@ describe('Leave Tracker (e2e)', () => {
       expect(ids).not.toContain(outsideEmployeeId);
     });
 
-    it('MANAGER passing a departmentId that is not their own is rejected', async () => {
-      await request(app.getHttpServer())
+    it('MANAGER passing a departmentId that is not their own gets nobody (a filter narrows, never widens)', async () => {
+      const res = await request(app.getHttpServer())
         .get('/leave-tracker/balances')
         .query({ year: YEAR, departmentId: otherDepartmentId })
         .set('Authorization', `Bearer ${managerToken}`)
-        .expect(403);
+        .expect(200);
+      expect(res.body as BalanceEntry[]).toEqual([]);
     });
   });
 });

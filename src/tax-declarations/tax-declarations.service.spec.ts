@@ -26,6 +26,8 @@ function build(
         orgPayrollAttendancePrefs: opts.orgPrefs ?? {},
       }),
     },
+    // Which departments the reviewer heads (common/dept-scope.ts): none here.
+    department: { findMany: async () => [] },
     user: {
       findMany: async (a: Row) =>
         (a?.where?.id?.in ?? [])

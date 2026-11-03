@@ -195,6 +195,11 @@ describe('Employees + Departments (e2e)', () => {
       })
       .expect(201);
     const managerBody = managerRes.body as EmployeeBody;
+    // What a manager sees is the departments they head (Organization > Departments > Department head).
+    await prisma.department.update({
+      where: { id: engDepartmentId },
+      data: { departmentHeadId: managerBody.employee.id },
+    });
     // Employee IDs are issued from the org's own documentNumbering.
     // employeeId config (see EmployeeIdService/issueDocumentNumber). At
     // registration that format starts with the company's initials
@@ -383,10 +388,9 @@ describe('Employees + Departments (e2e)', () => {
     expect(codes).toEqual([...codes].sort(compareEmployeeId));
   });
 
-  it('MANAGER listing employees only sees their own department, regardless of what they ask for', async () => {
+  it('MANAGER listing employees only sees the department they head; asking for another department never widens it', async () => {
     const res = await request(app.getHttpServer())
       .get('/employees')
-      .query({ department: salesDepartmentId }) // deliberately requesting the OTHER department
       .set('Authorization', `Bearer ${engManagerToken}`)
       .expect(200);
     const body = res.body as ListEmployeesBody;
@@ -394,6 +398,12 @@ describe('Employees + Departments (e2e)', () => {
     expect(body.data.every((e) => e.departmentId === engDepartmentId)).toBe(
       true,
     );
+    const other = await request(app.getHttpServer())
+      .get('/employees')
+      .query({ department: salesDepartmentId }) // deliberately requesting the OTHER department
+      .set('Authorization', `Bearer ${engManagerToken}`)
+      .expect(200);
+    expect((other.body as ListEmployeesBody).data).toEqual([]);
   });
 
   it('ADMIN/HR listing employees can filter by any department', async () => {
@@ -1350,7 +1360,7 @@ describe('Employees + Departments (e2e)', () => {
       expect((check.body as EmployeeBody['employee']).role).toBe('MANAGER');
     });
 
-    it('refuses to assign an ADMIN/HR account as department head (already broader authority)', async () => {
+    it('an HR user can head a department and keeps the HR role; an Admin cannot (already sees everyone)', async () => {
       const hrList = await request(app.getHttpServer())
         .get('/employees')
         .query({ role: 'HR' })
@@ -1362,6 +1372,43 @@ describe('Employees + Departments (e2e)', () => {
         .post(`/departments/${salesDepartmentId}/assign-head`)
         .set('Authorization', `Bearer ${adminToken}`)
         .send({ userId: hrUserId })
+        .expect(201);
+      const hr = await prisma.user.findUniqueOrThrow({ where: { id: hrUserId } });
+      expect(hr.role).toBe('HR');
+
+      // Heading Sales, the HR user now sees only Sales people (and themself).
+      const seen = await request(app.getHttpServer())
+        .get('/employees')
+        .query({ limit: 100 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      const rows = (seen.body as ListEmployeesBody).data;
+      expect(rows.length).toBeGreaterThan(1);
+      expect(
+        rows.every((e) => e.departmentId === salesDepartmentId || e.id === hrUserId),
+      ).toBe(true);
+
+      // Back to heading nothing: everyone again.
+      await prisma.department.update({
+        where: { id: salesDepartmentId },
+        data: { departmentHeadId: null },
+      });
+      const all = await request(app.getHttpServer())
+        .get('/employees')
+        .query({ limit: 100 })
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(200);
+      expect((all.body as ListEmployeesBody).data.length).toBeGreaterThan(rows.length);
+
+      const adminList = await request(app.getHttpServer())
+        .get('/employees')
+        .query({ role: 'ADMIN' })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      await request(app.getHttpServer())
+        .post(`/departments/${salesDepartmentId}/assign-head`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ userId: (adminList.body as ListEmployeesBody).data[0].id })
         .expect(400);
     });
 

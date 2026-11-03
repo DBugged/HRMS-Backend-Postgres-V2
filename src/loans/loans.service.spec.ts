@@ -22,6 +22,8 @@ function build(
     runs?: Row[];
     components?: Row[];
     repayments?: Row[];
+    // Everyone in the organisation, for the department-head scope (common/dept-scope.ts).
+    people?: Row[];
   } = {},
 ) {
   const loans: Row[] = (opts.loans ?? []).map((l) => ({ ...l }));
@@ -73,9 +75,12 @@ function build(
     },
   };
   const prisma: Row = {
+    // Which departments the reviewer heads (common/dept-scope.ts): none here.
+    department: { findMany: async () => [] },
     user: {
-      findFirst: async () => employee,
-      findMany: async () => [{ id: 'hr1' }],
+      findFirst: async (a: Row) =>
+        opts.people?.find((p) => p.id === a?.where?.id) ?? employee,
+      findMany: async () => opts.people ?? [{ id: 'hr1' }],
     },
     loan: loanModel,
     loanRepayment: repaymentModel,
@@ -90,6 +95,7 @@ function build(
     stub({
       create: async (n: Row) => notes.push(n),
       createMany: async (rows: Row[]) => { notes.push(...rows); },
+      reviewersFor: async () => ['hr1'],
     }),
     stub({ send: async () => undefined }),
     stub({
@@ -800,7 +806,15 @@ describe('loans: who can read the repayments', () => {
   });
 
   it('a manager reads repayments only within their own department', async () => {
-    const { service } = build({ loans: [loan('d1')] });
+    // Neither department has a head, so each manager sees their own department.
+    const { service } = build({
+      loans: [loan('d1')],
+      people: [
+        { id: 'e1', departmentId: 'd1' },
+        { id: 'm1', departmentId: 'd1', department: { id: 'd1', departmentHeadId: null } },
+        { id: 'm2', departmentId: 'd2', department: { id: 'd2', departmentHeadId: null } },
+      ],
+    });
     const same = { id: 'm1', role: Role.MANAGER, departmentId: 'd1' } as never;
     const other = { id: 'm2', role: Role.MANAGER, departmentId: 'd2' } as never;
     await expect(

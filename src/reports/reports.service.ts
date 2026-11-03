@@ -9,13 +9,15 @@ import {
   EMPLOYEE_ORDER_BY,
   EMPLOYEE_RELATION_ORDER_BY,
 } from '../common/employee-order';
-import { Inject, Injectable } from '@nestjs/common';
+import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
 import { LeaveStatus, Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import {
-  assertManagerDeptScope,
   deptScopedEmployeeIds,
+  inReviewerScope,
+  isScopedReviewer,
+  reviewerScope,
 } from '../common/dept-scope';
 import {
   formatDateDisplay,
@@ -100,7 +102,7 @@ export class ReportsService {
       if (from) where.date.gte = from;
       if (query.to) where.date.lte = query.to;
     }
-    if (actor.role === Role.MANAGER) {
+    if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       // Ignore query.department for MANAGER — always their own, never a
       // caller-chosen one, so a MANAGER can't request another dept's report.
       // deptScopedEmployeeIds scopes a departmentless MANAGER to nobody —
@@ -195,7 +197,7 @@ export class ReportsService {
     // Leave that overlaps the window, same rule as the department summary.
     if (query.from) where.endDate = { gte: query.from };
     if (query.to) where.startDate = { lte: query.to };
-    if (actor.role === Role.MANAGER) {
+    if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       where.employeeId = {
         in: await deptScopedEmployeeIds(
           this.scopedPrisma,
@@ -268,7 +270,7 @@ export class ReportsService {
       year: targetYear,
       leaveType: { showInLeaveTracker: true },
     };
-    if (actor.role === Role.MANAGER) {
+    if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       where.employeeId = {
         in: await deptScopedEmployeeIds(
           this.scopedPrisma,
@@ -327,12 +329,12 @@ export class ReportsService {
     organizationId: string,
   ): Promise<ReportPayload> {
     assertValidDateRange(query.from, query.to);
-    if (actor.role === Role.MANAGER) {
-      await assertManagerDeptScope(
-        this.scopedPrisma,
-        actor,
-        organizationId,
-        query.employeeId,
+    if (
+      actor.role !== Role.ADMIN &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, query.employeeId))
+    ) {
+      throw new ForbiddenException(
+        'You can only view employees in the departments you head or who report to you.',
       );
     }
 
@@ -385,21 +387,24 @@ export class ReportsService {
     };
     if (query.from) where.endDate = { gte: query.from };
     if (query.to) where.startDate = { lte: query.to };
-    if (actor.role === Role.MANAGER) {
-      // Same null-department guard as attendanceReport.
-      where.employeeId = {
-        in: await deptScopedEmployeeIds(
-          this.scopedPrisma,
-          actor,
-          organizationId,
-        ),
-      };
-    }
+    const scope =
+      actor.role === Role.ADMIN ? null : await reviewerScope(this.scopedPrisma, actor, organizationId);
+    if (scope) where.employeeId = { in: scope };
 
-    const departmentWhere: Prisma.DepartmentWhereInput =
-      actor.role === Role.MANAGER
-        ? { organizationId, id: actor.departmentId ?? undefined }
-        : { organizationId };
+    // A department head sees the departments their people are in.
+    const departmentWhere: Prisma.DepartmentWhereInput = scope
+      ? {
+          organizationId,
+          id: {
+            in: (
+              await this.scopedPrisma.user.findMany({
+                where: { organizationId, id: { in: scope }, departmentId: { not: null } },
+                select: { departmentId: true },
+              })
+            ).map((u) => u.departmentId as string),
+          },
+        }
+      : { organizationId };
 
     const [leaves, departments] = await Promise.all([
       this.scopedPrisma.leave.findMany({

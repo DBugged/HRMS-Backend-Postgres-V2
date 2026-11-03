@@ -18,6 +18,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { EVENT_META } from './timeline-events';
 import { QueryTimelineDto } from './dto/query-timeline.dto';
 import { paginate, skip } from '../common/pagination';
+import { inReviewerScope } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -88,9 +89,9 @@ export class EmployeeTimelineService {
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     if (
-      actor.role === Role.MANAGER &&
-      (actor.departmentId === null ||
-        actor.departmentId !== employee.departmentId)
+      actor.role !== Role.ADMIN &&
+      actor.role !== Role.EMPLOYEE &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
     ) {
       throw new ForbiddenException('Not authorized to view this employee.');
     }

@@ -8,11 +8,11 @@
 // (history only — the new values still apply immediately, never on a future effectiveDate). update() writes via updateMany (not update) so the write itself is organizationId-scoped, not
 // just pre-checked by findByIdOrThrow — closing an actual tenant-isolation gap, not just a defensive
 // pre-check.
+import { inReviewerScope, reviewerScope } from '../common/dept-scope';
 import { summarizeDocumentReview, type DocumentReview } from './document-review';
 import { sisterCompaniesOn } from '../module-access/module-gate';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly } from '../letters/auto-letter';
-import { isManagerOf } from '../common/managers';
 import { assertEmployeeRoom } from '../module-access/module-gate';
 import { buildOrgChart } from './org-chart';
 import {
@@ -69,10 +69,7 @@ import { lockedFieldAttempts, stripLockedFields } from './employee-field-lock';
 import { mergePersonalData } from './personal-data';
 import {
   Actor,
-  canManagerAccessEmployee,
   collectReportingChain,
-  noDepartmentManagerScope,
-  resolveDepartmentFilter,
   employeeDirectoryScope,
   slimForEmployeeViewer,
 } from './employee-query-scope';
@@ -808,8 +805,8 @@ export class EmployeesService {
     });
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     const months = await this.probationMonths(organizationId);
-    const departmentId = resolveDepartmentFilter(actor);
-    const noDeptScope = noDepartmentManagerScope(actor);
+    // A department head (MANAGER, or HR heading departments) sees only the people they look after.
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
     const rows = await this.scopedPrisma.user.findMany({
       where: {
         organizationId,
@@ -817,8 +814,7 @@ export class EmployeesService {
         employmentStatus: { in: ['PROBATION', 'EXTENDED_PROBATION'] },
         // Not someone who is leaving: there is no probation decision left to take.
         exitDate: null,
-        ...(departmentId && { departmentId }),
-        ...(noDeptScope && { AND: [noDeptScope] }),
+        ...(scope && { id: { in: scope } }),
       },
       select: {
         id: true,
@@ -915,17 +911,19 @@ export class EmployeesService {
             }),
           )
         : null;
-    const departmentId = teamIds
-      ? undefined
-      : resolveDepartmentFilter(actor, query.department);
-    const noDeptScope = teamIds ? undefined : noDepartmentManagerScope(actor);
+    // Everyone else a department head (MANAGER, or HR heading departments) lists is the people they look after
+    // (see reviewerScope); a picked department only narrows that.
+    const scope =
+      teamIds || actor.role === Role.EMPLOYEE
+        ? null
+        : await reviewerScope(this.scopedPrisma, actor as { id?: string; role: Role }, organizationId);
+    const ids = teamIds ?? scope;
+    const departmentId = teamIds ? undefined : query.department;
     const where = {
       organizationId,
-      ...(teamIds && { id: { in: teamIds } }),
+      ...(ids && { id: { in: ids } }),
       ...(departmentId && { departmentId }),
-      ...((noDeptScope || employeeDirectoryScope(actor)) && {
-        AND: [noDeptScope, employeeDirectoryScope(actor)].filter(Boolean) as object[],
-      }),
+      ...(employeeDirectoryScope(actor) && { AND: [employeeDirectoryScope(actor)] as object[] }),
       ...(query.role && { role: query.role }),
       ...(query.isActive !== undefined && { isActive: query.isActive }),
       ...(query.search && {
@@ -989,17 +987,12 @@ export class EmployeesService {
 
   async findOne(id: string, actor: Actor, organizationId: string) {
     const employee = await this.findByIdOrThrow(id, organizationId);
-    const noDeptScope = noDepartmentManagerScope(actor);
-    const ownOrDirectReport =
-      !!noDeptScope &&
-      !!actor.id &&
-      (employee.id === actor.id || isManagerOf(actor.id, employee));
     if (
-      !ownOrDirectReport &&
-      !canManagerAccessEmployee(actor, employee.departmentId)
+      actor.role !== Role.EMPLOYEE &&
+      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
     ) {
       throw new ForbiddenException(
-        'You can only view employees in your own department.',
+        'You can only view employees in the departments you head or who report to you.',
       );
     }
     // Personal data of another employee read by HR/ADMIN/MANAGER — record who looked at whom (never the values).

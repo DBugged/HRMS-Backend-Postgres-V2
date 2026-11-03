@@ -15,7 +15,7 @@ import {
   leaveYearOf,
 } from '../leave-balances/leave-year';
 import { EMPLOYEE_ORDER_BY, compareEmployees } from '../common/employee-order';
-import { ForbiddenException, Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import {
   AllocationType,
   AttendanceStatus,
@@ -27,7 +27,7 @@ import {
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { deptScopedEmployeeIds } from '../common/dept-scope';
+import { deptScopedEmployeeIds, isScopedReviewer } from '../common/dept-scope';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
@@ -117,20 +117,23 @@ export class LeaveTrackerService {
     private readonly compOffService: CompOffService,
   ) {}
 
-  // ADMIN/HR: org-wide, optionally narrowed to one department via
-  // `departmentId`. MANAGER: forced to their own department regardless —
-  // an explicit `departmentId` that isn't their own is rejected (403),
-  // never silently widened or narrowed to something else.
+  // ADMIN (and HR who heads no department): org-wide, optionally narrowed to one department via `departmentId`.
+  // A department head (MANAGER or HR, see reviewerScope): only the people they look after; `departmentId` can
+  // narrow that, never widen it.
   private async resolveScopedEmployeeIds(
     actor: Actor,
     organizationId: string,
     departmentId?: string,
   ): Promise<string[]> {
-    if (actor.role === Role.MANAGER) {
-      if (departmentId && departmentId !== actor.departmentId) {
-        throw new ForbiddenException('You can only view your own department.');
-      }
-      return deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId);
+    if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
+      // A department picked in the filter narrows the reviewer's own people; it never widens them.
+      const scope = await deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId);
+      if (!departmentId) return scope;
+      const inDept = await this.scopedPrisma.user.findMany({
+        where: { organizationId, departmentId, id: { in: scope } },
+        select: { id: true },
+      });
+      return inDept.map((e) => e.id);
     }
     const employees = await this.scopedPrisma.user.findMany({
       where: { organizationId, ...(departmentId && { departmentId }) },

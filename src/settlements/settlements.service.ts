@@ -54,7 +54,7 @@ import { PayrollService } from '../payroll/payroll.service';
 import { getFinancialYear } from '../payroll-settings/financial-year';
 import { ListSettlementsQueryDto } from './dto/list-settlements-query.dto';
 import { paginate, skip } from '../common/pagination';
-import { deptScopedEmployeeIds } from '../common/dept-scope';
+import { deptScopedEmployeeIds, isScopedReviewer } from '../common/dept-scope';
 import { PayrollSettingsService } from '../payroll-settings/payroll-settings.service';
 import { EmployeeSalaryComponentsService } from '../employee-salary-components/employee-salary-components.service';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
@@ -187,7 +187,7 @@ export class SettlementsService {
     const where: Prisma.SettlementWhereInput = { organizationId };
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
+    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       where.employeeId = {
         in: await deptScopedEmployeeIds(
           this.scopedPrisma,

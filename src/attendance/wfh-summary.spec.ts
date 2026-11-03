@@ -26,6 +26,8 @@ function build(rows: Row[], org: Row = {}) {
         ...org,
       }),
     },
+    // Which departments the reviewer heads (common/dept-scope.ts): none here.
+    department: { findMany: async () => [] },
     user: {
       findFirst: async (a: { where: Row }) =>
         a.where.id === 'e2' ? { id: 'e2', departmentId: 'd1' } : null,

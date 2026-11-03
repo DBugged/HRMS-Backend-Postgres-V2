@@ -51,6 +51,7 @@ import { paginate, skip } from '../common/pagination';
 import {
   assertManagerDeptScope,
   deptScopedEmployeeIds,
+  isScopedReviewer,
 } from '../common/dept-scope';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
@@ -112,7 +113,7 @@ export class ReimbursementsService {
 
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (actor.role === Role.MANAGER) {
+    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       const deptIds = await deptScopedEmployeeIds(
         this.scopedPrisma,
         actor,

@@ -4,6 +4,7 @@ import { Role } from '@prisma/client';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import type { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { todayInOrgTz } from './org-date';
+import { collectReportingChain } from '../employees/employee-query-scope';
 
 interface DeptScopeActor {
   id: string;
@@ -11,25 +12,65 @@ interface DeptScopeActor {
   departmentId: string | null;
 }
 
-// Employee ids a MANAGER's list/query endpoints must be constrained to —
-// their own department. Callers combine this with the actor's own id for
-// EMPLOYEE and leave ADMIN/HR unrestricted.
+// Who a reviewer looks after, or null for "everyone". The assignment is Department head (Organization > Departments):
+// - ADMIN sees everyone.
+// - HR sees the departments they head; an HR user who heads none sees everyone (until assigned).
+// - MANAGER sees the departments they head. One who heads none sees their own reporting line, plus their own
+//   department while that department has no head assigned (once a head is set, only the head sees it).
+// - Both always see themself and their reporting chain (direct reports and everyone below), so My Team and the
+//   approval lists agree.
+// - EMPLOYEE sees only themself.
+export async function reviewerScope(
+  prisma: ExtendedPrismaClient,
+  actor: { id?: string; role: Role },
+  organizationId: string,
+): Promise<string[] | null> {
+  if (actor.role === Role.ADMIN) return null;
+  if (!actor.id) return [];
+  if (actor.role === Role.EMPLOYEE) return [actor.id];
+  const headed = await prisma.department.findMany({
+    where: { organizationId, departmentHeadId: actor.id },
+    select: { id: true },
+  });
+  if (actor.role === Role.HR && headed.length === 0) return null;
+  const [people, me] = await Promise.all([
+    prisma.user.findMany({
+      where: { organizationId },
+      select: { id: true, departmentId: true, reportingManagerId: true, additionalReportingManagerIds: true },
+    }),
+    prisma.user.findFirst({
+      where: { id: actor.id, organizationId },
+      select: { department: { select: { id: true, departmentHeadId: true } } },
+    }),
+  ]);
+  const headedIds = new Set(headed.map((d) => d.id));
+  if (actor.role === Role.MANAGER && headed.length === 0 && me?.department && !me.department.departmentHeadId) {
+    headedIds.add(me.department.id);
+  }
+  const ids = new Set<string>([actor.id, ...collectReportingChain(actor.id, people)]);
+  for (const p of people) if (p.departmentId && headedIds.has(p.departmentId)) ids.add(p.id);
+  return [...ids];
+}
+
+// Employee ids a scoped reviewer's list/query endpoints must be constrained to (see reviewerScope). Kept for the callers
+// that only ever pass a MANAGER, who is always scoped; an unscoped actor gets an empty list rather than everyone.
 export async function deptScopedEmployeeIds(
   prisma: ExtendedPrismaClient,
   actor: DeptScopeActor,
   organizationId: string,
 ): Promise<string[]> {
-  // A departmentless actor must be scoped to nobody, not to every other
-  // departmentless employee — `departmentId: null` in a Prisma where-clause
-  // matches every row with a null department, which would otherwise let any
-  // two unassigned managers see (and, via the checks below, act on) each
-  // other's unassigned direct reports.
-  if (actor.departmentId === null) return [];
-  const deptEmployees = await prisma.user.findMany({
-    where: { organizationId, departmentId: actor.departmentId },
-    select: { id: true },
-  });
-  return deptEmployees.map((e) => e.id);
+  return (await reviewerScope(prisma, actor, organizationId)) ?? [];
+}
+
+// True when the actor may see / act on this employee under reviewerScope.
+export async function inReviewerScope(
+  prisma: ExtendedPrismaClient,
+  actor: { id?: string; role: Role },
+  organizationId: string,
+  employeeId: string,
+): Promise<boolean> {
+  const scope = await reviewerScope(prisma, actor, organizationId);
+  return scope === null || scope.includes(employeeId);
 }
 
 // No one below ADMIN may approve their own request — an HR (or MANAGER)
@@ -62,11 +103,9 @@ export function assertNotOwnRequest(
   }
 }
 
-// Guards a single-record action (review/approve/view) so a MANAGER can only
-// act on an employee within their own department, and no one but ADMIN can
-// act on their own request. No further scope check for ADMIN/HR beyond
-// self-approval. EMPLOYEE never reaches this — those actions are
-// self-scoped upstream.
+// Guards a single-record action (review/approve/view) so a scoped reviewer (see reviewerScope: a MANAGER, or an HR
+// user who heads departments) can only act on an employee they look after, and no one but ADMIN can act on their own
+// request. EMPLOYEE never reaches this — those actions are self-scoped upstream.
 export async function assertManagerDeptScope(
   prisma: ExtendedPrismaClient,
   actor: DeptScopeActor,
@@ -74,21 +113,10 @@ export async function assertManagerDeptScope(
   targetEmployeeId: string,
 ): Promise<void> {
   assertNotSelfApproval(actor, targetEmployeeId);
-  if (actor.role !== Role.MANAGER) return;
-  const target = await prisma.user.findFirst({
-    where: { id: targetEmployeeId, organizationId },
-    select: { departmentId: true },
-  });
-  // actor.departmentId === null is deliberately excluded from matching —
-  // otherwise two departmentless managers would satisfy `null === null`
-  // and be treated as sharing a department.
-  if (
-    !target ||
-    actor.departmentId === null ||
-    target.departmentId !== actor.departmentId
-  ) {
+  if (actor.role === Role.ADMIN || actor.role === Role.EMPLOYEE) return;
+  if (!(await inReviewerScope(prisma, actor, organizationId, targetEmployeeId))) {
     throw new ForbiddenException(
-      'You can only act on employees in your own department.',
+      'You can only act on employees in the departments you head or who report to you.',
     );
   }
 }
@@ -120,29 +148,19 @@ export async function assertManagerScopeOrDelegate(
       );
     }
   }
-  if (actor.role !== Role.MANAGER) return;
+  if (actor.role === Role.ADMIN || actor.role === Role.EMPLOYEE) return;
   const target = await prisma.user.findFirst({
     where: { id: targetEmployeeId, organizationId },
-    select: { departmentId: true, reportingManagerId: true, additionalReportingManagerIds: true },
+    select: { reportingManagerId: true, additionalReportingManagerIds: true },
   });
   if (!target) {
     throw new ForbiddenException(
-      'You can only act on employees in your own department (or whose manager has delegated to you).',
+      'You can only act on employees in the departments you head or who report to you (or whose manager has delegated to you).',
     );
   }
-  // The actual reporting relationship always grants access, independent of
-  // department — this covers a manager/employee pair that predates (or
-  // simply never got) a department assignment.
+  // The actual reporting relationship always grants access, independent of department.
   if (isManagerOf(actor.id, target)) return;
-  // actor.departmentId === null is deliberately excluded — see
-  // assertManagerDeptScope's identical guard against null-department
-  // managers matching every other null-department employee.
-  if (
-    actor.departmentId !== null &&
-    target.departmentId === actor.departmentId
-  ) {
-    return;
-  }
+  if (await inReviewerScope(prisma, actor, organizationId, targetEmployeeId)) return;
 
   // A delegate of ANY of the employee's managers (primary or additional) may act for them.
   const managerIds = managerIdsOf(target);
@@ -158,6 +176,17 @@ export async function assertManagerScopeOrDelegate(
   }
 
   throw new ForbiddenException(
-    'You can only act on employees in your own department (or whose manager has delegated to you).',
+    'You can only act on employees in the departments you head or who report to you (or whose manager has delegated to you).',
   );
+}
+
+// True when the actor's lists are narrowed to their own people (see reviewerScope) - a MANAGER, or an HR user who heads
+// departments. Callers then take the ids from deptScopedEmployeeIds.
+export async function isScopedReviewer(
+  prisma: ExtendedPrismaClient,
+  actor: { id?: string; role: Role },
+  organizationId: string,
+): Promise<boolean> {
+  if (actor.role === Role.ADMIN || actor.role === Role.EMPLOYEE) return false;
+  return (await reviewerScope(prisma, actor, organizationId)) !== null;
 }

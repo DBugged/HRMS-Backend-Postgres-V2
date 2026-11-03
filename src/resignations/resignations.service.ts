@@ -7,6 +7,7 @@
 // case. Nobody decides their own resignation, and only an ADMIN decides an HR/ADMIN user's (same rule as the
 // privacy module's requests). approvedLwd defaults to the last working day the employee asked for; an approver may
 // move it, and a date before the notice period ends (an early release) needs a note explaining why.
+import { inReviewerScope, reviewerScope } from '../common/dept-scope';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly } from '../letters/auto-letter';
 import { assertAccountCanLeave } from '../common/account-guard';
@@ -307,9 +308,12 @@ export class ResignationsService {
     return this.withRecordedBy(rows, actor.organizationId);
   }
 
-  findAll(query: ListResignationsQueryDto, organizationId: string) {
+  // An HR user who heads departments sees only their people's resignations (see reviewerScope).
+  async findAll(query: ListResignationsQueryDto, organizationId: string, actor?: Actor) {
+    const scope = actor ? await reviewerScope(this.scopedPrisma, actor, organizationId) : null;
     const where = {
       organizationId,
+      ...(scope && { employeeId: { in: scope } }),
       ...(query.status && { status: query.status }),
     };
     return paginate(
@@ -343,6 +347,13 @@ export class ResignationsService {
       },
     });
     if (!record) throw new NotFoundException('Resignation not found.');
+    if (
+      record.employeeId !== actor.id &&
+      actor.role === Role.HR &&
+      !(await inReviewerScope(this.scopedPrisma, actor, actor.organizationId, record.employeeId))
+    ) {
+      throw new NotFoundException('Resignation not found.');
+    }
     if (record.employeeId !== actor.id && !HR_ROLES.includes(actor.role)) {
       // A reporting manager may read (not decide) their direct report's resignation.
       const reportsToActor = await this.scopedPrisma.user.findFirst({
@@ -945,6 +956,13 @@ export class ResignationsService {
     ) {
       throw new ForbiddenException(
         'Only an Admin can decide an HR or Admin employee’s resignation.',
+      );
+    }
+    if (
+      !(await inReviewerScope(this.scopedPrisma, actor, actor.organizationId, record.employeeId))
+    ) {
+      throw new ForbiddenException(
+        'You can only decide resignations of the people in the departments you head.',
       );
     }
     if (record.status !== expectedStatus) {
