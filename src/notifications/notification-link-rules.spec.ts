@@ -3,27 +3,27 @@ import { resolveNotificationLink, withLink } from './notification-link-rules';
 describe('resolveNotificationLink', () => {
   const cases: Array<[string, string | null]> = [
     ['Work From Home Requested', '/attendance-approvals'],
-    ['Work From Home Request APPROVED', '/attendance?view=mine'],
+    ['Work From Home Request APPROVED', '/my/attendance'],
     ['Attendance Regularization Requested', '/attendance-approvals'],
-    ['Regularization Request REJECTED', '/attendance?view=mine'],
+    ['Regularization Request REJECTED', '/my/attendance'],
     ['Overtime Requested', '/overtime-approvals'],
-    ['Overtime Request APPROVED', '/attendance?view=mine'],
-    ['Marked Late — 03-11-2026', '/attendance?view=mine'],
-    ['New Leave Application', '/leaves'],
-    ['Leave Cancellation Request', '/leaves'],
-    ['Approved Leave Cancelled', '/leaves'],
-    ['Leave Request APPROVED', '/leaves?view=mine'],
-    ['Leave Cancelled', '/leaves?view=mine'],
-    ['Leave Recorded for You', '/leaves?view=mine'],
-    ['Leave balance expiring soon (03-11-2026)', '/leaves?view=mine'],
-    ['Comp-Off Requested', '/comp-offs'],
-    ['Comp-Off Request APPROVED', '/comp-offs?view=mine'],
-    ['Payslip for 10/2026', '/payroll?view=mine'],
-    ['Revised payslip for 10/2026', '/payroll?view=mine'],
-    ['Reimbursement Claim Submitted', '/reimbursements'],
-    ['Reimbursement Claim APPROVED', '/reimbursements?view=mine'],
-    ['Loan/Advance Request Pending Review', '/loans'],
-    ['Loan Request Approved', '/loans?view=mine'],
+    ['Overtime Request APPROVED', '/my/attendance'],
+    ['Marked Late — 03-11-2026', '/my/attendance'],
+    ['New Leave Application', '/approvals/leaves'],
+    ['Leave Cancellation Request', '/approvals/leaves'],
+    ['Approved Leave Cancelled', '/approvals/leaves'],
+    ['Leave Request APPROVED', '/my/leaves'],
+    ['Leave Cancelled', '/my/leaves'],
+    ['Leave Recorded for You', '/my/leaves'],
+    ['Leave balance expiring soon (03-11-2026)', '/my/leaves'],
+    ['Comp-Off Requested', '/approvals/comp-offs'],
+    ['Comp-Off Request APPROVED', '/my/comp-offs'],
+    ['Payslip for 10/2026', '/my/payslips'],
+    ['Revised payslip for 10/2026', '/my/payslips'],
+    ['Reimbursement Claim Submitted', '/approvals/reimbursements'],
+    ['Reimbursement Claim APPROVED', '/my/reimbursements'],
+    ['Loan/Advance Request Pending Review', '/approvals/loans'],
+    ['Loan Request Approved', '/my/loans'],
     ['Resignation Submitted', '/resignations'],
     ['Resignation Approved', '/my-resignation'],
     ['Withdrawal Approved', '/my-resignation'],
@@ -41,6 +41,6 @@ describe('resolveNotificationLink', () => {
 
   it('keeps a link the sender set', () => {
     expect(withLink({ title: 'Leave Cancelled', link: '/x' }).link).toBe('/x');
-    expect(withLink({ title: 'Leave Cancelled', link: null }).link).toBe('/leaves?view=mine');
+    expect(withLink({ title: 'Leave Cancelled', link: null }).link).toBe('/my/leaves');
   });
 });

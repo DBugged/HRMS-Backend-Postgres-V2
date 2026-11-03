@@ -3266,10 +3266,6 @@ enum NotificationCategory {
   PAYROLL
   ATTENDANCE
   GENERAL
-  // Defined for parity with the old system's enum, but nothing creates one
-  // — no controller old-side ever fires an ONBOARDING-category
-  // notification. Kept for schema fidelity, not because it's used.
-  ONBOARDING
 }
 
 model Notification {

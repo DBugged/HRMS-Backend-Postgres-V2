@@ -90,7 +90,7 @@ export class MissedPunchOutService {
           employeeName: row.employee.name,
           date: displayDate,
           inTime,
-          reviewUrl: `${frontendUrl()}/attendance`,
+          reviewUrl: `${frontendUrl()}/my/attendance`,
         },
         title: `You did not punch out on ${displayDate}`,
         message: `No punch-out was recorded for ${displayDate}. Request a regularization so your hours are correct.`,

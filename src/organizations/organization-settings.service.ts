@@ -153,7 +153,7 @@ const SECTION_FIELDS: Record<string, string[]> = {
     'assetMeta',
     'watermarkLogo',
   ],
-  signatory: ['signatories', 'sealUrl'],
+  signatory: ['signatories'],
   // Combined General Settings tab — org.policies and the shift-default
   // blob save together from one PATCH now (previously a separate
   // 'attendancePayroll' section/tab).

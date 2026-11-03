@@ -193,7 +193,7 @@ export class LeaveExpiryReminderService {
           employeeName: employee.name,
           leaveSummary: lines.join('; '),
           daysLeft: String(daysLeft),
-          reviewUrl: `${frontendUrl()}/leaves`,
+          reviewUrl: `${frontendUrl()}/my/leaves`,
         },
         title: `Leave balance expiring soon (${displayToday})`,
         message: lines.join('; '),

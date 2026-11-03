@@ -10,7 +10,7 @@ import { NotificationCategory } from '@prisma/client';
 export type NotificationChannel = 'inApp' | 'email' | 'push';
 export const NOTIFICATION_CHANNELS: readonly NotificationChannel[] = ['inApp', 'email', 'push'];
 
-/** The kinds a person can control. ONBOARDING exists in the schema but nothing sends it. */
+/** The kinds a person can control. */
 export const CONTROLLABLE_CATEGORIES: readonly NotificationCategory[] = [
   NotificationCategory.LEAVE,
   NotificationCategory.REGULARIZATION,
