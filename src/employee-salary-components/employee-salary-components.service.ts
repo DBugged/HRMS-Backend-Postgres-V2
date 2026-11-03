@@ -39,6 +39,9 @@ import {
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { LettersService } from '../letters/letters.service';
+import { handleEventLetter } from '../letters/auto-letter';
+import { Logger } from '@nestjs/common';
 import { EmailService } from '../notifications/email.service';
 import { EmailTemplatesService } from '../email-templates/email-templates.service';
 import { SalaryStructurePdfService } from './salary-structure-pdf.service';
@@ -58,7 +61,10 @@ export class EmployeeSalaryComponentsService {
     private readonly emailService: EmailService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly salaryStructurePdf: SalaryStructurePdfService,
+    private readonly lettersService: LettersService,
   ) {}
+
+  private readonly letterLogger = new Logger('EventLetter');
 
   // Tells the employee their salary structure was revised: an in-app notification (and phone push), and an email with
   // their Salary Structure document attached - the document carries the details, so the email itself states no
@@ -72,6 +78,8 @@ export class EmployeeSalaryComponentsService {
     organizationId: string,
     effectiveFrom: string,
   ): Promise<void> {
+    // The increment letter follows a revision: HR is told it is ready to review, or it is emailed, per the company's choice.
+    await handleEventLetter({ letters: this.lettersService, logger: this.letterLogger, prisma: this.scopedPrisma }, { employeeId, key: 'incrementLetter', actorId, organizationId });
     try {
       if (employeeId === actorId) return;
       const [org, employee] = await Promise.all([

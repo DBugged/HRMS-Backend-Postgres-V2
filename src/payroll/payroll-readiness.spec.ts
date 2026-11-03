@@ -1,11 +1,11 @@
-import { buildReadiness, type ReadinessEmployee } from './payroll-readiness';
+import { buildReadiness, readinessVerdict, type ReadinessEmployee } from './payroll-readiness';
 
 const emp = (over: Partial<ReadinessEmployee> = {}): ReadinessEmployee => ({
   id: 'e1',
   name: 'Priya Sharma',
   code: 'DP-00002',
   joiningDate: '2026-04-01',
-  personalData: { bankAccountNo: '500100207919', bankIFSC: 'HDFC0001234' },
+  personalData: { bankAccountNo: '500100207919', bankIFSC: 'HDFC0001234', panNumber: 'ABCDE1234F' },
   ...over,
 });
 
@@ -84,6 +84,7 @@ describe('buildReadiness', () => {
     expect(checks.map((c) => c.key)).toEqual([
       'structure',
       'bank',
+      'pan',
       'joiners',
       'exits',
     ]);
@@ -159,5 +160,19 @@ describe('buildReadiness - opening balances', () => {
         (c) => c.key,
       ),
     ).not.toContain('opening');
+  });
+});
+
+describe('readinessVerdict', () => {
+  const c = (level: 'blocker' | 'warning' | 'info', n: number) => ({ key: 'bank' as const, level, title: 't', people: Array.from({ length: n }, (_, i) => ({ id: String(i), name: 'n', code: 'c' })) });
+  it('is go with nothing to fix, review with warnings, no-go with a blocker', () => {
+    expect(readinessVerdict([c('info', 3)]).status).toBe('go');
+    expect(readinessVerdict([c('warning', 2)])).toMatchObject({ status: 'review', warnings: 2 });
+    expect(readinessVerdict([c('blocker', 1), c('warning', 2)])).toMatchObject({ status: 'no-go', blockers: 1, warnings: 2 });
+  });
+  it('flags a missing PAN as a warning', () => {
+    const e = { id: 'e1', name: 'A', code: 'C', joiningDate: '2026-04-01', personalData: { bankAccountNo: '1', bankIFSC: 'X' } };
+    const checks = buildReadiness({ month: 9, year: 2026, employees: [e], withStructure: new Set(['e1']), exits: new Map() });
+    expect(checks.find((k) => k.key === 'pan')).toMatchObject({ level: 'warning' });
   });
 });

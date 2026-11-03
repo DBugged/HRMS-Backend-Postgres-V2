@@ -59,6 +59,18 @@ interface PendingRequest {
   requestedAt: Date;
 }
 
+// The company's own escalation days per request type (Organization Settings > Policies), by RequestKind. Missing = use the
+// default; 0 = never escalate that type.
+export function readEscalationDays(policies: unknown): Partial<Record<RequestKind, number>> {
+  const raw = ((policies ?? {}) as { escalationDays?: unknown }).escalationDays;
+  if (!raw || typeof raw !== 'object') return {};
+  const out: Partial<Record<RequestKind, number>> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === 'number' && Number.isInteger(v) && v >= 0) out[k as RequestKind] = v;
+  }
+  return out;
+}
+
 export function escalationThresholdDays(
   env: NodeJS.ProcessEnv = process.env,
 ): number {
@@ -79,8 +91,9 @@ export class ApprovalEscalationService {
 
   @Cron('30 9 * * *')
   async escalateDaily() {
+    // The environment value is only the default: each company can set its own days per request type (0 = never), so the job
+    // still looks at every company even when the default is off.
     const threshold = escalationThresholdDays();
-    if (threshold === 0) return;
     const organizations = await this.scopedPrisma.organization.findMany({
       where: { isActive: true },
       select: { id: true },
@@ -104,10 +117,13 @@ export class ApprovalEscalationService {
   ): Promise<number> {
     // Requests of a module the Super Admin switched off for this company are not chased.
     const off = await disabledModulesOf(organizationId);
+    const org = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { policies: true } });
+    const perType = readEscalationDays(org?.policies);
+    const daysFor = (kind: RequestKind) => perType[kind] ?? thresholdDays;
     const due = (await this.pendingRequests(organizationId)).filter((r) => !off.has(REQUEST_TYPE_MODULE[r.kind] ?? '')).filter((r) =>
       isEscalationDue(
         Math.floor((now.getTime() - r.requestedAt.getTime()) / DAY_MS),
-        thresholdDays,
+        daysFor(r.kind),
       ),
     );
     if (due.length === 0) return 0;
@@ -164,13 +180,13 @@ export class ApprovalEscalationService {
         variables: {
           employeeName: user.name,
           totalPending: String(items.length),
-          thresholdDays: String(thresholdDays),
+          thresholdDays: String(Math.min(...items.map((i) => daysFor(i.kind)).filter((d) => d > 0))),
           oldestSummary: `${items[0].requesterName}: ${items[0].summary}`,
           requestList: listed.join('; '),
           reviewUrl: frontendUrl(),
         },
         // The date keeps each day's escalation distinct from the previous one for dedupe purposes.
-        title: `Escalation: ${items.length} request(s) waiting ${thresholdDays}+ days (${formatDateDisplay(today)})`,
+        title: `Escalation: ${items.length} request(s) waiting ${Math.min(...items.map((i) => daysFor(i.kind)).filter((d) => d > 0))}+ days (${formatDateDisplay(today)})`,
         message: listed.join('; '),
         category: NotificationCategory.GENERAL,
         dedupeWithinHours: 20,

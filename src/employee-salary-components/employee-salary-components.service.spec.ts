@@ -162,6 +162,7 @@ function build(
         };
       },
     } as never,
+    { send: async () => undefined } as never,
   );
   return { service, rows, audit, timeline, notifications, emails, built };
 }

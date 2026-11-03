@@ -27,6 +27,8 @@ export interface ReadinessCheck {
     | 'statutory'
     | 'opening'
     | 'bank'
+    | 'pan'
+    | 'approvals'
     | 'attendance'
     | 'joiners'
     | 'exits';
@@ -104,6 +106,8 @@ export function buildReadiness(input: {
             input.withStructure.has(e.id),
         )
       : [];
+  // No PAN: tax is deducted at the higher rate, so it is worth fixing first (not a blocker).
+  const noPan = onPayroll.filter((e) => !text(((e.personalData ?? {}) as Record<string, unknown>).panNumber));
   const joiners = onPayroll.filter(
     (e) => e.joiningDate >= monthStart && e.joiningDate <= monthEnd,
   );
@@ -136,6 +140,12 @@ export function buildReadiness(input: {
       people: noBank.map((e) => person(e)),
     },
     {
+      key: 'pan',
+      level: 'warning',
+      title: 'PAN missing (tax is deducted at the higher rate)',
+      people: noPan.map((e) => person(e)),
+    },
+    {
       key: 'joiners',
       level: 'info',
       title: 'Joined this month (part-month pay)',
@@ -154,4 +164,21 @@ export function buildReadiness(input: {
   return checks.filter((c) =>
     c.key === 'statutory' ? statutory : c.people.length > 0,
   );
+}
+
+// The one-line answer for HR: "go" (nothing to fix), "review" (warnings only - the run works but something is off) or
+// "no-go" (a blocker: the run would fail or skip someone).
+export type ReadinessVerdict = { status: 'go' | 'review' | 'no-go'; blockers: number; warnings: number; summary: string };
+
+export function readinessVerdict(checks: ReadinessCheck[]): ReadinessVerdict {
+  const blockers = checks.filter((c) => c.level === 'blocker').reduce((n, c) => n + Math.max(c.people.length, 1), 0);
+  const warnings = checks.filter((c) => c.level === 'warning').reduce((n, c) => n + Math.max(c.people.length, 1), 0);
+  const status = blockers > 0 ? 'no-go' : warnings > 0 ? 'review' : 'go';
+  const summary =
+    status === 'go'
+      ? 'Ready to run - nothing needs fixing first.'
+      : status === 'no-go'
+        ? `Not ready: ${blockers} thing${blockers === 1 ? '' : 's'} would stop or skip the run${warnings ? `, plus ${warnings} to review` : ''}.`
+        : `Can run, but ${warnings} thing${warnings === 1 ? '' : 's'} to review first.`;
+  return { status, blockers, warnings, summary };
 }

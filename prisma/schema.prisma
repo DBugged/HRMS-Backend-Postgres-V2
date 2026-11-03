@@ -283,6 +283,7 @@ model Organization {
   attendanceImportBatches          AttendanceImportBatch[]
   overtimeRecords                  OvertimeRecord[]
   scheduledReports                 ScheduledReport[]
+  statutoryFilings                 StatutoryFiling[]
   customFieldDefinitions           CustomFieldDefinition[]
   performanceRatings               PerformanceRating[]
   companyPerformance               CompanyPerformance[]
@@ -4224,6 +4225,25 @@ model ScheduledReport {
 
   @@index([organizationId])
   @@map("scheduled_reports")
+}
+
+// One statutory return / payment HR has confirmed as filed (Statutory Compliance > Filing tracker). The due date and kind come from the
+// calendar in scheduled-reminders/reminder-dates.ts, so nothing about the schedule is stored - only that this one was done.
+model StatutoryFiling {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  // PF | ESI | PT | TDS | 24Q | LWF
+  key      String
+  // The due date it was for (YYYY-MM-DD) - with the key, identifies the filing.
+  dueDate  String
+  filedAt  DateTime @default(now())
+  filedById String
+
+  @@unique([organizationId, key, dueDate])
+  @@index([organizationId])
+  @@map("statutory_filings")
 }
 
 enum CustomFieldType {

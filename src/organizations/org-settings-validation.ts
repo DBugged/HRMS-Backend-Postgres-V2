@@ -312,6 +312,27 @@ function validatePolicies(p: Record<string, unknown>) {
       bad(`policies.${key} must be a number of 0 or more.`);
     }
   }
+  if (p.eventLetters !== undefined) {
+    const e = p.eventLetters;
+    if (!e || typeof e !== 'object' || Array.isArray(e)) bad('policies.eventLetters must be an object.');
+    else {
+      for (const [k, v] of Object.entries(e as Record<string, unknown>)) {
+        if (!['promotionLetter', 'incrementLetter', 'transferLetter'].includes(k)) bad(`policies.eventLetters.${k} is not a letter that follows an event.`);
+        else if (!['off', 'review', 'send'].includes(v as string)) bad(`policies.eventLetters.${k} must be off, review or send.`);
+      }
+    }
+  }
+  if (p.escalationDays !== undefined) {
+    const kinds = ['LEAVE', 'REGULARIZATION', 'WFH', 'OVERTIME', 'COMP_OFF', 'REIMBURSEMENT', 'LOAN', 'ENCASHMENT', 'RESIGNATION'];
+    const e = p.escalationDays;
+    if (!e || typeof e !== 'object' || Array.isArray(e)) bad('policies.escalationDays must be an object.');
+    else {
+      for (const [k, v] of Object.entries(e as Record<string, unknown>)) {
+        if (!kinds.includes(k)) bad(`policies.escalationDays.${k} is not a request type.`);
+        else if (typeof v !== 'number' || !Number.isInteger(v) || v < 0 || v > 60) bad(`policies.escalationDays.${k} must be a whole number of days from 0 (never) to 60.`);
+      }
+    }
+  }
   if (
     p.negativeLeaveBalanceMode !== undefined &&
     !(NEGATIVE_BALANCE_MODES as readonly unknown[]).includes(

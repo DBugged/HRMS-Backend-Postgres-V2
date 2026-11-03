@@ -1,3 +1,4 @@
+import { LettersModule } from '../letters/letters.module';
 import { Module } from '@nestjs/common';
 import { EmployeeSalaryComponentsController } from './employee-salary-components.controller';
 import { EmployeeSalaryComponentsService } from './employee-salary-components.service';
@@ -12,6 +13,7 @@ import { CompanyBrandsModule } from '../company-brands/company-brands.module';
 
 @Module({
   imports: [
+    LettersModule,
     AuditLogModule,
     EmployeeTimelineModule,
     NotificationsModule,

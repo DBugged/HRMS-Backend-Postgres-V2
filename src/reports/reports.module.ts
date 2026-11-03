@@ -11,6 +11,7 @@ import { OpsReportsController } from './ops-reports.controller';
 import { OpsReportsService } from './ops-reports.service';
 import { EcrController } from './ecr.controller';
 import { EcrService } from './ecr.service';
+import { StatutoryFilingsController } from './statutory-filings.controller';
 import { StatutoryReturnsController } from './statutory-returns.controller';
 import { StatutoryReturnsService } from './statutory-returns.service';
 import { DashboardModule } from '../dashboard/dashboard.module';
@@ -26,6 +27,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     AuditLogModule,
   ],
   controllers: [
+    StatutoryFilingsController,
     ReportsController,
     PayrollReportsController,
     CustomReportController,

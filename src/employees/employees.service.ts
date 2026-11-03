@@ -12,7 +12,7 @@ import { inReviewerScope, reviewerScope } from '../common/dept-scope';
 import { summarizeDocumentReview, type DocumentReview } from './document-review';
 import { sisterCompaniesOn } from '../module-access/module-gate';
 import { LettersService } from '../letters/letters.service';
-import { sendLetterQuietly } from '../letters/auto-letter';
+import { sendLetterQuietly, handleEventLetter } from '../letters/auto-letter';
 import { assertEmployeeRoom } from '../module-access/module-gate';
 import { buildOrgChart } from './org-chart';
 import {
@@ -1645,6 +1645,12 @@ export class EmployeesService {
     }
     await this.scopedPrisma.employeeMovement.createMany({ data: rows });
 
+    const eventLetterDeps = { letters: this.lettersService, logger: this.logger, prisma: this.scopedPrisma };
+    if ((designationChanged || gradeChanged) && meta.isPromotion) {
+      void handleEventLetter(eventLetterDeps, { employeeId: before.id, key: 'promotionLetter', actorId: changedById, organizationId });
+    } else if (departmentChanged || locationChanged) {
+      void handleEventLetter(eventLetterDeps, { employeeId: before.id, key: 'transferLetter', actorId: changedById, organizationId });
+    }
     if ((designationChanged || gradeChanged) && meta.isPromotion) {
       await this.timelineService.logEvent({
         organizationId,

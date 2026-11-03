@@ -66,7 +66,7 @@ import {
 } from '../employee-salary-components/city-hra';
 import { buildBankAdvice } from './bank-advice';
 import { redactHoldForEmployee } from './payroll-hold';
-import { buildReadiness } from './payroll-readiness';
+import { buildReadiness, readinessVerdict } from './payroll-readiness';
 import { withOpeningBalance } from './opening-balances';
 import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import {
@@ -4239,7 +4239,46 @@ export class PayrollService {
         },
       );
     }
-    return { month, year, employeeCount: employees.length, checks };
+    // Requests still waiting for a decision that would change this month's pay.
+    const monthPrefix = monthStart.slice(0, 7);
+    const [pendingLeave, pendingOvertime, pendingRegularization] = await Promise.all([
+      this.scopedPrisma.leave.findMany({
+        where: { organizationId, employeeId: { in: ids }, status: 'PENDING', startDate: { lte: monthEnd }, endDate: { gte: monthStart } },
+        select: { employeeId: true },
+      }),
+      this.scopedPrisma.overtimeRecord.findMany({
+        where: { organizationId, employeeId: { in: ids }, status: 'PENDING', date: { startsWith: monthPrefix } },
+        select: { employeeId: true },
+      }),
+      this.scopedPrisma.attendance.findMany({
+        where: { organizationId, employeeId: { in: ids }, date: { startsWith: monthPrefix }, regularization: { path: ['status'], equals: 'pending' } },
+        select: { employeeId: true },
+      }),
+    ]);
+    const pendingBy = new Map<string, { leave: number; overtime: number; regularization: number }>();
+    const bump = (id: string, k: 'leave' | 'overtime' | 'regularization') => {
+      const row = pendingBy.get(id) ?? { leave: 0, overtime: 0, regularization: 0 };
+      row[k] += 1;
+      pendingBy.set(id, row);
+    };
+    pendingLeave.forEach((r) => bump(r.employeeId, 'leave'));
+    pendingOvertime.forEach((r) => bump(r.employeeId, 'overtime'));
+    pendingRegularization.forEach((r) => bump(r.employeeId, 'regularization'));
+    if (pendingBy.size > 0) {
+      const byId = new Map(employees.map((e) => [e.id, e]));
+      checks.splice(checks.findIndex((c) => c.level === 'info') === -1 ? checks.length : checks.findIndex((c) => c.level === 'info'), 0, {
+        key: 'approvals',
+        level: 'warning',
+        title: 'Requests still waiting for approval (leave, overtime, regularization)',
+        people: [...pendingBy.entries()].map(([id, n]) => ({
+          id,
+          name: byId.get(id)?.name ?? 'Unknown',
+          code: byId.get(id)?.employeeId ?? '',
+          detail: [n.leave && `${n.leave} leave`, n.overtime && `${n.overtime} overtime`, n.regularization && `${n.regularization} regularization`].filter(Boolean).join(', '),
+        })),
+      });
+    }
+    return { month, year, employeeCount: employees.length, checks, verdict: readinessVerdict(checks) };
   }
 
   // What to send the bank for a month: every locked, un-held, regular payslip with its account details, plus the ones

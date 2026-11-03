@@ -55,10 +55,15 @@ export class StatutoryDueReminderService {
       },
       select: { module: true },
     });
+    // Reminders before the due date (5 and 1 days) and, for anything still not marked filed, a chase 1 and 7 days after it.
+    const filedKeys = new Set(
+      (await this.scopedPrisma.statutoryFiling.findMany({ where: { organizationId }, select: { key: true, dueDate: true } })).map((f) => `${f.key}|${f.dueDate}`),
+    );
     const dues = upcomingStatutoryDues(
       today,
       new Set(versions.map((v) => v.module)),
-    );
+      [5, 1, -1, -7],
+    ).filter((d) => !filedKeys.has(`${d.key}|${d.dueDate}`));
     if (dues.length === 0) return 0;
 
     const recipients = (await this.notifier.activeUsers(organizationId)).filter(
@@ -80,8 +85,12 @@ export class StatutoryDueReminderService {
             daysLeft: String(due.daysLeft),
             reviewUrl: `${frontendUrl()}/statutory-compliance`,
           },
-          title: `${due.label} due on ${dueDate} (${due.daysLeft} day${due.daysLeft === 1 ? '' : 's'} to go)`,
-          message: `${due.label} for ${due.period} is due on ${dueDate}. Please confirm the date for your registration category.`,
+          title: due.daysLeft < 0
+            ? `${due.label} was due on ${dueDate} (${-due.daysLeft} day${due.daysLeft === -1 ? '' : 's'} ago)`
+            : `${due.label} due on ${dueDate} (${due.daysLeft} day${due.daysLeft === 1 ? '' : 's'} to go)`,
+          message: due.daysLeft < 0
+            ? `${due.label} for ${due.period} is not marked filed. File it, then mark it filed in Statutory Compliance so the reminders stop.`
+            : `${due.label} for ${due.period} is due on ${dueDate}. Download the file from Statutory Compliance, file it, then mark it filed.`,
           category: NotificationCategory.PAYROLL,
         });
         if (delivered) sent++;

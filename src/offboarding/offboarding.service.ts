@@ -579,6 +579,24 @@ export class OffboardingService {
       this.scopedPrisma,
       organizationId,
     );
+    // The asset recovery list: what the leaver still holds, told to them and to HR so nothing is chased by memory.
+    const heldAssets = await this.findOpenAssets(employee.id, organizationId);
+    if (heldAssets.length > 0) {
+      const list = heldAssets.map((x) => `${x.assetName}${x.assetTag ? ` (${x.assetTag})` : ''}`).join(', ');
+      await this.notificationsService.create({
+        organizationId,
+        userId: employee.id,
+        title: `Return your company assets before ${dmyText(dto.lastWorkingDay)}`,
+        message: `Please return: ${list}.`,
+        category: NotificationCategory.GENERAL,
+      });
+      await this.notifyHr(
+        organizationId,
+        [],
+        `Asset recovery list: ${employee.name}`,
+        `${employee.name} leaves on ${dmyText(dto.lastWorkingDay)} and still holds ${heldAssets.length} asset${heldAssets.length === 1 ? '' : 's'}: ${list}. Collect them and mark each returned in Employee Assets.`,
+      );
+    }
     const title = 'Offboarding Process Initiated';
     const message = `Your offboarding has been initiated with a last working day of ${formatDateDisplay(dto.lastWorkingDay, '', dateFormat, timeZone)}. HR will reach out with the exit checklist.`;
     await this.notificationsService.create({
