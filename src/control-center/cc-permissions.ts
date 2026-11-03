@@ -18,6 +18,8 @@ export const CC_RESOURCES = [
   'settings',
   'usage',
   'audit-log',
+  // Runs the smoke test; only OWNER (the Super Admin) holds it, through the '*' it has.
+  'smoke-test',
 ] as const;
 
 const ADMIN_PERMISSIONS = [
