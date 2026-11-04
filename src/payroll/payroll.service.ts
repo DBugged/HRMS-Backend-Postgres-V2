@@ -1824,8 +1824,10 @@ export class PayrollService {
         reason: 'No salary structure is set up yet.',
       };
     }
-    // Yearly variable pay (paid outside the monthly figures) counts once, as one more month's pay.
-    const variableAnnual = rows
+    // Yearly variable pay (paid outside the monthly figures) counts once, as one more month's pay - at the share of it the
+    // year's approved performance rating earns, the same rule payroll pays it by (applyVariablePay): rating 3 = 50%, and
+    // 100% while no rating is approved.
+    const variableFull = rows
       .filter(
         (r) =>
           r.isEnabled !== false &&
@@ -1833,6 +1835,22 @@ export class PayrollService {
           r.amountBasis === 'ANNUAL',
       )
       .reduce((sum, r) => sum + Number(r.fixedAmount ?? 0), 0);
+    const approvedRating =
+      variableFull > 0
+        ? await this.scopedPrisma.performanceRating.findFirst({
+            where: {
+              organizationId,
+              employeeId,
+              financialYear,
+              status: 'APPROVED',
+            },
+            select: { rating: true, payoutPercentage: true },
+          })
+        : null;
+    const variablePayoutPercent = approvedRating
+      ? approvedRating.payoutPercentage
+      : 100;
+    const variableAnnual = (variableFull * variablePayoutPercent) / 100;
 
     const declaration =
       await this.scopedPrisma.employeeTaxDeclaration.findFirst({
@@ -1981,8 +1999,34 @@ export class PayrollService {
       salary: {
         monthlyGross: Math.round(figures.gross),
         yearlyFixed: Math.round(figures.gross * 12),
+        // The variable pay the year's rating earns (what payroll will pay), with the full amount and the share for reference.
         yearlyVariable: Math.round(variableAnnual),
+        yearlyVariableFull: Math.round(variableFull),
+        variablePayoutPercent,
+        variableRating: approvedRating?.rating ?? null,
         yearlyGross: Math.round(figures.gross * 12 + variableAnnual),
+      },
+      // How "Income for the year" in the regime table is made up: months already paid count at what was actually paid
+      // (a salary change, overtime, arrears or unpaid days make it differ from today's salary), the rest at today's salary.
+      // The parts add up to grossIncome.
+      incomeBreakdown: {
+        paidMonths: ytdFigures.ytdMonths,
+        paidGross: Math.round(ytdFigures.ytdGross),
+        notInPayrollMonths: missing,
+        notInPayrollGross: Math.round(missing * figures.gross),
+        monthsLeft: remaining,
+        monthsLeftGross: Math.round(remaining * figures.gross),
+        variable: Math.round(variableAnnual),
+        // Previous employer's income, declared other income and employer NPS: whatever else the engine counts.
+        other: Math.max(
+          0,
+          newRegime.grossIncome -
+            Math.round(ytdFigures.ytdGross) -
+            Math.round(missing * figures.gross) -
+            Math.round(remaining * figures.gross) -
+            Math.round(variableAnnual),
+        ),
+        total: newRegime.grossIncome,
       },
       old: oldRegime,
       new: newRegime,

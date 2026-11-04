@@ -270,7 +270,8 @@ export function breakdownStructure(
         monthlyByCode[code] = num(r.fixedAmount);
       } else if (r.valueType === 'PERCENTAGE') {
         const base = monthlyByCode[r.percentageOf ?? ''] ?? 0;
-        monthlyByCode[code] = (base * num(r.percentageValue)) / 100;
+        // Rounded to the rupee, as payroll pays each line (50% of a Basic of 6,281 is paid as 3,141, not 3,140.50).
+        monthlyByCode[code] = Math.round((base * num(r.percentageValue)) / 100);
       } else if (monthlyByCode[code] === undefined) {
         monthlyByCode[code] = 0;
       }

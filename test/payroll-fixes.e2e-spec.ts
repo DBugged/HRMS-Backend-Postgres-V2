@@ -192,6 +192,61 @@ describe('Payroll correctness fixes (e2e)', () => {
       expect(line(run.payrolls[0].earnings, 'VARIABLE_PAY')).toBe(50000);
     });
 
+    it('the tax page counts the variable pay at the approved rating, and its income breakdown adds up', async () => {
+      const id = await mkEmployee('Var Rated', 'pf-var-rated@example.test', '2025-04-01');
+      await setStructure(
+        id,
+        [
+          { componentCode: 'BASIC', fixedAmount: 100000 },
+          { componentCode: 'VARIABLE_PAY', fixedAmount: 50000, amountBasis: 'ANNUAL' },
+        ],
+        '2025-04-01',
+      );
+      type Comparison = {
+        available: boolean;
+        financialYear: string;
+        salary: { yearlyVariable: number; yearlyVariableFull: number; variablePayoutPercent: number; yearlyFixed: number; yearlyGross: number };
+        incomeBreakdown: { paidGross: number; notInPayrollGross: number; monthsLeftGross: number; variable: number; other: number; total: number };
+        new: { grossIncome: number };
+      };
+      const compare = async () =>
+        (
+          await request(app.getHttpServer())
+            .get(`/payroll/regime-comparison?employeeId=${id}`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as Comparison;
+      const before = await compare();
+      expect(before.available).toBe(true);
+      // No approved rating yet: the whole variable pay counts.
+      expect(before.salary.yearlyVariable).toBe(50000);
+      expect(before.salary.variablePayoutPercent).toBe(100);
+
+      await prisma.performanceRating.create({
+        data: {
+          organizationId,
+          employeeId: id,
+          financialYear: before.financialYear,
+          rating: 3,
+          payoutPercentage: 50,
+          status: 'APPROVED',
+        },
+      });
+      const after = await compare();
+      expect(after.salary).toMatchObject({
+        yearlyVariable: 25000,
+        yearlyVariableFull: 50000,
+        variablePayoutPercent: 50,
+      });
+      expect(after.salary.yearlyGross).toBe(after.salary.yearlyFixed + 25000);
+      // The regime table's income is the breakdown's parts, at the rated variable pay.
+      const b = after.incomeBreakdown;
+      expect(b.variable).toBe(25000);
+      expect(b.total).toBe(after.new.grossIncome);
+      expect(Math.abs(b.paidGross + b.notInPayrollGross + b.monthsLeftGross + b.variable + b.other - b.total)).toBeLessThanOrEqual(2);
+      expect(before.new.grossIncome - after.new.grossIncome).toBe(25000);
+    });
+
     it('the same amount entered as MONTHLY basis still pays 50,000 in March', async () => {
       const id = await mkEmployee(
         'Var Monthly',
