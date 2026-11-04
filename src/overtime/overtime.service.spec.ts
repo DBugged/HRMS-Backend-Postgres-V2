@@ -31,6 +31,7 @@ function build(
     rates?: Row | null;
     compOffClaimed?: boolean;
     workCompensation?: Row;
+    prefs?: Row;
   } = {},
 ) {
   const records: Row[] = (opts.records ?? []).map((r) => ({
@@ -55,6 +56,8 @@ function build(
       findFirst: async () =>
         opts.attendance === undefined ? null : opts.attendance,
     },
+    overtimeRuleSet: { findMany: jest.fn().mockResolvedValue([]) },
+    shiftRule: { findMany: async () => [] },
     payrollSettings: {
       findFirst: async () =>
         opts.rates === null
@@ -74,6 +77,7 @@ function build(
     organization: {
       findFirst: async () => ({
         policies: {},
+        orgPayrollAttendancePrefs: opts.prefs ?? null,
         attendancePayrollPrefs: null,
         timezone: 'Asia/Kolkata',
       }),
@@ -192,6 +196,16 @@ describe('overtime: logging', () => {
       'org',
     );
     expect(r).toMatchObject({ type: 'REGULAR', rateMultiplier: 2 });
+  });
+
+  it('records ordinary overtime that ends inside the night window as night overtime', async () => {
+    const { service } = build({
+      prefs: { overtimePolicy: { nightStart: '22:00', nightEnd: '06:00' } },
+      attendance: { status: 'PRESENT', workDurationMinutes: 600, outTime: new Date('2026-10-05T18:00:00Z') },
+    });
+    const r = await service.log({ date: '2026-10-05', hours: 1 } as never, emp, 'org');
+    // 18:00 UTC is 23:30 in Asia/Kolkata, inside 22:00-06:00.
+    expect(r).toMatchObject({ type: 'NIGHT', rateMultiplier: 2 });
   });
 
   it('is refused while the Overtime Pay component is off', async () => {

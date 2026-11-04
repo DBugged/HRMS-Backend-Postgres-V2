@@ -462,6 +462,70 @@ export class EmployeesService {
     return { temporaryPassword, employeeId: employee.employeeId };
   }
 
+  // New one-time passwords for several people at once, returned ONCE so HR can hand them out as a sheet. Everyone
+  // changes theirs at first sign-in. Skipped, with a reason: the caller's own record, an Admin when the caller is not
+  // one, and anyone who has left. Passwords are stored hashed and are never kept in readable form.
+  async bulkResetPasswords(ids: string[], actor: Actor & { id: string; role: Role }, organizationId: string) {
+    const people = await this.scopedPrisma.user.findMany({
+      where: { organizationId, id: { in: [...new Set(ids)] } },
+      select: { id: true, employeeId: true, name: true, email: true, role: true, isActive: true },
+    });
+    const credentials: { employeeId: string; name: string; temporaryPassword: string; loginEmail: string | null }[] = [];
+    const skipped: { employeeId: string; name: string; reason: string }[] = [];
+    const todo = people.filter((p) => {
+      const reason =
+        p.id === actor.id ? 'Your own password is changed from your profile.'
+        : p.role === Role.ADMIN && actor.role !== Role.ADMIN ? 'Only an Admin can reset an Admin account.'
+        : !p.isActive ? 'This person is no longer active.'
+        : null;
+      if (reason) skipped.push({ employeeId: p.employeeId, name: p.name, reason });
+      return !reason;
+    });
+    // Hashing is the slow part, so a few at a time.
+    for (let i = 0; i < todo.length; i += 8) {
+      await Promise.all(
+        todo.slice(i, i + 8).map(async (p) => {
+          const temporaryPassword = generatePolicyPassword();
+          const hashedPassword = await bcrypt.hash(temporaryPassword, SALT_ROUNDS);
+          await this.scopedPrisma.user.updateMany({
+            where: { id: p.id, organizationId },
+            data: { password: hashedPassword, mustChangePassword: true, failedLoginAttempts: 0, lockedUntil: null },
+          });
+          credentials.push({
+            employeeId: p.employeeId,
+            name: p.name,
+            temporaryPassword,
+            loginEmail: p.email.endsWith('.invalid') ? null : p.email,
+          });
+        }),
+      );
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'EMPLOYEE_PASSWORDS_BULK_RESET',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: actor.id,
+      details: { count: credentials.length, employeeIds: credentials.map((c) => c.employeeId) },
+    });
+    credentials.sort((a, b) => a.employeeId.localeCompare(b.employeeId, undefined, { numeric: true }));
+    const missing = ids.length - people.length;
+    return { credentials, skipped, notFound: Math.max(0, missing) };
+  }
+
+  // A credentials sheet (Excel/PDF) was downloaded - kept in the audit trail so there is a record of who held the passwords.
+  async logCredentialsExport(count: number, source: string | undefined, actor: Actor & { id: string }, organizationId: string) {
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'CREDENTIALS_SHEET_DOWNLOADED',
+      module: 'EMPLOYEE',
+      organizationId,
+      targetId: actor.id,
+      details: { count, source: source ?? 'directory' },
+    });
+    return { logged: true };
+  }
+
   async resendCredentials(id: string, organizationId: string) {
     const employee = await this.findByIdOrThrow(id, organizationId);
     const personalEmail = (

@@ -20,6 +20,7 @@ import { CreateEmployeeDto } from './dto/create-employee.dto';
 import { BulkCreateEmployeesDto } from './dto/bulk-create-employees.dto';
 import { UpdateEmployeeDto } from './dto/update-employee.dto';
 import { BulkSetAlwaysPresentDto } from './dto/bulk-set-always-present.dto';
+import { BulkResetPasswordsDto, CredentialsExportLogDto } from './dto/bulk-reset-passwords.dto';
 import { BulkSetCompanyDto } from './dto/bulk-set-company.dto';
 import { BulkUpdateEmployeesDto } from './dto/bulk-update-employees.dto';
 import { SendProfileRemindersDto } from './dto/send-profile-reminders.dto';
@@ -112,6 +113,22 @@ export class EmployeesController {
   @UseGuards(RolesGuard)
   bulkSetCompany(@Body() dto: BulkSetCompanyDto, @CurrentUser() caller: Caller) {
     return this.employeesService.bulkSetCompany(dto.employeeIds, dto.brandId, caller, caller.organizationId);
+  }
+
+  // New one-time passwords for the chosen people, returned once for the credentials sheet. Before the :id routes.
+  @Post('bulk-reset-passwords')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  bulkResetPasswords(@Body() dto: BulkResetPasswordsDto, @CurrentUser() caller: Caller) {
+    return this.employeesService.bulkResetPasswords(dto.employeeIds, caller, caller.organizationId);
+  }
+
+  // Records that a credentials sheet was downloaded (audit trail).
+  @Post('credentials-export-log')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  credentialsExportLog(@Body() dto: CredentialsExportLogDto, @CurrentUser() caller: Caller) {
+    return this.employeesService.logCredentialsExport(dto.count, dto.source, caller, caller.organizationId);
   }
 
   // Marks several employees present on every working day (or back to normal). Before the :id routes so the path is not read as an id.

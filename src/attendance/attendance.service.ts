@@ -119,11 +119,13 @@ import {
   monthsBetween,
 } from '../payroll/payroll-period-guard';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { getOvertimeRates } from '../overtime/overtime.service';
+import { getEffectiveOvertime } from '../overtime/overtime.service';
+import { shiftDepartmentFor, type ShiftRuleLite } from './shift-rules';
 import { isOvertimePayEnabled } from '../overtime/overtime-pay';
 import {
-  getOvertimePolicy,
+  inNightWindow,
   roundOvertimeHours,
+  thresholdsFor,
 } from '../overtime/overtime-policy';
 import {
   formatDateDisplay,
@@ -592,7 +594,7 @@ export class AttendanceService {
         : employee.department;
 
     const shiftConfig = resolveShiftConfig(
-      departmentForShiftConfig,
+      shiftDepartmentFor(departmentForShiftConfig, employee, await this.shiftRulesOf(db, organizationId)),
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
       org?.timezone ?? DEFAULT_ORG_TIMEZONE,
     );
@@ -956,7 +958,7 @@ export class AttendanceService {
           isActive: true,
           departmentId: { in: departmentIds },
         },
-        select: { id: true, departmentId: true, joiningDate: true, exitDate: true },
+        select: { id: true, gender: true, departmentId: true, joiningDate: true, exitDate: true },
       });
       if (employees.length === 0) return { updated: 0 };
       const lockedRuns = await this.scopedPrisma.payrollRun.findMany({
@@ -972,6 +974,7 @@ export class AttendanceService {
       const locked = new Set(lockedRuns.map((r) => r.employeeId));
       const eligible = employees.filter((e) => !locked.has(e.id));
       const employeeById = new Map(eligible.map((e) => [e.id, e]));
+      const shiftRules = await this.shiftRulesOf(this.scopedPrisma, organizationId);
       const departments = await this.scopedPrisma.department.findMany({
         where: { organizationId, id: { in: departmentIds } },
       });
@@ -1000,7 +1003,7 @@ export class AttendanceService {
           ? (departmentById.get(employee.departmentId) ?? null)
           : null;
         const shiftConfig = resolveShiftConfig(
-          department,
+          shiftDepartmentFor(department, employee, shiftRules),
           org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
           org?.timezone ?? DEFAULT_ORG_TIMEZONE,
         );
@@ -1084,8 +1087,19 @@ export class AttendanceService {
     // are for HR to review).
     if (!(await isOvertimePayEnabled(db, organizationId))) return;
     // The Admin's overtime policy: no suggestions when overtime is entered by hand only.
-    const policy = await getOvertimePolicy(db, organizationId);
+    const person = await db.user.findFirst({
+      where: { id: employeeId, organizationId },
+      select: { id: true, departmentId: true, employeeType: true, designation: true },
+    });
+    const { policy, rates } = await getEffectiveOvertime(
+      db,
+      organizationId,
+      person ?? { id: employeeId },
+      dateStr,
+    );
     if (policy.creationMode === 'SELF') return;
+    // Overtime does not apply to this person's role (their rule set says so).
+    if (!policy.eligible) return;
     // No real shift was worked — nothing to overshoot.
     if (
       status === AttendanceStatus.ABSENT ||
@@ -1106,7 +1120,11 @@ export class AttendanceService {
       isHolidayDay || isWeeklyOff(dateStr, shiftConfig.weeklyOffs);
     const overshootMinutes = isOffDay
       ? Math.max(0, workDurationMinutes - (shiftConfig.breakMinutes ?? 0))
-      : Math.round((outTime.getTime() - shiftEnd.getTime()) / 60000);
+      : Math.max(
+          0,
+          Math.round((outTime.getTime() - shiftEnd.getTime()) / 60000) -
+            policy.startAfterMinutes,
+        );
 
     // One day, one benefit: work already claimed as comp-off is not also suggested as overtime.
     if (isOffDay) {
@@ -1132,7 +1150,28 @@ export class AttendanceService {
     const existingAuto =
       existing && existing.source !== OvertimeSource.SELF ? existing : null;
 
-    if (overshootMinutes < policy.minMinutes) {
+    // By the calendar, not the attendance status: a weekly off is WEEKEND (2x), a holiday HOLIDAY, any other day
+    // REGULAR (1.5x) - or NIGHT when the person left inside the company's night window.
+    let type: OvertimeType = isHolidayDay
+      ? OvertimeType.HOLIDAY
+      : isOffDay
+        ? OvertimeType.WEEKEND
+        : OvertimeType.REGULAR;
+    if (type === OvertimeType.REGULAR && policy.nightStart && policy.nightEnd) {
+      const leftAt = new Intl.DateTimeFormat('en-GB', {
+        timeZone: tzOf(shiftConfig),
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+      }).format(outTime);
+      if (inNightWindow(policy, leftAt)) type = OvertimeType.NIGHT;
+    }
+    // Below the Admin's "minimum hours worked to qualify" (for this kind of day) there is no overtime at all.
+    const threshold = thresholdsFor(policy, type);
+    const belowWorkedHours =
+      threshold.minWorkedHours !== null &&
+      workDurationMinutes < threshold.minWorkedHours * 60;
+    if (overshootMinutes < threshold.minMinutes || belowWorkedHours) {
       // A correction (e.g. a regularization) can shrink a day's punch span
       // below the threshold after an auto-suggestion was already created —
       // only ever clean up our own not-yet-reviewed suggestion, never a
@@ -1150,16 +1189,9 @@ export class AttendanceService {
     // so don't also create a second, auto-suggested one for the same day.
     if (existing && !existingAuto) return;
 
-    // By the calendar, not the attendance status: a weekly off is WEEKEND (2x), a holiday HOLIDAY, any other day
-    // REGULAR (1.5x).
-    const type = isHolidayDay
-      ? OvertimeType.HOLIDAY
-      : isOffDay
-        ? OvertimeType.WEEKEND
-        : OvertimeType.REGULAR;
     const hours = roundOvertimeHours(overshootMinutes / 60, policy);
     if (hours <= 0) return;
-    const rateMultiplier = (await getOvertimeRates(db, organizationId))[type];
+    const rateMultiplier = rates[type];
 
     if (existingAuto) {
       if (existingAuto.status !== OvertimeStatus.PENDING) return;
@@ -1306,6 +1338,14 @@ export class AttendanceService {
     return org?.timezone ?? 'Asia/Kolkata';
   }
 
+  // The company's active gender-wise shift rules (Work Schedules > Shift rules), laid over the department shift.
+  private async shiftRulesOf(
+    db: { shiftRule: { findMany: (a: { where: { organizationId: string; isActive: boolean } }) => Promise<ShiftRuleLite[]> } },
+    organizationId: string,
+  ): Promise<ShiftRuleLite[]> {
+    return db.shiftRule.findMany({ where: { organizationId, isActive: true } });
+  }
+
   private async resolveEmployeeShiftConfig(
     employeeId: string,
     organizationId: string,
@@ -1318,7 +1358,7 @@ export class AttendanceService {
       where: { id: organizationId },
     });
     return resolveShiftConfig(
-      employee?.department ?? null,
+      employee ? shiftDepartmentFor(employee.department, employee, await this.shiftRulesOf(this.scopedPrisma, organizationId)) ?? null : null,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
       org?.timezone ?? DEFAULT_ORG_TIMEZONE,
     );
@@ -3031,7 +3071,7 @@ export class AttendanceService {
       this.scopedPrisma.overtimeRecord.findMany({ where: { organizationId, employeeId, date }, orderBy: { createdAt: 'asc' } }),
       this.prisma.organization.findUnique({ where: { id: organizationId } }),
     ]);
-    const shift = resolveShiftConfig(employee.department, org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null, org?.timezone ?? DEFAULT_ORG_TIMEZONE);
+    const shift = resolveShiftConfig(shiftDepartmentFor(employee.department, employee, await this.shiftRulesOf(this.scopedPrisma, organizationId)), org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null, org?.timezone ?? DEFAULT_ORG_TIMEZONE);
     const shiftNetMinutes = shiftMinutes(shift.shiftStartTime, shift.shiftEndTime, shift.crossesMidnight, shift.breakMinutes);
     return {
       date,
@@ -3395,6 +3435,7 @@ export class AttendanceService {
         },
         select: {
           ...ATTENDANCE_LIST_EMPLOYEE_SELECT,
+          gender: true,
           joiningDate: true,
           departmentId: true,
           createdAt: true,
@@ -3431,6 +3472,7 @@ export class AttendanceService {
     );
 
     const synthetic: AttendanceListRow[] = [];
+    const listShiftRules = await this.shiftRulesOf(this.scopedPrisma, organizationId);
     for (const employee of employees) {
       const joiningDateStr = employee.joiningDate.toISOString().slice(0, 10);
       // Blank rows start on the day the employee was added to the system, never earlier: an employee added today
@@ -3441,7 +3483,7 @@ export class AttendanceService {
         employee.createdAt,
       );
       const shiftConfig = resolveShiftConfig(
-        employee.department,
+        shiftDepartmentFor(employee.department, employee, listShiftRules),
         orgPrefs,
         org?.timezone ?? DEFAULT_ORG_TIMEZONE,
       );
@@ -4254,7 +4296,7 @@ export class AttendanceService {
           })
         : (employee?.department ?? null);
     const shiftConfig = resolveShiftConfig(
-      department,
+      shiftDepartmentFor(department, employee ?? {}, await this.shiftRulesOf(this.scopedPrisma, organizationId)),
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
       org?.timezone ?? DEFAULT_ORG_TIMEZONE,
     );
@@ -4863,11 +4905,13 @@ export class AttendanceService {
           select: {
             id: true,
             employeeId: true,
+            gender: true,
             departmentId: true,
             department: true,
           },
         })
       : [];
+    const importShiftRules = await this.shiftRulesOf(this.scopedPrisma, organizationId);
     const byCode = new Map(employees.map((e) => [e.employeeId, e.id]));
     const employeeById = new Map(employees.map((e) => [e.id, e]));
 
@@ -5056,7 +5100,7 @@ export class AttendanceService {
             ? await departmentFor(existing.departmentId)
             : (employee?.department ?? null);
         const shiftConfig = resolveShiftConfig(
-          departmentForShiftConfig,
+          shiftDepartmentFor(departmentForShiftConfig, employee ?? {}, importShiftRules),
           orgPrefs,
           org?.timezone ?? DEFAULT_ORG_TIMEZONE,
         );
@@ -5371,6 +5415,7 @@ export class AttendanceService {
       include: { department: true },
     });
     const employeeById = new Map(employees.map((e) => [e.id, e]));
+    const recalcShiftRules = await this.shiftRulesOf(this.scopedPrisma, organizationId);
 
     const lockedByMonth = new Map<string, Set<string>>();
     for (const monthKey of new Set(rows.map((r) => r.date.slice(0, 7)))) {
@@ -5399,7 +5444,7 @@ export class AttendanceService {
       }
       if (row.date < utcDateStrOf(employee.joiningDate)) return;
       const shiftConfig = resolveShiftConfig(
-        employee.department,
+        shiftDepartmentFor(employee.department, employee, recalcShiftRules),
         org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
         org?.timezone ?? DEFAULT_ORG_TIMEZONE,
       );
@@ -5507,6 +5552,7 @@ export class AttendanceService {
       created: Record<string, number>;
     }[] = [];
 
+    const backfillShiftRules = await this.shiftRulesOf(this.scopedPrisma, organizationId);
     for (const user of users) {
       const joined = user.joiningDate.toISOString().slice(0, 10);
       const existing = new Set(
@@ -5534,7 +5580,7 @@ export class AttendanceService {
           lockedMonths.has(`${user.id}:${d.slice(0, 7)}`),
       ).length;
       const shiftConfig = resolveShiftConfig(
-        user.department,
+        shiftDepartmentFor(user.department, user, backfillShiftRules),
         orgPrefs,
         org?.timezone ?? DEFAULT_ORG_TIMEZONE,
       );
@@ -5787,9 +5833,10 @@ export class AttendanceService {
     const orgPrefs =
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null;
 
+    const openShiftRules = await this.shiftRulesOf(this.scopedPrisma, organizationId);
     for (const row of openRows) {
       const shiftConfig = resolveShiftConfig(
-        row.employee.department,
+        shiftDepartmentFor(row.employee.department, row.employee, openShiftRules),
         orgPrefs,
         org?.timezone ?? DEFAULT_ORG_TIMEZONE,
       );

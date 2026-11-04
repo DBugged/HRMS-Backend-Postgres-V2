@@ -81,6 +81,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   'EmployeeLetterAccess',
   'OrgListItem',
   'WorkSchedule',
+  'ShiftRule',
+  'OvertimeRuleSet',
   // Asset Inventory module (all organization-owned).
   'Asset',
   'AssetMaintenance',

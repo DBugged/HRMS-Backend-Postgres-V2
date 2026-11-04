@@ -266,6 +266,8 @@ model Organization {
   holidays                         Holiday[]
   workLocations                    WorkLocation[]
   workSchedules                    WorkSchedule[]
+  shiftRules                       ShiftRule[]
+  overtimeRuleSets                 OvertimeRuleSet[]
   leaveTypes                       LeaveType[]
   leaveBalances                    LeaveBalance[]
   leaves                           Leave[]
@@ -368,6 +370,8 @@ model Department {
   // department's shift fields directly afterward doesn't clear it.
   workScheduleId String?
   workSchedule   WorkSchedule? @relation(fields: [workScheduleId], references: [id])
+  // Monthly overtime hours this department plans to use (Overtime report); null = no budget set.
+  overtimeBudgetHours Float?
 
   // Per-department shift/attendance policy, read by
   // AttendanceService.recalculateAttendanceForDay. Falls back to
@@ -1057,6 +1061,63 @@ model WorkSchedule {
   @@unique([organizationId, name])
   @@index([organizationId])
   @@map("work_schedules")
+}
+
+// A timing that applies to one gender instead of the department's shift (e.g. women 09:30-17:30, everyone else on the
+// department shift). departmentIds empty = the whole company; otherwise only people in those departments. A rule for a
+// department wins over a company-wide one. Read through shift-rules.ts (shiftDepartmentFor), so attendance, lateness,
+// overtime and the check-in reminder all see the same effective shift.
+model ShiftRule {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name         String
+  gender       Gender
+  startTime    String
+  endTime      String
+  breakMinutes Int?
+  // Empty = every department.
+  departmentIds String[] @default([])
+  isActive      Boolean  @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("shift_rules")
+}
+
+// A named set of overtime rules ("Factory floor", "Office staff"). policy holds the same keys as the company overtime
+// policy (minMinutes, rounding, caps, claim window, creation mode) and any key left out falls back to the company
+// policy. rates optionally overrides the pay multipliers per overtime type. A rule set applies to the people matched by
+// employeeIds, departmentIds or employeeTypes (that order of precedence); anyone it does not match keeps the company
+// policy. effectiveFrom (YYYY-MM-DD) keeps earlier dates on the previous rules.
+model OvertimeRuleSet {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  name          String
+  description   String   @default("")
+  policy        Json     @default("{}")
+  rates         Json?
+  employeeIds   String[] @default([])
+  departmentIds String[] @default([])
+  employeeTypes String[] @default([])
+  // Designations (free text on the employee) the set applies to; after people and departments, before employee types.
+  designations  String[] @default([])
+  effectiveFrom String
+  isActive      Boolean  @default(true)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+  @@map("overtime_rule_sets")
 }
 
 enum AllocationType {

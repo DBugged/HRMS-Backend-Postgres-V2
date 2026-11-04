@@ -1191,6 +1191,9 @@ export class DashboardService {
         date: o.date,
         endDate: null,
         requestedAt: o.createdAt,
+        // Weekend / holiday work is compensated by the approver's choice, so the app needs these to offer it.
+        overtimeType: o.type,
+        employeeUserId: o.employeeId,
       })),
       ...compOffs.map((c) => ({
         type: 'COMP_OFF' as const,

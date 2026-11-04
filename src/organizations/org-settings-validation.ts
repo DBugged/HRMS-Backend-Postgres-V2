@@ -10,6 +10,7 @@ import { BadRequestException } from '@nestjs/common';
 import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
 import { SUPPORTED_STATES, isSupportedState } from '../common/indian-states';
 import { NEGATIVE_BALANCE_MODES } from './org-leave-switches';
+import { sanitizeRuleSetPolicy } from '../overtime/overtime-rule-sets';
 
 // Number of Setup Wizard steps (frontend/src/components/organization/
 // steps.js ORG_STEPS) — setupStep is 1-based and the wizard clamps it to
@@ -471,6 +472,11 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
         max: 240,
         integer: true,
       });
+      checkNumber(o, 'minWorkedHours', op('minWorkedHours'), {
+        min: 0.5,
+        max: 24,
+        allowEmpty: true,
+      });
       checkNumber(o, 'maxHoursPerDay', op('maxHoursPerDay'), {
         min: 0.25,
         max: 24,
@@ -501,6 +507,11 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       oneOf('roundingMode', ['DOWN', 'NEAREST', 'UP']);
       oneOf('capMode', ['BLOCK', 'WARN']);
       oneOf('creationMode', ['BOTH', 'SELF', 'AUTO']);
+      try {
+        sanitizeRuleSetPolicy(o);
+      } catch (e) {
+        bad(`${path('overtimePolicy')}: ${(e as Error).message}`);
+      }
     }
   }
   if (

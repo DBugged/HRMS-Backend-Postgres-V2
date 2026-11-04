@@ -58,6 +58,7 @@ function build(rows: Record<string, unknown>[], locked: string[] = []) {
         return { count: 1 };
       },
     },
+    shiftRule: { findMany: async () => [] },
     holiday: { findFirst: async () => null },
     leave: { findFirst: async () => null },
   };

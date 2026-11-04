@@ -17,6 +17,10 @@ export interface OvertimeDayFacts {
   hours: number;
   /** Unpaid break to leave out of a day with no regular shift (weekly off / holiday). */
   breakMinutes: number;
+  /** Overtime counts only from this many minutes after the shift ends (working days only; 0 = no delay). */
+  startAfterMinutes?: number;
+  /** Minutes between the shift end and the last punch-out (negative = left early); null when there is no punch-out. */
+  minutesPastShiftEnd?: number | null;
 }
 
 const EXPECTED_TYPE: Record<DayKind, OvertimeType> = {
@@ -50,11 +54,17 @@ export function overtimeDayProblem(f: OvertimeDayFacts): string | null {
   }
   const claimable =
     f.dayKind === 'WORKING'
-      ? f.workedMinutes
+      ? f.startAfterMinutes && f.minutesPastShiftEnd != null
+        ? // A delayed start: only the time beyond the shift end, less the delay, can be claimed.
+          Math.max(0, f.minutesPastShiftEnd - f.startAfterMinutes)
+        : Math.max(0, f.workedMinutes - (f.startAfterMinutes ?? 0))
       : Math.max(0, f.workedMinutes - f.breakMinutes);
   // A minute of slack so a rounded hours figure (e.g. 2.5 for 2h29m50s) is not rejected.
   if (f.hours * 60 > claimable + 1) {
     const worked = Math.round((claimable / 60) * 100) / 100;
+    if (f.dayKind === 'WORKING' && f.startAfterMinutes && f.minutesPastShiftEnd != null) {
+      return `Overtime counts from ${f.startAfterMinutes} minute(s) after the shift ends, so only ${worked} hour(s) can be claimed for that day, not ${f.hours}.`;
+    }
     return `Only ${worked} hour(s) were worked that day, so ${f.hours} hour(s) of overtime cannot be logged.`;
   }
   return null;

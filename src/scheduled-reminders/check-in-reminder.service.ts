@@ -6,6 +6,7 @@
 //   default). Nobody is nudged on a weekly off, a holiday (company-wide or their department's), a full day of approved
 //   leave, before they have joined, or once they have already punched in. One reminder per person per day (the
 //   notification title carries the date), even if the job re-runs.
+import { shiftDepartmentFor } from '../attendance/shift-rules';
 import { dmyText } from '../payroll/format-date';
 import { keepModuleEnabled } from '../module-access/module-gate';
 import { Inject, Injectable, Logger } from '@nestjs/common';
@@ -109,11 +110,14 @@ export class CheckInReminderService {
       },
       select: {
         id: true,
+        gender: true,
         departmentId: true,
         department: true,
       },
     });
     if (employees.length === 0) return 0;
+    // Gender-wise shift timings (Work Schedules > Shift rules) lie over the department shift.
+    const shiftRules = await this.scopedPrisma.shiftRule.findMany({ where: { organizationId, isActive: true } });
 
     // Everyone's shift first: only the people whose shift is at its reminder moment need the lookups below.
     const orgPrefs =
@@ -121,7 +125,7 @@ export class CheckInReminderService {
     const due = employees
       .map((e) => ({
         ...e,
-        shift: resolveShiftConfig(e.department, orgPrefs, timezone),
+        shift: resolveShiftConfig(shiftDepartmentFor(e.department, e, shiftRules), orgPrefs, timezone),
       }))
       .filter((e) => {
         const start = minutesOfDay(e.shift.shiftStartTime);
@@ -253,14 +257,15 @@ export class CheckInReminderService {
       select: {
         employeeId: true,
         date: true,
-        employee: { select: { department: true } },
+        employee: { select: { gender: true, department: true } },
       },
     });
 
+    const shiftRules = await this.scopedPrisma.shiftRule.findMany({ where: { organizationId, isActive: true } });
     let sent = 0;
     for (const row of open) {
       const shift = resolveShiftConfig(
-        row.employee.department,
+        shiftDepartmentFor(row.employee.department, row.employee, shiftRules),
         orgPrefs,
         timezone,
       );
@@ -348,14 +353,15 @@ export class CheckInReminderService {
       select: {
         employeeId: true,
         date: true,
-        employee: { select: { department: true } },
+        employee: { select: { gender: true, department: true } },
       },
     });
 
+    const shiftRules = await this.scopedPrisma.shiftRule.findMany({ where: { organizationId, isActive: true } });
     let sent = 0;
     for (const row of open) {
       const shift = resolveShiftConfig(
-        row.employee.department,
+        shiftDepartmentFor(row.employee.department, row.employee, shiftRules),
         orgPrefs,
         timezone,
       );
