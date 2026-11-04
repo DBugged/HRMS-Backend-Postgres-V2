@@ -219,8 +219,6 @@ describe('Weekend work compensation (e2e)', () => {
             { key: 'COMP_OFF', label: 'Comp-off (1 day)', compOffDays: 1, payDays: 0 },
             { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
             { key: 'PAY_2', label: '2 days pay', compOffDays: 0, payDays: 2 },
-            { key: 'COMP_OFF_PAY_1', label: 'Comp-off + 1 day pay', compOffDays: 1, payDays: 1 },
-            { key: 'COMP_OFF_PAY_2', label: 'Comp-off + 2 days pay', compOffDays: 1, payDays: 2 },
           ],
         },
       })
@@ -228,19 +226,36 @@ describe('Weekend work compensation (e2e)', () => {
     const res = await admin().get('/overtime/compensation-options').expect(200);
     const body = res.body as { defaultKey: string | null; options: { key: string }[] };
     expect(body.defaultKey).toBeNull();
-    expect(body.options.map((o) => o.key)).toEqual(['COMP_OFF', 'PAY_1', 'PAY_2', 'COMP_OFF_PAY_1', 'COMP_OFF_PAY_2']);
+    expect(body.options.map((o) => o.key)).toEqual(['COMP_OFF', 'PAY_1', 'PAY_2']);
   });
 
-  it('comp-off + 1 day pay: a comp-off lands in the balance and payroll pays one day', async () => {
+  it('one day, one benefit: an option giving both comp-off and pay cannot be saved', async () => {
+    const current = await admin().get('/payroll-settings').expect(200);
+    const res = await admin()
+      .put('/payroll-settings')
+      .send({
+        ...pickSettings(current.body as Record<string, unknown>),
+        workCompensation: {
+          defaultKey: null,
+          options: [
+            { key: 'COMP_OFF_PAY_2', label: 'Comp-off + 2 days pay', compOffDays: 1, payDays: 2 },
+          ],
+        },
+      })
+      .expect(400);
+    expect(JSON.stringify(res.body)).toMatch(/not both/);
+  });
+
+  it('comp-off: a comp-off lands in the balance and nothing extra is paid for the day', async () => {
     const sunday = await otFor('2026-09-13');
     const res = await admin()
       .patch(`/overtime/${sunday.id}/review`)
-      .send({ status: 'APPROVED', compensationKey: 'COMP_OFF_PAY_1' })
+      .send({ status: 'APPROVED', compensationKey: 'COMP_OFF' })
       .expect(200);
     expect(res.body).toMatchObject({
       status: 'APPROVED',
-      compensationKey: 'COMP_OFF_PAY_1',
-      payDays: 1,
+      compensationKey: 'COMP_OFF',
+      payDays: 0,
       compOffDays: 1,
     });
     const compOff = await prisma.compOff.findFirstOrThrow({
@@ -265,9 +280,9 @@ describe('Weekend work compensation (e2e)', () => {
     const overtimePay = payroll.earnings.find(
       (e) => e.code === 'OVERTIME_PAY',
     )?.amount;
-    // one day of pay = full-month Basic / 30
-    expect(overtimePay).toBe(1000);
-    expect(payroll.attendanceSummary.overtimeDayPayDays).toBe(1);
+    // Compensated with the comp-off: no overtime pay for that day as well.
+    expect(overtimePay ?? 0).toBe(0);
+    expect(payroll.attendanceSummary.overtimeDayPayDays ?? 0).toBe(0);
   });
 
   it('one day, one benefit: a comp-off cannot be claimed for a day already logged as overtime', async () => {
@@ -340,9 +355,10 @@ describe('Weekend work compensation (e2e)', () => {
     ).payrolls[0];
     const hours = after.hours;
     const hourly = Math.round(hours * 2 * (30000 / 208));
+    // Only this hourly overtime: the Sunday before was compensated with a comp-off, not pay.
     expect(
       payroll.earnings.find((e) => e.code === 'OVERTIME_PAY')?.amount,
-    ).toBe(1000 + hourly);
+    ).toBe(hourly);
   });
 
   it('the organisation can define its own options and a default, and the default is used', async () => {
@@ -362,9 +378,9 @@ describe('Weekend work compensation (e2e)', () => {
             },
             {
               key: 'COMP_OFF_HALF',
-              label: 'Comp-off + half day',
-              compOffDays: 1,
-              payDays: 0.5,
+              label: 'Half day comp-off',
+              compOffDays: 0.5,
+              payDays: 0,
             },
           ],
         },

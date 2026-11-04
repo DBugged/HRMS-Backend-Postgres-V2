@@ -360,16 +360,16 @@ describe('overtime: review', () => {
       expect(compOffs).toHaveLength(0);
     });
 
-    it('comp-off + 1 day pay: stores both and adds an approved comp-off with an expiry', async () => {
+    it('comp-off: adds an approved comp-off with an expiry and no pay days', async () => {
       const { service, records, compOffs } = build({ records: [weekend()] });
       await service.review(
         'ot1',
-        { status: 'APPROVED', compensationKey: 'COMP_OFF_PAY_1' } as never,
+        { status: 'APPROVED', compensationKey: 'COMP_OFF' } as never,
         hr,
         'org',
       );
       expect(records[0]).toMatchObject({
-        payDays: 1,
+        payDays: 0,
         compOffDays: 1,
         compOffId: 'co1',
       });
@@ -380,6 +380,20 @@ describe('overtime: review', () => {
         status: 'APPROVED',
         expiryDate: '2027-01-09',
       });
+    });
+
+    it('one day, one benefit: a saved "comp-off + pay" option is never offered and cannot be chosen', async () => {
+      const { service, records, compOffs } = build({ records: [weekend()] });
+      await expect(
+        service.review(
+          'ot1',
+          { status: 'APPROVED', compensationKey: 'COMP_OFF_PAY_2' } as never,
+          hr,
+          'org',
+        ),
+      ).rejects.toThrow(/not available/);
+      expect(records[0].status).toBe('PENDING');
+      expect(compOffs).toHaveLength(0);
     });
 
     it('uses the organisation default when the approver picks nothing', async () => {

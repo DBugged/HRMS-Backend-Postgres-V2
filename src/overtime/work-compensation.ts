@@ -1,4 +1,5 @@
-// Purpose: How work on a weekly off / holiday is compensated: comp-off days, days of pay, or both.
+// Purpose: How work on a weekly off / holiday is compensated: comp-off days or days of pay - one or the other, never
+//   both (one day, one benefit).
 // Responsibilities: The option list an organisation can configure (PayrollSettings.workCompensation), its defaults and
 //   validation, and resolving the option chosen when an overtime record is approved.
 // Important: Pay days are paid as days (full-month Basic / 30 each, through OT_DAY_PAY_DAYS); comp-off days become a
@@ -27,19 +28,13 @@ export const DEFAULT_WORK_COMPENSATION_OPTIONS: WorkCompensationOption[] = [
   { key: 'COMP_OFF', label: 'Comp-off (1 day)', compOffDays: 0, payDays: 0 },
   { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 0 },
   { key: 'PAY_2', label: '2 days pay', compOffDays: 0, payDays: 0 },
-  {
-    key: 'COMP_OFF_PAY_1',
-    label: 'Comp-off + 1 day pay',
-    compOffDays: 0,
-    payDays: 0,
-  },
-  {
-    key: 'COMP_OFF_PAY_2',
-    label: 'Comp-off + 2 days pay',
-    compOffDays: 0,
-    payDays: 0,
-  },
 ];
+
+// One day, one benefit: an option that grants comp-off AND pay for the same day (the old "Comp-off + 2 days pay") is a
+// double benefit. Such an option, saved before this rule, is dropped when the settings are read - it is never shown or
+// offered again - and a new one is refused when the settings are saved.
+const isDoubleBenefit = (o: Partial<WorkCompensationOption>) =>
+  Number(o.compOffDays) > 0 && Number(o.payDays) > 0;
 
 const MAX_OPTIONS = 20;
 const MAX_DAYS = 10;
@@ -49,10 +44,10 @@ export function resolveWorkCompensation(
   stored: unknown,
 ): WorkCompensationSettings {
   const raw = (stored ?? {}) as Partial<WorkCompensationSettings>;
-  const options =
-    Array.isArray(raw.options) && raw.options.length > 0
-      ? raw.options
-      : DEFAULT_WORK_COMPENSATION_OPTIONS;
+  const saved = Array.isArray(raw.options)
+    ? raw.options.filter((o) => !isDoubleBenefit(o))
+    : [];
+  const options = saved.length > 0 ? saved : DEFAULT_WORK_COMPENSATION_OPTIONS;
   const defaultKey =
     typeof raw.defaultKey === 'string' &&
     options.some((o) => o.key === raw.defaultKey)
@@ -135,6 +130,11 @@ export function assertValidWorkCompensation(
           `${where}: ${name} must be in steps of half a day.`,
         );
       }
+    }
+    if (isDoubleBenefit({ compOffDays, payDays })) {
+      throw new BadRequestException(
+        `${where}: give either comp-off days or pay days, not both - one day of work earns one benefit.`,
+      );
     }
     // 0 and 0 is allowed: it is a placeholder that is kept but never offered to an approver (selectableWorkCompensation).
     return { key, label, compOffDays, payDays };

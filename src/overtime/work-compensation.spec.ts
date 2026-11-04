@@ -54,16 +54,28 @@ describe('work compensation options', () => {
       defaultKey: 'PAY_2',
       options: [
         { key: 'PAY_2', label: ' 2 days pay ', compOffDays: 0, payDays: 2 },
-        {
-          key: 'CO_PAY_HALF',
-          label: 'Comp-off + half day',
-          compOffDays: 1,
-          payDays: 0.5,
-        },
+        { key: 'CO_HALF', label: 'Half day comp-off', compOffDays: 0.5, payDays: 0 },
       ],
     });
     expect(s.options[0].label).toBe('2 days pay');
     expect(s.defaultKey).toBe('PAY_2');
+  });
+
+  it('one day, one benefit: refuses an option with both comp-off and pay, and drops a saved one when read', () => {
+    expect(() =>
+      assertValidWorkCompensation({
+        options: [{ key: 'CO_PAY', label: 'Comp-off + pay', compOffDays: 1, payDays: 1 }],
+      }),
+    ).toThrow(/not both/);
+    const read = resolveWorkCompensation({
+      defaultKey: 'COMP_OFF_PAY_2',
+      options: [
+        { key: 'PAY_1', label: '1 day pay', compOffDays: 0, payDays: 1 },
+        { key: 'COMP_OFF_PAY_2', label: 'Comp-off + 2 days pay', compOffDays: 1, payDays: 2 },
+      ],
+    });
+    expect(read.options.map((o) => o.key)).toEqual(['PAY_1']);
+    expect(read.defaultKey).toBeNull();
   });
 
   it.each([
