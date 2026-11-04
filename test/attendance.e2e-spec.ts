@@ -76,6 +76,22 @@ function offsetWeekdayAvoidingHolidays(days: number): string {
   return date;
 }
 
+// The n-th working day (not Saturday, Sunday or a fixed national holiday) before today. Distinct n always give
+// distinct dates, for tests that need a run of separate working days: work on a weekly off is a Weekly Off day,
+// never late, early or Present.
+function nthWorkdayBack(n: number): string {
+  let found = 0;
+  let d = 0;
+  while (true) {
+    d -= 1;
+    const date = offsetDate(d);
+    if (FIXED_NATIONAL_HOLIDAYS.has(date.slice(5))) continue;
+    if ([0, 6].includes(new Date(`${date}T00:00:00Z`).getUTCDay())) continue;
+    found += 1;
+    if (found === n) return date;
+  }
+}
+
 // Finds the next date (from a UTC anchor) matching the given getUTCDay()
 // value, so weekly-off tests aren't flaky depending on when the suite runs.
 function nextWeekday(targetDay: number, fromOffsetDays: number): string {
@@ -478,6 +494,26 @@ describe('Attendance (e2e)', () => {
       expect(row?.status).toBe('WEEKLY_OFF');
     });
 
+    it('a full In/Out day worked on a weekly off stays WEEKLY_OFF (the calendar decides), keeping its hours', async () => {
+      const sunday = nextWeekday(0, -47);
+      await request(app.getHttpServer())
+        .post('/attendance/punch/manual')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          employeeId,
+          punchTime: `${sunday}T04:00:00.000Z`,
+          outPunchTime: `${sunday}T12:00:00.000Z`,
+        })
+        .expect(201);
+
+      const row = await prisma.attendance.findFirst({
+        where: { employeeId, date: sunday },
+      });
+      expect(row?.status).toBe('WEEKLY_OFF');
+      expect(row?.workDurationMinutes).toBe(480);
+      expect(row?.isLate).toBe(false);
+    });
+
     it('regularization JSON on an Attendance row survives a later recalculation', async () => {
       const date = offsetDate(-6);
       await request(app.getHttpServer())
@@ -554,7 +590,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('pairs a late check-in with a post-midnight check-out into ONE PRESENT day, not two ABSENT days', async () => {
-      const shiftDate = offsetDateAvoidingHolidays(-4);
+      const shiftDate = offsetWeekdayAvoidingHolidays(-4);
       const nextDate = nextDateStr(shiftDate);
       const checkIn = istIso(shiftDate, '22:15');
       const checkOut = istIso(nextDate, '06:30');
@@ -601,8 +637,31 @@ describe('Attendance (e2e)', () => {
         .send({ employeeId: nightEmployeeId, punchTime })
         .expect(201);
 
+    it('a night shift starting on a weekly off (Sunday 22:00 to Monday 06:00) counts on Sunday, as a Weekly Off with its hours', async () => {
+      const sunday = nextWeekday(0, -34);
+      const monday = nextDateStr(sunday);
+      await manualPunchAt(istIso(sunday, '22:00'));
+      await manualPunchAt(istIso(monday, '06:00'));
+
+      const row = await prisma.attendance.findFirstOrThrow({
+        where: { employeeId: nightEmployeeId, date: sunday },
+      });
+      expect(row.status).toBe('WEEKLY_OFF');
+      expect(row.workDurationMinutes).toBe(8 * 60);
+      // Nothing lands on Monday, and any overtime raised is Sunday's, at the weekend rate.
+      expect(
+        await prisma.attendance.findFirst({
+          where: { employeeId: nightEmployeeId, date: monday },
+        }),
+      ).toBeNull();
+      const overtime = await prisma.overtimeRecord.findMany({
+        where: { employeeId: nightEmployeeId, date: { in: [sunday, monday] } },
+      });
+      expect(overtime.every((o) => o.date === sunday && o.type === 'WEEKEND')).toBe(true);
+    });
+
     it('a checkout running past noon (in the quiet gap, nearer the shift end) still counts toward the previous night', async () => {
-      const shiftDate = offsetDateAvoidingHolidays(-12);
+      const shiftDate = offsetWeekdayAvoidingHolidays(-12);
       const nextDate = nextDateStr(shiftDate);
       await manualPunchAt(istIso(shiftDate, '22:00'));
       // 12:30 is past the old hardcoded noon cutoff but still nearer the
@@ -623,7 +682,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('an early check-in in the quiet gap (nearer the shift start) belongs to that evening’s shift and pairs with its checkout', async () => {
-      const shiftDate = offsetDateAvoidingHolidays(-16);
+      const shiftDate = offsetWeekdayAvoidingHolidays(-16);
       const nextDate = nextDateStr(shiftDate);
       // 15:00 is past the 14:00 gap midpoint -> this evening's shift.
       await manualPunchAt(istIso(shiftDate, '15:00'));
@@ -649,7 +708,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('punches exactly at and just before the gap midpoint split between adjacent shift-days with no gap', async () => {
-      const shiftDate = offsetDateAvoidingHolidays(-20);
+      const shiftDate = offsetWeekdayAvoidingHolidays(-20);
       const nextDate = nextDateStr(shiftDate);
       const justBefore = new Date(
         Date.parse(istIso(nextDate, '14:00')) - 1000,
@@ -675,7 +734,7 @@ describe('Attendance (e2e)', () => {
       outHHMM: string,
       zone: 'ist' | 'utc' = 'ist',
     ) => {
-      const date = offsetDateAvoidingHolidays(daysAgo);
+      const date = nthWorkdayBack(-daysAgo);
       const at = (hhmm: string) =>
         zone === 'ist' ? istIso(date, hhmm) : `${date}T${hhmm}:00.000Z`;
       await request(app.getHttpServer())
@@ -1776,7 +1835,10 @@ describe('Attendance (e2e)', () => {
     });
 
     it('two requests for the same day sent at the same moment: one goes through, the other gets 409', async () => {
-      const date = offsetDate(30);
+      // A weekday no earlier test in this file has requested.
+      let off = 55;
+      while ([0, 6].includes(new Date(`${offsetDate(off)}T00:00:00Z`).getUTCDay())) off += 1;
+      const date = offsetDate(off);
       const send = () =>
         request(app.getHttpServer())
           .put('/attendance/work-arrangement')
@@ -2393,7 +2455,7 @@ describe('Attendance (e2e)', () => {
       });
 
       it('approval recalculates the late / early-out flags for the corrected times', async () => {
-        const date = offsetDate(-3);
+        const date = offsetWeekdayAvoidingHolidays(-3);
         await request(app.getHttpServer())
           .post('/attendance/punch/manual')
           .set('Authorization', `Bearer ${hrToken}`)
@@ -3224,7 +3286,7 @@ describe('Attendance (e2e)', () => {
     it('a clean batch validates to VALIDATED and executes with the biometric-skip rule honored', async () => {
       // A separate, all-valid batch: one fresh row (imports) and one row
       // that collides with an existing FACE_API-sourced punch (skipped).
-      const freshDate = offsetDateAvoidingHolidays(-32);
+      const freshDate = offsetWeekdayAvoidingHolidays(-32);
       const biometricDate = offsetDate(-33);
 
       await scopedPrisma.attendance.create({
@@ -3468,7 +3530,7 @@ describe('Attendance (e2e)', () => {
         });
       try {
         await setOvertimePay(false);
-        const offDate = offsetWeekdayAvoidingHolidays(-33);
+        const offDate = offsetWeekdayAvoidingHolidays(-80);
         await punchAt(employeeId, istIso(offDate, '09:30'));
         await punchAt(employeeId, istIso(offDate, '19:15')); // 45 min past shift end
         expect(
@@ -3478,7 +3540,7 @@ describe('Attendance (e2e)', () => {
         ).toBeNull();
 
         await setOvertimePay(true);
-        const onDate = offsetWeekdayAvoidingHolidays(-34);
+        const onDate = offsetWeekdayAvoidingHolidays(-84);
         await punchAt(employeeId, istIso(onDate, '09:30'));
         await punchAt(employeeId, istIso(onDate, '19:15'));
         expect(

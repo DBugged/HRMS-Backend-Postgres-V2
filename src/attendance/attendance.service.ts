@@ -805,8 +805,6 @@ export class AttendanceService {
     let workDurationMinutes = 0;
     let isLate = false;
     let isEarlyOut = false;
-    // A real punch-in with the shift still running and no punch-out yet (see below).
-    let inProgress = false;
 
     if (inTime && outTime) {
       // A *real* punch-in with no punch-out (as opposed to no punches at
@@ -851,7 +849,6 @@ export class AttendanceService {
         // call them Absent - and send the "Marked Absent" in-app notice and e-mail the moment they punch in. Shown
         // as Present (in progress) with no duration until the punch-out arrives (or the shift ends and the day
         // becomes Incomplete, above).
-        inProgress = true;
         status = AttendanceStatus.PRESENT;
         isLate =
           inTime.getTime() - shiftStart.getTime() >
@@ -895,22 +892,22 @@ export class AttendanceService {
         : AttendanceStatus.ABSENT;
     }
 
-    // Overrides, in priority order — a holiday wins even over an
-    // approved-leave-derived status; weekly-off only overrides a bare
-    // ABSENT or INCOMPLETE (never on_leave/half_day), matching the old
-    // system exactly (INCOMPLETE is treated like ABSENT here — a stray
-    // single punch on a day off is still a day off, not something to
-    // regularize).
+    // Overrides, in priority order: a holiday wins even over an approved-leave-derived status; a weekly off wins over
+    // anything the punches say (Present, Half Day, Incomplete, Absent) but never over an approved leave. Holiday and
+    // weekly off come from the calendar, never from punches: work done that day keeps its punch times and hours, and is
+    // paid through the overtime / comp-off request it raises (suggestOvertimeFromPunchOut), not by turning the day
+    // into Present. There is no shift that day, so it is never late or early either.
+    const leaveDerived =
+      !(inTime && outTime) &&
+      (status === AttendanceStatus.ON_LEAVE || status === AttendanceStatus.HALF_DAY);
     if (holiday) {
       status = AttendanceStatus.HOLIDAY;
-    } else if (
-      isWeeklyOff(dateStr, shiftConfig.weeklyOffs) &&
-      (status === AttendanceStatus.ABSENT ||
-        status === AttendanceStatus.INCOMPLETE ||
-        // A stray single punch on a day off, shift still running: still a day off, as before.
-        (inProgress && status === AttendanceStatus.PRESENT))
-    ) {
+      isLate = false;
+      isEarlyOut = false;
+    } else if (isWeeklyOff(dateStr, shiftConfig.weeklyOffs) && !leaveDerived) {
       status = AttendanceStatus.WEEKLY_OFF;
+      isLate = false;
+      isEarlyOut = false;
     }
 
     return { status, workDurationMinutes, isLate, isEarlyOut };
@@ -1153,8 +1150,8 @@ export class AttendanceService {
     // so don't also create a second, auto-suggested one for the same day.
     if (existing && !existingAuto) return;
 
-    // By the calendar, not the attendance status: a weekly off with real punches is marked PRESENT, which used to
-    // make its overtime REGULAR (1.5x) instead of weekend (2x).
+    // By the calendar, not the attendance status: a weekly off is WEEKEND (2x), a holiday HOLIDAY, any other day
+    // REGULAR (1.5x).
     const type = isHolidayDay
       ? OvertimeType.HOLIDAY
       : isOffDay
@@ -5269,6 +5266,57 @@ export class AttendanceService {
       employeeIds,
       skippedLocked,
     };
+  }
+
+  // A holiday was added, moved, (de)activated or deleted after the fact: the attendance already written for those dates
+  // is judged again under the calendar as it now stands (a working day becomes Holiday, or a Holiday goes back to a
+  // working day - Present, Absent, leave). Only days up to today that already have a row are touched (later days, and
+  // past days with no row, are worked out from the calendar when they are read). departmentIds: the departments the
+  // holiday applies to, null for company-wide. An employee whose payroll for that month is locked or paid is left as
+  // they are and named in the result, so the caller can warn. Quiet: no notification or e-mail.
+  async recalculateForHolidayChange(
+    organizationId: string,
+    dates: string[],
+    departmentIds: (string | null)[],
+  ): Promise<{ updated: number; locked: { name: string; date: string }[] }> {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    const days = [...new Set(dates)].filter((d) => d <= today);
+    if (days.length === 0) return { updated: 0, locked: [] };
+    const companyWide = departmentIds.includes(null);
+    const deptIds = departmentIds.filter((d): d is string => d !== null);
+    const rows = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        date: { in: days },
+        ...(companyWide ? {} : { employee: { departmentId: { in: deptIds } } }),
+      },
+      select: { employeeId: true, date: true, employee: { select: { name: true } } },
+    });
+    const lockedByMonth = new Map<string, Set<string>>();
+    for (const monthKey of new Set(rows.map((r) => r.date.slice(0, 7)))) {
+      const [y, m] = monthKey.split('-').map(Number);
+      lockedByMonth.set(
+        monthKey,
+        await lockedEmployeeIdsForMonth(this.scopedPrisma, organizationId, y, m),
+      );
+    }
+    let updated = 0;
+    const locked: { name: string; date: string }[] = [];
+    for (const row of rows) {
+      if (lockedByMonth.get(row.date.slice(0, 7))?.has(row.employeeId)) {
+        locked.push({ name: row.employee.name, date: row.date });
+        continue;
+      }
+      await this.recalculateAttendanceForDay(
+        this.scopedPrisma,
+        row.employeeId,
+        row.date,
+        organizationId,
+        { quiet: true },
+      );
+      updated += 1;
+    }
+    return { updated, locked };
   }
 
   // One-off repair for the gap the nightly sweep used to leave: HR users were never swept, so on any day they did not

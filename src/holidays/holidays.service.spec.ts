@@ -21,7 +21,7 @@ describe('HolidaysService.bulkImport - past dates', () => {
       },
     };
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
-    const service = new HolidaysService(prisma as never, audit as never);
+    const service = new HolidaysService(prisma as never, audit as never, {} as never);
     return { service, created, audit };
   }
 

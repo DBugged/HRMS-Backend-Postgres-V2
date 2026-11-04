@@ -211,52 +211,76 @@ describe('Holidays (e2e)', () => {
       .expect(200);
   });
 
-  it('a holiday whose date has already passed is fully read-only — no field can be changed, and it cannot be deleted', async () => {
+  it('a holiday added or deleted after the fact recalculates that day; a locked payroll month only gets a warning', async () => {
+    const emp = await prisma.user.findFirstOrThrow({
+      where: { email: 'holidays-e2e-emp@example.test' },
+    });
+    await prisma.user.update({
+      where: { id: emp.id },
+      data: { joiningDate: new Date('2025-01-01T00:00:00.000Z') },
+    });
+    // Two past weekdays (the default weekly offs are Saturday and Sunday), in one month.
+    const pastWeekday = (from: number) => {
+      const d = new Date();
+      d.setUTCDate(d.getUTCDate() - from);
+      while ([0, 6].includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() - 1);
+      return d.toISOString().slice(0, 10);
+    };
+    const day = pastWeekday(40);
+    let other = pastWeekday(41);
+    for (let n = 42; other.slice(0, 7) !== day.slice(0, 7) || other === day; n += 1) other = pastWeekday(n);
+    for (const date of [day, other]) {
+      await prisma.attendance.create({
+        data: {
+          organizationId: emp.organizationId,
+          employeeId: emp.id,
+          date,
+          status: 'ABSENT',
+          source: 'SYSTEM',
+        },
+      });
+    }
+    const statusOn = async (date: string) =>
+      (await prisma.attendance.findFirstOrThrow({ where: { employeeId: emp.id, date } })).status;
+
+    // Added for a date that has passed: accepted, and the Absent day becomes Holiday.
     const created = await request(app.getHttpServer())
       .post('/holidays')
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ name: 'Past Holiday', date: '2030-01-01', type: 'COMPANY' })
+      .send({ name: 'Late Holiday', date: day, type: 'COMPANY' })
       .expect(201);
-    const pastId = (created.body as HolidayBody).id;
-    // The API refuses past dates, so backdate the row directly to exercise the read-only rule.
-    await prisma.$executeRawUnsafe(
-      `UPDATE "holidays" SET "date" = '2020-01-01' WHERE id = '${pastId}'`,
-    );
+    const body = created.body as HolidayBody & { attendance: { updated: number; warning: string | null } };
+    expect(body.attendance.updated).toBeGreaterThanOrEqual(1);
+    expect(body.attendance.warning).toBeNull();
+    expect(await statusOn(day)).toBe('HOLIDAY');
 
-    await request(app.getHttpServer())
-      .put(`/holidays/${pastId}`)
+    // Deleted again: the day goes back to Absent.
+    const removed = await request(app.getHttpServer())
+      .delete(`/holidays/${body.id}`)
       .set('Authorization', `Bearer ${adminToken}`)
-      .send({ isActive: false })
-      .expect(400);
-    await request(app.getHttpServer())
-      .put(`/holidays/${pastId}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ date: '2020-01-02' })
-      .expect(400);
-    // Even cosmetic/reporting-only fields are locked once past — a past
-    // holiday is fully read-only, not partially editable.
-    await request(app.getHttpServer())
-      .put(`/holidays/${pastId}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({
-        description: 'Updated after the fact',
-        type: 'NATIONAL',
-        isOptional: true,
-      })
-      .expect(400);
-
-    // Sending the same (unchanged) values isn't a real change — allowed.
-    const res = await request(app.getHttpServer())
-      .put(`/holidays/${pastId}`)
-      .set('Authorization', `Bearer ${adminToken}`)
-      .send({ isActive: true, date: '2020-01-01', name: 'Past Holiday' })
       .expect(200);
-    expect((res.body as HolidayBody).name).toBe('Past Holiday');
+    expect((removed.body as { attendance: { updated: number } }).attendance.updated).toBeGreaterThanOrEqual(1);
+    expect(await statusOn(day)).toBe('ABSENT');
 
-    await request(app.getHttpServer())
-      .delete(`/holidays/${pastId}`)
+    // Payroll for that month is locked: the holiday is saved, attendance is left as it was, and a warning names the person.
+    await prisma.payrollRun.create({
+      data: {
+        organizationId: emp.organizationId,
+        employeeId: emp.id,
+        month: Number(other.slice(5, 7)),
+        year: Number(other.slice(0, 4)),
+        status: 'LOCKED',
+      },
+    });
+    const lockedRes = await request(app.getHttpServer())
+      .post('/holidays')
       .set('Authorization', `Bearer ${adminToken}`)
-      .expect(400);
+      .send({ name: 'Locked Month Holiday', date: other, type: 'COMPANY' })
+      .expect(201);
+    const warning = (lockedRes.body as { attendance: { warning: string | null } }).attendance.warning;
+    expect(warning).toMatch(/Plain Employee/);
+    expect(warning).toMatch(/locked or paid/);
+    expect(await statusOn(other)).toBe('ABSENT');
   });
 
   it('bulk-import: valid rows create, invalid/duplicate rows fail without aborting the batch', async () => {

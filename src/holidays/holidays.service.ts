@@ -6,6 +6,7 @@
 // Important: bulkImport() mirrors the old bulkImportHolidays' behavior exactly — invalid or duplicate rows
 // are collected into `failed` rather than aborting the whole batch, and duplicates are checked both against
 // existing DB rows and within the same batch.
+import { AttendanceService } from '../attendance/attendance.service';
 import { calendarStatus } from './holiday-calendar-status';
 import {
   BadRequestException,
@@ -45,7 +46,31 @@ export class HolidaysService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
+    private readonly attendanceService: AttendanceService,
   ) {}
+
+  // After a holiday changes, the attendance already written for its date(s) follows the new calendar. A locked or paid
+  // payroll month is not rewritten: `warning` names who was left as they were, for the screen to show.
+  private async recalculateAttendance(
+    organizationId: string,
+    dates: string[],
+    departmentIds: (string | null)[],
+  ) {
+    const { updated, locked } =
+      await this.attendanceService.recalculateForHolidayChange(
+        organizationId,
+        dates,
+        departmentIds,
+      );
+    const names = [...new Set(locked.map((l) => l.name))];
+    return {
+      updated,
+      lockedCount: locked.length,
+      warning: names.length
+        ? `Attendance was not changed for ${names.slice(0, 5).join(', ')}${names.length > 5 ? ` and ${names.length - 5} more` : ''}: payroll for that month is already locked or paid. Unlock the payroll run first if their attendance should follow the new holiday calendar.`
+        : null,
+    };
+  }
 
   private async getOrgTimezone(organizationId: string): Promise<string> {
     const org = await this.scopedPrisma.organization.findFirst({
@@ -160,13 +185,8 @@ export class HolidaysService {
     // From the date text itself: reading it through a Date and its local year gives the wrong year on a server west of UTC.
     const year = Number(dto.date.slice(0, 4));
 
-    // A holiday on a date that has passed could never be edited or deleted afterwards (the attendance and payroll
-    // already calculated against that day are kept as they were), so it is not accepted in the first place.
-    if (dto.date < todayInOrgTz(await this.getOrgTimezone(organizationId))) {
-      throw new BadRequestException(
-        "A holiday can't be added for a date that has already passed - attendance and payroll for that day are already recorded. Add holidays before they happen.",
-      );
-    }
+    // A holiday may be added for a date that has passed: the attendance already written for that day is recalculated
+    // below (a locked or paid payroll month is left as it is, with a warning).
     await this.assertDepartmentInOrg(dto.department, organizationId);
     await this.assertNoDuplicate(organizationId, dto.date, name);
 
@@ -196,7 +216,10 @@ export class HolidaysService {
       });
     }
 
-    return holiday;
+    const attendance = holiday.isActive
+      ? await this.recalculateAttendance(organizationId, [holiday.date], [holiday.departmentId])
+      : null;
+    return { ...holiday, attendance };
   }
 
   async findAll(query: ListHolidaysQueryDto, organizationId: string) {
@@ -225,36 +248,8 @@ export class HolidaysService {
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
-    // A past holiday is fully read-only — simpler and more consistent
-    // with every other built-in-style lock in this app (Leave Types/
-    // Employee Categories/Salary Components all fully block Edit rather
-    // than allow a partial edit) than trying to enumerate which fields are
-    // "safe": date/department/isActive directly affect the live
-    // attendance/leave-tracker/dashboard lookup for that day (see
-    // attendance.service.ts's holiday.findFirst), and even a cosmetic
-    // rename could confuse whoever's reading last year's records against
-    // whatever the UI showed at the time.
-    const anyFieldChanges =
-      (dto.name !== undefined && dto.name.trim() !== existing.name) ||
-      (dto.date !== undefined && dto.date !== existing.date) ||
-      (dto.department !== undefined &&
-        dto.department !== existing.departmentId) ||
-      (dto.isOptional !== undefined &&
-        dto.isOptional !== existing.isOptional) ||
-      (dto.type !== undefined && dto.type !== existing.type) ||
-      (dto.state !== undefined && dto.state !== existing.state) ||
-      (dto.description !== undefined &&
-        dto.description !== existing.description) ||
-      (dto.isActive !== undefined && dto.isActive !== existing.isActive);
-    if (
-      anyFieldChanges &&
-      existing.date < todayInOrgTz(await this.getOrgTimezone(organizationId))
-    ) {
-      throw new BadRequestException(
-        "This holiday's date has already passed and can't be edited.",
-      );
-    }
-
+    // A past holiday may be edited too: the attendance of its old and new date is recalculated below (a locked or paid
+    // payroll month is left as it is, with a warning).
     await this.assertDepartmentInOrg(dto.department, organizationId);
     const nextName = (dto.name ?? existing.name).trim();
     const nextDate = dto.date ?? existing.date;
@@ -289,23 +284,25 @@ export class HolidaysService {
       });
     }
 
-    return this.findByIdOrThrow(id, organizationId);
+    const after = await this.findByIdOrThrow(id, organizationId);
+    const calendarChanged =
+      after.date !== existing.date ||
+      after.departmentId !== existing.departmentId ||
+      after.isActive !== existing.isActive;
+    const attendance = calendarChanged
+      ? await this.recalculateAttendance(
+          organizationId,
+          [existing.date, after.date],
+          [existing.departmentId, after.departmentId],
+        )
+      : null;
+    return { ...after, attendance };
   }
 
   async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
-    // Deleting is strictly more destructive than deactivating (it drops
-    // the record's own audit/reporting history entirely, not just its
-    // effect on future lookups) — same past-date protection as update()'s
-    // date/department/isActive guard, applied unconditionally here since
-    // there's no "which field changed" to check.
-    if (
-      existing.date < todayInOrgTz(await this.getOrgTimezone(organizationId))
-    ) {
-      throw new BadRequestException(
-        "This holiday's date has already passed and can't be deleted, to preserve the attendance/leave history calculated against it.",
-      );
-    }
+    // A past holiday may be deleted too: the attendance of that date is recalculated below (a locked or paid payroll
+    // month is left as it is, with a warning).
     await this.scopedPrisma.holiday.deleteMany({
       where: { id, organizationId },
     });
@@ -321,7 +318,12 @@ export class HolidaysService {
       });
     }
 
-    return { message: 'Holiday deleted' };
+    const attendance = await this.recalculateAttendance(
+      organizationId,
+      [existing.date],
+      [existing.departmentId],
+    );
+    return { message: 'Holiday deleted', attendance };
   }
 
   // Mirrors the old bulkImportHolidays' fail-but-continue behavior exactly:
