@@ -632,6 +632,8 @@ export class FieldTrackingService {
       .filter((r) => r.kind === 'LOCATION_OFF')
       .map((r) => r.recordedAt);
     const summary = summarizeRoute(points);
+    // Tells the screen how far back points can exist (older ones are deleted), so a day picker does not offer empty days.
+    const { retentionDays } = await this.getSettings(actor.organizationId);
     if (!self) {
       await this.audit.log({
         actorId: actor.id,
@@ -645,6 +647,7 @@ export class FieldTrackingService {
     return {
       employee: person,
       date: day,
+      retentionDays,
       points,
       locationOffAt: gaps,
       distanceKm: Math.round(summary.distanceMeters / 100) / 10,

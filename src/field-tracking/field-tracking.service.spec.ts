@@ -173,6 +173,11 @@ describe('field tracking: who can see a trail', () => {
       points: [],
     });
     expect(audits).toHaveLength(0); // looking at your own trail is not audited
+    // ...it says how long points are kept (so the day picker can stop there), and it still works after tracking is switched off,
+    // because the person is entitled to see what was recorded about them until it is deleted.
+    await expect(
+      svc.route(user({ fieldTrackingEnabled: false }), 'e1', '2026-11-05'),
+    ).resolves.toMatchObject({ retentionDays: 60 });
     await expect(
       svc.route(user(), 'other', '2026-11-05'),
     ).rejects.toBeInstanceOf(ForbiddenException);
