@@ -11,7 +11,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { OvertimeStatus } from '@prisma/client';
+import { OvertimeStatus, PayrollRunStatus } from '@prisma/client';
+import { estimateMonthlyBasic } from './basic-estimate';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
@@ -102,7 +103,8 @@ export class OvertimeReportService {
         else b.cost += paidHours * (basic / 208) + r.payDays * (basic / 30);
       } else b.pending += r.hours;
     };
-    // Each person's monthly Basic, for the cost estimate (a fixed Basic only; anyone else is counted as "no estimate").
+    // Each person's monthly Basic, for the cost estimate: from the salary structure (fixed, or a percentage of CTC or of
+    // another fixed component), else the largest Basic on their last three payroll runs.
     const approvedIds = [
       ...new Set(
         records
@@ -115,25 +117,57 @@ export class OvertimeReportService {
           .map((r) => r.employee.id),
       ),
     ];
-    const basicRows = approvedIds.length
-      ? await this.db.employeeSalaryComponent.findMany({
+    const basics = new Map<string, number>();
+    if (approvedIds.length) {
+      const [structureRows, runs] = await Promise.all([
+        this.db.employeeSalaryComponent.findMany({
           where: {
             organizationId,
             employeeId: { in: approvedIds },
-            componentCode: 'BASIC',
             isEnabled: true,
           },
-        })
-      : [];
-    const basics = new Map<string, number>();
-    for (const row of resolveCurrentRows(basicRows, to)) {
-      if (row.valueType === 'FIXED' && (row.fixedAmount ?? 0) > 0) {
-        basics.set(
-          row.employeeId,
-          row.amountBasis === 'ANNUAL'
-            ? (row.fixedAmount as number) / 12
-            : (row.fixedAmount as number),
-        );
+        }),
+        this.db.payrollRun.findMany({
+          where: {
+            organizationId,
+            employeeId: { in: approvedIds },
+            isFinalSettlement: false,
+            runSequence: 0,
+            status: { not: PayrollRunStatus.DRAFT },
+          },
+          orderBy: [{ year: 'desc' }, { month: 'desc' }],
+          select: { employeeId: true, earnings: true, ctcMonthly: true },
+          take: approvedIds.length * 3,
+        }),
+      ]);
+      const rowsBy = new Map<string, typeof structureRows>();
+      for (const r of structureRows) {
+        rowsBy.set(r.employeeId, [...(rowsBy.get(r.employeeId) ?? []), r]);
+      }
+      // The latest run's monthly CTC, for a Basic set as a percentage of CTC.
+      const ctcBy = new Map<string, number>();
+      for (const run of runs) {
+        if (!ctcBy.has(run.employeeId) && run.ctcMonthly > 0) {
+          ctcBy.set(run.employeeId, run.ctcMonthly);
+        }
+      }
+      const runBasics = new Map<string, number[]>();
+      for (const run of runs) {
+        const list = runBasics.get(run.employeeId) ?? [];
+        if (list.length >= 3) continue;
+        const entry = (
+          (run.earnings ?? []) as unknown as { code: string; amount: number }[]
+        ).find((e) => e.code === 'BASIC');
+        list.push(Number(entry?.amount) || 0);
+        runBasics.set(run.employeeId, list);
+      }
+      for (const id of approvedIds) {
+        const estimate = estimateMonthlyBasic({
+          rows: resolveCurrentRows(rowsBy.get(id) ?? [], to),
+          ctcMonthly: ctcBy.get(id) ?? null,
+          lastRunBasics: runBasics.get(id) ?? [],
+        });
+        if (estimate !== null) basics.set(id, estimate);
       }
     }
     const withoutBasic = new Set<string>();

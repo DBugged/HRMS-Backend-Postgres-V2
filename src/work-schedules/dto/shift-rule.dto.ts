@@ -50,7 +50,35 @@ export class SaveShiftRuleDto {
   @IsString({ each: true })
   departmentIds?: string[];
 
+  // Names the people this shift is for; then gender and departments do not apply.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  employeeIds?: string[];
+
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+}
+
+export class RecalculateShiftRulesDto {
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'from must be YYYY-MM-DD.' })
+  from!: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsEnum(Gender, { each: true })
+  genders?: Gender[];
+
+  // People named by a per-person rule.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  employeeIds?: string[];
+
+  // Empty = every department.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  departmentIds?: string[];
 }

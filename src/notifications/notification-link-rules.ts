@@ -14,6 +14,8 @@ const RULES: Array<[RegExp, string]> = [
   [/^Regularization Request/, '/my/attendance'],
   [/^Attendance Import Batch Uploaded/, '/attendance'],
   [/^Overtime (Requested|requests from an attendance import)/, '/overtime-approvals'],
+  [/^Overtime limit nearly reached for /, '/overtime-approvals'],
+  [/^Overtime limit nearly reached/, '/my/attendance'],
   [/^Overtime Request/, '/my/attendance'],
   [/^(Punch-Out Missing|Punch-Out Reminder|Marked Absent|Marked Late|You did not punch out|Mark your attendance|Remember to check out|Still checked in)/, '/my/attendance'],
   // Leave, comp-off, encashment, event leave

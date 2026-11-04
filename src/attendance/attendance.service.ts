@@ -52,6 +52,7 @@ import {
   User,
   WfhApprovalStatus,
   WorkArrangement,
+  Gender,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -5360,6 +5361,63 @@ export class AttendanceService {
       );
       updated += 1;
     }
+    return { updated, locked };
+  }
+
+  // A gender-wise shift rule was added, changed or removed: the attendance already written from `from` up to today for the
+  // people it covers is judged again under the shift as it now stands (late, early-out, hours, overtime suggestion).
+  // genders: who the rule covers; departmentIds: empty = every department. A person whose payroll for that month is
+  // locked or paid is left as they are and named in the result. Quiet: no notification or e-mail.
+  async recalculateForShiftRule(
+    organizationId: string,
+    from: string,
+    genders: Gender[],
+    departmentIds: string[],
+    employeeIds: string[] = [],
+  ): Promise<{ updated: number; locked: { name: string; date: string }[] }> {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    if (from > today || (genders.length === 0 && employeeIds.length === 0)) {
+      return { updated: 0, locked: [] };
+    }
+    const rows = await this.scopedPrisma.attendance.findMany({
+      where: {
+        organizationId,
+        date: { gte: from, lte: today },
+        OR: [
+          ...(genders.length
+            ? [
+                {
+                  employee: {
+                    gender: { in: genders },
+                    ...(departmentIds.length ? { departmentId: { in: departmentIds } } : {}),
+                  },
+                },
+              ]
+            : []),
+          ...(employeeIds.length ? [{ employeeId: { in: employeeIds } }] : []),
+        ],
+      },
+      select: { employeeId: true, date: true, employee: { select: { name: true } } },
+      take: 20000,
+    });
+    const lockedByMonth = new Map<string, Set<string>>();
+    for (const monthKey of new Set(rows.map((r) => r.date.slice(0, 7)))) {
+      const [y, m] = monthKey.split('-').map(Number);
+      lockedByMonth.set(
+        monthKey,
+        new Set(await lockedEmployeeIdsForMonth(this.scopedPrisma, organizationId, y, m)),
+      );
+    }
+    let updated = 0;
+    const locked: { name: string; date: string }[] = [];
+    await mapWithConcurrency(rows, 8, async (row) => {
+      if (lockedByMonth.get(row.date.slice(0, 7))?.has(row.employeeId)) {
+        locked.push({ name: row.employee.name, date: row.date });
+        return;
+      }
+      await this.recalculateAttendanceForDay(this.scopedPrisma, row.employeeId, row.date, organizationId, { quiet: true });
+      updated += 1;
+    });
     return { updated, locked };
   }
 

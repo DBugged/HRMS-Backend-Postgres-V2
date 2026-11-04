@@ -41,11 +41,53 @@ describe('shift rules', () => {
   it('a department rule beats a company-wide one; inactive rules are ignored', () => {
     const wide = rule({ startTime: '10:00' });
     const narrow = rule({ startTime: '11:00', departmentIds: ['d1'] });
-    expect(pickShiftRule([wide, narrow], 'FEMALE', 'd1')).toBe(narrow);
-    expect(pickShiftRule([wide, narrow], 'FEMALE', 'd2')).toBe(wide);
     expect(
-      pickShiftRule([{ ...wide, isActive: false }], 'FEMALE', 'd1'),
+      pickShiftRule([wide, narrow], { gender: 'FEMALE', departmentId: 'd1' }),
+    ).toBe(narrow);
+    expect(
+      pickShiftRule([wide, narrow], { gender: 'FEMALE', departmentId: 'd2' }),
+    ).toBe(wide);
+    expect(
+      pickShiftRule([{ ...wide, isActive: false }], {
+        gender: 'FEMALE',
+        departmentId: 'd1',
+      }),
     ).toBeNull();
+  });
+  it('a rule that names a person beats gender rules and applies whatever their gender', () => {
+    const wide = rule({ startTime: '10:00' });
+    const named = rule({
+      gender: null,
+      startTime: '07:00',
+      endTime: '15:00',
+      employeeIds: ['e9'],
+    });
+    expect(
+      pickShiftRule([wide, named], {
+        id: 'e9',
+        gender: 'FEMALE',
+        departmentId: 'd1',
+      }),
+    ).toBe(named);
+    expect(
+      pickShiftRule([wide, named], {
+        id: 'e9',
+        gender: 'MALE',
+        departmentId: 'd1',
+      }),
+    ).toBe(named);
+    expect(
+      pickShiftRule([wide, named], {
+        id: 'e1',
+        gender: 'FEMALE',
+        departmentId: 'd1',
+      }),
+    ).toBe(wide);
+    expect(pickShiftRule([named], { id: 'e1', gender: 'FEMALE' })).toBeNull();
+    expect(
+      shiftDepartmentFor(dept, { id: 'e9', gender: 'MALE' }, [named])!
+        .shiftStartTime,
+    ).toBe('07:00');
   });
   it('marks a shift that ends before it starts as crossing midnight', () => {
     expect(

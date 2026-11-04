@@ -12,7 +12,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { ShiftRulesService } from './shift-rules.service';
-import { SaveShiftRuleDto } from './dto/shift-rule.dto';
+import { SaveShiftRuleDto, RecalculateShiftRulesDto } from './dto/shift-rule.dto';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -43,6 +43,14 @@ export class ShiftRulesController {
   @UseGuards(RolesGuard)
   create(@Body() dto: SaveShiftRuleDto, @CurrentUser() caller: Caller) {
     return this.rules.create(dto, caller.organizationId, caller);
+  }
+
+  // Judges attendance already recorded again under the rules as they now stand. Before the :id routes.
+  @Post('recalculate')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  recalculate(@Body() dto: RecalculateShiftRulesDto, @CurrentUser() caller: Caller) {
+    return this.rules.recalculate(dto, caller.organizationId, caller);
   }
 
   @Patch(':id')

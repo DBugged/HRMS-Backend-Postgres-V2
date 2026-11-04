@@ -8,6 +8,8 @@ describe('resolveNotificationLink', () => {
     ['Regularization Request REJECTED', '/my/attendance'],
     ['Overtime Requested', '/overtime-approvals'],
     ['Overtime Request APPROVED', '/my/attendance'],
+    ['Overtime limit nearly reached', '/my/attendance'],
+    ['Overtime limit nearly reached for Asha Rao', '/overtime-approvals'],
     ['Marked Late — 03-11-2026', '/my/attendance'],
     ['New Leave Application', '/approvals/leaves'],
     ['Leave Cancellation Request', '/approvals/leaves'],

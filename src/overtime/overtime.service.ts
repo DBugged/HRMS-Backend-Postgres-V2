@@ -635,10 +635,14 @@ export class OvertimeService {
       const targets = [person.id, (person as { reportingManagerId?: string | null }).reportingManagerId].filter(Boolean) as string[];
       for (const userId of targets) {
         try {
+          const forManager = userId !== person.id;
           await this.notificationsService.create({
             organizationId,
             userId,
-            title: 'Overtime limit nearly reached',
+            // Directional: the manager's notice names the person and opens the approvals page.
+            title: forManager
+              ? `Overtime limit nearly reached for ${person.name}`
+              : 'Overtime limit nearly reached',
             message,
             category: NotificationCategory.ATTENDANCE,
           });

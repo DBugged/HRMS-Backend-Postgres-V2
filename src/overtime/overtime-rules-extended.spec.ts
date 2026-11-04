@@ -9,6 +9,7 @@ import {
 } from './overtime-policy';
 import { overtimeDayProblem } from './overtime-day-rules';
 import {
+  applyRuleSetPolicy,
   pickRuleSet,
   sanitizeRuleSetPolicy,
   type RuleSetRow,
@@ -146,6 +147,34 @@ describe('overtime: eligibility, day rules, quarter, night, delay', () => {
         minutesPastShiftEnd: -10,
       } as never),
     ).toMatch(/counts from 30 minute/);
+  });
+  it('a rule set can remove a company-wide cap with an explicit no-limit', () => {
+    const company = policy({
+      maxHoursPerDay: 4,
+      maxHoursPerMonth: 40,
+      maxHoursPerQuarter: 100,
+      claimWithinDays: 7,
+      minWorkedHours: 9,
+    });
+    const out = applyRuleSetPolicy(
+      company,
+      set({
+        policy: {
+          maxHoursPerDay: null,
+          maxHoursPerQuarter: null,
+          minWorkedHours: null,
+        },
+      }),
+    );
+    expect(out.maxHoursPerDay).toBeNull();
+    expect(out.maxHoursPerQuarter).toBeNull();
+    expect(out.minWorkedHours).toBeNull();
+    // Keys the set does not mention keep the company value.
+    expect(out.maxHoursPerMonth).toBe(40);
+    expect(out.claimWithinDays).toBe(7);
+    expect(sanitizeRuleSetPolicy({ maxHoursPerDay: null })).toEqual({
+      maxHoursPerDay: null,
+    });
   });
   it('validates the new policy keys', () => {
     expect(

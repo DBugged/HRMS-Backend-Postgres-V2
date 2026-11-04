@@ -1073,12 +1073,16 @@ model ShiftRule {
   organization   Organization @relation(fields: [organizationId], references: [id])
 
   name         String
-  gender       Gender
+  // Null = no gender condition (a rule for named people only).
+  gender       Gender?
   startTime    String
   endTime      String
   breakMinutes Int?
-  // Empty = every department.
+  // Empty = every department. Ignored for a rule that names people.
   departmentIds String[] @default([])
+  // A per-person override: when set, the rule applies to exactly these people (any gender, any department) and wins over
+  // gender and department rules.
+  employeeIds   String[] @default([])
   isActive      Boolean  @default(true)
 
   createdAt DateTime @default(now())
