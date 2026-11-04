@@ -59,6 +59,8 @@ export const DEFAULT_RULES = {
   maxAdvanceDays: null,
   allowHalfDay: true,
   sandwichLeaveApplies: false,
+  sandwichWeeklyOffs: false,
+  sandwichHolidays: false,
   restrictPrefixSuffixHoliday: false,
   maxConsecutiveDays: null,
   minGapBetweenRequestsDays: 0,

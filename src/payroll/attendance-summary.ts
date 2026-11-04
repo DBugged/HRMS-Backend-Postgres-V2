@@ -69,6 +69,8 @@ export interface AttendanceSummary {
   weekendWorkDays: number;
   holidays: number;
   weeklyOffs: number;
+  // Weekly offs / holidays left unpaid by the company's sandwich rule for absences (set by the payroll run).
+  absenceSandwichDays?: number;
   lopDays: number;
   payableDays: number;
   // Days this month still marked INCOMPLETE (punch-in with no punch-out) —

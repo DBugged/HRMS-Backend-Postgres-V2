@@ -4,6 +4,7 @@
 // LeaveBalanceService.reconcileUpfrontCredit/runYearEndCarryForward and audits both runs via AuditLogService.
 // Important: rules/carryForward/negativeBalance/encashment are opaque JSON columns validated only by the
 // DTO shape, not by a DB schema — keep leave-type-defaults.ts's shapes in sync with what the engine expects.
+import { withSandwichFlags } from '../leaves/leave-rules';
 import { keepModuleEnabled } from '../module-access/module-gate';
 import {
   currentLeaveYear,
@@ -359,7 +360,7 @@ export class LeaveTypesService {
         autoApproveIfNoAction: dto.autoApproveIfNoAction ?? false,
         autoApproveHours: dto.autoApproveHours ?? 0,
         ...(dto.rules !== undefined && {
-          rules: dto.rules as unknown as Prisma.InputJsonValue,
+          rules: withSandwichFlags(dto.rules) as unknown as Prisma.InputJsonValue,
         }),
         documentsRequired: dto.documentsRequired ?? false,
         countInTotalBalance: dto.countInTotalBalance ?? true,
@@ -541,7 +542,7 @@ export class LeaveTypesService {
             autoApproveHours: dto.autoApproveHours,
           }),
           ...(dto.rules !== undefined && {
-            rules: dto.rules as unknown as Prisma.InputJsonValue,
+            rules: withSandwichFlags(dto.rules) as unknown as Prisma.InputJsonValue,
           }),
           ...(dto.documentsRequired !== undefined && {
             documentsRequired: dto.documentsRequired,

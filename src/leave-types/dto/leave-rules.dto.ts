@@ -60,6 +60,22 @@ export class LeaveRulesDto {
   @IsBoolean()
   sandwichLeaveApplies?: boolean;
 
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Sandwich rule: weekly offs inside (or between) leaves of this type are charged as leave days.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sandwichWeeklyOffs?: boolean;
+
+  @ApiPropertyOptional({
+    default: false,
+    description: 'Sandwich rule: holidays inside (or between) leaves of this type are charged as leave days.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  sandwichHolidays?: boolean;
+
   @ApiPropertyOptional({ default: false })
   @IsOptional()
   @IsBoolean()

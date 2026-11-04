@@ -79,7 +79,7 @@ describe('splitForLossOfPay', () => {
   const weeklyOffs = [0];
   const base = {
     isHalfDay: false,
-    calendarDays: false,
+    kinds: { weeklyOffs: false, holidays: false },
     holidayDates: new Set<string>(),
     weeklyOffs,
   };
@@ -174,7 +174,7 @@ describe('splitForLossOfPay', () => {
   it('a calendar-day type charges every date, weekends included', () => {
     const r = splitForLossOfPay({
       ...base,
-      calendarDays: true,
+      kinds: { weeklyOffs: true, holidays: true },
       startDate: '2026-10-09',
       endDate: '2026-10-13',
       totalDays: 5,

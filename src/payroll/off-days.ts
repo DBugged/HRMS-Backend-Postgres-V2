@@ -4,7 +4,11 @@ import {
   isWeeklyOff,
   type WeeklyOffEntry,
 } from '../attendance/attendance-shift-config';
-import type { LeaveRowWithType } from './attendance-summary';
+import {
+  resolveDayPay,
+  type DatedAttendanceRowLike,
+  type LeaveRowWithType,
+} from './attendance-summary';
 
 /**
  * Pure helpers that make payroll treat weekly offs and holidays as paid days even when no attendance row was ever
@@ -186,32 +190,57 @@ export function hasNoAttendedDay(
 }
 
 export type LeaveRowWithSandwich = LeaveRowWithType & {
-  // The leave type's "sandwich leave applies" rule. When it is off, a weekly off or holiday inside a leave is not a
-  // leave day and stays paid; when it is on, those days belong to the leave (unpaid if the leave is unpaid).
+  // The leave type's sandwich rule. When it is off, a weekly off or holiday inside a leave is not a leave day and stays
+  // paid; when it is on, those days belong to the leave (unpaid if the leave is unpaid). `sandwich` chooses weekly offs
+  // and holidays separately; without it `sandwichApplies` means both.
   sandwichApplies?: boolean;
+  sandwich?: { weeklyOffs: boolean; holidays: boolean };
 };
 
+// Is this off day part of the leave (its kind is one the leave's sandwich rule takes in)? A day that is both a holiday
+// and a weekly off belongs to the leave when either kind does.
+function offDayInLeave(
+  leave: Pick<LeaveRowWithSandwich, 'sandwichApplies' | 'sandwich'>,
+  date: string,
+  calendar: OffDayCalendar,
+): boolean {
+  const kinds = leave.sandwich ?? {
+    weeklyOffs: !!leave.sandwichApplies,
+    holidays: !!leave.sandwichApplies,
+  };
+  return (
+    (kinds.weeklyOffs && calendar.weeklyOffDates.has(date)) ||
+    (kinds.holidays && calendar.holidayDates.has(date))
+  );
+}
+
 /**
- * Cuts weekly-off/holiday days out of multi-day leaves whose type does not apply the sandwich rule, so e.g. an unpaid
- * leave from Friday to Monday costs two days, not four. Leaves of types that do apply it, and half-day leaves, are
- * left exactly as they are.
+ * Cuts the weekly-off/holiday days a leave's sandwich rule does not take in out of multi-day leaves, so e.g. an unpaid
+ * leave from Friday to Monday costs two days, not four. Off days the rule does take in, and half-day leaves, are left
+ * exactly as they are. A plain set of dates is treated as off days of both kinds.
  */
 export function splitLeavesAroundOffDays<T extends LeaveRowWithSandwich>(
   leaves: T[],
-  offDates: Set<string>,
+  offDays: Set<string> | OffDayCalendar,
 ): T[] {
-  if (offDates.size === 0) return leaves;
+  const calendar: OffDayCalendar =
+    offDays instanceof Set
+      ? { weeklyOffDates: offDays, holidayDates: offDays }
+      : offDays;
+  if (calendar.weeklyOffDates.size === 0 && calendar.holidayDates.size === 0) return leaves;
+  const isOff = (date: string) =>
+    calendar.weeklyOffDates.has(date) || calendar.holidayDates.has(date);
   const out: T[] = [];
   for (const leave of leaves) {
-    if (leave.isHalfDay || leave.sandwichApplies) {
+    if (leave.isHalfDay) {
       out.push(leave);
       continue;
     }
-    // Walk the leave's dates and emit one leave row per run of consecutive non-off days.
+    // Walk the leave's dates and emit one leave row per run of days that belong to the leave.
     let runStart = '';
     let runEnd = '';
     for (const date of enumerateDateStrings(leave.startDate, leave.endDate)) {
-      if (offDates.has(date)) {
+      if (isOff(date) && !offDayInLeave(leave, date, calendar)) {
         if (runStart !== '') {
           out.push({ ...leave, startDate: runStart, endDate: runEnd });
           runStart = '';
@@ -232,20 +261,19 @@ export function splitLeavesAroundOffDays<T extends LeaveRowWithSandwich>(
  * Approving a leave writes an ON_LEAVE attendance row for every date in its range, weekends and holidays included, which
  * replaces the WEEKLY_OFF/HOLIDAY row that was there. When the leave's type does not apply the sandwich rule those days
  * are not leave days (splitLeavesAroundOffDays cuts them out), so the ON_LEAVE row is dropped here and the day goes back
- * to being the paid off day it is. Rows on dates a sandwich leave covers are kept.
+ * to being the paid off day it is. Rows on off days a leave's sandwich rule takes in are kept.
  */
 export function dropLeaveRowsOnOffDays<
   T extends { status: AttendanceStatus; date: string },
 >(
   rows: T[],
   calendar: OffDayCalendar,
-  leaves: { startDate: string; endDate: string; sandwichApplies?: boolean }[],
+  leaves: Pick<LeaveRowWithSandwich, 'startDate' | 'endDate' | 'sandwichApplies' | 'sandwich'>[],
 ): T[] {
   const sandwiched = new Set<string>();
   for (const leave of leaves) {
-    if (!leave.sandwichApplies) continue;
     for (const date of enumerateDateStrings(leave.startDate, leave.endDate)) {
-      sandwiched.add(date);
+      if (offDayInLeave(leave, date, calendar)) sandwiched.add(date);
     }
   }
   return rows.filter(
@@ -257,4 +285,82 @@ export function dropLeaveRowsOnOffDays<
         !sandwiched.has(r.date)
       ),
   );
+}
+
+/**
+ * The sandwich rule for absences (Organization Settings > Attendance, orgPayrollAttendancePrefs.absenceSandwich): when
+ * the working day just before a run of weekly offs / holidays and the working day just after both pay nothing (absent,
+ * unmarked, or unpaid leave), the off days in between of the kinds the company chose are not paid either. Off by
+ * default for both kinds.
+ */
+export interface AbsenceSandwichRule {
+  weeklyOffs: boolean;
+  holidays: boolean;
+}
+
+export function resolveAbsenceSandwich(prefs: unknown): AbsenceSandwichRule {
+  const raw = (prefs as { absenceSandwich?: Partial<AbsenceSandwichRule> } | null)
+    ?.absenceSandwich;
+  return {
+    weeklyOffs: raw?.weeklyOffs === true,
+    holidays: raw?.holidays === true,
+  };
+}
+
+/**
+ * The off days the absence sandwich rule makes unpaid, inside [from, to]. Only a run whose both neighbours fall inside
+ * the window is judged (a neighbour in another month is not known here). A run in which any off day was worked, or is
+ * covered by a leave, is left alone: the person came in, or the leave's own sandwich rule decides it.
+ */
+export function absenceSandwichedDates(
+  rows: (DatedAttendanceRowLike & { workDurationMinutes?: number | null; inTime?: Date | null })[],
+  leaves: LeaveRowWithType[],
+  calendar: OffDayCalendar,
+  from: string,
+  to: string,
+  rule: AbsenceSandwichRule,
+): Set<string> {
+  const out = new Set<string>();
+  if (!rule.weeklyOffs && !rule.holidays) return out;
+  const isOff = (d: string) =>
+    calendar.weeklyOffDates.has(d) || calendar.holidayDates.has(d);
+  const pay = resolveDayPay(rows, leaves, from, to);
+  const worked = new Set(
+    rows.filter((r) => r.inTime || (r.workDurationMinutes ?? 0) > 0).map((r) => r.date),
+  );
+  const onLeave = new Set<string>();
+  for (const l of leaves) {
+    for (const d of enumerateDateStrings(l.startDate, l.endDate)) onLeave.add(d);
+  }
+  const dates = [...enumerateDateStrings(from, to)];
+  let i = 0;
+  while (i < dates.length) {
+    if (!isOff(dates[i])) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < dates.length && isOff(dates[j + 1])) j += 1;
+    const before = i > 0 ? dates[i - 1] : null;
+    const after = j + 1 < dates.length ? dates[j + 1] : null;
+    const run = dates.slice(i, j + 1);
+    if (
+      before &&
+      after &&
+      (pay.get(before) ?? 0) === 0 &&
+      (pay.get(after) ?? 0) === 0 &&
+      !run.some((d) => worked.has(d) || onLeave.has(d))
+    ) {
+      for (const d of run) {
+        if (
+          (rule.weeklyOffs && calendar.weeklyOffDates.has(d)) ||
+          (rule.holidays && calendar.holidayDates.has(d))
+        ) {
+          out.add(d);
+        }
+      }
+    }
+    i = j + 1;
+  }
+  return out;
 }

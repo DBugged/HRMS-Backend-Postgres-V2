@@ -53,8 +53,8 @@ import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import {
   checkLeaveRules,
   applicationDocumentRule,
-  countDaysInclusive,
-  countWorkingDaysInclusive,
+  chargedKindsOf,
+  countChargedDaysInclusive,
   effectiveLeaveRules,
   rangesOverlap,
   splitDaysByYear,
@@ -361,20 +361,17 @@ export class LeavesService {
       leaveType,
     );
     const holidayDates = new Set(holidays.map((h) => h.date));
-    const calendarDays = !!(
-      rules.sandwichLeaveApplies || rules.countCalendarDays
-    );
+    const kinds = chargedKindsOf(rules);
     const isHalfDay = dto.isHalfDay ?? false;
     const totalDays = isHalfDay
       ? 0.5
-      : calendarDays
-        ? countDaysInclusive(dto.startDate, dto.endDate)
-        : countWorkingDaysInclusive(
-            dto.startDate,
-            dto.endDate,
-            holidayDates,
-            weeklyOffs,
-          );
+      : countChargedDaysInclusive(
+          dto.startDate,
+          dto.endDate,
+          holidayDates,
+          weeklyOffs,
+          kinds,
+        );
     const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
     const available = await this.scopedPrisma.$transaction(async (tx) => {
       const row = await this.leaveBalanceService.ensureBalanceRow(
@@ -406,7 +403,7 @@ export class LeavesService {
       isHalfDay,
       totalDays,
       available,
-      calendarDays,
+      kinds,
       holidayDates,
       weeklyOffs,
     });

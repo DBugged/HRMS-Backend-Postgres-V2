@@ -1,5 +1,7 @@
 import { AttendanceStatus } from '@prisma/client';
 import {
+  absenceSandwichedDates,
+  resolveAbsenceSandwich,
   dropLeaveRowsOnOffDays,
   employmentWindow,
   hasNoAttendedDay,
@@ -362,5 +364,64 @@ describe('hasNoAttendedDay (absent on every working day)', () => {
     expect(hasNoAttendedDay([], [], calendar, '2026-09-30', '2026-09-01')).toBe(
       false,
     );
+  });
+});
+
+describe('absence sandwich rule', () => {
+  // September 2026: Fri 11, Sat 12, Sun 13, Mon 14. Thu 10 and Tue 15 are worked.
+  const cal = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, []);
+  const row = (date: string, status: AttendanceStatus) => ({ date, status });
+  const absentAround = [
+    row('2026-09-10', AttendanceStatus.PRESENT),
+    row('2026-09-11', AttendanceStatus.ABSENT),
+    row('2026-09-14', AttendanceStatus.ABSENT),
+    row('2026-09-15', AttendanceStatus.PRESENT),
+  ];
+  const on = { weeklyOffs: true, holidays: true };
+
+  it('off by default: nothing is sandwiched', () => {
+    expect(resolveAbsenceSandwich({})).toEqual({ weeklyOffs: false, holidays: false });
+    expect(
+      absenceSandwichedDates(absentAround, [], cal, '2026-09-01', '2026-09-30', resolveAbsenceSandwich(null)).size,
+    ).toBe(0);
+  });
+
+  it('absent Friday and Monday: the weekend in between is unpaid', () => {
+    const out = absenceSandwichedDates(absentAround, [], cal, '2026-09-01', '2026-09-30', on);
+    expect([...out].filter((d) => d >= '2026-09-10' && d <= '2026-09-15')).toEqual(['2026-09-12', '2026-09-13']);
+  });
+
+  it('only one side absent: the weekend stays paid', () => {
+    const rows = absentAround.map((r) =>
+      r.date === '2026-09-14' ? row('2026-09-14', AttendanceStatus.PRESENT) : r,
+    );
+    const out = absenceSandwichedDates(rows, [], cal, '2026-09-01', '2026-09-30', on);
+    expect(out.has('2026-09-12')).toBe(false);
+  });
+
+  it('a holiday is only sandwiched when the company chose holidays', () => {
+    const withHoliday = offDayCalendar('2026-09-01', '2026-09-30', SAT_SUN, ['2026-09-14']);
+    const rows = [
+      row('2026-09-11', AttendanceStatus.ABSENT),
+      row('2026-09-15', AttendanceStatus.ABSENT),
+    ];
+    const weeklyOnly = absenceSandwichedDates(rows, [], withHoliday, '2026-09-01', '2026-09-30', {
+      weeklyOffs: true,
+      holidays: false,
+    });
+    expect(weeklyOnly.has('2026-09-12')).toBe(true);
+    expect(weeklyOnly.has('2026-09-14')).toBe(false);
+  });
+
+  it('a worked off day, or one inside a paid leave, is left alone', () => {
+    const worked = [
+      ...absentAround,
+      { date: '2026-09-12', status: AttendanceStatus.WEEKLY_OFF, workDurationMinutes: 300 },
+    ];
+    expect(absenceSandwichedDates(worked, [], cal, '2026-09-01', '2026-09-30', on).has('2026-09-13')).toBe(false);
+    const paidLeave = [
+      { startDate: '2026-09-11', endDate: '2026-09-11', isHalfDay: false, leaveType: { isPaid: true, salaryImpactPercent: 100 } },
+    ];
+    expect(absenceSandwichedDates(absentAround, paidLeave, cal, '2026-09-01', '2026-09-30', on).has('2026-09-12')).toBe(false);
   });
 });

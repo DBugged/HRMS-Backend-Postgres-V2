@@ -7,8 +7,9 @@ import type { NegativeBalanceRule } from './leave-balance-check';
 import { isPeriodicForYear } from '../leave-balances/leave-balance-math';
 import {
   addDaysStr,
+  countChargedDaysInclusive,
   countDaysInclusive,
-  countWorkingDaysInclusive,
+  type SandwichKinds,
 } from './leave-rules';
 import type { WeeklyOffEntry } from '../attendance/attendance-shift-config';
 
@@ -62,8 +63,8 @@ export interface LossOfPaySplit {
 }
 
 /**
- * Cuts [startDate, endDate] where the balance runs out. Days are counted the way the leave type counts them (calendar
- * days for a sandwich / calendar-day type, otherwise working days only), whole days only: the balance covers the
+ * Cuts [startDate, endDate] where the balance runs out. Days are counted the way the leave type counts them (the off
+ * days its sandwich rule takes in, every date for a calendar-day type), whole days only: the balance covers the
  * longest run of dates from the start whose charge is within `available`, and everything after is Loss of Pay.
  * A half day is not cut: it is covered only if at least half a day is available.
  */
@@ -73,7 +74,8 @@ export function splitForLossOfPay(args: {
   isHalfDay: boolean;
   totalDays: number;
   available: number;
-  calendarDays: boolean;
+  // Which off days the leave type charges (chargedKindsOf).
+  kinds: SandwichKinds;
   holidayDates: Set<string>;
   weeklyOffs: WeeklyOffEntry[];
 }): LossOfPaySplit {
@@ -96,14 +98,13 @@ export function splitForLossOfPay(args: {
     };
   }
   const charge = (to: string) =>
-    args.calendarDays
-      ? countDaysInclusive(startDate, to)
-      : countWorkingDaysInclusive(
-          startDate,
-          to,
-          args.holidayDates,
-          args.weeklyOffs,
-        );
+    countChargedDaysInclusive(
+      startDate,
+      to,
+      args.holidayDates,
+      args.weeklyOffs,
+      args.kinds,
+    );
   const span = countDaysInclusive(startDate, endDate);
   let coveredEnd: string | null = null;
   let coveredDays = 0;

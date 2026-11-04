@@ -25,7 +25,12 @@ export interface LeaveRules {
   allowFutureDated: boolean;
   maxAdvanceDays: number | null;
   allowHalfDay: boolean;
+  // The sandwich rule: weekly offs and/or holidays inside a leave are charged as leave days. sandwichWeeklyOffs /
+  // sandwichHolidays choose each kind; a type saved before they existed has only sandwichLeaveApplies, which then means
+  // both (see sandwichKindsOf). sandwichLeaveApplies is kept true whenever either kind applies.
   sandwichLeaveApplies: boolean;
+  sandwichWeeklyOffs?: boolean;
+  sandwichHolidays?: boolean;
   // Event-based leave counted in calendar days: every date in the range is charged, weekends/holidays included.
   countCalendarDays?: boolean;
   restrictPrefixSuffixHoliday: boolean;
@@ -56,6 +61,8 @@ export function effectiveLeaveRules(
       ? {
           countCalendarDays: true,
           sandwichLeaveApplies: false,
+          sandwichWeeklyOffs: false,
+          sandwichHolidays: false,
           restrictPrefixSuffixHoliday: false,
         }
       : {}),
@@ -144,9 +151,8 @@ export function countDaysInclusive(startStr: string, endStr: string): number {
   return daysBetween(startStr, endStr) + 1;
 }
 
-// Working (non-weekly-off, non-holiday) days in [startStr, endStr],
-// inclusive. Used when sandwichLeaveApplies is false so weekends/holidays
-// falling inside a leave range aren't charged against the balance.
+// Working (non-weekly-off, non-holiday) days in [startStr, endStr], inclusive: the charge of a leave whose sandwich
+// rule takes in neither kind of off day.
 export function countWorkingDaysInclusive(
   startStr: string,
   endStr: string,
@@ -160,6 +166,79 @@ export function countWorkingDaysInclusive(
     if (!isHolidayOrWeeklyOff(d, holidayDates, weeklyOffs)) working += 1;
   }
   return working;
+}
+
+// Which off days inside a leave are charged as leave days (the sandwich rule).
+export interface SandwichKinds {
+  weeklyOffs: boolean;
+  holidays: boolean;
+}
+
+export function sandwichKindsOf(
+  rules: Partial<
+    Pick<LeaveRules, 'sandwichLeaveApplies' | 'sandwichWeeklyOffs' | 'sandwichHolidays'>
+  > | null | undefined,
+): SandwichKinds {
+  const legacy = !!rules?.sandwichLeaveApplies;
+  return {
+    weeklyOffs: rules?.sandwichWeeklyOffs ?? legacy,
+    holidays: rules?.sandwichHolidays ?? legacy,
+  };
+}
+
+// Before saving a type's rules: when the weekly-off / holiday choices are given, sandwichLeaveApplies follows them (on
+// when either applies), so older readers of that one flag still see whether the type has a sandwich rule at all.
+export function withSandwichFlags<T extends object>(rules: T): T {
+  const r = rules as Partial<LeaveRules>;
+  if (r.sandwichWeeklyOffs === undefined && r.sandwichHolidays === undefined) return rules;
+  const kinds = sandwichKindsOf(r);
+  return {
+    ...rules,
+    sandwichWeeklyOffs: kinds.weeklyOffs,
+    sandwichHolidays: kinds.holidays,
+    sandwichLeaveApplies: kinds.weeklyOffs || kinds.holidays,
+  };
+}
+
+// What a leave of this type charges: every date for a calendar-day type, else the working days plus the off days
+// its sandwich rule takes in.
+export function chargedKindsOf(
+  rules: Partial<LeaveRules> | null | undefined,
+): SandwichKinds {
+  return rules?.countCalendarDays
+    ? { weeklyOffs: true, holidays: true }
+    : sandwichKindsOf(rules);
+}
+
+// Is this date an off day the leave does not charge? A date that is both a holiday and a weekly off is charged when
+// either kind is.
+function isUnchargedOffDay(
+  dateStr: string,
+  holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
+  kinds: SandwichKinds,
+): boolean {
+  const holiday = holidayDates.has(dateStr);
+  const weeklyOff = isWeeklyOff(dateStr, weeklyOffs);
+  if (!holiday && !weeklyOff) return false;
+  return !((holiday && kinds.holidays) || (weeklyOff && kinds.weeklyOffs));
+}
+
+// The days in [startStr, endStr] a leave is charged for, given which off days its sandwich rule takes in.
+export function countChargedDaysInclusive(
+  startStr: string,
+  endStr: string,
+  holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
+  kinds: SandwichKinds,
+): number {
+  if (kinds.weeklyOffs && kinds.holidays) return countDaysInclusive(startStr, endStr);
+  const span = countDaysInclusive(startStr, endStr);
+  let charged = 0;
+  for (let i = 0; i < span; i++) {
+    if (!isUnchargedOffDay(addDaysStr(startStr, i), holidayDates, weeklyOffs, kinds)) charged += 1;
+  }
+  return charged;
 }
 
 export function addDaysStr(dateStr: string, days: number): string {
@@ -187,6 +266,7 @@ function computeSandwichAdjustedDays(
   priorLeaveEndDate: string | null | undefined,
   holidayDates: Set<string>,
   weeklyOffs: WeeklyOffEntry[],
+  kinds: SandwichKinds,
 ): number {
   if (!priorLeaveEndDate) return totalDays;
   const gapDays = daysBetween(priorLeaveEndDate, startDate) - 1;
@@ -196,8 +276,12 @@ function computeSandwichAdjustedDays(
   for (let i = 1; i <= gapDays; i++) {
     gapDates.push(addDaysStr(priorLeaveEndDate, i));
   }
-  const allNonWorking = gapDates.every((d) =>
-    isHolidayOrWeeklyOff(d, holidayDates, weeklyOffs),
+  // Every gap day is an off day the sandwich rule takes in (a gap with an off day of a kind it leaves out is a real
+  // break).
+  const allNonWorking = gapDates.every(
+    (d) =>
+      isHolidayOrWeeklyOff(d, holidayDates, weeklyOffs) &&
+      !isUnchargedOffDay(d, holidayDates, weeklyOffs, kinds),
   );
   return allNonWorking ? totalDays + gapDays : totalDays;
 }
@@ -231,7 +315,12 @@ export function rangesOverlap(a: DateRange, b: DateRange): boolean {
 // include a sandwich adjustment); each part is counted with the same basis as the total and the last part takes the
 // remainder, so the parts always add up to it. A leave inside one year returns a single part.
 export function splitDaysByYear(
-  rules: Pick<LeaveRules, 'sandwichLeaveApplies' | 'countCalendarDays'>,
+  rules: Partial<
+    Pick<
+      LeaveRules,
+      'sandwichLeaveApplies' | 'sandwichWeeklyOffs' | 'sandwichHolidays' | 'countCalendarDays'
+    >
+  >,
   startDate: string,
   endDate: string,
   total: number,
@@ -243,7 +332,7 @@ export function splitDaysByYear(
   if (ranges.length <= 1) {
     return [{ year: leaveYearOf(startDate, cfg), days: total }];
   }
-  const calendar = rules.sandwichLeaveApplies || rules.countCalendarDays;
+  const kinds = chargedKindsOf(rules);
   const parts: { year: number; days: number }[] = [];
   let assigned = 0;
   ranges.forEach((r, i) => {
@@ -254,9 +343,7 @@ export function splitDaysByYear(
       });
       return;
     }
-    const days = calendar
-      ? countDaysInclusive(r.from, r.to)
-      : countWorkingDaysInclusive(r.from, r.to, holidayDates, weeklyOffs);
+    const days = countChargedDaysInclusive(r.from, r.to, holidayDates, weeklyOffs, kinds);
     parts.push({ year: r.key, days });
     assigned += days;
   });
@@ -305,28 +392,25 @@ export function checkLeaveRules(
   }
 
   const rangeIsValid = request.endDate >= request.startDate;
-  // Day-count basis depends on sandwichLeaveApplies:
-  //   - true  (traditional sandwich rule): every calendar day in the range
-  //     is charged, weekends/holidays inside it included.
-  //   - false (the seeded default): only working, non-holiday days inside
-  //     the range are charged — a Fri->Mon request costs 2 days, not 4.
-  // The half-day short-circuit and the gap-based sandwich adjustment
-  // between separate requests (below) are independent of this.
+  // Day-count basis depends on the sandwich rule:
+  //   - weekly offs and/or holidays it takes in are charged as leave days;
+  //   - the off days it leaves out are not (the seeded default leaves both out: a Fri->Mon request costs 2 days, not 4).
+  // The half-day short-circuit and the gap-based sandwich adjustment between separate requests (below) are independent
+  // of this.
+  // Each kind (weekly offs, holidays) is chosen on its own: e.g. weekly offs charged but holidays not.
+  const kinds = chargedKindsOf(rules);
   let totalDays: number;
   if (request.isHalfDay) {
     totalDays = 0.5;
-  } else if (
-    rules.sandwichLeaveApplies ||
-    rules.countCalendarDays ||
-    !rangeIsValid
-  ) {
+  } else if ((kinds.weeklyOffs && kinds.holidays) || !rangeIsValid) {
     totalDays = countDaysInclusive(request.startDate, request.endDate);
   } else {
-    totalDays = countWorkingDaysInclusive(
+    totalDays = countChargedDaysInclusive(
       request.startDate,
       request.endDate,
       context.holidayDates,
       context.weeklyOffs,
+      kinds,
     );
     if (totalDays === 0) {
       errors.push(
@@ -334,13 +418,18 @@ export function checkLeaveRules(
       );
     }
   }
-  if (!request.isHalfDay && rules.sandwichLeaveApplies) {
+  if (
+    !request.isHalfDay &&
+    !rules.countCalendarDays &&
+    (kinds.weeklyOffs || kinds.holidays)
+  ) {
     totalDays = computeSandwichAdjustedDays(
       totalDays,
       request.startDate,
       context.priorLeaveEndDate,
       context.holidayDates,
       context.weeklyOffs,
+      kinds,
     );
   }
 

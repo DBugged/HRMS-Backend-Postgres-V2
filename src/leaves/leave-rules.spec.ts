@@ -4,7 +4,9 @@ import {
   effectiveLeaveRules,
   LeaveRules,
   rangesOverlap,
+  sandwichKindsOf,
   splitDaysByYear,
+  withSandwichFlags,
 } from './leave-rules';
 
 const permissiveRules: LeaveRules = {
@@ -651,5 +653,51 @@ describe('splitDaysByYear', () => {
     );
     expect(parts.reduce((s, p) => s + p.days, 0)).toBe(6);
     expect(parts[0].year).toBe(2030);
+  });
+});
+
+describe('sandwich rule: weekly offs and holidays chosen separately', () => {
+  // Fri 2026-06-05 .. Tue 2026-06-09: Sat/Sun are weekly offs and Mon 8 is a holiday.
+  const ctx = {
+    ...baseContext,
+    weeklyOffs: [0, 6],
+    holidayDates: new Set(['2026-06-08']),
+  };
+  const days = (rules: Partial<LeaveRules>) =>
+    checkLeaveRules(
+      { ...permissiveRules, ...rules },
+      {
+        startDate: '2026-06-05',
+        endDate: '2026-06-09',
+        isHalfDay: false,
+        hasAttachment: false,
+      },
+      ctx,
+    ).totalDays;
+
+  it('charges only the working days when neither kind is taken in', () => {
+    expect(days({ sandwichWeeklyOffs: false, sandwichHolidays: false })).toBe(2);
+  });
+
+  it('charges the weekly offs but not the holiday', () => {
+    expect(days({ sandwichWeeklyOffs: true, sandwichHolidays: false })).toBe(4);
+  });
+
+  it('charges the holiday but not the weekly offs', () => {
+    expect(days({ sandwichWeeklyOffs: false, sandwichHolidays: true })).toBe(3);
+  });
+
+  it('a type saved with only the old single switch takes in both', () => {
+    expect(days({ sandwichLeaveApplies: true })).toBe(5);
+  });
+
+  it('withSandwichFlags keeps the old switch in step with the two choices', () => {
+    expect(
+      withSandwichFlags({ sandwichWeeklyOffs: false, sandwichHolidays: true }),
+    ).toMatchObject({ sandwichLeaveApplies: true, sandwichWeeklyOffs: false, sandwichHolidays: true });
+    expect(
+      withSandwichFlags({ sandwichWeeklyOffs: false, sandwichHolidays: false }),
+    ).toMatchObject({ sandwichLeaveApplies: false });
+    expect(sandwichKindsOf({ sandwichLeaveApplies: true })).toEqual({ weeklyOffs: true, holidays: true });
   });
 });

@@ -432,6 +432,18 @@ function validateAttendancePrefs(p: Record<string, unknown>) {
       );
     }
   }
+  if (p.absenceSandwich !== undefined) {
+    const c = p.absenceSandwich;
+    if (!isPlainObject(c)) {
+      bad(`${path('absenceSandwich')} must be an object.`);
+    } else {
+      for (const k of ['weeklyOffs', 'holidays'] as const) {
+        if (c[k] !== undefined && typeof c[k] !== 'boolean') {
+          bad(`${path('absenceSandwich')}.${k} must be true or false.`);
+        }
+      }
+    }
+  }
   for (const key of ['checkInReminder', 'checkOutReminder'] as const) {
     if (p[key] === undefined) continue;
     const c = p[key];

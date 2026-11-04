@@ -9,6 +9,7 @@
 // afterLock() marks approved-unprocessed leave encashments PROCESSED so a future run can't double-count
 // them. afterPay()'s notification/email failures are swallowed deliberately — the payment transition has
 // already committed by that point and must not be rolled back by a PDF/email failure.
+import { sandwichKindsOf, type LeaveRules } from '../leaves/leave-rules';
 import { employeeDob, missingPastMonths } from './fy-employment';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import {
@@ -124,6 +125,8 @@ import {
   missingOffDayRows,
   offDayCalendar,
   splitLeavesAroundOffDays,
+  absenceSandwichedDates,
+  resolveAbsenceSandwich,
   type LeaveRowWithSandwich,
 } from './off-days';
 import {
@@ -660,7 +663,11 @@ export class PayrollService {
         : Promise.resolve(null),
       this.scopedPrisma.organization.findFirst({
         where: { id: organizationId },
-        select: { attendancePayrollPrefs: true, timezone: true },
+        select: {
+          attendancePayrollPrefs: true,
+          orgPayrollAttendancePrefs: true,
+          timezone: true,
+        },
       }),
     ]);
 
@@ -712,10 +719,9 @@ export class PayrollService {
       endDate: l.endDate,
       isHalfDay: l.isHalfDay,
       leaveType: l.leaveType,
-      // A weekly off or holiday inside a leave is only part of the leave when its type applies the sandwich rule.
-      sandwichApplies: !!(
-        l.leaveType.rules as { sandwichLeaveApplies?: boolean } | null
-      )?.sandwichLeaveApplies,
+      // A weekly off or holiday inside a leave is only part of the leave when its type's sandwich rule takes that
+      // kind of day in.
+      sandwich: sandwichKindsOf(l.leaveType.rules as Partial<LeaveRules> | null),
     }));
     // Approving a leave stamps ON_LEAVE on its weekends/holidays too; without the sandwich rule those go back to being
     // paid off days.
@@ -726,7 +732,7 @@ export class PayrollService {
     );
     const leaves: LeaveRowWithSandwich[] = splitLeavesAroundOffDays(
       leaveInputs,
-      new Set([...calendar.weeklyOffDates, ...calendar.holidayDates]),
+      calendar,
     );
     // Nobody who was absent on every working day of the period is paid for the weekly offs and holidays in between.
     const absentThroughout = hasNoAttendedDay(
@@ -735,6 +741,15 @@ export class PayrollService {
       calendar,
       employed.from,
       employed.to,
+    );
+    // The company's sandwich rule for absences: off days between two unpaid working days are not paid either.
+    const sandwichedOffDays = absenceSandwichedDates(
+      keptRows,
+      leaves,
+      calendar,
+      employed.from,
+      employed.to,
+      resolveAbsenceSandwich(org?.orgPayrollAttendancePrefs),
     );
     const attendanceForPay = absentThroughout
       ? keptRows.filter(
@@ -745,7 +760,7 @@ export class PayrollService {
       : [
           ...keptRows,
           ...missingOffDayRows(calendar, new Set(keptRows.map((r) => r.date))),
-        ];
+        ].filter((r) => !sandwichedOffDays.has(r.date));
     const attendanceSummary = computeAttendanceSummary(
       attendanceForPay,
       leaves,
@@ -755,6 +770,7 @@ export class PayrollService {
       employed.daysBeforeJoining + employed.daysNotElapsed,
     );
     attendanceSummary.daysBeforeJoining = employed.daysBeforeJoining;
+    attendanceSummary.absenceSandwichDays = absentThroughout ? 0 : sandwichedOffDays.size;
     attendanceSummary.daysNotElapsed = employed.daysNotElapsed;
     // Payable days before a manual LOP correction replaces them (a month split by a mid-month revision is paid
     // segment by segment from raw attendance, so the correction has to be carried into the segments as well).
