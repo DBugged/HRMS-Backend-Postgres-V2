@@ -85,6 +85,11 @@ class BulkEmployeeRowDto {
   @ApiPropertyOptional()
   @IsOptional()
   employeeType?: unknown;
+
+  // Optional Yes / No: live tracking for this person (only when the company has the feature on).
+  @ApiPropertyOptional()
+  @IsOptional()
+  liveTracking?: unknown;
 }
 
 export class BulkCreateEmployeesDto {

@@ -43,8 +43,8 @@ export class CustomReportController {
   ) {}
 
   @Get('sources')
-  getSources() {
-    return this.customReportService.listSources();
+  getSources(@CurrentUser() caller: Caller) {
+    return this.customReportService.listSources(caller.organizationId);
   }
 
   @Get()

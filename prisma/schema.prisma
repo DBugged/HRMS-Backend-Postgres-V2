@@ -70,6 +70,8 @@ model Organization {
   id             String   @id @default(uuid())
   name           String
   timezone       String   @default("Asia/Kolkata")
+  // Live tracking: { intervalSeconds, minDistanceMeters, retentionDays }; null = the built-in defaults.
+  fieldTrackingSettings Json?
   isActive       Boolean  @default(true)
   // The platform (Control Center) status: ACTIVE | PENDING | SUSPENDED | ARCHIVED. isActive is what the app enforces and
   // is false for SUSPENDED and ARCHIVED - nobody in the organisation can sign in or use a session while it is.
@@ -268,6 +270,8 @@ model Organization {
   workSchedules                    WorkSchedule[]
   shiftRules                       ShiftRule[]
   overtimeRuleSets                 OvertimeRuleSet[]
+  locationPings                    LocationPing[]
+  fieldVisits                      FieldVisit[]
   leaveTypes                       LeaveType[]
   leaveBalances                    LeaveBalance[]
   leaves                           Leave[]
@@ -605,6 +609,9 @@ model User {
   validatedAttendanceImportBatches AttendanceImportBatch[]           @relation("AttendanceImportValidatedBy")
   executedAttendanceImportBatches  AttendanceImportBatch[]           @relation("AttendanceImportExecutedBy")
   overtimeRecords                  OvertimeRecord[]                  @relation("OvertimeEmployee")
+  locationPings                    LocationPing[]                    @relation("LocationPingEmployee")
+  fieldVisits                      FieldVisit[]                      @relation("FieldVisitEmployee")
+  fieldVisitsCreated               FieldVisit[]                      @relation("FieldVisitCreator")
   overtimeRecordsApproved          OvertimeRecord[]                  @relation("OvertimeApprovedBy")
   performanceRatings               PerformanceRating[]               @relation("PerformanceRatingEmployee")
   performanceRatingsGiven          PerformanceRating[]               @relation("PerformanceRatingRatedBy")
@@ -637,6 +644,10 @@ model User {
   // Marked present on every working day without punching: the nightly sweep writes a Present day for the person's own shift timings
   // (never absent, even on unpaid leave), from alwaysPresentFrom (YYYY-MM-DD) up to their last working day. Payroll counts the days as normal.
   alwaysPresent                    Boolean                           @default(false)
+  // Live tracking for field staff: set by Admin / HR. While true (and the company has the feature on) the app shares
+  // the person's location during their shift, after they have consented (fieldTrackingConsentAt).
+  fieldTrackingEnabled             Boolean                           @default(false)
+  fieldTrackingConsentAt           DateTime?
   alwaysPresentFrom                String?
   // The company name this person's payslips, letters and emails carry (a sister company's name and logo). Null = the company's
   // own branding. Changing it never changes the employee ID.
@@ -1122,6 +1133,93 @@ model OvertimeRuleSet {
   @@unique([organizationId, name])
   @@index([organizationId])
   @@map("overtime_rule_sets")
+}
+
+// One location sample from a field employee's phone, sent only during a shift by a person Admin / HR switched live
+// tracking on for and who consented. kind LOCATION_OFF is a marker ("location was switched off on the phone") with no
+// coordinates. Purged after the retention period (FieldTrackingService.purgeOld).
+model LocationPing {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("LocationPingEmployee", fields: [employeeId], references: [id])
+
+  recordedAt     DateTime
+  latitude       Float?
+  longitude      Float?
+  accuracyMeters Float?
+  speedMps       Float?
+  batteryPercent Int?
+  // The phone reported a mock / spoofed location; the point is kept but flagged.
+  isMock Boolean @default(false)
+  // POINT | LOCATION_OFF
+  kind   String  @default("POINT")
+
+  createdAt DateTime @default(now())
+
+  @@unique([employeeId, recordedAt, kind])
+  @@index([organizationId, employeeId, recordedAt])
+  @@index([organizationId, recordedAt])
+  @@map("location_pings")
+}
+
+enum FieldVisitStatus {
+  PLANNED
+  CHECKED_IN
+  COMPLETED
+  MISSED
+  CANCELLED
+}
+
+// A client visit for a field employee: planned by a manager / HR (or by the employee), then checked in and out from the
+// app at the client's location. The check-in records how far from the client the phone was (checkInDistanceMeters) and
+// whether that is inside the allowed radius, so a manager can see visits made from somewhere else.
+model FieldVisit {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+
+  employeeId String
+  employee   User   @relation("FieldVisitEmployee", fields: [employeeId], references: [id])
+  createdById String
+  createdBy   User   @relation("FieldVisitCreator", fields: [createdById], references: [id])
+
+  clientName String
+  address    String  @default("")
+  // The client's location; null = no location given, so a check-in cannot be measured against it.
+  latitude     Float?
+  longitude    Float?
+  radiusMeters Int    @default(150)
+  purpose      String @default("")
+
+  // YYYY-MM-DD in the company's time zone.
+  scheduledFor String
+  status       FieldVisitStatus @default(PLANNED)
+
+  checkInAt             DateTime?
+  checkInLatitude       Float?
+  checkInLongitude      Float?
+  checkInAccuracyMeters Float?
+  checkInDistanceMeters Float?
+  // null = the client had no location, so it could not be judged.
+  checkInWithinRange    Boolean?
+
+  checkOutAt        DateTime?
+  checkOutLatitude  Float?
+  checkOutLongitude Float?
+  outcome           String    @default("")
+  durationMinutes   Int?
+  // Closed by the nightly job because the employee never checked out.
+  autoClosed Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([organizationId, scheduledFor])
+  @@index([organizationId, employeeId, scheduledFor])
+  @@map("field_visits")
 }
 
 enum AllocationType {

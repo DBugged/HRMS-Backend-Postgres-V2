@@ -6,7 +6,13 @@
 //   data); overtime and regularization also allow a Manager, limited to their own department.
 import { employedOnWhere } from '../common/managers';
 import { todayInOrgTz } from '../common/org-date';
-import { Inject, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Inject,
+  Injectable,
+  Optional,
+} from '@nestjs/common';
+import { FieldVisitsService } from '../field-tracking/field-visits.service';
 import { Prisma, Role, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
@@ -35,6 +41,8 @@ const label = (v: string) =>
 export class OpsReportsService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
+    // Optional so tests that build this service by hand keep working.
+    @Optional() private readonly fieldVisits?: FieldVisitsService,
   ) {}
 
   // The employee ids a caller may see: everyone for Admin/HR (optionally one department), the caller's own
@@ -130,6 +138,58 @@ export class OpsReportsService {
       columns,
       rows,
       filename: 'overtime_report',
+    };
+  }
+
+  // One row per field employee for the period: visits planned/completed/missed, time at clients, distance travelled. Built
+  // from the same figures as the Field Visits screen (so the two never disagree), and limited to the people the caller
+  // looks after. Switched off together with the live-tracking feature.
+  async fieldVisitsReport(
+    query: OpsReportQueryDto,
+    actor: Actor,
+  ): Promise<ReportPayload> {
+    assertValidDateRange(query.from, query.to);
+    if (!this.fieldVisits)
+      throw new BadRequestException('Field visits are not available.');
+    const data = await this.fieldVisits.report(actor, {
+      from: query.from,
+      to: query.to,
+    });
+    const hm = (m: number) => `${Math.floor(m / 60)}h ${m % 60}m`;
+    const rows = data.people.map((p) => ({
+      employeeId: p.employeeId,
+      name: p.name,
+      designation: p.designation ?? '',
+      totalVisits: p.totalVisits,
+      completed: p.completed,
+      missed: p.missed,
+      cancelled: p.cancelled,
+      stillOpen: p.planned + p.checkedIn,
+      outsideRange: p.outsideRange,
+      timeAtClients: hm(p.minutesAtClients),
+      daysTracked: p.daysTracked,
+      distanceKm: p.distanceKm,
+    }));
+    const columns: ReportColumn[] = [
+      { header: 'Employee ID', key: 'employeeId', width: 14 },
+      { header: 'Name', key: 'name', width: 24 },
+      { header: 'Designation', key: 'designation', width: 20 },
+      { header: 'Visits', key: 'totalVisits', width: 9 },
+      { header: 'Completed', key: 'completed', width: 11 },
+      { header: 'Missed', key: 'missed', width: 9 },
+      { header: 'Cancelled', key: 'cancelled', width: 11 },
+      { header: 'Still open', key: 'stillOpen', width: 11 },
+      { header: 'Checked in far from client', key: 'outsideRange', width: 16 },
+      { header: 'Time at clients', key: 'timeAtClients', width: 15 },
+      { header: 'Days tracked', key: 'daysTracked', width: 12 },
+      { header: 'Distance (km)', key: 'distanceKm', width: 13 },
+    ];
+    return {
+      title: 'Field Visits Report',
+      subtitle: `${data.from} to ${data.to}`,
+      columns,
+      rows,
+      filename: 'field_visits_report',
     };
   }
 

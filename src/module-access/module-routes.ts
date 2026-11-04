@@ -16,7 +16,7 @@ export const MODULE_LABELS: Record<string, string> = {
 };
 
 const SEGMENTS: Record<string, string[]> = {
-  'module.attendance': ['attendance', 'work-schedules', 'overtime'],
+  'module.attendance': ['attendance', 'work-schedules', 'overtime', 'field-tracking', 'field-visits'],
   'module.leave': ['leaves', 'leave-balances', 'leave-encashments', 'leave-grants', 'leave-tracker', 'leave-types', 'leave-year', 'comp-offs'],
   'module.payroll': ['payroll', 'payroll-settings', 'payroll-templates', 'employee-salary', 'salary-components', 'opening-balances'],
   'module.statutory': ['statutory-config', 'tds', 'tax-slabs', 'tax-declarations'],

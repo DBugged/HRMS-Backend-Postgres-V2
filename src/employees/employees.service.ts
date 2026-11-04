@@ -11,7 +11,8 @@
 import { placeholderEmailFor, readLoginPolicy } from '../common/no-email';
 import { inReviewerScope, reviewerScope } from '../common/dept-scope';
 import { summarizeDocumentReview, type DocumentReview } from './document-review';
-import { sisterCompaniesOn } from '../module-access/module-gate';
+import { featureEnabledFor, sisterCompaniesOn } from '../module-access/module-gate';
+import { FieldTrackingService } from '../field-tracking/field-tracking.service';
 import { LettersService } from '../letters/letters.service';
 import { sendLetterQuietly, handleEventLetter } from '../letters/auto-letter';
 import { assertEmployeeRoom } from '../module-access/module-gate';
@@ -33,6 +34,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  Optional,
   NotFoundException, Logger } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
@@ -141,6 +143,9 @@ export const LEAVING_STATUSES: EmploymentStatus[] = [
 const DEACTIVATION_BLOCKED_MESSAGE =
   'An employee is not deactivated directly. Start their Resignation or Offboarding - the account is closed when the offboarding is completed.';
 
+/** Yes / Y / True / 1 in the import column's Live tracking cell. */
+export const wantsTracking = (v: string): boolean => ['yes', 'y', 'true', '1', 'on'].includes(v.trim().toLowerCase());
+
 @Injectable()
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
@@ -165,6 +170,8 @@ export class EmployeesService {
     private readonly payrollService: PayrollService,
     private readonly lettersService: LettersService,
     private readonly leaveBalanceService: LeaveBalanceService,
+    // Last, so tests that build the service by position keep working. Turns live tracking on / off with the usual notice, audit and consent.
+    @Optional() private readonly fieldTracking?: FieldTrackingService,
   ) {}
 
   async create(
@@ -181,6 +188,9 @@ export class EmployeesService {
   ) {
     const sendWelcomeEmail = options?.sendWelcomeEmail ?? true;
     const requestedRole = dto.role ?? Role.EMPLOYEE;
+    // Live tracking at creation: Admin / HR only, and only where the company has the feature on (checked before anything is created).
+    const wantsTracking = dto.fieldTrackingEnabled === true;
+    if (wantsTracking) await this.assertMayTrack(actor, organizationId);
     if (
       actor.role === Role.HR &&
       !ROLES_HR_CAN_ASSIGN.includes(requestedRole)
@@ -405,7 +415,28 @@ export class EmployeesService {
       performedById: actor.id,
     });
 
-    return { employee: toSafe(user), generatedPassword };
+    // After the record exists: switch live tracking on the same way the directory does (notice to the person, audit, consent to follow).
+    let trackingOn = false;
+    if (wantsTracking && this.fieldTracking) {
+      try {
+        await this.fieldTracking.setEnabled(actor as never, [user.id], true);
+        trackingOn = true;
+      } catch (err) {
+        this.logger.warn(`Live tracking for new employee ${user.id} could not be switched on: ${(err as Error).message}`);
+      }
+    }
+
+    return { employee: toSafe(trackingOn ? { ...user, fieldTrackingEnabled: true, fieldTrackingConsentAt: null } : user), generatedPassword };
+  }
+
+  // Switching live tracking on or off is for Admin / HR, and only where the company has the feature on.
+  private async assertMayTrack(actor: { role: Role }, organizationId: string) {
+    if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
+      throw new ForbiddenException('Only Admin or HR can switch live tracking on.');
+    }
+    if (!(await featureEnabledFor(organizationId, 'feature.field_tracking'))) {
+      throw new BadRequestException('Live tracking is not switched on for this company.');
+    }
   }
 
   // One-time set-password link for welcome/resend emails: only the SHA-256 of the token is stored (same
@@ -614,6 +645,7 @@ export class EmployeesService {
       company?: unknown;
       role?: unknown;
       employeeType?: unknown;
+      liveTracking?: unknown;
     }>,
     actor: Actor & { id: string; role: Role },
     organizationId: string,
@@ -636,6 +668,8 @@ export class EmployeesService {
     // resolved once up front rather than per row, since every row in a
     // batch is checked against the same org-wide lists.
     // The Company column is read only when sister companies is switched on; otherwise it is ignored.
+    // A Live tracking column asking for Yes needs the feature on for the company - refused up front, before any row is created.
+    if (rows.some((r) => wantsTracking(asString(r.liveTracking)))) await this.assertMayTrack(actor, organizationId);
     const brandsOn = await sisterCompaniesOn(organizationId);
     const allowNoEmail = readLoginPolicy(
       (await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { policies: true } }))?.policies,
@@ -700,6 +734,7 @@ export class EmployeesService {
       const companyName = asString(row.company).trim();
       const roleInput = asString(row.role).trim();
       const employeeTypeInput = asString(row.employeeType).trim();
+      const liveTrackingInput = asString(row.liveTracking).trim().toLowerCase();
 
       if (!name) {
         failed.push({ row, error: 'Name is required.' });
@@ -856,6 +891,7 @@ export class EmployeesService {
         selfieRequirement,
         role,
         employeeType: employeeType.value,
+        ...(wantsTracking(liveTrackingInput) ? { fieldTrackingEnabled: true } : {}),
       };
       // The same field rules the form's API enforces (name pattern and length, phone and email formats, lengths): an imported
       // row is held to exactly what a person typing it into the form would be.
@@ -1171,8 +1207,13 @@ export class EmployeesService {
       effectiveDate,
       changeReason,
       isPromotion,
+      fieldTrackingEnabled,
       ...updateFields
     } = dto;
+    // Live tracking is applied through FieldTrackingService after the save, and only when it actually changes.
+    const trackingChange =
+      fieldTrackingEnabled !== undefined && fieldTrackingEnabled !== before.fieldTrackingEnabled ? fieldTrackingEnabled : undefined;
+    if (trackingChange !== undefined) await this.assertMayTrack(actor, organizationId);
     // Department, designation, employee category and work location are required on every employee, so an edit
     // cannot blank one that is set (a blank sent for one that is already empty is a no-op).
     const requiredFields: [string, string][] = [
@@ -1616,6 +1657,38 @@ export class EmployeesService {
         await this.attendanceService.backfillAlwaysPresent(id, (clean.alwaysPresentFrom ?? before.alwaysPresentFrom) as string, organizationId);
       } catch (err) {
         this.logger.warn(`Always-present backfill for ${id} failed: ${(err as Error).message}`);
+      }
+    }
+
+    if (trackingChange !== undefined && this.fieldTracking) {
+      await this.fieldTracking.setEnabled(actor as never, [id], trackingChange);
+    }
+    // Moving a tracked person to another department or role switches tracking off (an office move should not leave a phone
+    // reporting a location). HR can turn it back on in the same breath by setting the switch in this very edit, or later.
+    if (
+      before.fieldTrackingEnabled &&
+      trackingChange === undefined &&
+      before.isActive &&
+      this.fieldTracking
+    ) {
+      const departmentMoved =
+        clean.departmentId !== undefined &&
+        clean.departmentId !== before.departmentId;
+      const roleMoved = clean.role !== undefined && clean.role !== before.role;
+      if (departmentMoved || roleMoved) {
+        try {
+          await this.fieldTracking.stopForChange(
+            organizationId,
+            id,
+            departmentMoved ? 'department_changed' : 'role_changed',
+            actor.id,
+            { tellPerson: true },
+          );
+        } catch (err) {
+          this.logger.warn(
+            `Stopping live tracking for ${id} failed: ${(err as Error).message}`,
+          );
+        }
       }
     }
 

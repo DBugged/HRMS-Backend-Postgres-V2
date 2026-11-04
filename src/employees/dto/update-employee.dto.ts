@@ -113,6 +113,13 @@ export class UpdateEmployeeDto {
   @IsBoolean()
   alwaysPresent?: boolean;
 
+  // Live tracking of a field employee (only when the company has the feature on; Admin / HR only). Switching it on tells the person
+  // and asks them to agree in the app; it is applied through FieldTrackingService, never written straight to the record.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  fieldTrackingEnabled?: boolean;
+
   // YYYY-MM-DD the marking starts from (today when left out as it is switched on).
   @ApiPropertyOptional()
   @IsOptional()

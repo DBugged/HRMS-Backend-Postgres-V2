@@ -107,6 +107,14 @@ export const EVENT_META: Record<string, TimelineEventMeta> = {
   LEAVE_REJECTED: { category: 'ATTENDANCE_LEAVE', title: 'Leave Rejected' },
   LEAVE_CANCELLED: { category: 'ATTENDANCE_LEAVE', title: 'Leave Cancelled' },
   COMP_OFF_GRANTED: { category: 'ATTENDANCE_LEAVE', title: 'Comp-Off Granted' },
+  FIELD_TRACKING_ENABLED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Live Tracking Turned On',
+  },
+  FIELD_TRACKING_DISABLED: {
+    category: 'ATTENDANCE_LEAVE',
+    title: 'Live Tracking Turned Off',
+  },
   WFH_REQUESTED: {
     category: 'ATTENDANCE_LEAVE',
     title: 'Work From Home Requested',

@@ -83,6 +83,8 @@ export const TENANT_SCOPED_MODELS = new Set([
   'WorkSchedule',
   'ShiftRule',
   'OvertimeRuleSet',
+  'LocationPing',
+  'FieldVisit',
   // Asset Inventory module (all organization-owned).
   'Asset',
   'AssetMaintenance',

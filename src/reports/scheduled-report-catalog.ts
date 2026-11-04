@@ -23,10 +23,22 @@ interface CatalogEntry {
   label: string;
   // What period it follows, shown to the Admin so "weekly" has a clear meaning.
   covers: string;
+  // A company feature the report needs; it is offered only to companies that have it.
+  feature?: string;
   run: (c: ReportRunContext) => Promise<ReportPayload>;
 }
 
 export const SCHEDULED_REPORTS: Record<string, CatalogEntry> = {
+  fieldVisits: {
+    label: 'Field visits report',
+    covers: 'the period that just ended',
+    feature: 'feature.field_tracking',
+    run: (c) =>
+      c.ops.fieldVisitsReport(
+        { from: c.period.from, to: c.period.to } as never,
+        c.actor,
+      ),
+  },
   attendance: {
     label: 'Attendance report',
     covers: 'the period that just ended',

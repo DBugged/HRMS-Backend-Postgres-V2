@@ -13,6 +13,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
 import { EmailTemplatesModule } from '../email-templates/email-templates.module';
 
 import { LettersModule } from '../letters/letters.module';
+import { FieldTrackingModule } from '../field-tracking/field-tracking.module';
 import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
 import { ProbationAutoConfirmService } from './probation-auto-confirm.service';
 
@@ -28,6 +29,7 @@ import { ProbationAutoConfirmService } from './probation-auto-confirm.service';
     PrivacyModule,
     LettersModule,
     LeaveBalancesModule,
+    FieldTrackingModule,
   ],
   controllers: [EmployeesController],
   providers: [EmployeesService, EmployeeProfileService, EmployeeIdService, ProbationAutoConfirmService],

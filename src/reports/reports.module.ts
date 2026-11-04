@@ -18,6 +18,7 @@ import { DashboardModule } from '../dashboard/dashboard.module';
 import { PrivacyModule } from '../privacy/privacy.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { AuditLogModule } from '../audit-log/audit-log.module';
+import { FieldTrackingModule } from '../field-tracking/field-tracking.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { AuditLogModule } from '../audit-log/audit-log.module';
     PrivacyModule,
     NotificationsModule,
     AuditLogModule,
+    FieldTrackingModule,
   ],
   controllers: [
     StatutoryFilingsController,

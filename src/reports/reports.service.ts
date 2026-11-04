@@ -28,6 +28,7 @@ import { dateStrInOrgTz, todayInOrgTz } from '../common/org-date';
 import { employedOnWhere, isEmployedOn } from '../common/managers';
 import { DashboardService } from '../dashboard/dashboard.service';
 import { ReportColumn } from './report-export';
+import { featureEnabledFor } from '../module-access/module-gate';
 import {
   AttendanceReportQueryDto,
   DepartmentLeaveSummaryReportQueryDto,
@@ -516,6 +517,11 @@ export class ReportsService {
   }
 
   async employeeReport(organizationId: string): Promise<ReportPayload> {
+    // A Live tracking column, only for companies that have the feature on.
+    const trackingOn = await featureEnabledFor(
+      organizationId,
+      'feature.field_tracking',
+    );
     const employees = await this.scopedPrisma.user.findMany({
       where: { organizationId },
       include: { department: { select: { name: true } } },
@@ -532,6 +538,7 @@ export class ReportsService {
       joiningDate: formatDateDisplay(e.joiningDate),
       confirmationDate: e.confirmationDate ? formatDateDisplay(e.confirmationDate) : '',
       isActive: e.isActive ? 'Active' : 'Inactive',
+      liveTracking: e.fieldTrackingEnabled ? 'Yes' : 'No',
     }));
 
     const columns: ReportColumn[] = [
@@ -544,6 +551,9 @@ export class ReportsService {
       { header: 'Joining Date', key: 'joiningDate', width: 14 },
       { header: 'Confirmation Date', key: 'confirmationDate', width: 16 },
       { header: 'Status', key: 'isActive', width: 12 },
+      ...(trackingOn
+        ? [{ header: 'Live tracking', key: 'liveTracking', width: 14 }]
+        : []),
     ];
 
     return {

@@ -25,6 +25,7 @@ import { OpsReportsService } from './ops-reports.service';
 import { sendReportBranded } from './report-branding';
 import { CapturedResponse } from './captured-response';
 import { SCHEDULED_REPORTS } from './scheduled-report-catalog';
+import { featureEnabledFor } from '../module-access/module-gate';
 import {
   isScheduleDue,
   periodFor,
@@ -67,12 +68,14 @@ export class ScheduledReportsService {
     private readonly auditLogService: AuditLogService,
   ) {}
 
-  options() {
-    return Object.entries(SCHEDULED_REPORTS).map(([key, r]) => ({
-      key,
-      label: r.label,
-      covers: r.covers,
-    }));
+  async options(organizationId: string) {
+    const out: { key: string; label: string; covers: string }[] = [];
+    for (const [key, r] of Object.entries(SCHEDULED_REPORTS)) {
+      if (r.feature && !(await featureEnabledFor(organizationId, r.feature)))
+        continue;
+      out.push({ key, label: r.label, covers: r.covers });
+    }
+    return out;
   }
 
   list(organizationId: string) {
@@ -93,6 +96,12 @@ export class ScheduledReportsService {
     organizationId: string,
   ) {
     if (d.reportKey !== undefined && !SCHEDULED_REPORTS[d.reportKey]) {
+      throw new BadRequestException('That report cannot be scheduled.');
+    }
+    const needs = d.reportKey
+      ? SCHEDULED_REPORTS[d.reportKey]?.feature
+      : undefined;
+    if (needs && !(await featureEnabledFor(organizationId, needs))) {
       throw new BadRequestException('That report cannot be scheduled.');
     }
     if (d.frequency === 'WEEKLY' && (d.dayOfWeek ?? null) === null) {
@@ -230,7 +239,10 @@ export class ScheduledReportsService {
       select: { id: true, timezone: true },
     });
     // Skip companies whose Super Admin switched this module off.
-    const organizations = await keepModuleEnabled(allOrganizations, 'module.reports');
+    const organizations = await keepModuleEnabled(
+      allOrganizations,
+      'module.reports',
+    );
     let sent = 0;
     for (const org of organizations) {
       try {

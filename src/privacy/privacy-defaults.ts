@@ -87,6 +87,17 @@ export function defaultPurposes(): ProcessingPurpose[] {
         'Selfie and GPS capture is currently mandatory on every punch, with no notice or consent step in the apps. Confirm the lawful basis (and whether these should be optional) with legal counsel.',
     },
     {
+      key: 'field_tracking',
+      label: 'Field work: live location and visits',
+      description:
+        'For employees your company marks as field staff: your phone shares its location every few minutes while you are punched in, and you check in and out of client visits. Location points are deleted after the number of days your company sets (60 by default).',
+      legalBasis: 'LEGITIMATE_USE',
+      modules: ['field-tracking', 'field-visits'],
+      legalReviewRequired: true,
+      notes:
+        'Only switched on per employee by Admin or HR, only when the company has the feature, and only after the employee agrees in the app. That agreement is recorded on the employee record. Confirm the lawful basis for location monitoring with legal counsel.',
+    },
+    {
       key: 'leave',
       label: 'Leave management',
       description:
@@ -307,6 +318,12 @@ export function defaultCategories(): DataCategory[] {
         f('selfie', 'Punch selfie', 'punches.selfieUrl'),
         f('attendanceStatus', 'Daily attendance status', 'attendances.status'),
         f('overtime', 'Overtime records', 'overtime_records'),
+        f(
+          'liveLocation',
+          'Live location points while punched in (field staff who agreed)',
+          'location_pings',
+        ),
+        f('fieldVisits', 'Field visit check-ins and outcomes', 'field_visits'),
       ],
     },
     {
@@ -462,6 +479,7 @@ ${orgName} uses this HR system to manage your employment. This notice explains, 
 - Bank details: account holder name, account number, IFSC, bank name and a cancelled cheque image.
 - Documents you upload (for example identity, address and education proofs, offer letters) and their review status.
 - Attendance: punch times and, when you punch, a selfie and GPS location; daily attendance status and overtime.
+- Field work (only if your company switches it on for you and you agree in the app): your phone's location every few minutes while you are punched in, and the check-ins and outcomes of client visits. Location points are deleted after the number of days your company sets (60 by default).
 - Leave: requests, remarks, balances and any attachment such as a medical certificate.
 - Payroll and tax: salary components, payslips, tax declarations, reimbursements with receipts, loans and final settlement.
 - Company assets allocated to you.
@@ -471,7 +489,7 @@ ${orgName} uses this HR system to manage your employment. This notice explains, 
 To run your employment relationship (onboarding, payroll, attendance, leave, loans and offboarding), to meet statutory and legal obligations (for example provident fund, ESI, professional tax and income tax records), to communicate with you about your requests and payslips, to keep company assets in order, and to keep the system secure. Optional announcements and celebration messages are sent only on the basis of your consent, which you can withdraw at any time.
 
 4. Who can see your data
-Your HR and administrators can see the data needed for their role. Your reporting manager can see limited information about their team members. You can see your own data. Some data is processed by service providers that keep the system running, such as email delivery and file storage; the list is maintained by your privacy officer.
+Your HR and administrators can see the data needed for their role. Your reporting manager can see limited information about their team members. If live tracking is on for you, your manager and HR can see where you are while you are punched in, and each time someone looks at your location trail it is recorded in the audit log. You can see your own data. Some data is processed by service providers that keep the system running, such as email delivery and file storage; the list is maintained by your privacy officer.
 
 5. How long we keep it
 Suggested retention periods for each type of data are shown in the app and are being confirmed by ${orgName} with legal advice. Data is kept while it is needed for the purposes above and for legal or statutory requirements, and is reviewed by a person before any removal.

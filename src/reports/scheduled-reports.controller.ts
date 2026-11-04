@@ -33,8 +33,8 @@ export class ScheduledReportsController {
   constructor(private readonly service: ScheduledReportsService) {}
 
   @Get('options')
-  options() {
-    return this.service.options();
+  options(@CurrentUser() caller: Caller) {
+    return this.service.options(caller.organizationId);
   }
 
   @Get()

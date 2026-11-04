@@ -39,6 +39,7 @@ import { TaxSlabsModule } from './tax-slabs/tax-slabs.module';
 import { TaxDeclarationsModule } from './tax-declarations/tax-declarations.module';
 import { AttendanceModule } from './attendance/attendance.module';
 import { OvertimeModule } from './overtime/overtime.module';
+import { FieldTrackingModule } from './field-tracking/field-tracking.module';
 import { PerformanceRatingsModule } from './performance-ratings/performance-ratings.module';
 import { CompanyPerformanceModule } from './company-performance/company-performance.module';
 import { TdsComplianceModule } from './tds-compliance/tds-compliance.module';
@@ -141,6 +142,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     TaxDeclarationsModule,
     AttendanceModule,
     OvertimeModule,
+    FieldTrackingModule,
     PerformanceRatingsModule,
     CompanyPerformanceModule,
     TdsComplianceModule,

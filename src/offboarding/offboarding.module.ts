@@ -10,6 +10,7 @@ import { SettlementsModule } from '../settlements/settlements.module';
 import { LeavesModule } from '../leaves/leaves.module';
 import { LoansModule } from '../loans/loans.module';
 import { PayrollModule } from '../payroll/payroll.module';
+import { FieldTrackingModule } from '../field-tracking/field-tracking.module';
 import { OffboardingAutomationService } from './offboarding-automation.service';
 import { ExitClosureService } from './exit-closure.service';
 
@@ -24,6 +25,7 @@ import { ExitClosureService } from './exit-closure.service';
     LeavesModule,
     LoansModule,
     PayrollModule,
+    FieldTrackingModule,
   ],
   controllers: [OffboardingController],
   providers: [OffboardingService, OffboardingAutomationService, ExitClosureService],

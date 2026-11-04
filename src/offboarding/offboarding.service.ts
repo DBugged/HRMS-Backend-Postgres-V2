@@ -18,8 +18,11 @@ import {
   BadRequestException,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
+import { FieldTrackingService } from '../field-tracking/field-tracking.service';
 import {
   AssetStatus,
   EmploymentStatus,
@@ -88,6 +91,8 @@ const CLOSED_STATUSES: OffboardingStatus[] = [
 
 @Injectable()
 export class OffboardingService {
+  private readonly logger = new Logger(OffboardingService.name);
+
   constructor(
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly auditLogService: AuditLogService,
@@ -96,6 +101,8 @@ export class OffboardingService {
     private readonly emailService: EmailService,
     private readonly emailTemplatesService: EmailTemplatesService,
     private readonly lettersService: LettersService,
+    // Optional so existing unit tests that build this service by hand keep working.
+    @Optional() private readonly fieldTracking?: FieldTrackingService,
   ) {}
 
   async findAll(query: ListOffboardingQueryDto, organizationId: string) {
@@ -1059,6 +1066,20 @@ export class OffboardingService {
       targetId: record.employeeId,
       details: { reason: 'offboarding_completed' },
     });
+    // A leaver is no longer tracked, and visits planned for them are cancelled. Never undoes the completed exit.
+    try {
+      await this.fieldTracking?.stopForChange(
+        organizationId,
+        record.employeeId,
+        'left_company',
+        actor.id,
+        { closeVisits: true },
+      );
+    } catch (err) {
+      this.logger.warn(
+        `Stopping live tracking for ${record.employeeId} failed: ${(err as Error).message}`,
+      );
+    }
     await this.timelineService.logEvent({
       organizationId,
       employeeId: record.employeeId,

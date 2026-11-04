@@ -21,6 +21,7 @@ function build(
       : null,
   };
   const audit: Row[] = [];
+  const stops: unknown[][] = [];
   const tx: Row = {
     offboardingCase: {
       updateMany: async (a: Row) => {
@@ -30,7 +31,12 @@ function build(
       },
     },
     resignation: { updateMany: async () => ({ count: 0 }) },
-    user: { updateMany: async () => ({ count: 1 }) },
+    user: {
+      updateMany: async () => ({ count: 1 }),
+      findFirst: async () => ({ employmentStatus: 'RESIGNED' }),
+    },
+    employmentStatusHistory: { create: async () => ({}) },
+    refreshToken: { updateMany: async () => ({ count: 0 }) },
     payrollRun: { updateMany: async () => ({ count: 0 }) },
   };
   const prisma: Row = {
@@ -69,8 +75,14 @@ function build(
     stub({ send: async () => undefined }),
     stub({ renderOccasion: async () => ({ subject: 's', html: 'h' }) }),
     stub({ send: async () => undefined }), // LettersService
+    stub({
+      stopForChange: async (...a: unknown[]) => {
+        stops.push(a);
+        return true;
+      },
+    }),
   );
-  return { service, kase, audit };
+  return { service, kase, audit, stops };
 }
 
 const actor = { id: 'hr', role: 'HR' } as never;
@@ -155,13 +167,44 @@ describe('offboarding: exit rules', () => {
 
   it('completing needs the final settlement PAID - processed is not enough', async () => {
     const { service, kase } = build({ settlementStatus: 'PROCESSED' });
-    Object.assign(kase, { assetsReturned: true, accessRevoked: true, exitInterviewDone: true, exitStatus: 'RELEASED' });
-    await expect(service.complete('c1', {} as never, actor, 'org')).rejects.toThrow(/settlement payment/);
+    Object.assign(kase, {
+      assetsReturned: true,
+      accessRevoked: true,
+      exitInterviewDone: true,
+      exitStatus: 'RELEASED',
+    });
+    await expect(
+      service.complete('c1', {} as never, actor, 'org'),
+    ).rejects.toThrow(/settlement payment/);
   });
 
   it('completing is refused while the settlement is still a draft', async () => {
     const { service, kase } = build({ settlementStatus: 'DRAFT' });
-    Object.assign(kase, { assetsReturned: true, accessRevoked: true, exitInterviewDone: true, exitStatus: 'RELEASED' });
-    await expect(service.complete('c1', {} as never, actor, 'org')).rejects.toThrow(/still DRAFT/);
+    Object.assign(kase, {
+      assetsReturned: true,
+      accessRevoked: true,
+      exitInterviewDone: true,
+      exitStatus: 'RELEASED',
+    });
+    await expect(
+      service.complete('c1', {} as never, actor, 'org'),
+    ).rejects.toThrow(/still DRAFT/);
+  });
+
+  it('completing the exit stops live tracking and closes pending visits for the leaver', async () => {
+    const { service, kase, stops } = build({ settlementStatus: 'PAID' });
+    Object.assign(kase, {
+      assetsReturned: true,
+      accessRevoked: true,
+      exitInterviewDone: true,
+      exitStatus: 'RELEASED',
+      lastWorkingDay: '2026-10-30',
+    });
+    await service.complete('c1', {} as never, actor, 'org').catch(() => {
+      /* letters / emails after the exit are not the subject here */
+    });
+    expect(stops).toHaveLength(1);
+    expect(stops[0].slice(0, 3)).toEqual(['org', 'e1', 'left_company']);
+    expect(stops[0][4]).toEqual({ closeVisits: true });
   });
 });

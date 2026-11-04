@@ -19,6 +19,8 @@ export class ModuleAccessController {
       // Opt-in features switched on for this company (sister companies: company names and employee ID series).
       sisterCompanies: await this.access.featureEnabledFor(user.organizationId, 'feature.sister_companies'),
       // Our branding is hidden in the apps (a paid option, switched on per company in the Control Panel).
+      // Live tracking of field employees (a paid / opt-in feature, switched on per company in the Control Panel).
+      fieldTracking: await this.access.featureEnabledFor(user.organizationId, 'feature.field_tracking'),
       whiteLabel: await this.access.featureEnabledFor(user.organizationId, 'feature.white_label'),
     };
   }

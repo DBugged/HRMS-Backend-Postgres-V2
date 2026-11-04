@@ -68,6 +68,15 @@ export class OpsReportsController {
     );
   }
 
+  @Get('field-visits')
+  async fieldVisits(
+    @Query() q: OpsReportQueryDto,
+    @CurrentUser() c: Caller,
+    @Res() res: Response,
+  ) {
+    return this.send(res, c, q, await this.ops.fieldVisitsReport(q, c));
+  }
+
   @Get('regularization')
   async regularization(
     @Query() q: OpsReportQueryDto,

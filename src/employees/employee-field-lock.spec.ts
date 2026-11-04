@@ -62,3 +62,17 @@ describe('stripLockedFields', () => {
     expect(result).toEqual({ name: 'Just A Name' });
   });
 });
+
+describe('stripLockedFields: live tracking', () => {
+  it('an employee cannot switch live tracking on for themselves; HR and Admin can', () => {
+    const dto = { name: 'X', fieldTrackingEnabled: true } as UpdateEmployeeDto;
+    expect(stripLockedFields(dto, Role.EMPLOYEE)).toEqual({ name: 'X' });
+    expect(stripLockedFields(dto, Role.MANAGER)).toEqual({ name: 'X' });
+    expect(stripLockedFields(dto, Role.HR)).toMatchObject({
+      fieldTrackingEnabled: true,
+    });
+    expect(stripLockedFields(dto, Role.ADMIN)).toMatchObject({
+      fieldTrackingEnabled: true,
+    });
+  });
+});

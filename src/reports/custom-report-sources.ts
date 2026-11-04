@@ -1,6 +1,7 @@
 import {
   AttendanceStatus,
   EmploymentStatus,
+  FieldVisitStatus,
   LeaveStatus,
   PayrollRunStatus,
   Prisma,
@@ -46,6 +47,8 @@ interface CustomReportColumn<Row> {
 
 interface CustomReportSource<Row> {
   label: string;
+  // A company feature flag the source needs; the source is hidden and refused for companies that do not have it.
+  feature?: string;
   // The choices the builder offers for the Status filter of this source (omitted = no Status filter shown).
   statuses?: { value: string; label: string }[];
   columns: Record<string, CustomReportColumn<Row>>;
@@ -389,10 +392,71 @@ const payrollSource: CustomReportSource<
   },
 };
 
+const fieldVisitsSource: CustomReportSource<
+  Prisma.FieldVisitGetPayload<{
+    include: { employee: { select: { name: true; employeeId: true } } };
+  }>
+> = {
+  label: 'Field visits',
+  feature: 'feature.field_tracking',
+  statuses: Object.values(FieldVisitStatus).map((v) => ({
+    value: v,
+    label: v.charAt(0) + v.slice(1).toLowerCase().replace(/_/g, ' '),
+  })),
+  columns: {
+    employeeId: { header: 'Employee ID', get: (r) => r.employee.employeeId },
+    employeeName: { header: 'Employee Name', get: (r) => r.employee.name },
+    date: { header: 'Visit Date', get: (r) => r.scheduledFor },
+    client: { header: 'Client', get: (r) => r.clientName },
+    address: { header: 'Address', get: (r) => r.address },
+    purpose: { header: 'Purpose', get: (r) => r.purpose },
+    status: { header: 'Status', get: (r) => r.status },
+    checkIn: {
+      header: 'Checked In',
+      get: (r, ctx) =>
+        formatTimeInZone(r.checkInAt, ctx.timezone, ctx.timeFormat),
+    },
+    checkOut: {
+      header: 'Checked Out',
+      get: (r, ctx) =>
+        formatTimeInZone(r.checkOutAt, ctx.timezone, ctx.timeFormat),
+    },
+    minutes: {
+      header: 'Minutes at Client',
+      get: (r) => r.durationMinutes ?? '',
+    },
+    farFromClient: {
+      header: 'Checked in far from client',
+      get: (r) => (r.checkInWithinRange === false ? 'Yes' : 'No'),
+    },
+    outcome: { header: 'Outcome', get: (r) => r.outcome },
+  },
+  fetch: async (filters, organizationId, prisma) => {
+    const where: Prisma.FieldVisitWhereInput = { organizationId };
+    if (filters.from || filters.to) {
+      where.scheduledFor = {};
+      if (filters.from) where.scheduledFor.gte = filters.from;
+      if (filters.to) where.scheduledFor.lte = filters.to;
+    }
+    if (filters.status) where.status = filters.status as FieldVisitStatus;
+    if (filters.department)
+      where.employee = { departmentId: filters.department };
+    const rows = await prisma.fieldVisit.findMany({
+      where,
+      include: { employee: { select: { name: true, employeeId: true } } },
+      orderBy: [{ scheduledFor: 'desc' }, { createdAt: 'asc' }],
+      take: FETCH_LIMIT,
+    });
+    assertWithinReportLimit(rows);
+    return rows;
+  },
+};
+
 export const CUSTOM_REPORT_SOURCES: Record<string, AnyCustomReportSource> = {
   employees: employeesSource as unknown as AnyCustomReportSource,
   attendance: attendanceSource as unknown as AnyCustomReportSource,
   leaves: leavesSource as unknown as AnyCustomReportSource,
   probation: probationSource as unknown as AnyCustomReportSource,
   payroll: payrollSource as unknown as AnyCustomReportSource,
+  fieldVisits: fieldVisitsSource as unknown as AnyCustomReportSource,
 };
