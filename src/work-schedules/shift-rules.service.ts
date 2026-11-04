@@ -276,14 +276,17 @@ export class ShiftRulesService {
           `"${clash.name}" already sets the shift for the same people. Edit or turn that one off first.`,
         );
     }
-    const updated = await this.db.shiftRule.update({
-      where: { id },
+    await this.db.shiftRule.updateMany({
+      where: { id, organizationId },
       data: {
         ...(name ? { name } : {}),
         gender,
         ...next,
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       },
+    });
+    const updated = await this.db.shiftRule.findFirstOrThrow({
+      where: { id, organizationId },
     });
     await this.audit.log({
       actorId: actor.id,
@@ -300,7 +303,7 @@ export class ShiftRulesService {
       where: { id, organizationId },
     });
     if (!cur) throw new NotFoundException('Shift rule not found.');
-    await this.db.shiftRule.delete({ where: { id } });
+    await this.db.shiftRule.deleteMany({ where: { id, organizationId } });
     await this.audit.log({
       actorId: actor.id,
       action: 'SHIFT_RULE_DELETED',

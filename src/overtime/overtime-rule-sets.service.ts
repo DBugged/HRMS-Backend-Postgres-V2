@@ -43,7 +43,12 @@ export class OvertimeRuleSetsService {
       }),
       this.db.user.findMany({
         where: { organizationId, isActive: true },
-        select: { id: true, departmentId: true, employeeType: true, designation: true },
+        select: {
+          id: true,
+          departmentId: true,
+          employeeType: true,
+          designation: true,
+        },
       }),
     ]);
     // How many people each set reaches today (by the same precedence the engine uses).
@@ -181,8 +186,8 @@ export class OvertimeRuleSetsService {
         'Choose who this applies to: departments, designations, employee types or specific people.',
       );
     }
-    const updated = await this.db.overtimeRuleSet.update({
-      where: { id },
+    await this.db.overtimeRuleSet.updateMany({
+      where: { id, organizationId },
       data: {
         ...(name ? { name } : {}),
         ...(dto.description !== undefined
@@ -204,6 +209,9 @@ export class OvertimeRuleSetsService {
         ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       } as never,
     });
+    const updated = await this.db.overtimeRuleSet.findFirstOrThrow({
+      where: { id, organizationId },
+    });
     await this.audit.log({
       actorId: actor.id,
       action: 'OVERTIME_RULE_SET_UPDATED',
@@ -219,7 +227,7 @@ export class OvertimeRuleSetsService {
       where: { id, organizationId },
     });
     if (!found) throw new NotFoundException('Overtime rule set not found.');
-    await this.db.overtimeRuleSet.delete({ where: { id } });
+    await this.db.overtimeRuleSet.deleteMany({ where: { id, organizationId } });
     await this.audit.log({
       actorId: actor.id,
       action: 'OVERTIME_RULE_SET_DELETED',
@@ -238,7 +246,13 @@ export class OvertimeRuleSetsService {
   ) {
     const person = await this.db.user.findFirst({
       where: { id: employeeId, organizationId },
-      select: { id: true, name: true, departmentId: true, employeeType: true, designation: true },
+      select: {
+        id: true,
+        name: true,
+        departmentId: true,
+        employeeType: true,
+        designation: true,
+      },
     });
     if (!person) throw new NotFoundException('Employee not found.');
     const on = date ?? todayUtc();

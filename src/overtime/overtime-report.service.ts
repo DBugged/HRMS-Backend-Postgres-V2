@@ -302,8 +302,8 @@ export class OvertimeReportService {
         'The budget must be more than 0 hours, or empty for none.',
       );
     }
-    await this.db.department.update({
-      where: { id: departmentId },
+    await this.db.department.updateMany({
+      where: { id: departmentId, organizationId },
       data: { overtimeBudgetHours: hours },
     });
     await this.audit.log({
