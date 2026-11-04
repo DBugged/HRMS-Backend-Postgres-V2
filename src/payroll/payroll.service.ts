@@ -57,6 +57,7 @@ import { PayrollSettingsService } from '../payroll-settings/payroll-settings.ser
 import { StatutoryConfigService } from '../statutory-config/statutory-config.service';
 import { getFinancialYear } from '../payroll-settings/financial-year';
 import {
+  OCCURRENCES_PER_YEAR,
   resolveCurrentRows,
   splitPeriodAtRevisions,
   type PeriodSegment,
@@ -1827,14 +1828,24 @@ export class PayrollService {
     // Yearly variable pay (paid outside the monthly figures) counts once, as one more month's pay - at the share of it the
     // year's approved performance rating earns, the same rule payroll pays it by (applyVariablePay): rating 3 = 50%, and
     // 100% while no rating is approved.
+    // A yearly-paid component counts however its amount was entered (a monthly-basis amount on a yearly component is
+    // also paid in its month, and monthlyFiguresForStructure leaves it out of the monthly gross).
+    const frequencyByCode = new Map(
+      components.map((c) => [c.code, c.payFrequency]),
+    );
     const variableFull = rows
-      .filter(
-        (r) =>
-          r.isEnabled !== false &&
-          r.valueType === 'MANUAL' &&
-          r.amountBasis === 'ANNUAL',
-      )
-      .reduce((sum, r) => sum + Number(r.fixedAmount ?? 0), 0);
+      .filter((r) => r.isEnabled !== false)
+      .reduce((sum, r) => {
+        if (r.valueType === 'MANUAL' && r.amountBasis === 'ANNUAL') {
+          return sum + Number(r.fixedAmount ?? 0);
+        }
+        const frequency =
+          frequencyByCode.get(r.componentCode) ?? PayFrequency.MONTHLY;
+        return (r.valueType === 'FIXED' || r.valueType === 'MANUAL') &&
+          frequency !== PayFrequency.MONTHLY
+          ? sum + Number(r.fixedAmount ?? 0) * (OCCURRENCES_PER_YEAR[frequency] || 1)
+          : sum;
+      }, 0);
     const approvedRating =
       variableFull > 0
         ? await this.scopedPrisma.performanceRating.findFirst({

@@ -1,5 +1,6 @@
 import { CalcType } from '@prisma/client';
 import {
+  breakdownStructure,
   dayAfter,
   dayBefore,
   localDateStr,
@@ -354,5 +355,18 @@ describe('summarizeStructure', () => {
       },
     ]);
     expect(s.fixedMonthly).toBe(10000);
+  });
+});
+
+describe('breakdownStructure rounds each monthly line as payroll pays it', () => {
+  it('a fixed line with paise and a percentage line both come to whole rupees', () => {
+    const b = breakdownStructure([
+      { componentCode: 'BASIC', valueType: 'FIXED', fixedAmount: 6281 },
+      { componentCode: 'HRA', valueType: 'PERCENTAGE', percentageOf: 'BASIC', percentageValue: 50 },
+      { componentCode: 'SPECIAL_ALLOWANCE', valueType: 'FIXED', fixedAmount: 1538.3333 },
+    ] as never);
+    expect(b.earnings.map((e) => e.monthly)).toEqual([6281, 3141, 1538]);
+    expect(b.fixedMonthly).toBe(10960);
+    expect(b.fixedAnnual).toBe(131520);
   });
 });

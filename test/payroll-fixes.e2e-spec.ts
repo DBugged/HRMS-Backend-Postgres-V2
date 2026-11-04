@@ -247,6 +247,41 @@ describe('Payroll correctness fixes (e2e)', () => {
       expect(before.new.grossIncome - after.new.grossIncome).toBe(25000);
     });
 
+    it('the tax page also counts a yearly component entered on a monthly basis, at the approved rating', async () => {
+      const id = await mkEmployee('Var Monthly Rated', 'pf-var-monthly-rated@example.test', '2025-04-01');
+      await setStructure(
+        id,
+        [
+          { componentCode: 'BASIC', fixedAmount: 100000 },
+          { componentCode: 'VARIABLE_PAY', fixedAmount: 20000, amountBasis: 'MONTHLY' },
+        ],
+        '2025-04-01',
+      );
+      const compare = async () =>
+        (
+          await request(app.getHttpServer())
+            .get(`/payroll/regime-comparison?employeeId=${id}`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as {
+          financialYear: string;
+          salary: { yearlyVariable: number; yearlyVariableFull: number };
+        };
+      const before = await compare();
+      expect(before.salary).toMatchObject({ yearlyVariable: 20000, yearlyVariableFull: 20000 });
+      await prisma.performanceRating.create({
+        data: {
+          organizationId,
+          employeeId: id,
+          financialYear: before.financialYear,
+          rating: 2,
+          payoutPercentage: 25,
+          status: 'APPROVED',
+        },
+      });
+      expect((await compare()).salary).toMatchObject({ yearlyVariable: 5000, yearlyVariableFull: 20000 });
+    });
+
     it('the same amount entered as MONTHLY basis still pays 50,000 in March', async () => {
       const id = await mkEmployee(
         'Var Monthly',
