@@ -564,7 +564,9 @@ export class AttendanceService {
     // for a day that is long past.
     // deferAbsenceNotice: the day is still written (so payroll and dashboards see it), but the "Marked Absent" notice and
     // e-mail are left for the morning job (sendMorningAbsenceNotices), so they land when people read them.
-    opts?: { quiet?: boolean; deferAbsenceNotice?: boolean },
+    // rejudgeStored: an imported or regularized day has no punches behind it, so it is normally left as it is. When the
+    // calendar or the shift changed, its status, hours and late / early flags are judged again from the times it stores.
+    opts?: { quiet?: boolean; deferAbsenceNotice?: boolean; rejudgeStored?: boolean },
   ) {
     const employee = await db.user.findFirst({
       where: { id: employeeId, organizationId },
@@ -618,7 +620,28 @@ export class AttendanceService {
       (existing.source === AttendanceSource.REGULARIZED ||
         existing.source === AttendanceSource.EXCEL_IMPORT)
     ) {
-      return existing;
+      if (!opts?.rejudgeStored || (!existing.inTime && !existing.outTime)) {
+        return existing;
+      }
+      const outcome = await this.deriveDayOutcome(db, {
+        organizationId,
+        employeeId,
+        employeeDepartmentId: employee.departmentId,
+        dateStr,
+        shiftConfig,
+        inTime: existing.inTime,
+        outTime: existing.outTime,
+      });
+      await db.attendance.updateMany({
+        where: { id: existing.id, organizationId },
+        data: {
+          status: outcome.status,
+          workDurationMinutes: outcome.workDurationMinutes,
+          isLate: outcome.isLate,
+          isEarlyOut: outcome.isEarlyOut,
+        },
+      });
+      return { ...existing, ...outcome };
     }
 
     let inTime: Date | null = null;
@@ -5352,16 +5375,41 @@ export class AttendanceService {
         locked.push({ name: row.employee.name, date: row.date });
         continue;
       }
-      await this.recalculateAttendanceForDay(
-        this.scopedPrisma,
-        row.employeeId,
-        row.date,
-        organizationId,
-        { quiet: true },
-      );
-      updated += 1;
+      if (await this.rejudgeDay(row.employeeId, row.date, organizationId)) updated += 1;
     }
     return { updated, locked };
+  }
+
+  // Judges one written day again after the calendar or a shift changed, imported and regularized days included. Quiet:
+  // no notice or overtime suggestion. True when the day actually changed, so a count says what really happened; a
+  // payroll already calculated for that month is then marked out of date.
+  private async rejudgeDay(
+    employeeId: string,
+    date: string,
+    organizationId: string,
+  ): Promise<boolean> {
+    const before = await this.scopedPrisma.attendance.findFirst({
+      where: { organizationId, employeeId, date },
+      select: { status: true, workDurationMinutes: true, isLate: true, isEarlyOut: true },
+    });
+    const after = await this.recalculateAttendanceForDay(
+      this.scopedPrisma,
+      employeeId,
+      date,
+      organizationId,
+      { quiet: true, rejudgeStored: true },
+    );
+    const changed =
+      before?.status !== after.status ||
+      before?.workDurationMinutes !== after.workDurationMinutes ||
+      before?.isLate !== after.isLate ||
+      before?.isEarlyOut !== after.isEarlyOut;
+    if (changed) {
+      await markPayrollInputsChanged(this.scopedPrisma, organizationId, employeeId, [
+        { month: Number(date.slice(5, 7)), year: Number(date.slice(0, 4)) },
+      ]);
+    }
+    return changed;
   }
 
   // A gender-wise shift rule was added, changed or removed: the attendance already written from `from` up to today for the
@@ -5415,8 +5463,7 @@ export class AttendanceService {
         locked.push({ name: row.employee.name, date: row.date });
         return;
       }
-      await this.recalculateAttendanceForDay(this.scopedPrisma, row.employeeId, row.date, organizationId, { quiet: true });
-      updated += 1;
+      if (await this.rejudgeDay(row.employeeId, row.date, organizationId)) updated += 1;
     });
     return { updated, locked };
   }

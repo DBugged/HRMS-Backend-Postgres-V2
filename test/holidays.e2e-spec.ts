@@ -283,6 +283,86 @@ describe('Holidays (e2e)', () => {
     expect(await statusOn(other)).toBe('ABSENT');
   });
 
+  it('an imported day follows a holiday added or deleted later, and a shift rule; a day that does not change is not counted', async () => {
+    const emp = await prisma.user.findFirstOrThrow({
+      where: { email: 'holidays-e2e-emp@example.test' },
+    });
+    await prisma.user.update({
+      where: { id: emp.id },
+      data: { joiningDate: new Date('2025-01-01T00:00:00.000Z') },
+    });
+    // A past weekday in a month with no locked payroll (the earlier test locks the month about 40 days back).
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 10);
+    while ([0, 6].includes(d.getUTCDay())) d.setUTCDate(d.getUTCDate() - 1);
+    const date = d.toISOString().slice(0, 10);
+    const inTime = new Date(`${date}T04:00:00.000Z`); // 09:30 IST
+    const outTime = new Date(`${date}T13:00:00.000Z`); // 18:30 IST
+    await prisma.payrollRun.deleteMany({ where: { employeeId: emp.id } });
+    await prisma.attendance.deleteMany({ where: { employeeId: emp.id, date } });
+    await prisma.attendance.create({
+      data: {
+        organizationId: emp.organizationId,
+        employeeId: emp.id,
+        date,
+        status: 'PRESENT',
+        source: 'EXCEL_IMPORT',
+        inTime,
+        outTime,
+        workDurationMinutes: 540,
+      },
+    });
+    const row = () =>
+      prisma.attendance.findFirstOrThrow({ where: { employeeId: emp.id, date } });
+
+    const created = await request(app.getHttpServer())
+      .post('/holidays')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Late Holiday On Import', date, type: 'COMPANY' })
+      .expect(201);
+    const body = created.body as HolidayBody & { attendance: { updated: number } };
+    expect(body.attendance.updated).toBe(1);
+    const asHoliday = await row();
+    expect(asHoliday.status).toBe('HOLIDAY');
+    // The imported times stay.
+    expect(asHoliday.inTime?.toISOString()).toBe(inTime.toISOString());
+    expect(asHoliday.outTime?.toISOString()).toBe(outTime.toISOString());
+
+    await request(app.getHttpServer())
+      .delete(`/holidays/${body.id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    expect((await row()).status).toBe('PRESENT');
+
+    // A shift rule that moves the day to 11:30-20:30 makes the same imported times early (a rule is laid over a department's shift).
+    const dept = await prisma.department.create({
+      data: { organizationId: emp.organizationId, name: 'Shift Rule Dept', code: 'SRD' },
+    });
+    await prisma.user.update({ where: { id: emp.id }, data: { departmentId: dept.id } });
+    const rule = await request(app.getHttpServer())
+      .post('/shift-rules')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ name: 'Later shift', startTime: '11:30', endTime: '20:30', breakMinutes: 30, employeeIds: [emp.id], isActive: true })
+      .expect(201);
+    const recalc = () =>
+      request(app.getHttpServer())
+        .post('/shift-rules/recalculate')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ from: date, employeeIds: [emp.id] })
+        .expect(201);
+    expect(((await recalc()).body as { updated: number }).updated).toBeGreaterThanOrEqual(1);
+    expect(await row()).toMatchObject({ isLate: false, isEarlyOut: true });
+    // Nothing changed since: nothing is reported as updated.
+    expect(((await recalc()).body as { updated: number }).updated).toBe(0);
+
+    await request(app.getHttpServer())
+      .delete(`/shift-rules/${(rule.body as { id: string }).id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    await recalc();
+    expect(await row()).toMatchObject({ status: 'PRESENT', isEarlyOut: false });
+  });
+
   it('bulk-import: valid rows create, invalid/duplicate rows fail without aborting the batch', async () => {
     const res = await request(app.getHttpServer())
       .post('/holidays/bulk-import')
