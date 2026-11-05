@@ -241,6 +241,24 @@ export function countChargedDaysInclusive(
   return charged;
 }
 
+// The dates in [startStr, endStr] a leave is charged for (the same days countChargedDaysInclusive counts). Approving a leave
+// marks exactly these as On Leave, so a holiday or weekly off the type's sandwich rule leaves out stays what it was.
+export function chargedDatesInclusive(
+  startStr: string,
+  endStr: string,
+  holidayDates: Set<string>,
+  weeklyOffs: WeeklyOffEntry[],
+  kinds: SandwichKinds,
+): string[] {
+  const span = countDaysInclusive(startStr, endStr);
+  const out: string[] = [];
+  for (let i = 0; i < span; i++) {
+    const d = addDaysStr(startStr, i);
+    if (!isUnchargedOffDay(d, holidayDates, weeklyOffs, kinds)) out.push(d);
+  }
+  return out;
+}
+
 export function addDaysStr(dateStr: string, days: number): string {
   const date = toUTCDate(dateStr);
   date.setUTCDate(date.getUTCDate() + days);

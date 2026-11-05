@@ -53,6 +53,7 @@ import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import {
   checkLeaveRules,
   applicationDocumentRule,
+  chargedDatesInclusive,
   chargedKindsOf,
   countChargedDaysInclusive,
   effectiveLeaveRules,
@@ -1071,6 +1072,12 @@ export class LeavesService {
         'leave',
       );
     }
+    // The days this leave stamps as On Leave: the ones it is charged for, so a holiday or weekly off inside it that its type's
+    // sandwich rule leaves out stays a holiday / weekly off in the attendance grid and in payroll.
+    const stampDates =
+      decision === 'APPROVED'
+        ? await this.datesToStamp(leave, leaveType, organizationId)
+        : undefined;
     await this.scopedPrisma.$transaction(async (tx) => {
       // status: PENDING re-asserted here (not just in whatever check the
       // caller already ran) so a second concurrent call — double-click, a
@@ -1097,6 +1104,7 @@ export class LeavesService {
           tx,
           leave,
           organizationId,
+          stampDates,
         );
         await markPayrollInputsChanged(
           tx,
@@ -1642,6 +1650,46 @@ export class LeavesService {
       });
       await this.leaveBalanceService.recalculate(tx, row.id, organizationId);
     }
+  }
+
+  // The dates of an approved leave that are marked On Leave: every date when the type charges them all (or it is a half day),
+  // otherwise only the charged ones. undefined = every date in the range.
+  private async datesToStamp(
+    leave: Leave,
+    leaveType: LeaveType,
+    organizationId: string,
+  ): Promise<string[] | undefined> {
+    if (leave.isHalfDay) return undefined;
+    const kinds = chargedKindsOf(
+      effectiveLeaveRules(leaveType.rules as unknown as LeaveRules, leaveType),
+    );
+    if (kinds.weeklyOffs && kinds.holidays) return undefined;
+    const person = await this.scopedPrisma.user.findFirst({
+      where: { id: leave.employeeId, organizationId },
+      select: { departmentId: true },
+    });
+    const [holidays, org, dept] = await Promise.all([
+      this.holidaysFor({ departmentId: person?.departmentId ?? null }, organizationId),
+      this.scopedPrisma.organization.findFirst({ where: { id: organizationId } }),
+      person?.departmentId
+        ? this.scopedPrisma.department.findFirst({
+            where: { id: person.departmentId, organizationId },
+          })
+        : Promise.resolve(null),
+    ]);
+    const { weeklyOffs } = resolveShiftConfig(
+      dept,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+    );
+    const charged = chargedDatesInclusive(
+      leave.startDate,
+      leave.endDate,
+      new Set(holidays.map((h) => h.date)),
+      weeklyOffs,
+      kinds,
+    );
+    // Nothing charged (should not happen for an accepted application): stamp the whole range rather than leave it unmarked.
+    return charged.length > 0 ? charged : undefined;
   }
 
   // The holidays this employee actually gets: company-wide and their own department's, optional ones excluded (an

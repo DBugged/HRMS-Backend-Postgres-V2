@@ -39,9 +39,15 @@ import {
   type OrganizationAttendancePrefs,
 } from '../attendance/attendance-shift-config';
 import {
-  clampLeaveDaysToMonth,
-  clampLeaveDaysToRange,
-} from '../payroll/payroll-date-math';
+  chargedKindsOf,
+  effectiveLeaveRules,
+  type LeaveRules,
+} from '../leaves/leave-rules';
+import {
+  chargedDaysInWindow,
+  crossesWindow,
+  type WindowRules,
+} from '../leaves/leave-window-days';
 import { QueryLeaveTrackerGridDto } from './dto/query-leave-tracker-grid.dto';
 import { QueryLeaveTrackerBalancesDto } from './dto/query-leave-tracker-balances.dto';
 import { ExportLeaveTrackerGridDto } from './dto/export-leave-tracker-grid.dto';
@@ -127,7 +133,11 @@ export class LeaveTrackerService {
   ): Promise<string[]> {
     if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
       // A department picked in the filter narrows the reviewer's own people; it never widens them.
-      const scope = await deptScopedEmployeeIds(this.scopedPrisma, actor, organizationId);
+      const scope = await deptScopedEmployeeIds(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+      );
       if (!departmentId) return scope;
       const inDept = await this.scopedPrisma.user.findMany({
         where: { organizationId, departmentId, id: { in: scope } },
@@ -467,7 +477,8 @@ export class LeaveTrackerService {
         exitDate: true,
         // Shown by the Employee Leave Stat page.
         designation: true,
-        department: { select: { name: true } },
+        // The name is shown; the whole row also carries the shift that decides this person's weekly offs.
+        department: true,
       },
       orderBy: EMPLOYEE_ORDER_BY,
     });
@@ -482,7 +493,12 @@ export class LeaveTrackerService {
       for (let i = employees.length - 1; i >= 0; i--) {
         if (joinedOn(employees[i]) > periodEnd) employees.splice(i, 1);
         // ...and only up to the month of their last working day: a month that began after it does not list them.
-        else if (periodStart && employees[i].exitDate && employees[i].exitDate! < periodStart) employees.splice(i, 1);
+        else if (
+          periodStart &&
+          employees[i].exitDate &&
+          employees[i].exitDate! < periodStart
+        )
+          employees.splice(i, 1);
       }
     }
 
@@ -559,7 +575,16 @@ export class LeaveTrackerService {
                 startDate: true,
                 endDate: true,
                 isHalfDay: true,
-                leaveType: { select: { code: true, name: true } },
+                totalDays: true,
+                leaveType: {
+                  select: {
+                    code: true,
+                    name: true,
+                    rules: true,
+                    allocationType: true,
+                    eventGrant: true,
+                  },
+                },
               },
             })
           : Promise.resolve([]),
@@ -580,15 +605,114 @@ export class LeaveTrackerService {
                 startDate: true,
                 endDate: true,
                 isHalfDay: true,
+                totalDays: true,
+                leaveType: {
+                  select: {
+                    rules: true,
+                    allocationType: true,
+                    eventGrant: true,
+                  },
+                },
               },
             }),
       ]);
+
+    // Days are counted the way each leave was charged (holidays and weekly offs only when its type's sandwich rule takes them
+    // in), not as every calendar day between its dates. Only a leave running across the edge of the month / year being shown
+    // needs the calendar and the shift to be re-counted; most never do, so those are loaded only when one exists.
+    type TypeForRules = {
+      rules: unknown;
+      allocationType: string;
+      eventGrant: unknown;
+    };
+    const periodFrom = periodStart ?? yearStart;
+    const periodTo = periodEnd ?? yearEnd;
+    const crossing = [...monthLeaves, ...lwpLeaves].some(
+      (l) =>
+        crossesWindow(l, periodStart ?? yearStart, periodEnd ?? yearEnd) ||
+        crossesWindow(l, yearStart, yearEnd),
+    );
+    let calendar: {
+      holidays: {
+        date: string;
+        departmentId: string | null;
+        isOptional: boolean;
+      }[];
+      orgPrefs: OrganizationAttendancePrefs | null;
+      timeZone: string;
+    } | null = null;
+    if (crossing) {
+      const [orgRow, holidayRows] = await Promise.all([
+        this.scopedPrisma.organization.findFirst({
+          where: { id: organizationId },
+          select: { timezone: true, attendancePayrollPrefs: true },
+        }),
+        this.scopedPrisma.holiday.findMany({
+          where: {
+            organizationId,
+            AND: [holidayInEffect],
+            date: {
+              gte: yearStart < periodFrom ? yearStart : periodFrom,
+              lte: yearEnd > periodTo ? yearEnd : periodTo,
+            },
+          },
+          select: { date: true, departmentId: true, isOptional: true },
+        }),
+      ]);
+      calendar = {
+        holidays: holidayRows,
+        orgPrefs:
+          (orgRow?.attendancePayrollPrefs as OrganizationAttendancePrefs | null) ??
+          null,
+        timeZone: orgRow?.timezone ?? 'Asia/Kolkata',
+      };
+    }
+    const employeeById = new Map(employees.map((e) => [e.id, e]));
+    const daysInWindow = (
+      l: {
+        employeeId: string;
+        startDate: string;
+        endDate: string;
+        isHalfDay: boolean;
+        totalDays: number | null;
+        leaveType: TypeForRules;
+      },
+      from: string,
+      to: string,
+    ): number =>
+      chargedDaysInWindow(l, from, to, (): WindowRules => {
+        const employee = employeeById.get(l.employeeId);
+        const { weeklyOffs } = resolveShiftConfig(
+          employee?.department ?? null,
+          calendar?.orgPrefs ?? null,
+          calendar?.timeZone,
+        );
+        return {
+          holidayDates: new Set(
+            (calendar?.holidays ?? [])
+              .filter(
+                (h) =>
+                  !h.isOptional &&
+                  (h.departmentId === null ||
+                    h.departmentId === employee?.departmentId),
+              )
+              .map((h) => h.date),
+          ),
+          weeklyOffs,
+          kinds: chargedKindsOf(
+            effectiveLeaveRules(
+              l.leaveType.rules as unknown as LeaveRules,
+              l.leaveType,
+            ),
+          ),
+        };
+      });
     const lwpDaysByEmployee = new Map<string, number>();
     for (const l of lwpLeaves) {
       lwpDaysByEmployee.set(
         l.employeeId,
         (lwpDaysByEmployee.get(l.employeeId) ?? 0) +
-          clampLeaveDaysToRange(l, yearStart, yearEnd),
+          daysInWindow(l, yearStart, yearEnd),
       );
     }
     // employeeId -> leaveTypeCode -> { name, days } for the chosen month.
@@ -597,10 +721,8 @@ export class LeaveTrackerService {
       Map<string, { name: string; days: number }>
     >();
     if (periodStart) {
-      const m = Number(periodStart.slice(5, 7));
-      const y = Number(periodStart.slice(0, 4));
       for (const l of monthLeaves) {
-        const days = clampLeaveDaysToMonth(l, m, y);
+        const days = daysInWindow(l, periodStart, periodEnd as string);
         if (days <= 0) continue;
         const byType = takenInPeriod.get(l.employeeId) ?? new Map();
         const cur = byType.get(l.leaveType.code) ?? {

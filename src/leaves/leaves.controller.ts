@@ -16,6 +16,7 @@ import {
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { LeavesService } from './leaves.service';
+import { LeaveStampRepairService } from './leave-stamp-repair.service';
 import { PreviewLeaveDaysQueryDto } from './dto/preview-leave-days-query.dto';
 import { ManualLeaveDto } from './dto/manual-leave.dto';
 import { ApplyLeaveDto } from './dto/apply-leave.dto';
@@ -38,7 +39,26 @@ type Caller = Omit<User, 'password'>;
 @ApiBearerAuth('access-token')
 @Controller('leaves')
 export class LeavesController {
-  constructor(private readonly leavesService: LeavesService) {}
+  constructor(
+    private readonly leavesService: LeavesService,
+    private readonly stampRepair: LeaveStampRepairService,
+  ) {}
+
+  // Admin: puts back the holidays / weekly offs that older leave approvals wrongly marked as On Leave. dryRun (the default) only
+  // reports what it would change; send { "dryRun": false } to apply. Declared before the parameterised routes.
+  @Post('repair-stamps')
+  @Roles(Role.ADMIN)
+  @UseGuards(RolesGuard)
+  repairStamps(
+    @Body() body: { dryRun?: boolean } | undefined,
+    @CurrentUser() caller: Caller,
+  ) {
+    return this.stampRepair.run(
+      caller,
+      caller.organizationId,
+      body?.dryRun !== false,
+    );
+  }
 
   // Migration of past, already-approved leave from a spreadsheet (Admin/HR). dryRun (the default) only checks every row.
   // Declared before the parameterised routes.
@@ -199,7 +219,12 @@ export class LeavesController {
     @Body() dto: RequestLeaveCancelDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.leavesService.requestCancel(id, dto, caller, caller.organizationId);
+    return this.leavesService.requestCancel(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+    );
   }
 
   // A manager / HR / Admin approves or declines that request.
@@ -211,6 +236,11 @@ export class LeavesController {
     @Body() dto: DecideLeaveCancelDto,
     @CurrentUser() caller: Caller,
   ) {
-    return this.leavesService.decideCancelRequest(id, dto, caller, caller.organizationId);
+    return this.leavesService.decideCancelRequest(
+      id,
+      dto,
+      caller,
+      caller.organizationId,
+    );
   }
 }

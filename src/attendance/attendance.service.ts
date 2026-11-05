@@ -3631,12 +3631,16 @@ export class AttendanceService {
     tx: Prisma.TransactionClient,
     leave: Leave,
     organizationId: string,
+    // The days the leave is charged for, when that is fewer than every date in its range (a holiday or weekly off inside it that
+    // the leave type's sandwich rule leaves out keeps its own status). Omitted = every date in the range.
+    onlyDates?: string[],
   ) {
     const status = leave.isHalfDay
       ? AttendanceStatus.HALF_DAY
       : AttendanceStatus.ON_LEAVE;
 
-    const dates = enumerateDateStrings(leave.startDate, leave.endDate);
+    const dates = onlyDates ?? enumerateDateStrings(leave.startDate, leave.endDate);
+    if (dates.length === 0) return;
     // One findMany + one updateMany + one createMany instead of a
     // findFirst+update/create pair per date — a leave range is usually
     // short, but this is free to batch regardless.

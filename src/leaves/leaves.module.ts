@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { LeavesController } from './leaves.controller';
 import { LeavesService } from './leaves.service';
+import { LeaveStampRepairService } from './leave-stamp-repair.service';
 import { LeaveBalancesModule } from '../leave-balances/leave-balances.module';
 import { CompOffsModule } from '../comp-offs/comp-offs.module';
 import { AttendanceModule } from '../attendance/attendance.module';
@@ -20,7 +21,7 @@ import { EmailTemplatesModule } from '../email-templates/email-templates.module'
     EmailTemplatesModule,
   ],
   controllers: [LeavesController],
-  providers: [LeavesService],
+  providers: [LeavesService, LeaveStampRepairService],
   // Exported so the offboarding automation can cancel a leaver's pending leave requests.
   exports: [LeavesService],
 })
