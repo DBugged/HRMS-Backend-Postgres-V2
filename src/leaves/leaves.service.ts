@@ -1725,21 +1725,36 @@ export class LeavesService {
       where: { id: query.leaveType, organizationId, isActive: true },
     });
     if (!leaveType) throw new NotFoundException('Leave type not found.');
+    // Admin / HR recording a leave for someone: the days are that person's - their department's weekly offs and holidays - and the
+    // rules are the relaxed ones recording uses, so the number shown is the number that will be charged.
+    const forOther = !!query.employeeId && query.employeeId !== actor.id;
+    if (forOther && actor.role !== Role.ADMIN && actor.role !== Role.HR) {
+      throw new ForbiddenException(
+        'Only Admin or HR can preview days for another employee.',
+      );
+    }
+    const person = forOther
+      ? await this.scopedPrisma.user.findFirst({
+          where: { id: query.employeeId, organizationId },
+          select: { id: true, departmentId: true },
+        })
+      : actor;
+    if (!person) throw new NotFoundException('Employee not found.');
     const [holidays, prior, employeeDept, org] = await Promise.all([
-      this.holidaysFor(actor, organizationId),
+      this.holidaysFor(person, organizationId),
       this.scopedPrisma.leave.findFirst({
         where: {
           organizationId,
-          employeeId: actor.id,
+          employeeId: person.id,
           leaveTypeId: leaveType.id,
           status: { in: [LeaveStatus.PENDING, LeaveStatus.APPROVED] },
           endDate: { lt: query.startDate },
         },
         orderBy: { endDate: 'desc' },
       }),
-      actor.departmentId
+      person.departmentId
         ? this.scopedPrisma.department.findFirst({
-            where: { id: actor.departmentId, organizationId },
+            where: { id: person.departmentId, organizationId },
           })
         : Promise.resolve(null),
       this.scopedPrisma.organization.findFirst({
@@ -1750,10 +1765,11 @@ export class LeavesService {
       employeeDept,
       org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
     );
-    const rules = effectiveLeaveRules(
+    const baseRules = effectiveLeaveRules(
       leaveType.rules as unknown as LeaveRules,
       leaveType,
     );
+    const rules = forOther ? relaxedForImport(baseRules) : baseRules;
     const isHalfDay = query.isHalfDay ?? false;
     const result = checkLeaveRules(
       rules,

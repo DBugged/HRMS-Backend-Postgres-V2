@@ -22,4 +22,12 @@ export class PreviewLeaveDaysQueryDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   isHalfDay?: boolean;
+
+  @ApiPropertyOptional({
+    description:
+      'Admin / HR only: work the days out for this employee (their department\'s weekly offs and holidays, as when recording a leave on their behalf) instead of the caller',
+  })
+  @IsOptional()
+  @IsUUID()
+  employeeId?: string;
 }
