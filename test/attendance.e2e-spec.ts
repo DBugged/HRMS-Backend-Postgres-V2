@@ -332,7 +332,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('HR can punch on behalf of an employee; two punches spanning >=8h yield PRESENT', async () => {
-      const date = offsetDateAvoidingHolidays(-5);
+      const date = nthWorkdayBack(9);
       const inTime = istIso(date, '09:00');
       const outTime = istIso(date, '18:00');
 
@@ -494,7 +494,7 @@ describe('Attendance (e2e)', () => {
       expect(row?.status).toBe('WEEKLY_OFF');
     });
 
-    it('a full In/Out day worked on a weekly off stays WEEKLY_OFF (the calendar decides), keeping its hours', async () => {
+    it('a full In/Out day worked on a weekly off shows PRESENT with its hours, and is never late', async () => {
       const sunday = nextWeekday(0, -47);
       await request(app.getHttpServer())
         .post('/attendance/punch/manual')
@@ -509,7 +509,7 @@ describe('Attendance (e2e)', () => {
       const row = await prisma.attendance.findFirst({
         where: { employeeId, date: sunday },
       });
-      expect(row?.status).toBe('WEEKLY_OFF');
+      expect(row?.status).toBe('PRESENT');
       expect(row?.workDurationMinutes).toBe(480);
       expect(row?.isLate).toBe(false);
     });
@@ -637,7 +637,7 @@ describe('Attendance (e2e)', () => {
         .send({ employeeId: nightEmployeeId, punchTime })
         .expect(201);
 
-    it('a night shift starting on a weekly off (Sunday 22:00 to Monday 06:00) counts on Sunday, as a Weekly Off with its hours', async () => {
+    it('a night shift starting on a weekly off (Sunday 22:00 to Monday 06:00) counts on Sunday, as Present with its hours', async () => {
       const sunday = nextWeekday(0, -34);
       const monday = nextDateStr(sunday);
       await manualPunchAt(istIso(sunday, '22:00'));
@@ -646,7 +646,7 @@ describe('Attendance (e2e)', () => {
       const row = await prisma.attendance.findFirstOrThrow({
         where: { employeeId: nightEmployeeId, date: sunday },
       });
-      expect(row.status).toBe('WEEKLY_OFF');
+      expect(row.status).toBe('PRESENT');
       expect(row.workDurationMinutes).toBe(8 * 60);
       // Nothing lands on Monday, and any overtime raised is Sunday's, at the weekend rate.
       expect(
@@ -1353,7 +1353,7 @@ describe('Attendance (e2e)', () => {
     });
 
     it('accepts a non-WFH arrangement regardless of the org toggle, without touching other fields', async () => {
-      const date = offsetDateAvoidingHolidays(-5); // the PRESENT day from the manual-punch test above
+      const date = nthWorkdayBack(9); // the PRESENT day from the manual-punch test above
       const before = await prisma.attendance.findFirstOrThrow({
         where: { employeeId, date },
       });
@@ -3281,6 +3281,65 @@ describe('Attendance (e2e)', () => {
         .post(`/attendance/import/${managerBatchId}/execute`)
         .set('Authorization', `Bearer ${hrToken}`)
         .expect(400);
+    });
+
+    it('an import never changes a day already marked: leave, a regularization or a half day of leave', async () => {
+      const [leaveDate, regDate, pendingDate, halfDate, openDate] = [-70, -71, -72, -73, -74].map((n) => nthWorkdayBack(-n));
+      const seed = (date: string, data: object) =>
+        scopedPrisma.attendance.create({
+          data: { organizationId, employeeId, date, source: 'SYSTEM', status: 'ABSENT', ...data },
+        });
+      await seed(leaveDate, { status: 'ON_LEAVE' });
+      await seed(regDate, { status: 'PRESENT', source: 'REGULARIZED', workDurationMinutes: 400 });
+      await seed(pendingDate, { regularization: { requested: true, status: 'pending' } });
+      await seed(halfDate, { status: 'HALF_DAY', leaveOverriddenStatus: 'ABSENT', leaveOverriddenSource: 'SYSTEM' });
+      await seed(openDate, {});
+      const dates = [leaveDate, regDate, pendingDate, halfDate, openDate];
+      const upload = await request(app.getHttpServer())
+        .post('/attendance/import')
+        .set('Authorization', `Bearer ${hrToken}`)
+        .send({
+          rows: dates.map((date) => ({
+            employeeId: employeeHumanId,
+            date,
+            inTime: `${date}T04:00:00.000Z`,
+            outTime: `${date}T13:00:00.000Z`,
+          })),
+        })
+        .expect(201);
+      const id = (upload.body as { id: string }).id;
+      await request(app.getHttpServer())
+        .post(`/attendance/import/${id}/validate`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(201);
+      const executed = await request(app.getHttpServer())
+        .post(`/attendance/import/${id}/execute`)
+        .set('Authorization', `Bearer ${hrToken}`)
+        .expect(201);
+      const result = (executed.body as {
+        executionResult: { imported: number; skipped: number; skippedRows: { date: string; reason: string }[] };
+      }).executionResult;
+      expect(result).toMatchObject({ imported: 2, skipped: 3 });
+      expect(result.skippedRows.map((r) => [r.date, r.reason])).toEqual([
+        [leaveDate, 'On approved leave'],
+        [regDate, 'Already regularized'],
+        [pendingDate, 'A regularization request is waiting'],
+      ]);
+      const row = (date: string) =>
+        prisma.attendance.findFirstOrThrow({ where: { employeeId, date } });
+      expect((await row(leaveDate)).status).toBe('ON_LEAVE');
+      expect(await row(regDate)).toMatchObject({ status: 'PRESENT', source: 'REGULARIZED', workDurationMinutes: 400 });
+      expect(await row(pendingDate)).toMatchObject({ status: 'ABSENT', source: 'SYSTEM', inTime: null });
+      // The half day stays leave; the other half's times are kept under it.
+      expect(await row(halfDate)).toMatchObject({
+        status: 'HALF_DAY',
+        source: 'SYSTEM',
+        leaveOverriddenStatus: 'PRESENT',
+        leaveOverriddenSource: 'EXCEL_IMPORT',
+      });
+      expect((await row(halfDate)).inTime).not.toBeNull();
+      // A day nobody marked takes the import.
+      expect(await row(openDate)).toMatchObject({ status: 'PRESENT', source: 'EXCEL_IMPORT' });
     });
 
     it('a clean batch validates to VALIDATED and executes with the biometric-skip rule honored', async () => {

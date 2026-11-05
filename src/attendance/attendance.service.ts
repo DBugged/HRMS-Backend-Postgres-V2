@@ -68,6 +68,7 @@ import { mapWithConcurrency } from '../common/concurrency';
 import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { isEmployedOn } from '../common/managers';
 import { alwaysPresentApplies, shiftMinutes } from './always-present';
+import { importSkipReason, isHalfLeaveStamp } from './import-protection';
 import { extraMinutesBeyondShift } from './day-detail';
 import { zonedWallTimeToUtc } from '../common/zoned-time';
 import {
@@ -497,6 +498,8 @@ type ImportExecutionResult = {
   // Pending overtime requests this import created (weekend / holiday work, or time past the shift end).
   overtimeRequests?: number;
   rowErrors: { row: number; error: string }[];
+  // Rows left out because the day is already marked, and why.
+  skippedRows?: { row: number; employeeId: string; date: string; reason: string }[];
 };
 
 // Selfies are stored as the storage relativeKey (POST /files/upload/selfies) — not servable as-is, so every read
@@ -831,6 +834,8 @@ export class AttendanceService {
     let workDurationMinutes = 0;
     let isLate = false;
     let isEarlyOut = false;
+    // A real punch-in with the shift still running and no punch-out yet (see below).
+    let inProgress = false;
 
     if (inTime && outTime) {
       // A *real* punch-in with no punch-out (as opposed to no punches at
@@ -875,6 +880,7 @@ export class AttendanceService {
         // call them Absent - and send the "Marked Absent" in-app notice and e-mail the moment they punch in. Shown
         // as Present (in progress) with no duration until the punch-out arrives (or the shift ends and the day
         // becomes Incomplete, above).
+        inProgress = true;
         status = AttendanceStatus.PRESENT;
         isLate =
           inTime.getTime() - shiftStart.getTime() >
@@ -918,20 +924,23 @@ export class AttendanceService {
         : AttendanceStatus.ABSENT;
     }
 
-    // Overrides, in priority order: a holiday wins even over an approved-leave-derived status; a weekly off wins over
-    // anything the punches say (Present, Half Day, Incomplete, Absent) but never over an approved leave. Holiday and
-    // weekly off come from the calendar, never from punches: work done that day keeps its punch times and hours, and is
-    // paid through the overtime / comp-off request it raises (suggestOvertimeFromPunchOut), not by turning the day
-    // into Present. There is no shift that day, so it is never late or early either.
-    const leaveDerived =
-      !(inTime && outTime) &&
-      (status === AttendanceStatus.ON_LEAVE || status === AttendanceStatus.HALF_DAY);
+    // Overrides, in priority order: a holiday wins even over an approved-leave-derived status. A weekly off with nothing
+    // worked (no punch, a stray single punch, or too little time) stays a Weekly Off; a day actually worked on it shows
+    // Present or Half Day, keeps its times and raises Weekend overtime (suggestOvertimeFromPunchOut), and approved leave
+    // stays leave. Either way there is no shift that day, so it is never late or early.
+    const weeklyOff = isWeeklyOff(dateStr, shiftConfig.weeklyOffs);
     if (holiday) {
       status = AttendanceStatus.HOLIDAY;
       isLate = false;
       isEarlyOut = false;
-    } else if (isWeeklyOff(dateStr, shiftConfig.weeklyOffs) && !leaveDerived) {
-      status = AttendanceStatus.WEEKLY_OFF;
+    } else if (weeklyOff) {
+      if (
+        status === AttendanceStatus.ABSENT ||
+        status === AttendanceStatus.INCOMPLETE ||
+        inProgress
+      ) {
+        status = AttendanceStatus.WEEKLY_OFF;
+      }
       isLate = false;
       isEarlyOut = false;
     }
@@ -4969,6 +4978,7 @@ export class AttendanceService {
     let skipped = 0;
     let errors = 0;
     const rowErrors: { row: number; error: string }[] = [];
+    const skippedRows: NonNullable<ImportExecutionResult['skippedRows']> = [];
 
     // Attendance has a unique constraint on (organizationId, employeeId,
     // date), but two rows sharing a key still can't safely run concurrently
@@ -5082,12 +5092,11 @@ export class AttendanceService {
 
       try {
         const existing = existingByKey.get(`${empId}:${date}`) ?? null;
-        if (
-          existing &&
-          existing.source === AttendanceSource.FACE_API &&
-          existing.inTime
-        ) {
+        // What is already marked stays as it is (see import-protection.ts).
+        const skipReason = importSkipReason(existing, approvedLeaveFor(empId, date));
+        if (skipReason) {
           skipped += 1;
+          skippedRows.push({ row: rowNum, employeeId: empCode, date, reason: skipReason });
           continue;
         }
 
@@ -5153,7 +5162,22 @@ export class AttendanceService {
           checkoutLocation: row.outLocation ? asString(row.outLocation) : null,
         };
 
-        if (existing) {
+        if (existing && isHalfLeaveStamp(existing)) {
+          // A half day of leave stays a half day of leave. The other half was worked: its times go on the day, and what it
+          // came to is remembered under the leave, which is what pays that half and what cancelling the leave restores.
+          const underLeave = {
+            inTime,
+            outTime,
+            workDurationMinutes: outcome.workDurationMinutes,
+            leaveOverriddenStatus: outcome.status,
+            leaveOverriddenSource: AttendanceSource.EXCEL_IMPORT,
+          };
+          await this.scopedPrisma.attendance.updateMany({
+            where: { id: existing.id, organizationId },
+            data: underLeave,
+          });
+          existingByKey.set(`${empId}:${date}`, { ...existing, ...underLeave });
+        } else if (existing) {
           await this.scopedPrisma.attendance.updateMany({
             where: { id: existing.id, organizationId },
             data: fields,
@@ -5206,7 +5230,7 @@ export class AttendanceService {
       }
     }
 
-    return { imported, skipped, errors, rowErrors };
+    return { imported, skipped, errors, rowErrors, skippedRows };
   }
 
   async rejectImportBatch(id: string, actor: Actor, organizationId: string) {
