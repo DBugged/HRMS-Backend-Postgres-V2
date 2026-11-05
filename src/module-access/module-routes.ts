@@ -12,7 +12,7 @@ export const MODULE_LABELS: Record<string, string> = {
   'module.documents_letters': 'Documents and letters',
   'module.offboarding': 'Offboarding',
   'module.reports': 'Reports',
-  'module.policy_assistant': 'Policy assistant',
+  'module.policy_assistant': 'Ask HR',
 };
 
 const SEGMENTS: Record<string, string[]> = {
@@ -26,7 +26,7 @@ const SEGMENTS: Record<string, string[]> = {
   'module.documents_letters': ['documents', 'letter-templates', 'letters'],
   'module.offboarding': ['offboarding', 'resignations', 'settlements'],
   'module.reports': ['reports'],
-  'module.policy_assistant': ['policy-assistant', 'ask-hr'],
+  'module.policy_assistant': ['ask-hr'],
 };
 
 const BY_SEGMENT = new Map(Object.entries(SEGMENTS).flatMap(([mod, segs]) => segs.map((s) => [s, mod] as const)));

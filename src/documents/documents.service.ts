@@ -131,8 +131,8 @@ export class DocumentsService {
   // Same visibility scoping as findPolicies, but returns raw storage keys
   // (never signed URLs) and only ever currently-active policies (isPublished
   // — even for HR/Admin, unlike findPolicies which lets them see retired
-  // drafts too). For internal server-side consumption only (the Policy
-  // Assistant reads file bytes directly via readStoredFile) — never
+  // drafts too). For internal server-side consumption only (Ask HR searches
+  // their stored text) — never
   // returned in an HTTP response as-is.
   async findActivePoliciesRaw(actor: Actor, organizationId: string) {
     const policies = await this.scopedPrisma.policyDocument.findMany({

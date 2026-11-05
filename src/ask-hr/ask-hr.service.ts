@@ -27,8 +27,8 @@ type Line = { name: string; amount: number };
 
 export type AskHrCard =
   | { kind: 'balance'; year: number; items: Array<{ leaveType: string; available: number; used: number; pending: number }> }
-  | { kind: 'holiday'; items: Array<{ name: string; date: string; type: string }> }
-  | { kind: 'letters'; items: Array<{ name: string; stage: string; available: boolean; reason: string | null }> }
+  | { kind: 'holiday'; items: Array<{ name: string; date: string }> }
+  | { kind: 'letters'; items: Array<{ name: string; available: boolean; reason: string | null }> }
   | { kind: 'onLeave'; date: string; items: Array<{ name: string; from: string; to: string }> }
   | { kind: 'payroll'; items: Array<{ period: string; gross: number; deductions: number; net: number; status: string }>; latest: { period: string; earnings: Line[]; deductions: Line[] } | null }
   | { kind: 'policy'; hits: PolicyHit[]; unreadable: string[] };
@@ -159,19 +159,19 @@ export class AskHrService {
         OR: [{ departmentId: null }, ...(actor.departmentId ? [{ departmentId: actor.departmentId }] : [])],
       },
       orderBy: { date: 'asc' },
-      select: { name: true, date: true, type: true },
+      select: { name: true, date: true },
     });
     const terms = tokenize(q).filter((t) => t !== 'holiday');
     const named = terms.length ? rows.filter((h) => terms.some((t) => h.name.toLowerCase().includes(t))) : [];
     const items = (named.length ? named : rows.filter((h) => h.date >= today)).slice(0, 8);
-    return { kind: 'holiday', items: items.map((h) => ({ name: h.name, date: h.date, type: String(h.type) })) };
+    return { kind: 'holiday', items: items.map((h) => ({ name: h.name, date: h.date })) };
   }
 
   private async lettersCard(actor: Actor, organizationId: string): Promise<AskHrCard> {
     const list = await this.lettersService.listForEmployee(actor.id, actor, organizationId);
     return {
       kind: 'letters',
-      items: list.map((l) => ({ name: l.name, stage: String(l.stage), available: l.unlocked, reason: l.reason })),
+      items: list.map((l) => ({ name: l.name, available: l.unlocked, reason: l.reason })),
     };
   }
 
