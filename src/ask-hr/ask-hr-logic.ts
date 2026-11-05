@@ -115,3 +115,21 @@ export function snippetAround(body: string, terms: string[]): string {
   const cut = body.slice(start, start + 320).trim();
   return `${start > 0 ? '…' : ''}${cut}${start + 320 < body.length ? '…' : ''}`;
 }
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** "Oct 2026" - the one place month names live, so the web and the app just show the text they are given. */
+export function periodLabel(month: number, year: number): string {
+  return `${MONTH_NAMES[month - 1] ?? month} ${year}`;
+}
+
+/** The example questions offered under the search box; only ones whose answer the company has switched on. */
+export function suggestionsFor(on: { leave: boolean; payroll: boolean; letters: boolean }): string[] {
+  return [
+    ...(on.leave ? ['How many leaves do I have left?'] : []),
+    'Is Diwali a holiday?',
+    'What is the notice period?',
+    ...(on.letters ? ['Show my letters'] : []),
+    ...(on.payroll ? ['What is my salary?'] : []),
+  ];
+}

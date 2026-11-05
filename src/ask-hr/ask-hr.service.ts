@@ -8,12 +8,14 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Role, User } from '@prisma/client';
 import { PDFParse } from 'pdf-parse';
 import { moduleEnabledFor } from '../module-access/module-gate';
+import { todayInOrgTz } from '../common/org-date';
+import { EMPLOYEE_VISIBLE_STATUSES } from '../payroll/payroll.service';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { DocumentsService } from '../documents/documents.service';
 import { LettersService } from '../letters/letters.service';
 import { readStoredFile } from '../files/file-storage.config';
-import { detectIntents, searchPolicies, tokenize, type AskIntent, type PolicyHit } from './ask-hr-logic';
+import { detectIntents, periodLabel, searchPolicies, suggestionsFor, tokenize, type AskIntent, type PolicyHit } from './ask-hr-logic';
 
 type Actor = Omit<User, 'password'>;
 const EXTERNAL_URL_RE = /^https?:\/\//i;
@@ -27,7 +29,7 @@ export type AskHrCard =
   | { kind: 'holiday'; items: Array<{ name: string; date: string; type: string }> }
   | { kind: 'letters'; items: Array<{ name: string; stage: string; available: boolean; reason: string | null }> }
   | { kind: 'onLeave'; date: string; items: Array<{ name: string; from: string; to: string }> }
-  | { kind: 'payroll'; items: Array<{ month: number; year: number; gross: number; deductions: number; net: number; status: string }>; latest: { month: number; year: number; earnings: Line[]; deductions: Line[] } | null }
+  | { kind: 'payroll'; items: Array<{ period: string; gross: number; deductions: number; net: number; status: string }>; latest: { period: string; earnings: Line[]; deductions: Line[] } | null }
   | { kind: 'policy'; hits: PolicyHit[]; unreadable: string[] };
 
 @Injectable()
@@ -42,6 +44,7 @@ export class AskHrService {
 
   async ask(question: string, actor: Actor, organizationId: string): Promise<{ question: string; cards: AskHrCard[] }> {
     const q = question.trim();
+    const today = await this.orgToday(organizationId);
     const intents = detectIntents(q);
     const cards: AskHrCard[] = [];
     // A module the company switched off is skipped, same as its own screens are hidden.
@@ -56,7 +59,7 @@ export class AskHrService {
       if (hit(types.flatMap((t) => [t.name, t.code]))) intents.push('balance');
     }
     if (!has('holiday')) {
-      const hs = await this.scopedPrisma.holiday.findMany({ where: { organizationId, year: new Date().getFullYear() }, select: { name: true } });
+      const hs = await this.scopedPrisma.holiday.findMany({ where: { organizationId, year: Number(today.slice(0, 4)) }, select: { name: true } });
       if (hit(hs.map((h) => h.name))) intents.push('holiday');
     }
     let letterCard: AskHrCard | null = null;
@@ -68,12 +71,13 @@ export class AskHrService {
         if (matched.length) letterCard = { kind: 'letters', items: matched };
       }
     }
-    if (has('balance') && (await on('module.leave'))) cards.push(await this.balanceCard(actor, organizationId));
-    if (has('holiday')) cards.push(await this.holidayCard(q, actor, organizationId));
-    if (letterCard) cards.push(letterCard);
+    // A pay question leads with the payslips, ahead of any letter whose name merely matches (e.g. "Salary Certificate").
     if (has('payroll') && (await on('module.payroll'))) cards.push(await this.payrollCard(actor, organizationId));
+    if (has('balance') && (await on('module.leave'))) cards.push(await this.balanceCard(actor, organizationId, today));
+    if (has('holiday')) cards.push(await this.holidayCard(q, actor, organizationId, today));
+    if (letterCard) cards.push(letterCard);
     if (intents.includes('onLeave')) {
-      const c = await this.onLeaveCard(actor, organizationId);
+      const c = await this.onLeaveCard(actor, organizationId, today);
       if (c) cards.push(c);
     }
     const policy = await this.policyCard(q, actor, organizationId);
@@ -81,8 +85,24 @@ export class AskHrService {
     return { question: q, cards };
   }
 
-  private async balanceCard(actor: Actor, organizationId: string): Promise<AskHrCard> {
-    const year = new Date().getFullYear();
+  /** Today's date (YYYY-MM-DD) in the organization's own timezone, so "today" is right just after midnight in India too. */
+  private async orgToday(organizationId: string): Promise<string> {
+    const org = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } });
+    return todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+  }
+
+  /** The example questions for the search box, limited to what this company has switched on. */
+  async suggestions(organizationId: string): Promise<string[]> {
+    const [leave, payroll, letters] = await Promise.all([
+      moduleEnabledFor(organizationId, 'module.leave'),
+      moduleEnabledFor(organizationId, 'module.payroll'),
+      moduleEnabledFor(organizationId, 'module.documents_letters'),
+    ]);
+    return suggestionsFor({ leave, payroll, letters });
+  }
+
+  private async balanceCard(actor: Actor, organizationId: string, today: string): Promise<AskHrCard> {
+    const year = Number(today.slice(0, 4));
     const rows = await this.scopedPrisma.leaveBalance.findMany({
       where: { organizationId, employeeId: actor.id, year },
       include: { leaveType: { select: { name: true, isActive: true } } },
@@ -99,7 +119,7 @@ export class AskHrService {
   /** The caller's own last 6 final payslips (locked or paid - the same ones they can open); never anyone else's, whatever the role. */
   private async payrollCard(actor: Actor, organizationId: string): Promise<AskHrCard> {
     const rows = await this.scopedPrisma.payrollRun.findMany({
-      where: { organizationId, employeeId: actor.id, status: { in: ['LOCKED', 'PAID'] } },
+      where: { organizationId, employeeId: actor.id, status: { in: EMPLOYEE_VISIBLE_STATUSES } },
       orderBy: [{ year: 'desc' }, { month: 'desc' }],
       take: 6,
       select: { month: true, year: true, earnings: true, deductions: true, grossSalary: true, totalDeductions: true, netPay: true, status: true, heldAt: true },
@@ -108,10 +128,9 @@ export class AskHrService {
       Array.isArray(v) ? v.filter((l) => l && typeof l.name === 'string' && Number(l.amount) !== 0).map((l) => ({ name: l.name, amount: round(Number(l.amount)) })) : [];
     return {
       kind: 'payroll',
-      latest: rows[0] ? { month: rows[0].month, year: rows[0].year, earnings: lines(rows[0].earnings), deductions: lines(rows[0].deductions) } : null,
+      latest: rows[0] ? { period: periodLabel(rows[0].month, rows[0].year), earnings: lines(rows[0].earnings), deductions: lines(rows[0].deductions) } : null,
       items: rows.map((r) => ({
-        month: r.month,
-        year: r.year,
+        period: periodLabel(r.month, r.year),
         gross: round(r.grossSalary),
         deductions: round(r.totalDeductions),
         net: round(r.netPay),
@@ -120,12 +139,11 @@ export class AskHrService {
     };
   }
 
-  private async holidayCard(q: string, actor: Actor, organizationId: string): Promise<AskHrCard> {
-    const today = new Date().toISOString().slice(0, 10);
+  private async holidayCard(q: string, actor: Actor, organizationId: string, today: string): Promise<AskHrCard> {
     const rows = await this.scopedPrisma.holiday.findMany({
       where: {
         organizationId,
-        year: { in: [new Date().getFullYear(), new Date().getFullYear() + 1] },
+        year: { in: [Number(today.slice(0, 4)), Number(today.slice(0, 4)) + 1] },
         OR: [{ departmentId: null }, ...(actor.departmentId ? [{ departmentId: actor.departmentId }] : [])],
       },
       orderBy: { date: 'asc' },
@@ -145,9 +163,8 @@ export class AskHrService {
     };
   }
 
-  private async onLeaveCard(actor: Actor, organizationId: string): Promise<AskHrCard | null> {
+  private async onLeaveCard(actor: Actor, organizationId: string, date: string): Promise<AskHrCard | null> {
     if (actor.role === Role.EMPLOYEE) return null;
-    const date = new Date().toISOString().slice(0, 10);
     const rows = await this.scopedPrisma.leave.findMany({
       where: {
         organizationId,

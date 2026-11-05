@@ -1,4 +1,4 @@
-import { detectIntents, searchPolicies, splitIntoSections, tokenize } from './ask-hr-logic';
+import { detectIntents, periodLabel, suggestionsFor, searchPolicies, splitIntoSections, tokenize } from './ask-hr-logic';
 
 describe('ask-hr-logic', () => {
   it('drops filler words and trims plurals', () => {
@@ -25,5 +25,13 @@ describe('ask-hr-logic', () => {
   it('returns nothing when no policy mentions the words', () => {
     expect(searchPolicies('maternity benefits', [{ id: 'p1', title: 'HR', contentText: '1. Dress Code\nCasual.' }])).toEqual([]);
     expect(searchPolicies('anything', [{ id: 'p1', title: 'HR', contentText: null }])).toEqual([]);
+  });
+
+  it('labels a payslip month and offers only the examples that are switched on', () => {
+    expect(periodLabel(10, 2026)).toBe('Oct 2026');
+    expect(suggestionsFor({ leave: true, payroll: true, letters: true })).toContain('What is my salary?');
+    const off = suggestionsFor({ leave: false, payroll: false, letters: false });
+    expect(off).not.toContain('What is my salary?');
+    expect(off).not.toContain('How many leaves do I have left?');
   });
 });

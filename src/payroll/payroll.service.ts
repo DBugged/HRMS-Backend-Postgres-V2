@@ -338,7 +338,7 @@ export interface CalculatedPayroll {
 // An employee sees a payslip only once it is final (LOCKED or PAID). An APPROVED run can still be sent back for
 // recalculation when attendance, leave or overtime changes, and the employee must not be shown - or download - amounts
 // that may then change.
-const EMPLOYEE_VISIBLE_STATUSES: PayrollRunStatus[] = [
+export const EMPLOYEE_VISIBLE_STATUSES: PayrollRunStatus[] = [
   PayrollRunStatus.LOCKED,
   PayrollRunStatus.PAID,
 ];

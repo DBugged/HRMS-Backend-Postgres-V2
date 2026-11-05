@@ -15,6 +15,12 @@ type Caller = Omit<User, 'password'>;
 export class AskHrController {
   constructor(private readonly askHr: AskHrService) {}
 
+  // The example questions under the search box, limited to the modules this company has on.
+  @Get('suggestions')
+  suggestions(@CurrentUser() caller: Caller) {
+    return this.askHr.suggestions(caller.organizationId);
+  }
+
   // Open to every signed-in employee; each answer is limited to what that person may already see (see the service header).
   @Get()
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
