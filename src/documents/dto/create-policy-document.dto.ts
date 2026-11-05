@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, IsDateString } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, IsDateString, MaxLength } from 'class-validator';
 import { PolicyDocType, PolicyVisibility } from '@prisma/client';
 
 export class CreatePolicyDocumentDto {
@@ -67,6 +67,12 @@ export class CreatePolicyDocumentDto {
   @IsOptional()
   @IsDateString()
   reviewDate?: string | null;
+
+  @ApiPropertyOptional({ description: 'Text for Ask HR to search - for a link, an image or a scanned PDF. A stored PDF is read automatically.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200000)
+  contentText?: string;
 
   // Publishing a new version of an existing document rather than a brand
   // new one — chains via previousVersionId and retires the old row.

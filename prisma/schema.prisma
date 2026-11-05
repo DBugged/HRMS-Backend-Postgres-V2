@@ -4776,3 +4776,19 @@ model CcAlert {
   @@index([createdAt])
   @@map("cc_alerts")
 }
+
+// One row per Ask HR question: who asked, the words, which kinds of answer came back and whether anything was found.
+// Lets HR see the questions that found nothing (a missing policy). Plain ids, no relations; rows older than 90 days are
+// deleted nightly (AskHrService.purgeOld).
+model AskHrQuery {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  question       String
+  kinds          String[] @default([])
+  answered       Boolean
+  createdAt      DateTime @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("ask_hr_queries")
+}

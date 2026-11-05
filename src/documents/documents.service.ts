@@ -37,6 +37,7 @@ import { UpdateDocumentRequirementDto } from './dto/update-document-requirement.
 import { BulkDeleteDocumentRequirementsDto } from './dto/bulk-delete-document-requirements.dto';
 import { BulkImportDocumentRequirementsDto } from './dto/bulk-import-document-requirements.dto';
 import { wrapAll } from '../common/pagination';
+import { EXTERNAL_URL_RE as STORED_URL_RE, extractPdfText } from '../ask-hr/policy-text';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -117,9 +118,12 @@ export class DocumentsService {
   private withSignedUrl<T extends { fileUrl: string; organizationId: string }>(
     doc: T,
   ): T {
-    if (EXTERNAL_URL_RE.test(doc.fileUrl)) return doc;
+    // The searchable text (can be very long) is never sent to a browser; the list only says whether Ask HR has any for it.
+    const { contentText, ...rest } = doc as T & { contentText?: string | null };
+    const base = ('contentText' in (doc as object) ? { ...rest, hasSearchText: !!contentText } : rest) as unknown as T;
+    if (EXTERNAL_URL_RE.test(doc.fileUrl)) return base;
     return {
-      ...doc,
+      ...base,
       fileUrl: `/files/${signFileToken(doc.organizationId, doc.fileUrl)}`,
     };
   }
@@ -374,8 +378,16 @@ export class DocumentsService {
           dto.visibleEmployees ?? previousVersion?.visibleEmployees ?? [],
         version: previousVersion ? previousVersion.version + 1 : 1,
         previousVersionId: previousVersion?.id ?? null,
+        // Text typed in for Ask HR (a link, image or scanned PDF); otherwise a stored PDF is read just below.
+        ...(dto.contentText?.trim() ? { contentText: dto.contentText.trim() } : {}),
       },
     });
+    // Read a stored PDF's text now, in the background, so the first Ask HR search does not have to wait for it.
+    if (!dto.contentText?.trim() && docType === PolicyDocType.PDF && !STORED_URL_RE.test(dto.fileUrl)) {
+      void extractPdfText(dto.fileUrl)
+        .then((text) => this.scopedPrisma.policyDocument.updateMany({ where: { id: policy.id, organizationId }, data: { contentText: text } }))
+        .catch(() => undefined);
+    }
 
     if (previousVersion) {
       await this.scopedPrisma.policyDocument.updateMany({
@@ -452,6 +464,8 @@ export class DocumentsService {
         ...(dto.visibleEmployees !== undefined && {
           visibleEmployees: dto.visibleEmployees,
         }),
+        // Typed text replaces whatever was read from the file; clearing it (null) makes Ask HR read the PDF again.
+        ...(dto.contentText !== undefined && { contentText: dto.contentText.trim() ? dto.contentText.trim() : null }),
         ...(dto.isPublished !== undefined && { isPublished: dto.isPublished }),
         ...(dto.requiresAcknowledgment !== undefined && {
           requiresAcknowledgment: dto.requiresAcknowledgment,

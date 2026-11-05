@@ -1,4 +1,4 @@
-import { detectIntents, periodLabel, suggestionsFor, searchPolicies, splitIntoSections, tokenize } from './ask-hr-logic';
+import { detectIntents, expandQuestion, periodLabel, suggestionsFor, searchPolicies, splitIntoSections, tokenize } from './ask-hr-logic';
 
 describe('ask-hr-logic', () => {
   it('drops filler words and trims plurals', () => {
@@ -33,5 +33,17 @@ describe('ask-hr-logic', () => {
     const off = suggestionsFor({ leave: false, payroll: false, letters: false });
     expect(off).not.toContain('What is my salary?');
     expect(off).not.toContain('How many leaves do I have left?');
+  });
+
+  it('finds a policy by another wording of the same thing', () => {
+    const wfh = [{ id: 'p', title: 'Policy', contentText: '4. Flexible Work\nStaff may work from home two days a week with manager approval.' }];
+    expect(searchPolicies('what is the WFH policy', wfh)[0]?.snippet).toContain('work from home');
+    const mat = [{ id: 'p', title: 'Policy', contentText: '7. Parental Leave\nParental leave of 26 weeks is given to new mothers.' }];
+    expect(searchPolicies('maternity benefits', mat)[0]?.heading).toBe('7. Parental Leave');
+    expect(searchPolicies('can I resign', [{ id: 'p', title: 'P', contentText: '2. Separation\nSubmit a resignation letter to HR.' }])).toHaveLength(1);
+  });
+
+  it('keeps unrelated words as their own ideas', () => {
+    expect(expandQuestion('wfh on fridays')).toEqual([expect.arrayContaining(['work from home']), ['friday']]);
   });
 });

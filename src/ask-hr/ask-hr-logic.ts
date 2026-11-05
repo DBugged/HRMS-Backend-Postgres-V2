@@ -39,6 +39,57 @@ export function detectIntents(question: string): AskIntent[] {
   return out;
 }
 
+
+/**
+ * Words and phrases that mean the same thing in a policy, so asking one finds the other ("wfh" finds "work from home",
+ * "maternity" finds "parental leave"). Lower-case; a policy word is matched anywhere inside the text, so "resign" also finds
+ * "resignation". Add a group here when a company's own wording keeps being missed.
+ */
+export const SYNONYM_GROUPS: string[][] = [
+  ['wfh', 'work from home', 'work-from-home', 'remote work', 'work remotely', 'remote', 'telework', 'hybrid'],
+  ['maternity', 'parental', 'pregnancy', 'childbirth', 'maternal', 'mat leave'],
+  ['paternity', 'parental', 'newborn'],
+  ['notice', 'resign', 'last working day', 'exit', 'separation', 'relieving'],
+  ['salary', 'pay', 'wage', 'compensation', 'ctc', 'remuneration'],
+  ['sick', 'medical', 'illness', 'unwell', 'health'],
+  ['casual leave', 'cl', 'casual'],
+  ['earned leave', 'privilege leave', 'el', 'pl', 'earned', 'privilege'],
+  ['probation', 'probationary', 'confirmation', 'trainee'],
+  ['dress code', 'dress', 'attire', 'uniform', 'clothing'],
+  ['bonus', 'incentive', 'variable pay', 'performance pay'],
+  ['harassment', 'posh', 'misconduct', 'grievance', 'complaint'],
+  ['overtime', 'extra hours', 'extra work', 'ot'],
+  ['carry forward', 'carryforward', 'carry over', 'carried', 'lapse', 'encash'],
+  ['holiday', 'festival', 'public holiday', 'day off'],
+  ['hike', 'increment', 'appraisal', 'salary revision', 'raise'],
+  ['gratuity', 'end of service', 'retirement benefit'],
+  ['pf', 'provident fund', 'epf'],
+  ['esi', 'esic', 'insurance', 'mediclaim'],
+  ['attendance', 'punch', 'check in', 'check-in', 'clock in', 'late mark', 'late coming'],
+  ['laptop', 'asset', 'equipment', 'device'],
+  ['reimbursement', 'reimburse', 'expense', 'claim', 'travel allowance'],
+  ['resign', 'resignation', 'quit', 'leaving the company'],
+];
+
+/**
+ * The question as a list of "slots": each is one idea with every wording that counts as a match. A plain word is its own slot;
+ * a word or phrase from a synonym group becomes a slot holding the whole group.
+ */
+export function expandQuestion(question: string): string[][] {
+  let rest = ` ${question.toLowerCase()} `;
+  const slots: string[][] = [];
+  const aliases = SYNONYM_GROUPS.flatMap((g) => g.map((a) => ({ a, g }))).sort((x, y) => y.a.length - x.a.length);
+  for (const { a, g } of aliases) {
+    const re = new RegExp(`(?<![a-z0-9])${a.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}(?![a-z0-9])`);
+    if (re.test(rest)) {
+      rest = rest.replace(re, ' ');
+      if (!slots.some((s) => s === g)) slots.push(g);
+    }
+  }
+  for (const t of tokenize(rest)) slots.push([t]);
+  return slots;
+}
+
 export interface PolicySection {
   heading: string;
   body: string;
@@ -78,30 +129,44 @@ export interface PolicyHit {
 }
 
 /** Scores each section by distinct question words it contains (heading hits count double); best first, weak ones dropped. */
+// Sections of each policy are cut once and kept (keyed by policy and its text), so a search is a scan of ready lists and not a
+// re-split of every document. Bounded so a big library cannot grow it without limit.
+const SECTION_CACHE = new Map<string, Array<PolicySection & { lowerBody: string }>>();
+const SECTION_CACHE_MAX = 300;
+function preparedSections(key: string, text: string) {
+  const hit = SECTION_CACHE.get(key);
+  if (hit) return hit;
+  const prepared = splitIntoSections(text).map((s) => ({ ...s, lowerBody: s.body.toLowerCase() }));
+  if (SECTION_CACHE.size >= SECTION_CACHE_MAX) SECTION_CACHE.delete(SECTION_CACHE.keys().next().value as string);
+  SECTION_CACHE.set(key, prepared);
+  return prepared;
+}
+
 export function searchPolicies(
   question: string,
-  policies: Array<{ id: string; title: string; contentText: string | null }>,
+  policies: Array<{ id: string; title: string; contentText: string | null; updatedAt?: Date }>,
   limit = 4,
 ): PolicyHit[] {
-  const terms = tokenize(question);
-  if (!terms.length) return [];
+  const slots = expandQuestion(question);
+  if (!slots.length) return [];
+  const flat = Array.from(new Set(slots.flat()));
   const hits: PolicyHit[] = [];
   for (const p of policies) {
     if (!p.contentText) continue;
-    for (const s of splitIntoSections(p.contentText)) {
+    for (const s of preparedSections(`${p.id}:${p.updatedAt?.getTime() ?? 0}:${p.contentText.length}`, p.contentText)) {
       const head = `${p.title} ${s.heading}`.toLowerCase();
-      const body = s.body.toLowerCase();
+      const body = s.lowerBody;
       let score = 0;
       let matched = 0;
-      for (const t of terms) {
-        const inBody = body.includes(t);
-        const inHead = head.includes(t);
+      for (const alts of slots) {
+        const inBody = alts.some((t) => body.includes(t));
+        const inHead = alts.some((t) => head.includes(t));
         if (inBody || inHead) matched += 1;
         score += (inBody ? 1 : 0) + (inHead ? 2 : 0);
       }
-      // Need at least half of the meaningful words (and at least one) to appear, so one stray word doesn't match.
-      if (matched < Math.max(1, Math.ceil(terms.length / 2))) continue;
-      hits.push({ policyId: p.id, title: p.title, heading: s.heading, snippet: snippetAround(s.body, terms), score: score + matched });
+      // Need at least half of the ideas in the question (and at least one) to appear, so one stray word doesn't match.
+      if (matched < Math.max(1, Math.ceil(slots.length / 2))) continue;
+      hits.push({ policyId: p.id, title: p.title, heading: s.heading, snippet: snippetAround(s.body, flat), score: score + matched });
     }
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit);

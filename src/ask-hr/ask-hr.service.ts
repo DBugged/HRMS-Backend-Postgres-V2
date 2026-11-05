@@ -6,7 +6,11 @@
 //   once on first search and stored on the policy (contentText); '' means "tried, nothing readable" (e.g. a scanned PDF).
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { Role, User } from '@prisma/client';
-import { PDFParse } from 'pdf-parse';
+import { Cron } from '@nestjs/schedule';
+import { PrismaService } from '../prisma/prisma.service';
+import { PrivacyAuditService } from '../privacy/privacy-audit.service';
+import { auditSensitive } from '../common/sensitive-audit';
+import { EXTERNAL_URL_RE, extractPdfText } from './policy-text';
 import { moduleEnabledFor } from '../module-access/module-gate';
 import { todayInOrgTz } from '../common/org-date';
 import { EMPLOYEE_VISIBLE_STATUSES } from '../payroll/payroll.service';
@@ -14,13 +18,10 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { DocumentsService } from '../documents/documents.service';
 import { LettersService } from '../letters/letters.service';
-import { readStoredFile } from '../files/file-storage.config';
 import { detectIntents, periodLabel, searchPolicies, suggestionsFor, tokenize, type AskIntent, type PolicyHit } from './ask-hr-logic';
 
 type Actor = Omit<User, 'password'>;
-const EXTERNAL_URL_RE = /^https?:\/\//i;
-const MAX_PDF_BYTES = 15 * 1024 * 1024;
-const MAX_TEXT_CHARS = 400_000;
+const KEEP_QUERIES_DAYS = 90;
 
 type Line = { name: string; amount: number };
 
@@ -40,6 +41,8 @@ export class AskHrService {
     @Inject(PRISMA_CLIENT) private readonly scopedPrisma: ExtendedPrismaClient,
     private readonly documentsService: DocumentsService,
     private readonly lettersService: LettersService,
+    private readonly prisma: PrismaService,
+    private readonly privacyAudit: PrivacyAuditService,
   ) {}
 
   async ask(question: string, actor: Actor, organizationId: string): Promise<{ question: string; cards: AskHrCard[] }> {
@@ -82,6 +85,11 @@ export class AskHrService {
     }
     const policy = await this.policyCard(q, actor, organizationId);
     if (policy.hits.length || !cards.length) cards.push(policy);
+    // Remember the question and whether anything was found, so HR can see what is missing (see insights()).
+    const found = cards.some((c) => (c.kind === 'policy' ? c.hits.length > 0 : true));
+    void this.prisma.askHrQuery
+      .create({ data: { organizationId, userId: actor.id, question: q.slice(0, 200), kinds: cards.map((c) => c.kind), answered: found } })
+      .catch(() => undefined);
     return { question: q, cards };
   }
 
@@ -124,6 +132,10 @@ export class AskHrService {
       take: 6,
       select: { month: true, year: true, earnings: true, deductions: true, grossSalary: true, totalDeductions: true, netPay: true, status: true, heldAt: true },
     });
+    // Reading payslip figures here is recorded in the privacy audit, same as opening a payslip on the payroll screen.
+    if (rows.length) {
+      auditSensitive(this.privacyAudit, actor, { action: 'PAYSLIP_VIEWED_VIA_ASK_HR', category: 'PAYSLIP', targetUserId: actor.id, entity: 'PayrollRun', meta: { payslips: rows.length } });
+    }
     const lines = (v: unknown): Line[] =>
       Array.isArray(v) ? v.filter((l) => l && typeof l.name === 'string' && Number(l.amount) !== 0).map((l) => ({ name: l.name, amount: round(Number(l.amount)) })) : [];
     return {
@@ -186,36 +198,55 @@ export class AskHrService {
   private async policyCard(q: string, actor: Actor, organizationId: string): Promise<Extract<AskHrCard, { kind: 'policy' }>> {
     const policies = await this.documentsService.findActivePoliciesRaw(actor, organizationId);
     const unreadable: string[] = [];
-    const withText: Array<{ id: string; title: string; contentText: string | null }> = [];
+    const withText: Array<{ id: string; title: string; contentText: string | null; updatedAt: Date }> = [];
     for (const p of policies) {
       let text = p.contentText;
       if (text === null && p.docType === 'PDF' && !EXTERNAL_URL_RE.test(p.fileUrl)) {
         text = await this.extractAndStore(p.id, p.fileUrl, organizationId);
       }
       if (!text) unreadable.push(p.title);
-      withText.push({ id: p.id, title: p.title, contentText: text });
+      withText.push({ id: p.id, title: p.title, contentText: text, updatedAt: p.updatedAt });
     }
     return { kind: 'policy', hits: searchPolicies(q, withText), unreadable };
   }
 
-  /** Reads the PDF's text once and saves it on the policy so later searches never re-read the file. */
+  /** Policies uploaded before text was read at upload time: read the PDF now and keep it. '' = nothing readable (e.g. scanned). */
   private async extractAndStore(id: string, fileUrl: string, organizationId: string): Promise<string> {
-    let text = '';
-    try {
-      const buf = await readStoredFile(fileUrl);
-      if (buf && buf.length <= MAX_PDF_BYTES) {
-        const parser = new PDFParse({ data: buf });
-        try {
-          text = (await parser.getText()).text.replace(/^-- \d+ of \d+ --$/gm, '').slice(0, MAX_TEXT_CHARS).trim();
-        } finally {
-          await parser.destroy();
-        }
-      }
-    } catch (err) {
-      this.logger.warn(`Could not read text of policy ${id}: ${err instanceof Error ? err.message : String(err)}`);
-    }
+    const text = await extractPdfText(fileUrl);
     await this.scopedPrisma.policyDocument.updateMany({ where: { id, organizationId }, data: { contentText: text } });
     return text;
+  }
+
+  /** HR/Admin view: how many questions came in over the last 30 days, how many found nothing, and the most common of each. */
+  async insights(organizationId: string) {
+    const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const rows = await this.prisma.askHrQuery.findMany({
+      where: { organizationId, createdAt: { gte: since } },
+      select: { question: true, answered: true },
+      take: 5000,
+    });
+    const tally = (answered: boolean) => {
+      const m = new Map<string, { question: string; count: number }>();
+      for (const r of rows.filter((x) => x.answered === answered)) {
+        const key = tokenize(r.question).sort().join(' ') || r.question.toLowerCase();
+        const e = m.get(key);
+        if (e) e.count += 1;
+        else m.set(key, { question: r.question, count: 1 });
+      }
+      return [...m.values()].sort((a, b) => b.count - a.count).slice(0, 15);
+    };
+    const unanswered = rows.filter((r) => !r.answered).length;
+    return { days: 30, total: rows.length, unanswered, topUnanswered: tally(false), topAsked: tally(true) };
+  }
+
+  /** Questions are kept for 90 days only. */
+  @Cron('30 3 * * *')
+  async purgeOld() {
+    try {
+      await this.prisma.askHrQuery.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - KEEP_QUERIES_DAYS * 24 * 3600 * 1000) } } });
+    } catch (err) {
+      this.logger.warn(`Ask HR purge failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 }
 

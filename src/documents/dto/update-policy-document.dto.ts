@@ -1,10 +1,16 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, IsDateString } from 'class-validator';
+import { IsArray, IsBoolean, IsEnum, IsOptional, IsString, IsUUID, IsDateString, MaxLength } from 'class-validator';
 import { PolicyVisibility } from '@prisma/client';
 
 // Metadata-only edit — never touches the file itself. Also used for the
 // publish/unpublish toggle ({ isPublished }).
 export class UpdatePolicyDocumentDto {
+  @ApiPropertyOptional({ description: 'Text for Ask HR to search. Empty clears it; a stored PDF is then read again on the next search.' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200000)
+  contentText?: string;
+
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
