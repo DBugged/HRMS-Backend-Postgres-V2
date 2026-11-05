@@ -3,10 +3,12 @@ import { LetterDataProfile } from '@prisma/client';
 import {
   IsBoolean,
   IsEnum,
+  IsIn,
   IsOptional,
   IsString,
   MinLength,
 } from 'class-validator';
+import { LETTER_STAGES } from '../../letters/letter-stages';
 
 export class CreateLetterTemplateDto {
   @ApiProperty({ example: 'Internship Completion Certificate' })
@@ -36,4 +38,11 @@ export class CreateLetterTemplateDto {
   @IsOptional()
   @IsEnum(LetterDataProfile)
   dataProfile?: LetterDataProfile;
+
+  // The stage of the employee's journey this letter belongs to (shown under that heading on the Letters tab). null / omitted = not part
+  // of the flow (listed under "Other letters"). Only a custom template takes it; a built-in one's stage is fixed.
+  @ApiPropertyOptional({ enum: LETTER_STAGES, nullable: true })
+  @IsOptional()
+  @IsIn(LETTER_STAGES as unknown as string[])
+  journeyStage?: (typeof LETTER_STAGES)[number] | null;
 }

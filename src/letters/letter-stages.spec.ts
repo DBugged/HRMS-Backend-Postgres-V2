@@ -3,6 +3,7 @@ import {
   currentLetterStage,
   letterFlowOrder,
   letterFlowStatus,
+  stageOfTemplate,
   stageOfLetterKey,
   type IssuedLetter,
 } from './letter-stages';
@@ -150,5 +151,32 @@ describe('letter stages', () => {
       'experienceCertificate',
       'custom',
     ]);
+  });
+
+  it('a custom template goes where its admin put it; unset or unknown means Other; a built-in one ignores the setting', () => {
+    expect(
+      stageOfTemplate({
+        key: 'bonusLetter',
+        isCustom: true,
+        journeyStage: 'EMPLOYMENT',
+      }),
+    ).toBe('EMPLOYMENT');
+    expect(
+      stageOfTemplate({ key: 'x', isCustom: true, journeyStage: 'EXIT' }),
+    ).toBe('EXIT');
+    expect(
+      stageOfTemplate({ key: 'x', isCustom: true, journeyStage: null }),
+    ).toBe('OTHER');
+    expect(stageOfTemplate({ key: 'x', isCustom: true })).toBe('OTHER');
+    expect(
+      stageOfTemplate({ key: 'x', isCustom: true, journeyStage: 'NONSENSE' }),
+    ).toBe('OTHER');
+    expect(
+      stageOfTemplate({
+        key: 'offerLetter',
+        isCustom: false,
+        journeyStage: 'EXIT',
+      }),
+    ).toBe('HIRING');
   });
 });

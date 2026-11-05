@@ -84,7 +84,7 @@ import {
   currentLetterStage,
   letterFlowOrder,
   letterFlowStatus,
-  stageOfLetterKey,
+  stageOfTemplate,
   type IssuedLetter,
   type LetterFlowStatus,
   type LetterStage,
@@ -368,7 +368,9 @@ export class LettersService {
 
     const nowStage = currentLetterStage(employee);
     // Offer before appointment, relieving before experience: the order the letters come up in (custom templates last).
-    const inFlowOrder = [...activeTemplates].sort((a, b) => letterFlowOrder(a.key) - letterFlowOrder(b.key));
+    const inFlowOrder = [...activeTemplates].sort(
+      (a, b) => letterFlowOrder(a.key) - letterFlowOrder(b.key),
+    );
     return inFlowOrder.map((t) => {
       const gate = UNLOCK_BY_PROFILE[t.dataProfile];
       const restricted = RESTRICTED_LETTER_KEYS.has(t.key);
@@ -392,8 +394,8 @@ export class LettersService {
         key: t.key,
         name: t.name,
         dataProfile: t.dataProfile,
-        stage: stageOfLetterKey(t.key),
-        inCurrentStage: stageOfLetterKey(t.key) === nowStage,
+        stage: stageOfTemplate(t),
+        inCurrentStage: stageOfTemplate(t) === nowStage,
         unlocked:
           gate.unlocked &&
           !employeeGateBlocked &&

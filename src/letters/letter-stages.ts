@@ -71,6 +71,23 @@ const ORDER_OF_KEY = new Map<string, number>(
 export const letterFlowOrder = (key: string): number =>
   ORDER_OF_KEY.get(key) ?? Number.MAX_SAFE_INTEGER;
 
+/**
+ * The stage a template is listed under: a built-in letter's is fixed; a custom template uses the stage its admin chose (or OTHER when it
+ * was left out of the flow).
+ */
+export function stageOfTemplate(t: {
+  key: string;
+  isCustom: boolean;
+  journeyStage?: string | null;
+}): LetterStage {
+  if (t.isCustom) {
+    return (LETTER_STAGES as readonly string[]).includes(t.journeyStage ?? '')
+      ? (t.journeyStage as KnownLetterStage)
+      : 'OTHER';
+  }
+  return stageOfLetterKey(t.key);
+}
+
 export const stageOfLetterKey = (key: string): LetterStage =>
   STAGE_OF_KEY.get(key) ?? 'OTHER';
 

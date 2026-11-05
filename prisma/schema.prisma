@@ -880,6 +880,9 @@ model LetterTemplate {
   bodyText String @db.Text
 
   isActive Boolean @default(true)
+  // The stage of the employee's journey a CUSTOM template belongs to (HIRING | PROBATION | EMPLOYMENT | DISCIPLINARY | EXIT); null = not part of the
+  // flow. Built-in templates ignore it - their stage is fixed in letters/letter-stages.ts.
+  journeyStage String?
   // False only for the 7 seeded built-in keys — can't be deleted (Document
   // Numbering and this app's own onboarding/exit flows point at those
   // exact keys), only disabled/re-edited. A custom template can be
