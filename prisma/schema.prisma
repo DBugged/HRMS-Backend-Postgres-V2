@@ -3276,6 +3276,9 @@ model PolicyDocument {
   fileUrl  String
   fileName String
 
+  // Text read from the PDF the first time Ask HR searches it (null = not read yet, '' = nothing readable, e.g. a scanned PDF).
+  contentText String?
+
   isPublished Boolean @default(true)
 
   // Only documents HR flags (compliance policies — Code of Conduct, POSH, IT
