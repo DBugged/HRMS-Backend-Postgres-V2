@@ -23,7 +23,7 @@ const SEGMENTS: Record<string, string[]> = {
   'module.loans_reimbursements': ['loans', 'reimbursements'],
   'module.assets': ['assets'],
   'module.performance': ['performance-ratings', 'company-performance'],
-  'module.documents_letters': ['documents', 'letter-templates'],
+  'module.documents_letters': ['documents', 'letter-templates', 'letters'],
   'module.offboarding': ['offboarding', 'resignations', 'settlements'],
   'module.reports': ['reports'],
   'module.policy_assistant': ['policy-assistant'],

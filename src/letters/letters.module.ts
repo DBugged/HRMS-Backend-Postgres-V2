@@ -1,5 +1,8 @@
 import { Module } from '@nestjs/common';
-import { LettersController } from './letters.controller';
+import {
+  LettersController,
+  LettersOverviewController,
+} from './letters.controller';
 import { LettersService } from './letters.service';
 import { LetterPdfService } from './letter-pdf.service';
 import { AuditLogModule } from '../audit-log/audit-log.module';
@@ -19,7 +22,7 @@ import { CompanyBrandsModule } from '../company-brands/company-brands.module';
     EmailTemplatesModule,
     CompanyBrandsModule,
   ],
-  controllers: [LettersController],
+  controllers: [LettersController, LettersOverviewController],
   providers: [LettersService, LetterPdfService],
   // Exported so completing an exit can email the relieving / experience letters.
   exports: [LettersService],

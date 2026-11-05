@@ -38,6 +38,21 @@ import { EXPENSIVE_OP_THROTTLE_LIMIT } from '../common/throttle.constants';
 
 type Caller = Omit<User, 'password'>;
 
+// The directory's Letters column: where every employee is in their letters (Admin / HR).
+@ApiTags('letters')
+@ApiBearerAuth('access-token')
+@Controller('letters')
+export class LettersOverviewController {
+  constructor(private readonly lettersService: LettersService) {}
+
+  @Get('overview')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  overview(@CurrentUser() caller: Caller) {
+    return this.lettersService.overview(caller.organizationId);
+  }
+}
+
 @ApiTags('letters')
 @ApiBearerAuth('access-token')
 @Controller('employees/:id/letters')

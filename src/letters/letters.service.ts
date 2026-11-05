@@ -80,6 +80,16 @@ function hiringLetterBlocked(
   );
 }
 
+import {
+  currentLetterStage,
+  letterFlowOrder,
+  letterFlowStatus,
+  stageOfLetterKey,
+  type IssuedLetter,
+  type LetterFlowStatus,
+  type LetterStage,
+} from './letter-stages';
+
 type Actor = Omit<User, 'password'>;
 
 // Letters about a particular event in someone's employment. On the employee's own My Letters they are offered only
@@ -205,6 +215,48 @@ export class LettersService {
   // exact same existence checks generate() already throws 400 on, just
   // turned into a boolean instead of an exception so the UI can show
   // locked ones greyed out rather than surfacing a failed download.
+  // One line per employee for the directory's Letters column: the stage they are in and which letter is due or was issued last.
+  // Admin / HR only (the controller enforces it). Built from what was issued (the audit trail of generated / emailed letters).
+  async overview(
+    organizationId: string,
+  ): Promise<Record<string, LetterFlowStatus>> {
+    const [people, issuedRows] = await Promise.all([
+      this.scopedPrisma.user.findMany({
+        where: { organizationId },
+        select: { id: true, employmentStatus: true, isActive: true },
+      }),
+      this.scopedPrisma.auditLog.findMany({
+        where: {
+          organizationId,
+          module: AuditModule.DOCUMENT,
+          action: { in: ['LETTER_ISSUED', 'LETTER_EMAILED'] },
+        },
+        select: { targetId: true, details: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 50_000,
+      }),
+    ]);
+    const byPerson = new Map<string, Map<string, IssuedLetter>>();
+    for (const r of issuedRows) {
+      const d = r.details as { key?: string; templateName?: string } | null;
+      if (!r.targetId || !d?.key) continue;
+      const m = byPerson.get(r.targetId) ?? new Map<string, IssuedLetter>();
+      // Newest first, so the first one seen for a key is its latest issue.
+      if (!m.has(d.key))
+        m.set(d.key, { name: d.templateName || d.key, at: r.createdAt });
+      byPerson.set(r.targetId, m);
+    }
+    return Object.fromEntries(
+      people.map((p) => [
+        p.id,
+        letterFlowStatus(
+          p,
+          byPerson.get(p.id) ?? new Map<string, IssuedLetter>(),
+        ),
+      ]),
+    );
+  }
+
   async listForEmployee(
     employeeId: string,
     actor: Actor,
@@ -223,6 +275,9 @@ export class LettersService {
       // `unlocked` already folds the grant in).
       restricted?: boolean;
       accessEnabled?: boolean;
+      // Where the letter sits in the employee's journey (hiring, probation, ...), and whether that is the stage they are in now.
+      stage: LetterStage;
+      inCurrentStage: boolean;
     }>
   > {
     const employee = await this.scopedPrisma.user.findFirst({
@@ -244,7 +299,12 @@ export class LettersService {
       employeeId !== actor.id &&
       actor.role !== Role.ADMIN &&
       actor.role !== Role.EMPLOYEE &&
-      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employeeId))
+      !(await inReviewerScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        employeeId,
+      ))
     ) {
       throw new ForbiddenException('Not authorized to view this employee.');
     }
@@ -306,7 +366,10 @@ export class LettersService {
       },
     };
 
-    return activeTemplates.map((t) => {
+    const nowStage = currentLetterStage(employee);
+    // Offer before appointment, relieving before experience: the order the letters come up in (custom templates last).
+    const inFlowOrder = [...activeTemplates].sort((a, b) => letterFlowOrder(a.key) - letterFlowOrder(b.key));
+    return inFlowOrder.map((t) => {
       const gate = UNLOCK_BY_PROFILE[t.dataProfile];
       const restricted = RESTRICTED_LETTER_KEYS.has(t.key);
       // No EmployeeLetterAccess row yet: a restricted (disciplinary) key
@@ -329,17 +392,22 @@ export class LettersService {
         key: t.key,
         name: t.name,
         dataProfile: t.dataProfile,
+        stage: stageOfLetterKey(t.key),
+        inCurrentStage: stageOfLetterKey(t.key) === nowStage,
         unlocked:
-          gate.unlocked && !employeeGateBlocked && !leavingBlocked && !eventBlocked,
+          gate.unlocked &&
+          !employeeGateBlocked &&
+          !leavingBlocked &&
+          !eventBlocked,
         reason: leavingBlocked
           ? HIRING_LETTER_BLOCKED_REASON
           : eventBlocked
             ? EVENT_LETTER_REASON[t.key]
             : employeeGateBlocked
-            ? 'Not yet made available to you — contact HR.'
-            : gate.unlocked
-              ? null
-              : gate.reason,
+              ? 'Not yet made available to you — contact HR.'
+              : gate.unlocked
+                ? null
+                : gate.reason,
         // Present for every key (not just restricted ones) so a
         // privileged caller's UI can render the "Visible to employee"
         // toggle everywhere, not only on the 3 disciplinary keys.
@@ -404,7 +472,12 @@ export class LettersService {
       employeeId !== actor.id &&
       actor.role !== Role.ADMIN &&
       actor.role !== Role.EMPLOYEE &&
-      !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
+      !(await inReviewerScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        employee.id,
+      ))
     ) {
       throw new ForbiddenException('Not authorized to view this employee.');
     }
@@ -418,9 +491,9 @@ export class LettersService {
     if (
       EVENT_LETTER_REASON[key] &&
       this.isEventGated(actor, employeeId) &&
-      (await this.eventLettersMissing(employeeId, organizationId, employee)).has(
-        key,
-      )
+      (
+        await this.eventLettersMissing(employeeId, organizationId, employee)
+      ).has(key)
     ) {
       throw new BadRequestException(EVENT_LETTER_REASON[key]);
     }
@@ -463,8 +536,12 @@ export class LettersService {
     });
     if (!organization) throw new NotFoundException('Organization not found.');
     // A sister company's letter carries its brand's name, address and logo; no brand keeps the organization's own exactly.
-    const branding = employee.brandId ? await this.brandingLookup.forBrand(organizationId, employee.brandId) : null;
-    const companyName = branding?.brandId ? branding.companyName : organization.companyName || 'the Company';
+    const branding = employee.brandId
+      ? await this.brandingLookup.forBrand(organizationId, employee.brandId)
+      : null;
+    const companyName = branding?.brandId
+      ? branding.companyName
+      : organization.companyName || 'the Company';
     const policies = (organization.policies ?? {}) as {
       currencySymbol?: string;
     };
@@ -495,9 +572,14 @@ export class LettersService {
       employeeType: employee.employeeType,
       joiningDate: formatDateDisplay(employee.joiningDate),
       // The date the employee was confirmed from ('—' until they are confirmed).
-      confirmationDate: employee.confirmationDate ? formatDateDisplay(employee.confirmationDate) : '—',
+      confirmationDate: employee.confirmationDate
+        ? formatDateDisplay(employee.confirmationDate)
+        : '—',
       companyName,
-      companyAddress: (branding?.brandId ? branding.address : organization.registeredAddress) || '',
+      companyAddress:
+        (branding?.brandId
+          ? branding.address
+          : organization.registeredAddress) || '',
       // Organization Settings > Registration Details ('—' when not filled in).
       companyGstin: organization.gstin?.trim() || '—',
       companyPan: organization.pan?.trim() || '—',
@@ -944,7 +1026,11 @@ export class LettersService {
       letterFooterBuffer,
     ] = await Promise.all([
       (branding?.brandId ? branding.logoUrl : organization.companyLogoUrl)
-        ? readStoredFile((branding?.brandId ? branding.logoUrl : organization.companyLogoUrl) as string).catch(() => null)
+        ? readStoredFile(
+            (branding?.brandId
+              ? branding.logoUrl
+              : organization.companyLogoUrl) as string,
+          ).catch(() => null)
         : Promise.resolve(null),
       primarySignatory?.signatureUrl
         ? readStoredFile(primarySignatory.signatureUrl).catch(() => null)
@@ -963,7 +1049,10 @@ export class LettersService {
       documentNumber,
       issueDate: new Date(),
       companyName,
-      companyAddress: (branding?.brandId ? branding.address : organization.registeredAddress) || '',
+      companyAddress:
+        (branding?.brandId
+          ? branding.address
+          : organization.registeredAddress) || '',
       companyLogoBuffer,
       addressedToEmployee: template.addressedToEmployee,
       employeeName: employee.name,
@@ -1028,16 +1117,26 @@ export class LettersService {
 
     const employee = await this.scopedPrisma.user.findFirst({
       where: { id: employeeId, organizationId },
-      select: { name: true, email: true, isActive: true, exitDate: true, personalData: true, brandId: true },
+      select: {
+        name: true,
+        email: true,
+        isActive: true,
+        exitDate: true,
+        personalData: true,
+        brandId: true,
+      },
     });
     if (!employee) throw new NotFoundException('Employee not found.');
     // Someone who has left (or is leaving) loses the company mailbox, so their letters - relieving, experience - go to the
     // personal address on file when there is one.
     const leaving = !employee.isActive || !!employee.exitDate;
-    let recipient = (leaving ? personalEmailOf(employee.personalData) : null) ?? employee.email;
+    let recipient =
+      (leaving ? personalEmailOf(employee.personalData) : null) ??
+      employee.email;
     // Someone with no email has only an undeliverable placeholder address: use a personal address if one was ever added, else
     // refuse - the letter is never "sent" to nowhere. HR downloads it and hands it over.
-    if (isPlaceholderEmail(recipient)) recipient = personalEmailOf(employee.personalData) ?? '';
+    if (isPlaceholderEmail(recipient))
+      recipient = personalEmailOf(employee.personalData) ?? '';
     if (!recipient) {
       throw new BadRequestException(
         `${employee.name} has no email address, so this letter cannot be emailed. Download it and hand it over.`,
@@ -1057,8 +1156,12 @@ export class LettersService {
       where: { id: organizationId },
       select: { companyName: true, registeredAddress: true },
     });
-    const sisterBrand = employee.brandId ? await this.brandingLookup.forBrand(organizationId, employee.brandId) : null;
-    const companyName = sisterBrand?.brandId ? sisterBrand.companyName : organization?.companyName || 'the Company';
+    const sisterBrand = employee.brandId
+      ? await this.brandingLookup.forBrand(organizationId, employee.brandId)
+      : null;
+    const companyName = sisterBrand?.brandId
+      ? sisterBrand.companyName
+      : organization?.companyName || 'the Company';
 
     const rendered = await this.emailTemplatesService.renderOccasion(
       organizationId,
