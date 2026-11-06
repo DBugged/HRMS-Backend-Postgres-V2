@@ -1,6 +1,7 @@
 import { LeaveStatus } from '@prisma/client';
 import {
   leaveTaken,
+  leaveCancelAfterApprovalDaysOf,
   leaveCancelWindowDaysOf,
   ownerCancelOptions,
   ownerCanCancel,
@@ -67,5 +68,19 @@ describe('adminCanCancelOthers', () => {
     expect(adminCanCancelOthers(leave(LS.APPROVED, '2026-10-20'), '2026-11-02')).toBe(false);
     expect(adminCanCancelOthers(leave(LS.CANCELLED, '2026-11-10'), '2026-11-02')).toBe(false);
     expect(adminCanCancelOthers(leave(LS.REJECTED, '2026-11-10'), '2026-11-02')).toBe(false);
+  });
+
+  it('limits the direct cancel to N days after approval when the company sets it', () => {
+    const l = { ...approved, approvedOn: '2026-11-01' };
+    expect(leaveCancelAfterApprovalDaysOf(undefined)).toBeNull();
+    expect(leaveCancelAfterApprovalDaysOf('')).toBeNull();
+    expect(leaveCancelAfterApprovalDaysOf(2)).toBe(2);
+    expect(leaveCancelAfterApprovalDaysOf(-1)).toBeNull();
+    expect(ownerCanCancel(l, '2026-11-03', 0, 2)).toBe(true); // approved 1 Nov, 2 days allowed: 3 Nov is the last day
+    expect(ownerCanCancel(l, '2026-11-04', 0, 2)).toBe(false); // too late, even though the leave has not started
+    expect(ownerCanCancel(l, '2026-11-04', 0, null)).toBe(true); // no limit set
+    expect(ownerCanCancel({ ...approved, approvedOn: null }, '2026-11-09', 0, 0)).toBe(true); // approval day unknown
+    // Past the approval window but before it starts: no direct cancel, so a cancellation request is offered instead.
+    expect(ownerCancelOptions(l, '2026-11-05', 0, false, 2)).toEqual({ canCancel: false, canRequestCancel: true });
   });
 });

@@ -222,6 +222,13 @@ function validatePolicies(p: Record<string, unknown>) {
     integer: true,
     allowEmpty: true,
   });
+  // Days after a leave is approved that the employee can still cancel it themselves (blank = no limit from approval).
+  checkNumber(p, 'leaveCancelAfterApprovalDays', 'policies.leaveCancelAfterApprovalDays', {
+    min: 0,
+    max: 365,
+    integer: true,
+    allowEmpty: true,
+  });
   const ALLOWED_DATE_FORMATS = ['DD-MM-YYYY', 'MM-DD-YYYY', 'YYYY-MM-DD'];
   if (
     typeof p.dateFormat === 'string' &&

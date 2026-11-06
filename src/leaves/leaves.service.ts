@@ -99,8 +99,9 @@ import {
   resolveOrgDateTimeFormat,
   dmyText,
 } from '../payroll/format-date';
-import { todayInOrgTz } from '../common/org-date';
+import { dateStrInOrgTz, todayInOrgTz } from '../common/org-date';
 import {
+  leaveCancelAfterApprovalDaysOf,
   leaveCancelWindowDaysOf,
   ownerCancelOptions,
   adminCanCancelOthers,
@@ -135,6 +136,17 @@ const CREDIT_HISTORY_ACTIONS = [
 const APPROVE_ROLES: Role[] = [Role.ADMIN, Role.HR, Role.MANAGER];
 // The original release's LEAVE_CONFIG_ROLES — HR override for cancellation.
 const CANCEL_OVERRIDE_ROLES: Role[] = [Role.ADMIN, Role.HR];
+
+// The company's two limits on an employee cancelling their own approved leave directly (Policies).
+const cancelPolicyOf = (policies: unknown) => {
+  const p = (policies ?? {}) as { leaveCancelWindowDays?: unknown; leaveCancelAfterApprovalDays?: unknown };
+  return {
+    windowDays: leaveCancelWindowDaysOf(p.leaveCancelWindowDays),
+    afterApprovalDays: leaveCancelAfterApprovalDaysOf(p.leaveCancelAfterApprovalDays),
+  };
+};
+const approvedOnOf = (leave: { reviewedAt?: Date | null }, tz: string): string | null =>
+  leave.reviewedAt ? dateStrInOrgTz(tz, leave.reviewedAt) : null;
 
 function deriveLeaveYear(startDate: string, cfg: LeaveYearConfig): number {
   return leaveYearOf(startDate, cfg);
@@ -526,11 +538,9 @@ export class LeavesService {
       where: { id: organizationId },
       select: { timezone: true, policies: true },
     });
-    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
-    const windowDays = leaveCancelWindowDaysOf(
-      (org?.policies as { leaveCancelWindowDays?: unknown } | null)
-        ?.leaveCancelWindowDays,
-    );
+    const tz = org?.timezone ?? 'Asia/Kolkata';
+    const today = todayInOrgTz(tz);
+    const { windowDays, afterApprovalDays } = cancelPolicyOf(org?.policies);
 
     return paginate(
       async () =>
@@ -555,10 +565,10 @@ export class LeavesService {
         ).map((l) => ({
           ...l,
           ...(l.employeeId === actor.id
-            ? ownerCancelOptions(l, today, windowDays, CANCEL_OVERRIDE_ROLES.includes(actor.role))
+            ? ownerCancelOptions({ ...l, approvedOn: approvedOnOf(l, tz) }, today, windowDays, actor.role === Role.ADMIN, afterApprovalDays)
             : {
                 // An Admin / HR can cancel a colleague's leave that has not started yet, even when it is approved.
-                canCancel: CANCEL_OVERRIDE_ROLES.includes(actor.role) && adminCanCancelOthers(l, today),
+                canCancel: (CANCEL_OVERRIDE_ROLES.includes(actor.role) || actor.role === Role.MANAGER) && adminCanCancelOthers(l, today),
                 canRequestCancel: false,
               }),
         })),
@@ -1394,10 +1404,20 @@ export class LeavesService {
     const leave = await this.findByIdOrThrow(id, organizationId);
     const isSelf = leave.employeeId === actor.id;
     const isOverride = CANCEL_OVERRIDE_ROLES.includes(actor.role);
-    if (!isSelf && !isOverride) {
+    if (!isSelf && !isOverride && actor.role !== Role.MANAGER) {
       throw new ForbiddenException(
         "You cannot cancel another employee's leave request.",
       );
+    }
+    // A manager cancels a reportee's leave (their own team, or one they cover as a delegate), and only before it has started.
+    if (!isSelf && !isOverride && actor.role === Role.MANAGER) {
+      await assertManagerScopeOrDelegate(this.scopedPrisma, this.delegationService, actor, organizationId, leave.employeeId);
+      const org = await this.scopedPrisma.organization.findFirst({ where: { id: organizationId }, select: { timezone: true } });
+      if (!adminCanCancelOthers(leave, todayInOrgTz(org?.timezone ?? 'Asia/Kolkata'))) {
+        throw new BadRequestException(
+          'A manager can cancel a team member\'s leave only before it starts. After that, the employee sends a cancellation request.',
+        );
+      }
     }
     const cancellableStatuses: LeaveStatus[] = [
       LeaveStatus.PENDING,
@@ -1411,20 +1431,19 @@ export class LeavesService {
     }
 
     // The owner cancels an approved leave directly only until it starts (plus the company's grace days); after that
-    // they send a cancellation request instead. HR/Admin can cancel at any time.
-    if (isSelf && !isOverride && leave.status === LeaveStatus.APPROVED) {
+    // they send a cancellation request instead; the company can also limit it to N days after approval. Only an Admin
+    // cancels their own leave at any time (HR follows the same rules as everyone else for their own leave).
+    if (isSelf && actor.role !== Role.ADMIN && leave.status === LeaveStatus.APPROVED) {
       const org = await this.scopedPrisma.organization.findFirst({
         where: { id: organizationId },
         select: { timezone: true, policies: true },
       });
-      const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
-      const windowDays = leaveCancelWindowDaysOf(
-        (org?.policies as { leaveCancelWindowDays?: unknown } | null)
-          ?.leaveCancelWindowDays,
-      );
-      if (!ownerCanCancel(leave, today, windowDays)) {
+      const tz = org?.timezone ?? 'Asia/Kolkata';
+      const today = todayInOrgTz(tz);
+      const { windowDays, afterApprovalDays } = cancelPolicyOf(org?.policies);
+      if (!ownerCanCancel({ ...leave, approvedOn: approvedOnOf(leave, tz) }, today, windowDays, afterApprovalDays)) {
         throw new BadRequestException(
-          'This leave has already started, so it can no longer be cancelled directly. Send a cancellation request to your manager or HR instead.',
+          'This leave can no longer be cancelled directly: it has started, or the days allowed after approval have passed. Send a cancellation request to your manager or HR instead.',
         );
       }
     }
@@ -2556,18 +2575,16 @@ export class LeavesService {
       where: { id: organizationId },
       select: { timezone: true, policies: true },
     });
-    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
-    const windowDays = leaveCancelWindowDaysOf(
-      (org?.policies as { leaveCancelWindowDays?: unknown } | null)
-        ?.leaveCancelWindowDays,
-    );
-    // An Admin / HR cancels their own leave directly: a request would wait for an approver who is not there.
-    if (CANCEL_OVERRIDE_ROLES.includes(actor.role)) {
+    const tz = org?.timezone ?? 'Asia/Kolkata';
+    const today = todayInOrgTz(tz);
+    const { windowDays, afterApprovalDays } = cancelPolicyOf(org?.policies);
+    // An Admin cancels their own leave directly: a request would wait for an approver who is not there.
+    if (actor.role === Role.ADMIN) {
       return this.performCancel(id, leave, actor, organizationId, false);
     }
-    if (ownerCanCancel(leave, today, windowDays)) {
+    if (ownerCanCancel({ ...leave, approvedOn: approvedOnOf(leave, tz) }, today, windowDays, afterApprovalDays)) {
       throw new BadRequestException(
-        'This leave has not started yet - cancel it directly instead of sending a request.',
+        'You can still cancel this leave directly - no request is needed.',
       );
     }
     if (leaveTaken(leave, today)) {
