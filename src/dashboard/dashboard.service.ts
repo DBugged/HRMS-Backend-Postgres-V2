@@ -28,6 +28,9 @@ import {
   AllocationType,
   AttendanceStatus,
   CompOffStatus,
+  EmployeeDocumentCategory,
+  EmployeeDocumentStatus,
+  EmploymentStatus,
   LeaveStatus,
   LoanStatus,
   OffboardingStatus,
@@ -550,7 +553,18 @@ export class DashboardService {
       };
     }
 
+    const extras = await this.hrOverviewExtras({
+      organizationId,
+      today,
+      off,
+      onBooksToday,
+      totalEmployees,
+      payrollMonth: { month: currentMonth, year: currentYear },
+      statutoryOn,
+    });
+
     return {
+      ...extras,
       totalEmployees,
       attendanceSummary: {
         presentToday,
@@ -1685,8 +1699,296 @@ export class DashboardService {
     };
   }
 
-  async executiveDashboard(organizationId: string) {
-    const WINDOW_DAYS = 30;
+  // What the HR Overview adds beyond the original snapshot: the workforce strip, today's late / WFH counts, the extra
+  // pending chips (probation confirmations, documents to verify), a one-card payroll overview, the next week's
+  // events, and the alert rows (shown only when non-zero). Every number is a count over data that already exists.
+  private async hrOverviewExtras(args: {
+    organizationId: string;
+    today: string;
+    off: Set<string>;
+    onBooksToday: Prisma.UserWhereInput;
+    totalEmployees: number;
+    payrollMonth: { month: number; year: number };
+    statutoryOn: { pf: boolean; esi: boolean; pt: boolean; lwf: boolean };
+  }) {
+    const { organizationId, today, off, onBooksToday, totalEmployees } = args;
+    const { month, year } = args.payrollMonth;
+    const probationStatuses = [
+      EmploymentStatus.PROBATION,
+      EmploymentStatus.EXTENDED_PROBATION,
+    ];
+    const addDays = (dateStr: string, days: number) => {
+      const d = new Date(`${dateStr}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + days);
+      return d.toISOString().slice(0, 10);
+    };
+    const in7 = addDays(today, 7);
+
+    const [
+      onRecord,
+      onProbation,
+      onNotice,
+      lateToday,
+      wfhToday,
+      halfDayToday,
+      probationDue,
+      probationEnds,
+      documentsToVerify,
+      milestones,
+      payrollRuns,
+      missingDocuments,
+    ] = await Promise.all([
+      this.scopedPrisma.user.count({ where: { organizationId } }),
+      this.scopedPrisma.user.count({
+        where: {
+          organizationId,
+          ...onBooksToday,
+          employmentStatus: { in: probationStatuses },
+        },
+      }),
+      this.scopedPrisma.user.count({
+        where: {
+          organizationId,
+          ...onBooksToday,
+          employmentStatus: EmploymentStatus.NOTICE_PERIOD,
+        },
+      }),
+      gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          isLate: true,
+          employee: onBooksToday,
+          status: { in: [AttendanceStatus.PRESENT, AttendanceStatus.HALF_DAY] },
+        },
+      }), 0),
+      // Working from home today: an approved (or admin-set) WFH day, not one still waiting or turned down.
+      gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          workArrangement: WorkArrangement.WFH,
+          workArrangementStatus: {
+            notIn: [WfhApprovalStatus.PENDING, WfhApprovalStatus.REJECTED],
+          },
+          employee: onBooksToday,
+        },
+      }), 0),
+      gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          employee: onBooksToday,
+          status: AttendanceStatus.HALF_DAY,
+        },
+      }), 0),
+      // On probation with the end date within the coming week or already past: confirmation is due.
+      this.scopedPrisma.user.count({
+        where: {
+          organizationId,
+          ...onBooksToday,
+          employmentStatus: { in: probationStatuses },
+          probationEndDate: { not: null, lte: in7 },
+        },
+      }),
+      this.scopedPrisma.user.findMany({
+        where: {
+          organizationId,
+          ...onBooksToday,
+          employmentStatus: { in: probationStatuses },
+          probationEndDate: { gte: today, lte: in7 },
+        },
+        select: { id: true, name: true, employeeId: true, probationEndDate: true },
+        orderBy: { probationEndDate: 'asc' },
+        take: 10,
+      }),
+      this.scopedPrisma.employeeDocument.count({
+        where: {
+          organizationId,
+          category: EmployeeDocumentCategory.DOCUMENT,
+          status: EmployeeDocumentStatus.PENDING,
+          employee: onBooksToday,
+        },
+      }),
+      this.peopleMilestones(organizationId, 7),
+      gate(off, 'module.payroll', async () => this.scopedPrisma.payrollRun.findMany({
+        where: {
+          organizationId,
+          month,
+          year,
+          isFinalSettlement: false,
+          runSequence: 0,
+        },
+        select: { status: true },
+      }), []),
+      this.countEmployeesMissingMandatoryDocuments(organizationId, onBooksToday),
+    ]);
+
+    // Payroll: the month's stage is the least advanced run (the month isn't done until every run is).
+    const STAGE: PayrollRunStatus[] = [
+      PayrollRunStatus.DRAFT,
+      PayrollRunStatus.CALCULATED,
+      PayrollRunStatus.VERIFIED,
+      PayrollRunStatus.APPROVED,
+      PayrollRunStatus.LOCKED,
+      PayrollRunStatus.PAID,
+    ];
+    const processedStatuses = STAGE.slice(1);
+    const payslipStatuses: PayrollRunStatus[] = [
+      PayrollRunStatus.APPROVED,
+      PayrollRunStatus.LOCKED,
+      PayrollRunStatus.PAID,
+    ];
+    const processed = payrollRuns.filter((r) =>
+      processedStatuses.includes(r.status),
+    ).length;
+    const payrollOverview = off.has('module.payroll')
+      ? null
+      : {
+          label: `${MONTH_LABELS[month - 1]} ${year}`,
+          // NOT_STARTED when no run exists yet; otherwise the least advanced stage across the month's runs.
+          status:
+            payrollRuns.length === 0
+              ? 'NOT_STARTED'
+              : STAGE[Math.min(...payrollRuns.map((r) => STAGE.indexOf(r.status)))],
+          processed,
+          pending: Math.max(0, totalEmployees - processed),
+          payslipsGenerated: payrollRuns.filter((r) =>
+            payslipStatuses.includes(r.status),
+          ).length,
+          totalEmployees,
+        };
+
+    const compliance = off.has('module.payroll')
+      ? []
+      : await this.complianceReminders({
+          organizationId,
+          today,
+          statutoryOn: args.statutoryOn,
+        });
+
+    return {
+      workforce: { active: totalEmployees, onRecord, onProbation, onNotice },
+      todayExtra: { lateToday, wfhToday, halfDayToday },
+      pendingExtra: {
+        probationConfirmationsDue: probationDue,
+        documentsToVerify,
+      },
+      payrollOverview,
+      upcoming: {
+        birthdays: milestones.upcomingBirthdays.slice(0, 10),
+        anniversaries: milestones.upcomingAnniversaries.slice(0, 10),
+        probationEnds: probationEnds.map((u) => ({
+          id: u.id,
+          name: u.name,
+          employeeId: u.employeeId,
+          date: u.probationEndDate,
+        })),
+      },
+      alerts: { missingDocuments, compliance },
+    };
+  }
+
+  // Employees on the books who have not uploaded every mandatory document the organisation requires (a rejected upload
+  // does not count as uploaded).
+  private async countEmployeesMissingMandatoryDocuments(
+    organizationId: string,
+    onBooksToday: Prisma.UserWhereInput,
+  ): Promise<number> {
+    const requirements = await this.scopedPrisma.documentRequirement.findMany({
+      where: { organizationId, isActive: true, isMandatory: true },
+      select: { name: true },
+    });
+    if (requirements.length === 0) return 0;
+    const [employees, docs] = await Promise.all([
+      this.scopedPrisma.user.findMany({
+        where: { organizationId, ...onBooksToday },
+        select: { id: true },
+      }),
+      this.scopedPrisma.employeeDocument.findMany({
+        where: {
+          organizationId,
+          category: EmployeeDocumentCategory.DOCUMENT,
+          status: { not: EmployeeDocumentStatus.REJECTED },
+        },
+        select: { employeeId: true, docType: true },
+      }),
+    ]);
+    const have = new Map<string, Set<string>>();
+    for (const d of docs) {
+      const set = have.get(d.employeeId) ?? new Set<string>();
+      set.add(d.docType);
+      have.set(d.employeeId, set);
+    }
+    return employees.filter((e) => {
+      const got = have.get(e.id);
+      return requirements.some((r) => !got?.has(r.name));
+    }).length;
+  }
+
+  // Filing reminders from the standard monthly calendar (TDS challan by the 7th, PF and ESI by the 15th, for the month
+  // before). A reminder only - there is no filing tracker, except that a TDS challan recorded for the month clears its
+  // reminder. Only shown for a month that actually had final payroll, and for PF / ESI only when they are enabled.
+  private async complianceReminders(args: {
+    organizationId: string;
+    today: string;
+    statutoryOn: { pf: boolean; esi: boolean; pt: boolean; lwf: boolean };
+  }) {
+    const { organizationId, today, statutoryOn } = args;
+    const [y, m, d] = today.split('-').map(Number);
+    const prevMonth = m === 1 ? 12 : m - 1;
+    const prevYear = m === 1 ? y - 1 : y;
+    const prevRuns = await this.scopedPrisma.payrollRun.count({
+      where: {
+        organizationId,
+        month: prevMonth,
+        year: prevYear,
+        isFinalSettlement: false,
+        runSequence: 0,
+        status: { in: EXPORTABLE_RUN_STATUSES },
+      },
+    });
+    if (prevRuns === 0) return [];
+    const period = `${MONTH_LABELS[prevMonth - 1]} ${prevYear}`;
+    const dueDate = (day: number) =>
+      `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const out: {
+      key: string;
+      label: string;
+      period: string;
+      dueDate: string;
+      daysAway: number;
+    }[] = [];
+
+    const challan = await this.scopedPrisma.tdsChallan.count({
+      where: { organizationId, month: prevMonth, year: prevYear },
+    });
+    // TDS: due by the 7th. Shown from the 1st; once past, it stays (as overdue) until the challan is recorded.
+    if (challan === 0) {
+      out.push({
+        key: 'TDS',
+        label: 'TDS challan',
+        period,
+        dueDate: dueDate(7),
+        daysAway: 7 - d,
+      });
+    }
+    // PF / ESI: due by the 15th. Shown for the week before it, and on the day.
+    const dueSoon = 15 - d;
+    if (dueSoon >= 0 && dueSoon <= 7) {
+      if (statutoryOn.pf) {
+        out.push({ key: 'PF', label: 'PF contribution', period, dueDate: dueDate(15), daysAway: dueSoon });
+      }
+      if (statutoryOn.esi) {
+        out.push({ key: 'ESI', label: 'ESI contribution', period, dueDate: dueDate(15), daysAway: dueSoon });
+      }
+    }
+    return out.sort((a, b) => a.daysAway - b.daysAway);
+  }
+
+  // The next `windowDays` of birthdays and work anniversaries, nearest first. Shared by the Executive Summary (30 days) and
+  // the HR Overview's Upcoming card (7 days).
+  private async peopleMilestones(organizationId: string, windowDays: number) {
     const today = await this.orgNow(organizationId);
     const todayStr = todayInOrgTz(await this.getOrgTimezone(organizationId));
 
@@ -1694,24 +1996,21 @@ export class DashboardService {
     // Birthdays only need the date of birth, which is stored as plain text inside personalData. Reading the whole
     // personalData would decrypt every employee's PAN / Aadhaar / bank fields just to throw them away, so the one key is
     // read in SQL (organizationId is a bound parameter).
-    const [headcount, activeEmployees] = await Promise.all([
-      this.computeHeadcountTrend(12, organizationId),
-      this.scopedPrisma.$queryRaw<
-        {
-          id: string;
-          name: string;
-          employeeId: string;
-          joiningDate: Date;
-          dateOfBirth: string | null;
-        }[]
-      >`SELECT "id", "name", "employeeId", "joiningDate",
-               "personalData"->>'dateOfBirth' AS "dateOfBirth"
-          FROM "users"
-         WHERE "organizationId" = ${organizationId} AND "isActive" = true
-           AND "joiningDate" <= ${new Date(`${todayStr}T23:59:59.999Z`)}
-           AND ("exitDate" IS NULL OR "exitDate" >= ${todayStr})
-         ORDER BY "employeeId" ASC`,
-    ]);
+    const activeEmployees = await this.scopedPrisma.$queryRaw<
+      {
+        id: string;
+        name: string;
+        employeeId: string;
+        joiningDate: Date;
+        dateOfBirth: string | null;
+      }[]
+    >`SELECT "id", "name", "employeeId", "joiningDate",
+             "personalData"->>'dateOfBirth' AS "dateOfBirth"
+        FROM "users"
+       WHERE "organizationId" = ${organizationId} AND "isActive" = true
+         AND "joiningDate" <= ${new Date(`${todayStr}T23:59:59.999Z`)}
+         AND ("exitDate" IS NULL OR "exitDate" >= ${todayStr})
+       ORDER BY "employeeId" ASC`;
 
     const upcomingAnniversaries: {
       id: string;
@@ -1743,7 +2042,7 @@ export class DashboardService {
         jd.getUTCDate(),
         today,
       );
-      if (days <= WINDOW_DAYS) {
+      if (days <= windowDays) {
         const anniversaryDate = new Date(today);
         anniversaryDate.setDate(today.getDate() + days);
         const years = anniversaryDate.getFullYear() - jd.getUTCFullYear();
@@ -1768,7 +2067,7 @@ export class DashboardService {
           Number(dobParts[3]),
           today,
         );
-        if (birthdayDays <= WINDOW_DAYS) {
+        if (birthdayDays <= windowDays) {
           upcomingBirthdays.push({
             id: e.id,
             name: e.name,
@@ -1781,11 +2080,18 @@ export class DashboardService {
     }
     upcomingAnniversaries.sort((a, b) => a.daysAway - b.daysAway);
     upcomingBirthdays.sort((a, b) => a.daysAway - b.daysAway);
+    return { upcomingBirthdays, upcomingAnniversaries };
+  }
 
+  async executiveDashboard(organizationId: string) {
+    const [headcount, milestones] = await Promise.all([
+      this.computeHeadcountTrend(12, organizationId),
+      this.peopleMilestones(organizationId, 30),
+    ]);
     return {
       headcount,
-      upcomingBirthdays: upcomingBirthdays.slice(0, 10),
-      upcomingAnniversaries: upcomingAnniversaries.slice(0, 10),
+      upcomingBirthdays: milestones.upcomingBirthdays.slice(0, 10),
+      upcomingAnniversaries: milestones.upcomingAnniversaries.slice(0, 10),
     };
   }
 }

@@ -286,6 +286,112 @@ describe('Dashboard (e2e)', () => {
     ).toBe(true);
   });
 
+  it('the HR dashboard carries the workforce strip, extra today counts, payroll overview, upcoming events and alerts', async () => {
+    const res = await request(app.getHttpServer())
+      .get('/dashboard/hr')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .expect(200);
+    const body = res.body as {
+      totalEmployees: number;
+      workforce: {
+        active: number;
+        onRecord: number;
+        onProbation: number;
+        onNotice: number;
+      };
+      todayExtra: {
+        lateToday: number;
+        wfhToday: number;
+        halfDayToday: number;
+      };
+      pendingExtra: {
+        probationConfirmationsDue: number;
+        documentsToVerify: number;
+      };
+      payrollOverview: {
+        status: string;
+        processed: number;
+        pending: number;
+        payslipsGenerated: number;
+      } | null;
+      upcoming: {
+        birthdays: unknown[];
+        anniversaries: unknown[];
+        probationEnds: unknown[];
+      };
+      alerts: { missingDocuments: number; compliance: unknown[] };
+    };
+    expect(body.workforce.active).toBe(body.totalEmployees);
+    // The record count includes everyone on the books, so it is never smaller.
+    expect(body.workforce.onRecord).toBeGreaterThanOrEqual(
+      body.workforce.active,
+    );
+    for (const n of [
+      body.workforce.onProbation,
+      body.workforce.onNotice,
+      body.todayExtra.lateToday,
+      body.todayExtra.wfhToday,
+      body.todayExtra.halfDayToday,
+      body.pendingExtra.probationConfirmationsDue,
+      body.pendingExtra.documentsToVerify,
+      body.alerts.missingDocuments,
+    ]) {
+      expect(typeof n).toBe('number');
+      expect(n).toBeGreaterThanOrEqual(0);
+    }
+    expect(body.payrollOverview).not.toBeNull();
+    expect(body.payrollOverview!.pending).toBeGreaterThanOrEqual(0);
+    expect(Array.isArray(body.upcoming.birthdays)).toBe(true);
+    expect(Array.isArray(body.upcoming.anniversaries)).toBe(true);
+    expect(Array.isArray(body.upcoming.probationEnds)).toBe(true);
+    expect(Array.isArray(body.alerts.compliance)).toBe(true);
+  });
+
+  it('counts probation, notice period, probation confirmations due and probation ends in the next week', async () => {
+    const people = await prisma.user.findMany({
+      where: { role: 'EMPLOYEE', isActive: true },
+      select: { id: true },
+      take: 2,
+    });
+    expect(people.length).toBe(2);
+    const inThreeDays = new Date(Date.now() + 3 * 86400000)
+      .toISOString()
+      .slice(0, 10);
+    await prisma.user.update({
+      where: { id: people[0].id },
+      data: {
+        employmentStatus: 'PROBATION',
+        probationEndDate: inThreeDays,
+      },
+    });
+    await prisma.user.update({
+      where: { id: people[1].id },
+      data: { employmentStatus: 'NOTICE_PERIOD' },
+    });
+    const body = (
+      await request(app.getHttpServer())
+        .get('/dashboard/hr')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200)
+    ).body as {
+      workforce: { onProbation: number; onNotice: number };
+      pendingExtra: { probationConfirmationsDue: number };
+      upcoming: { probationEnds: { id: string }[] };
+    };
+    expect(body.workforce.onProbation).toBeGreaterThanOrEqual(1);
+    expect(body.workforce.onNotice).toBeGreaterThanOrEqual(1);
+    expect(body.pendingExtra.probationConfirmationsDue).toBeGreaterThanOrEqual(
+      1,
+    );
+    expect(body.upcoming.probationEnds.some((p) => p.id === people[0].id)).toBe(
+      true,
+    );
+    await prisma.user.updateMany({
+      where: { id: { in: people.map((p) => p.id) } },
+      data: { employmentStatus: 'CONFIRMED', probationEndDate: null },
+    });
+  });
+
   it('Department Leave counts only the days of a leave that fall in this month', async () => {
     const dashboard = async () => {
       const res = await request(app.getHttpServer())
