@@ -255,8 +255,17 @@ export function employerMonthlyForStructure(args: {
   settings: OverlaidSettings;
   rows: SavedStructureRow[];
 }): number {
+  return employerLinesForStructure(args).reduce((s, l) => s + l.amount, 0);
+}
+
+/** The same figure line by line (PF, EDLI, ESI, NPS, ...), so a screen can name what the company pays. */
+export function employerLinesForStructure(args: {
+  components: SalaryComponent[];
+  settings: OverlaidSettings;
+  rows: SavedStructureRow[];
+}): { code: string; name: string; amount: number }[] {
   const components = args.components.filter((c) => c.isActive);
-  if (!args.rows.some((r) => r.isEnabled !== false)) return 0;
+  if (!args.rows.some((r) => r.isEnabled !== false)) return [];
   const overrides = new Map<string, EmployeeSalaryComponent>();
   for (const r of args.rows) {
     overrides.set(
@@ -276,7 +285,7 @@ export function employerMonthlyForStructure(args: {
     args.settings,
     overrides,
     fullMonthBase(args.settings),
-  ).employerTotal;
+  ).employerLines;
 }
 
 /**

@@ -73,7 +73,7 @@ import { withOpeningBalance } from './opening-balances';
 import { HoldPayrollDto } from './dto/hold-payroll.dto';
 import {
   computeStructurePreview,
-  employerMonthlyForStructure,
+  employerLinesForStructure,
   monthlyFiguresForStructure,
 } from './structure-preview';
 import { StructurePreviewDto } from './dto/structure-preview.dto';
@@ -1725,7 +1725,13 @@ export class PayrollService {
   async employerCost(
     organizationId: string,
     employeeId?: string,
-  ): Promise<{ employeeId: string; employerMonthly: number }[]> {
+  ): Promise<
+    {
+      employeeId: string;
+      employerMonthly: number;
+      lines: { code: string; name: string; amount: number }[];
+    }[]
+  > {
     const { settings, components, today } =
       await this.packageContext(organizationId);
     const users = await this.scopedPrisma.user.findMany({
@@ -1756,13 +1762,15 @@ export class PayrollService {
       const current = resolveCurrentRows(byEmployee.get(u.id) ?? [], today);
       // HRA that has no line of its own follows the work location, the same as everywhere else.
       const cityClass = effectiveWorkLocation(u)?.cityClass ?? 'NON_METRO';
+      const lines = employerLinesForStructure({
+        components: withCityHra(components, cityClass),
+        settings,
+        rows: current,
+      });
       return {
         employeeId: u.id,
-        employerMonthly: employerMonthlyForStructure({
-          components: withCityHra(components, cityClass),
-          settings,
-          rows: current,
-        }),
+        employerMonthly: lines.reduce((s, l) => s + l.amount, 0),
+        lines,
       };
     });
   }

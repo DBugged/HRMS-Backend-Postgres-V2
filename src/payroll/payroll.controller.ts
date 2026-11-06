@@ -130,7 +130,8 @@ export class PayrollController {
       caller.organizationId,
       caller.id,
     );
-    return { employerMonthly: mine?.employerMonthly ?? 0 };
+    // The total and the lines it is made of (PF, ESI, NPS, ...), so an app can name what the company pays.
+    return { employerMonthly: mine?.employerMonthly ?? 0, lines: mine?.lines ?? [] };
   }
 
   // The checklist before running a month: missing salary structures, bank details, unmarked attendance, joiners and
