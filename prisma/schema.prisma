@@ -713,9 +713,12 @@ model RefreshToken {
   createdAt   DateTime @default(now())
   createdByIp String?
   userAgent   String?
+  // The sign-in (AuthSession) this token belongs to; null for tokens issued before sessions existed.
+  sessionId   String?
 
   @@index([userId])
   @@index([organizationId])
+  @@index([sessionId])
   @@map("refresh_tokens")
 }
 
@@ -4797,4 +4800,20 @@ model AskHrQuery {
 
   @@index([organizationId, createdAt])
   @@map("ask_hr_queries")
+}
+
+// One row per sign-in. A person has at most one live session per client type (web or mobile): signing in again on the
+// same kind of device ends the earlier one at once (endedReason 'signed_in_elsewhere'). Plain ids, no relations.
+model AuthSession {
+  id             String    @id @default(uuid())
+  userId         String
+  organizationId String
+  clientType     String
+  createdAt      DateTime  @default(now())
+  endedAt        DateTime?
+  endedReason    String?
+
+  @@index([userId, clientType, endedAt])
+  @@index([organizationId])
+  @@map("auth_sessions")
 }

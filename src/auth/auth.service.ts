@@ -9,6 +9,7 @@
 // rotate on every use (revoke-and-reissue) to limit replay of a leaked token. forgotPassword() and
 // findRefreshTokenByHash() deliberately return the same response/bypass tenant scoping for tenant-unknown
 // lookups by design, not by oversight.
+import { ClientType, SIGNED_IN_ELSEWHERE_MESSAGE } from './client-type';
 import { isPlaceholderEmail, loginRefusal, readLoginPolicy } from '../common/no-email';
 import { EXIT_ACCESS_ENDED_MESSAGE, exitAccessEnded } from '../common/exit-access';
 import {
@@ -365,7 +366,7 @@ export class AuthService {
 
   async login(
     dto: LoginDto,
-    meta: { ip?: string; userAgent?: string },
+    meta: { ip?: string; userAgent?: string; clientType?: ClientType },
   ): Promise<IssuedTokens & { user: AuthUserDto }> {
     // Sign in with an email, or with an employee ID (company ID prefixes are unique, so an ID names one person). An ID that two older
     // companies still share cannot be told apart, and the person is asked to use their email.
@@ -466,11 +467,15 @@ export class AuthService {
       );
     }
     await this.usersService.updateLastLogin(user.id, user.organizationId);
+    // One live session per kind of device: this sign-in ends an earlier one on the same kind (web or mobile).
+    const sessionId = await this.startSession(user.id, user.organizationId, meta.clientType ?? 'web');
     const tokens = await this.issueTokenPair(
       user.id,
       user.organizationId,
       user.role,
       meta,
+      undefined,
+      sessionId,
     );
     await this.auditLogService.log({
       actorId: user.id,
@@ -517,13 +522,25 @@ export class AuthService {
 
   async refresh(
     rawToken: string,
-    meta: { ip?: string; userAgent?: string },
+    meta: { ip?: string; userAgent?: string; clientType?: ClientType },
   ): Promise<IssuedTokens> {
     const tokenHash = hashToken(rawToken);
     const existing = await this.findRefreshTokenByHash(tokenHash);
 
     if (!existing) {
       throw new UnauthorizedException('Refresh token is invalid or expired.');
+    }
+    // This sign-in was ended by a newer one on the same kind of device: say so, plainly.
+    if (existing.sessionId) {
+      const session = await this.scopedPrisma.authSession.findFirst({
+        where: { id: existing.sessionId, organizationId: existing.organizationId },
+        select: { endedAt: true, endedReason: true },
+      });
+      if (session?.endedAt) {
+        throw new UnauthorizedException(
+          session.endedReason === 'signed_in_elsewhere' ? SIGNED_IN_ELSEWHERE_MESSAGE : 'Refresh token is invalid or expired.',
+        );
+      }
     }
     // Reuse detection: a token that was already rotated (replacedByTokenHash
     // set) being presented again means it leaked — either the attacker or
@@ -595,6 +612,7 @@ export class AuthService {
       user.role,
       meta,
       rawRefreshToken,
+      existing.sessionId ?? undefined,
     );
   }
 
@@ -648,6 +666,34 @@ export class AuthService {
       where: { id: existing.id, organizationId: existing.organizationId },
       data: { revokedAt: new Date() },
     });
+    if (existing.sessionId) {
+      await this.scopedPrisma.authSession.updateMany({
+        where: { id: existing.sessionId, organizationId: existing.organizationId, endedAt: null },
+        data: { endedAt: new Date(), endedReason: 'logout' },
+      });
+    }
+  }
+
+  /** Starts a sign-in: ends the person's earlier live sessions of the same kind (and their refresh tokens), then opens a new one. */
+  private async startSession(userId: string, organizationId: string, clientType: ClientType): Promise<string> {
+    const live = await this.scopedPrisma.authSession.findMany({
+      where: { userId, organizationId, clientType, endedAt: null },
+      select: { id: true },
+    });
+    if (live.length) {
+      const ids = live.map((s) => s.id);
+      const now = new Date();
+      await this.scopedPrisma.authSession.updateMany({
+        where: { id: { in: ids }, organizationId },
+        data: { endedAt: now, endedReason: 'signed_in_elsewhere' },
+      });
+      await this.scopedPrisma.refreshToken.updateMany({
+        where: { userId, organizationId, sessionId: { in: ids }, revokedAt: null },
+        data: { revokedAt: now },
+      });
+    }
+    const created = await this.scopedPrisma.authSession.create({ data: { userId, organizationId, clientType } });
+    return created.id;
   }
 
   async me(userId: string, organizationId: string) {
@@ -929,7 +975,7 @@ export class AuthService {
     userId: string,
     organizationId: string,
     dto: ChangePasswordDto,
-    meta: { ip?: string; userAgent?: string } = {},
+    meta: { ip?: string; userAgent?: string; clientType?: ClientType } = {},
   ): Promise<
     {
       message: string;
@@ -984,11 +1030,14 @@ export class AuthService {
     // caller stays signed in only until the current access token expires and is then logged out — which is
     // exactly what hit every new user (the first login forces this change). Mint a fresh pair for the
     // session that made the change; every other session stays signed out.
+    const sessionId = await this.startSession(user.id, user.organizationId, meta.clientType ?? 'web');
     const tokens = await this.issueTokenPair(
       user.id,
       user.organizationId,
       user.role,
       meta,
+      undefined,
+      sessionId,
     );
 
     if (wasFirstTimeChange) {
@@ -1070,16 +1119,18 @@ export class AuthService {
     userId: string,
     organizationId: string,
     role: Role,
-    meta: { ip?: string; userAgent?: string },
+    meta: { ip?: string; userAgent?: string; clientType?: ClientType },
     // refresh() pre-generates the new raw token so its hash can be linked
     // (replacedByTokenHash) in the same guarded write that revokes the old one.
     rawRefreshToken: string = generateRefreshToken(),
+    sessionId?: string,
   ): Promise<IssuedTokens> {
     const payload: JwtPayload = {
       sub: userId,
       organizationId,
       role,
       jti: crypto.randomUUID(),
+      ...(sessionId ? { sid: sessionId } : {}),
     };
     // expiresIn takes seconds (a plain number) rather than re-parsing the
     // env string here too — ACCESS_TOKEN_TTL_SECONDS already did that once.
@@ -1099,6 +1150,7 @@ export class AuthService {
         expiresAt,
         createdByIp: meta.ip,
         userAgent: meta.userAgent,
+        sessionId,
       },
     });
 

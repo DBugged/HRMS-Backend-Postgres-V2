@@ -1,3 +1,4 @@
+import { clientTypeOf } from './client-type';
 import { cookieSecure } from '../common/production-config';
 import { ResendVerificationDto, VerifyEmailDto } from './dto/verify-email.dto';
 // Purpose: Exposes registration, login, token refresh/logout, password reset, and the current-user endpoints.
@@ -117,6 +118,7 @@ export class AuthController {
     const result = await this.authService.login(dto, {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
+      clientType: clientTypeOf(req.headers),
     });
     // Mobile piggybacks its push-token/device registration onto login so it
     // doesn't need a second call right after signing in. A bad/missing
@@ -201,7 +203,7 @@ export class AuthController {
       user.id,
       user.organizationId,
       dto,
-      { ip: req.ip, userAgent: req.headers['user-agent'] },
+      { ip: req.ip, userAgent: req.headers['user-agent'], clientType: clientTypeOf(req.headers) },
     );
     // The old refresh tokens are revoked by the change; hand this session its replacement.
     setRefreshCookie(res, result.refreshToken);

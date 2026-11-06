@@ -16,6 +16,8 @@ export interface JwtPayload {
   // token again," which matters for audit/traceability and surfaced as
   // real e2e test flakiness (rapid login->refresh in the same second).
   jti: string;
+  // The sign-in (AuthSession) this token belongs to; a token whose session was ended is refused at once.
+  sid?: string;
   // Issue time in seconds, added by the JWT library when the token is signed.
   iat?: number;
 }

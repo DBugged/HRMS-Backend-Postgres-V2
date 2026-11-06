@@ -69,6 +69,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'ApprovalDelegation',
   'PolicyDocument',
   'AskHrQuery',
+  'AuthSession',
   'PolicyDocumentAcknowledgment',
   'DocumentRequirement',
   'Notification',

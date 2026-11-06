@@ -1,4 +1,7 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Inject, Injectable, UnauthorizedException } from '@nestjs/common';
+import { PRISMA_CLIENT } from '../../prisma/prisma.module';
+import type { ExtendedPrismaClient } from '../../prisma/prisma.module';
+import { SIGNED_IN_ELSEWHERE_MESSAGE } from '../client-type';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtPayload } from '../../common/interfaces/jwt-payload.interface';
@@ -20,7 +23,10 @@ export class JwtAccessStrategy extends PassportStrategy(
   Strategy,
   'jwt-access',
 ) {
-  constructor(private readonly usersService: UsersService) {
+  constructor(
+    private readonly usersService: UsersService,
+    @Inject(PRISMA_CLIENT) private readonly db: ExtendedPrismaClient,
+  ) {
     const secret = process.env.JWT_ACCESS_SECRET;
     if (!secret) throw new Error('JWT_ACCESS_SECRET is not set.');
     super({
@@ -56,6 +62,18 @@ export class JwtAccessStrategy extends PassportStrategy(
       throw new UnauthorizedException(
         'Your password was changed. Please sign in again.',
       );
+    }
+    // A newer sign-in on the same kind of device (web or mobile) ended this session: refuse it at once.
+    if (payload.sid) {
+      const session = await this.db.authSession.findFirst({
+        where: { id: payload.sid, organizationId: payload.organizationId },
+        select: { endedAt: true, endedReason: true },
+      });
+      if (session?.endedAt) {
+        throw new UnauthorizedException(
+          session.endedReason === 'signed_in_elsewhere' ? SIGNED_IN_ELSEWHERE_MESSAGE : 'Session is no longer valid.',
+        );
+      }
     }
     return user; // becomes request.user (hash + reset fields omitted in the query)
   }

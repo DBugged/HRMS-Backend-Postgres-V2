@@ -26,7 +26,8 @@ async function build(opts: { locked: boolean; knownIps: string[] }) {
       findFirst: async (a: Row) =>
         opts.knownIps.includes(a.where.ipAddress) ? { id: 'l1' } : null,
     },
-    refreshToken: { create: async () => ({}) },
+    refreshToken: { create: async () => ({}), updateMany: async () => ({ count: 0 }) },
+    authSession: { findMany: async () => [], updateMany: async () => ({ count: 0 }), create: async () => ({ id: 's1' }), findFirst: async () => null },
     organization: { findFirst: async () => ({ policies: {} }) },
   };
   const usersService = {
