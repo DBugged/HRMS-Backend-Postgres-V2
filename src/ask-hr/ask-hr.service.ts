@@ -18,7 +18,7 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { DocumentsService } from '../documents/documents.service';
 import { LettersService } from '../letters/letters.service';
-import { detectIntents, periodLabel, searchPolicies, suggestionsFor, tokenize, type AskIntent, type PolicyHit } from './ask-hr-logic';
+import { detectIntents, periodLabel, searchPolicies, suggestionsFor, tokenize, toTsQuery, type AskIntent, type PolicyHit } from './ask-hr-logic';
 
 type Actor = Omit<User, 'password'>;
 const KEEP_QUERIES_DAYS = 90;
@@ -196,7 +196,18 @@ export class AskHrService {
   }
 
   private async policyCard(q: string, actor: Actor, organizationId: string): Promise<Extract<AskHrCard, { kind: 'policy' }>> {
-    const policies = await this.documentsService.findActivePoliciesRaw(actor, organizationId);
+    // Only read the policies that can matter: the database word index picks those containing the question's words, plus the
+    // ones with no text yet (read on demand) or no readable text (listed as not searchable).
+    const tsq = toTsQuery(q);
+    const ids = (
+      await this.prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM policy_documents
+        WHERE "organizationId" = ${organizationId} AND "isPublished" = true
+          AND ("contentText" IS NULL OR "contentText" = ''
+               OR (${tsq}::text IS NOT NULL AND "contentSearch" @@ to_tsquery('simple', ${tsq}::text)))`
+    ).map((r) => r.id);
+    // Visibility still decides which of those this person may see.
+    const policies = ids.length ? await this.documentsService.findActivePoliciesRaw(actor, organizationId, ids) : [];
     const unreadable: string[] = [];
     const withText: Array<{ id: string; title: string; contentText: string | null; updatedAt: Date }> = [];
     for (const p of policies) {

@@ -897,6 +897,7 @@ export class PrivacyRequestsService {
       documentsRemoved: 0,
       profileImageRemoved: false,
       locationPointsRemoved: 0,
+      askHrQuestionsRemoved: 0,
     };
     const user = await p.user.findFirst({
       where: { id: userId, organizationId },
@@ -933,6 +934,9 @@ export class PrivacyRequestsService {
       where: { organizationId, employeeId: userId },
     });
     outcome.locationPointsRemoved = pings.count;
+    // The questions typed into Ask HR are not a legal-retention record either.
+    const asked = await p.askHrQuery.deleteMany({ where: { organizationId, userId } });
+    outcome.askHrQuestionsRemoved = asked.count;
     await p.user.updateMany({
       where: { id: userId, organizationId },
       data: { fieldTrackingEnabled: false, fieldTrackingConsentAt: null },
@@ -1025,6 +1029,7 @@ export class PrivacyRequestsService {
       requests,
       pings,
       visits,
+      askHrQuestions,
     ] = await Promise.all([
       p.employeeDocument.findMany({
         where: { organizationId, employeeId: userId },
@@ -1100,6 +1105,13 @@ export class PrivacyRequestsService {
           outcome: true,
         },
       }),
+      // Ask HR: the questions this person typed (kept 90 days) and whether anything was found.
+      p.askHrQuery.findMany({
+        where: { organizationId, userId },
+        orderBy: { createdAt: 'desc' },
+        take: 2000,
+        select: { question: true, answered: true, createdAt: true },
+      }),
     ]);
 
     return {
@@ -1134,6 +1146,10 @@ export class PrivacyRequestsService {
         locationPoints: pings,
       },
       fieldVisits: visits,
+      askHrQuestions: {
+        note: 'Questions you typed into Ask HR are kept for 90 days and then deleted.',
+        items: askHrQuestions,
+      },
     };
   }
 

@@ -1,4 +1,4 @@
-import { detectIntents, expandQuestion, periodLabel, suggestionsFor, searchPolicies, splitIntoSections, tokenize } from './ask-hr-logic';
+import { toTsQuery, detectIntents, expandQuestion, periodLabel, suggestionsFor, searchPolicies, splitIntoSections, tokenize } from './ask-hr-logic';
 
 describe('ask-hr-logic', () => {
   it('drops filler words and trims plurals', () => {
@@ -45,5 +45,13 @@ describe('ask-hr-logic', () => {
 
   it('keeps unrelated words as their own ideas', () => {
     expect(expandQuestion('wfh on fridays')).toEqual([expect.arrayContaining(['work from home']), ['friday']]);
+  });
+
+  it('builds a word-index query from the question and its synonyms', () => {
+    const q = toTsQuery('wfh policy') as string;
+    expect(q).toContain('(wfh:*)');
+    expect(q).toContain('(work:* & from:* & home:*)');
+    expect(q).toContain('(policy:*)');
+    expect(toTsQuery('a ?')).toBeNull();
   });
 });

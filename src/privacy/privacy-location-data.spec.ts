@@ -59,6 +59,10 @@ function build() {
       findMany: rec('locationPing', 'findMany', [ping, ping]),
       deleteMany: rec('locationPing', 'deleteMany', { count: 2 }),
     },
+    askHrQuery: {
+      findMany: rec('askHrQuery', 'findMany', [{ question: 'notice period', answered: true, createdAt: new Date() }]),
+      deleteMany: rec('askHrQuery', 'deleteMany', { count: 1 }),
+    },
     fieldVisit: {
       findMany: rec('fieldVisit', 'findMany', [visit]),
       updateMany: rec('fieldVisit', 'updateMany', { count: 1 }),
@@ -89,6 +93,7 @@ describe('privacy: location data', () => {
     expect(out.liveTracking.locationPoints).toHaveLength(2);
     expect(out.liveTracking.note).toMatch(/90 days/);
     expect(out.fieldVisits.map((v) => v.clientName)).toEqual(['Acme']);
+    expect((out as any).askHrQuestions.items.map((q: any) => q.question)).toEqual(['notice period']);
   });
 
   it('erasing personal data deletes the trail, switches tracking off and blanks visit coordinates', async () => {
@@ -102,6 +107,7 @@ describe('privacy: location data', () => {
       }
     ).anonymize('u1', 'org');
     expect(outcome.locationPointsRemoved).toBe(2);
+    expect((outcome as any).askHrQuestionsRemoved).toBe(1);
     const del = calls.find(
       (c) => c.model === 'locationPing' && c.op === 'deleteMany',
     );

@@ -87,6 +87,17 @@ export function defaultPurposes(): ProcessingPurpose[] {
         'Selfie and GPS capture is currently mandatory on every punch, with no notice or consent step in the apps. Confirm the lawful basis (and whether these should be optional) with legal counsel.',
     },
     {
+      key: 'ask_hr',
+      label: 'Ask HR questions',
+      description:
+        'When you type a question into Ask HR, the question and whether an answer was found are saved for 90 days so HR can see which policies are missing. HR sees the questions, not who asked them. Nothing is sent outside your company system.',
+      legalBasis: 'LEGITIMATE_USE',
+      modules: ['ask-hr'],
+      legalReviewRequired: false,
+      notes:
+        'Insights show question text only, grouped; the asking person is stored for the employee export and erasure. Deleted automatically after 90 days.',
+    },
+    {
       key: 'field_tracking',
       label: 'Field work: live location and visits',
       description:

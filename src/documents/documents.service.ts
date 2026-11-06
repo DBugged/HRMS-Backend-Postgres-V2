@@ -134,9 +134,9 @@ export class DocumentsService {
   // drafts too). For internal server-side consumption only (Ask HR searches
   // their stored text) — never
   // returned in an HTTP response as-is.
-  async findActivePoliciesRaw(actor: Actor, organizationId: string) {
+  async findActivePoliciesRaw(actor: Actor, organizationId: string, onlyIds?: string[]) {
     const policies = await this.scopedPrisma.policyDocument.findMany({
-      where: { organizationId, isPublished: true },
+      where: { organizationId, isPublished: true, ...(onlyIds ? { id: { in: onlyIds } } : {}) },
       orderBy: { createdAt: 'desc' },
     });
     return HR_ROLES.includes(actor.role)

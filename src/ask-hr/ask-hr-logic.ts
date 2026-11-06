@@ -90,6 +90,18 @@ export function expandQuestion(question: string): string[][] {
   return slots;
 }
 
+/**
+ * The database word-index query for a question: any of its words or phrases (a phrase needs all its words), each matched as a
+ * word prefix. It only chooses which policies are worth reading; the scoring above still decides what is shown.
+ */
+export function toTsQuery(question: string): string | null {
+  const parts = Array.from(new Set(expandQuestion(question).flat()))
+    .map((alt) => (alt.toLowerCase().match(/[a-z0-9]+/g) ?? []).map((w) => `${w}:*`).join(' & '))
+    .filter(Boolean)
+    .map((p) => `(${p})`);
+  return parts.length ? parts.join(' | ') : null;
+}
+
 export interface PolicySection {
   heading: string;
   body: string;
