@@ -538,7 +538,7 @@ describe('Leave Tracker (e2e)', () => {
         .query({ format: 'csv', from: `${YEAR}-08-01`, to: `${YEAR}-08-31` })
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
-      const lateJoinerLines = (report.text as string)
+      const lateJoinerLines = report.text
         .split('\n')
         .filter((l) => l.includes('Late Joiner'));
       expect(lateJoinerLines.some((l) => l.includes('05-08-2026'))).toBe(false);
@@ -754,6 +754,132 @@ describe('Leave Tracker (e2e)', () => {
       expect(find(await get(`${YEAR}-08`))?.wfhDaysUsed).toBe(1);
       expect(find(await get(`${YEAR}-07`))).toBeUndefined(); // a month before they joined
       expect(find(await get())).toBeDefined(); // the whole year keeps everyone listed
+    });
+  });
+
+  describe('pending requests in the balances', () => {
+    it('keeps WFH waiting for approval out of "used", reports it as pending, and counts it once approved', async () => {
+      const org = await prisma.user.findFirstOrThrow({ where: { id: empBId } });
+      const day = `${YEAR}-09-09`;
+      await prisma.attendance.upsert({
+        where: {
+          organizationId_employeeId_date: {
+            organizationId: org.organizationId,
+            employeeId: empBId,
+            date: day,
+          },
+        },
+        update: { workArrangement: 'WFH', workArrangementStatus: 'PENDING' },
+        create: {
+          organizationId: org.organizationId,
+          employeeId: empBId,
+          date: day,
+          status: 'ABSENT',
+          source: 'SYSTEM',
+          workArrangement: 'WFH',
+          workArrangementStatus: 'PENDING',
+        },
+      });
+      type Row = {
+        employeeId: string;
+        wfhDaysUsed: number;
+        wfhDaysPending: number;
+      };
+      const get = async () =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get('/leave-tracker/balances')
+              .query({ year: YEAR, period: `${YEAR}-09` })
+              .set('Authorization', `Bearer ${adminToken}`)
+              .expect(200)
+          ).body as Row[]
+        ).find((r) => r.employeeId === empBId)!;
+
+      const waiting = await get();
+      expect(waiting.wfhDaysUsed).toBe(0);
+      expect(waiting.wfhDaysPending).toBe(1);
+
+      await prisma.attendance.updateMany({
+        where: { employeeId: empBId, date: day },
+        data: { workArrangementStatus: 'APPROVED' },
+      });
+      const approved = await get();
+      expect(approved.wfhDaysUsed).toBe(1);
+      expect(approved.wfhDaysPending).toBe(0);
+
+      await prisma.attendance.updateMany({
+        where: { employeeId: empBId, date: day },
+        data: { workArrangementStatus: 'REJECTED' },
+      });
+      const rejected = await get();
+      expect(rejected.wfhDaysUsed).toBe(0);
+      expect(rejected.wfhDaysPending).toBe(0);
+    });
+
+    it('reports comp-off waiting for approval (earned, and leave applied for) separately from what is available', async () => {
+      const org = await prisma.user.findFirstOrThrow({ where: { id: empBId } });
+      const earned = await prisma.compOff.create({
+        data: {
+          organizationId: org.organizationId,
+          employeeId: empBId,
+          earnedForDate: `${YEAR}-01-04`,
+          reason: 'pending comp-off',
+          daysEarned: 1,
+          status: 'PENDING',
+        },
+      });
+      type Row = {
+        employeeId: string;
+        compOffAvailable: number;
+        compOffPendingRequests: number;
+        compOffPendingLeave: number;
+      };
+      const get = async () =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get('/leave-tracker/balances')
+              .query({ year: YEAR })
+              .set('Authorization', `Bearer ${adminToken}`)
+              .expect(200)
+          ).body as Row[]
+        ).find((r) => r.employeeId === empBId)!;
+      const before = await get();
+      expect(before.compOffPendingRequests).toBe(1);
+      // Not available until approved.
+      expect(before.compOffAvailable).toBe(0);
+
+      const leave = await prisma.leave.create({
+        data: {
+          organizationId: org.organizationId,
+          employeeId: empBId,
+          leaveTypeId: compOffLeaveTypeId,
+          startDate: `${YEAR}-10-12`,
+          endDate: `${YEAR}-10-12`,
+          totalDays: 1,
+          status: 'PENDING',
+        },
+      });
+      expect((await get()).compOffPendingLeave).toBe(1);
+
+      // The employee-facing comp-off balance reports the same waiting amounts.
+      const empB = await prisma.user.findFirstOrThrow({
+        where: { id: empBId },
+      });
+      const own = await request(app.getHttpServer())
+        .get('/comp-offs/balance')
+        .query({ employeeId: empBId })
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(own.body).toMatchObject({
+        pendingRequests: 1,
+        pendingLeave: 1,
+      });
+      expect(empB.id).toBe(empBId);
+
+      await prisma.leave.delete({ where: { id: leave.id } });
+      await prisma.compOff.delete({ where: { id: earned.id } });
     });
   });
 

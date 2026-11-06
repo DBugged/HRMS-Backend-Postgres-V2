@@ -23,6 +23,7 @@ import {
   LeaveType,
   Role,
   User,
+  WfhApprovalStatus,
   WorkArrangement,
 } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -535,87 +536,124 @@ export class LeaveTrackerService {
     // availableForEmployees() sweeps once and fetches every employee's comp-off
     // rows in a single findMany; the attendance groupBy replaces N separate
     // counts with one grouped query — same final per-employee numbers either way.
-    const [compOffAvailableByEmployee, wfhCounts, monthLeaves, lwpLeaves] =
-      await Promise.all([
-        query.lite
-          ? Promise.resolve(new Map<string, number>())
-          : this.compOffService.availableForEmployees(
-              balanceEmployeeIds,
+    const [
+      compOffAvailableByEmployee,
+      wfhCounts,
+      monthLeaves,
+      lwpLeaves,
+      compOffPendingByEmployee,
+      wfhPendingCounts,
+    ] = await Promise.all([
+      query.lite
+        ? Promise.resolve(new Map<string, number>())
+        : this.compOffService.availableForEmployees(
+            balanceEmployeeIds,
+            organizationId,
+          ),
+      query.lite
+        ? Promise.resolve(
+            [] as { employeeId: string; _count: { _all: number } }[],
+          )
+        : this.scopedPrisma.attendance.groupBy({
+            by: ['employeeId'],
+            where: {
               organizationId,
-            ),
-        query.lite
-          ? Promise.resolve(
-              [] as { employeeId: string; _count: { _all: number } }[],
-            )
-          : this.scopedPrisma.attendance.groupBy({
-              by: ['employeeId'],
-              where: {
-                organizationId,
-                employeeId: { in: balanceEmployeeIds },
-                date: {
-                  gte: periodStart ?? yearStart,
-                  lte: periodEnd ?? yearEnd,
-                },
-                workArrangement: WorkArrangement.WFH,
+              employeeId: { in: balanceEmployeeIds },
+              date: {
+                gte: periodStart ?? yearStart,
+                lte: periodEnd ?? yearEnd,
               },
-              _count: { _all: true },
-            }),
-        // Approved leave overlapping the chosen month, to say how much of each type was taken in it.
-        periodStart && periodEnd
-          ? this.scopedPrisma.leave.findMany({
-              where: {
-                organizationId,
-                employeeId: { in: balanceEmployeeIds },
-                status: LeaveStatus.APPROVED,
-                startDate: { lte: periodEnd },
-                endDate: { gte: periodStart },
+              workArrangement: WorkArrangement.WFH,
+              // Only approved WFH counts as used; a request still waiting is reported as pending below.
+              workArrangementStatus: {
+                notIn: [WfhApprovalStatus.PENDING, WfhApprovalStatus.REJECTED],
               },
-              select: {
-                employeeId: true,
-                startDate: true,
-                endDate: true,
-                isHalfDay: true,
-                totalDays: true,
-                leaveType: {
-                  select: {
-                    code: true,
-                    name: true,
-                    rules: true,
-                    allocationType: true,
-                    eventGrant: true,
-                  },
+            },
+            _count: { _all: true },
+          }),
+      // Approved leave overlapping the chosen month, to say how much of each type was taken in it.
+      periodStart && periodEnd
+        ? this.scopedPrisma.leave.findMany({
+            where: {
+              organizationId,
+              employeeId: { in: balanceEmployeeIds },
+              status: LeaveStatus.APPROVED,
+              startDate: { lte: periodEnd },
+              endDate: { gte: periodStart },
+            },
+            select: {
+              employeeId: true,
+              startDate: true,
+              endDate: true,
+              isHalfDay: true,
+              totalDays: true,
+              leaveType: {
+                select: {
+                  code: true,
+                  name: true,
+                  rules: true,
+                  allocationType: true,
+                  eventGrant: true,
                 },
               },
-            })
-          : Promise.resolve([]),
-        // Approved Leave Without Pay overlapping the leave year (the type has no balance, so it is summed here).
-        query.lite
-          ? Promise.resolve([])
-          : this.scopedPrisma.leave.findMany({
-              where: {
-                organizationId,
-                employeeId: { in: balanceEmployeeIds },
-                status: LeaveStatus.APPROVED,
-                leaveType: { code: LWP_CODE },
-                startDate: { lte: yearEnd },
-                endDate: { gte: yearStart },
-              },
-              select: {
-                employeeId: true,
-                startDate: true,
-                endDate: true,
-                isHalfDay: true,
-                totalDays: true,
-                leaveType: {
-                  select: {
-                    rules: true,
-                    allocationType: true,
-                    eventGrant: true,
-                  },
+            },
+          })
+        : Promise.resolve([]),
+      // Approved Leave Without Pay overlapping the leave year (the type has no balance, so it is summed here).
+      query.lite
+        ? Promise.resolve([])
+        : this.scopedPrisma.leave.findMany({
+            where: {
+              organizationId,
+              employeeId: { in: balanceEmployeeIds },
+              status: LeaveStatus.APPROVED,
+              leaveType: { code: LWP_CODE },
+              startDate: { lte: yearEnd },
+              endDate: { gte: yearStart },
+            },
+            select: {
+              employeeId: true,
+              startDate: true,
+              endDate: true,
+              isHalfDay: true,
+              totalDays: true,
+              leaveType: {
+                select: {
+                  rules: true,
+                  allocationType: true,
+                  eventGrant: true,
                 },
               },
-            }),
-      ]);
+            },
+          }),
+      // Comp-off earned / comp-off leave waiting for approval, and WFH days waiting for approval.
+      query.lite
+        ? Promise.resolve(
+            new Map<string, { requests: number; leaveDays: number }>(),
+          )
+        : this.compOffService.pendingForEmployees(
+            balanceEmployeeIds,
+            organizationId,
+          ),
+      query.lite
+        ? Promise.resolve(
+            [] as { employeeId: string; _count: { _all: number } }[],
+          )
+        : this.scopedPrisma.attendance.groupBy({
+            by: ['employeeId'],
+            where: {
+              organizationId,
+              employeeId: { in: balanceEmployeeIds },
+              date: {
+                gte: periodStart ?? yearStart,
+                lte: periodEnd ?? yearEnd,
+              },
+              workArrangement: WorkArrangement.WFH,
+              workArrangementStatus: WfhApprovalStatus.PENDING,
+            },
+            _count: { _all: true },
+          }),
+    ]);
 
     // Days are counted the way each leave was charged (holidays and weekly offs only when its type's sandwich rule takes them
     // in), not as every calendar day between its dates. Only a leave running across the edge of the month / year being shown
@@ -737,6 +775,9 @@ export class LeaveTrackerService {
     const wfhDaysUsedByEmployee = new Map(
       wfhCounts.map((c) => [c.employeeId, c._count._all]),
     );
+    const wfhDaysPendingByEmployee = new Map(
+      wfhPendingCounts.map((c) => [c.employeeId, c._count._all]),
+    );
     // WFH days count only from the joining date: for anyone who joined after the range starts, a record dated before
     // they joined (an import or a manual entry) is not counted. Only those few are re-counted individually.
     const wfhFrom = periodStart ?? yearStart;
@@ -751,6 +792,9 @@ export class LeaveTrackerService {
               employeeId: e.id,
               date: { gte: joinedOn(e), lte: wfhTo },
               workArrangement: WorkArrangement.WFH,
+              workArrangementStatus: {
+                notIn: [WfhApprovalStatus.PENDING, WfhApprovalStatus.REJECTED],
+              },
             },
           });
           wfhDaysUsedByEmployee.set(e.id, count);
@@ -784,7 +828,12 @@ export class LeaveTrackerService {
         closing: number;
       }[];
       compOffAvailable: number;
+      // Comp-off earned, and comp-off leave applied for, that is still waiting for approval (days).
+      compOffPendingRequests: number;
+      compOffPendingLeave: number;
       wfhDaysUsed: number;
+      // WFH days requested for the period that are still waiting for approval (not counted in wfhDaysUsed).
+      wfhDaysPending: number;
       // Days of approved Leave Without Pay in the leave year (not in the lite response).
       leaveWithoutPayDays: number;
       // Only when a month was asked for: leave taken in that month, by type.
@@ -876,6 +925,8 @@ export class LeaveTrackerService {
       // attendance-count derivation, not a real ledger, hence the
       // `wfhDaysUsed` naming rather than "balance".
       const wfhDaysUsed = wfhDaysUsedByEmployee.get(employee.id) ?? 0;
+      const wfhDaysPending = wfhDaysPendingByEmployee.get(employee.id) ?? 0;
+      const compOffPending = compOffPendingByEmployee.get(employee.id);
 
       result.push({
         employeeId: employee.id,
@@ -886,7 +937,10 @@ export class LeaveTrackerService {
         isActive: employee.isActive,
         leaveBalances,
         compOffAvailable,
+        compOffPendingRequests: compOffPending?.requests ?? 0,
+        compOffPendingLeave: compOffPending?.leaveDays ?? 0,
         wfhDaysUsed,
+        wfhDaysPending,
         leaveWithoutPayDays:
           Math.round((lwpDaysByEmployee.get(employee.id) ?? 0) * 100) / 100,
         ...(periodStart && {
@@ -1003,12 +1057,23 @@ export class LeaveTrackerService {
           ]
         : []),
       { header: 'Comp-Off Available', key: 'compOffAvailable', width: 16 },
+      {
+        header: 'Comp-Off Requested (Pending)',
+        key: 'compOffPendingRequests',
+        width: 22,
+      },
+      {
+        header: 'Comp-Off Leave (Pending)',
+        key: 'compOffPendingLeave',
+        width: 20,
+      },
       { header: 'Leave Without Pay', key: 'leaveWithoutPayDays', width: 16 },
       {
         header: query.period ? `WFH Days (${query.period})` : 'WFH Days Used',
         key: 'wfhDaysUsed',
         width: 14,
       },
+      { header: 'WFH Days (Pending)', key: 'wfhDaysPending', width: 16 },
     ];
 
     const rows = balances.map((entry) => {
@@ -1016,8 +1081,11 @@ export class LeaveTrackerService {
         employeeId: codeByUserId.get(entry.employeeId) ?? '',
         name: entry.name,
         compOffAvailable: entry.compOffAvailable,
+        compOffPendingRequests: entry.compOffPendingRequests,
+        compOffPendingLeave: entry.compOffPendingLeave,
         leaveWithoutPayDays: entry.leaveWithoutPayDays,
         wfhDaysUsed: entry.wfhDaysUsed,
+        wfhDaysPending: entry.wfhDaysPending,
         leaveTakenInPeriod: (entry.leaveTakenInPeriod ?? [])
           .map((t) => `${t.leaveTypeCode} ${t.days}`)
           .join(', '),

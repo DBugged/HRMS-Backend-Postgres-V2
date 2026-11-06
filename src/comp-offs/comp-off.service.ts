@@ -36,6 +36,7 @@ import {
   Role,
   User,
 } from '@prisma/client';
+import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateCompOffDto } from './dto/create-comp-off.dto';
@@ -127,7 +128,9 @@ export class CompOffService {
     });
     if (!targetEmployee) throw new NotFoundException('Employee not found.');
     if (!targetEmployee.isActive) {
-      throw new BadRequestException('Comp-off cannot be earned for a deactivated employee.');
+      throw new BadRequestException(
+        'Comp-off cannot be earned for a deactivated employee.',
+      );
     }
     // ...nor for a day after their last working day.
     if (!isEmployedOn(targetEmployee.exitDate, dto.earnedForDate)) {
@@ -193,7 +196,11 @@ export class CompOffService {
       );
     }
 
-    await this.assertDayOffWorked(targetEmployee, dto.earnedForDate, organizationId);
+    await this.assertDayOffWorked(
+      targetEmployee,
+      dto.earnedForDate,
+      organizationId,
+    );
 
     const settings =
       await this.payrollSettingsService.getOrCreate(organizationId);
@@ -242,7 +249,12 @@ export class CompOffService {
     // Companies that turned on automatic approval: a self-raised request for a day off that the punches confirm was worked
     // (checked above), within the allowed days, is approved right away through the normal review path.
     if (targetEmployeeId === actor.id && compOff.status === 'PENDING') {
-      const approved = await this.tryAutoApprove(compOff.id, compOff.daysEarned, actor, organizationId);
+      const approved = await this.tryAutoApprove(
+        compOff.id,
+        compOff.daysEarned,
+        actor,
+        organizationId,
+      );
       if (approved) return approved;
     }
     // Only a request the employee raised for themselves is waiting on someone; one a reviewer logged on their behalf
@@ -271,7 +283,9 @@ export class CompOffService {
     const where: Prisma.CompOffWhereInput = { organizationId };
     if (actor.role === Role.EMPLOYEE) {
       where.employeeId = actor.id;
-    } else if (await isScopedReviewer(this.scopedPrisma, actor, organizationId)) {
+    } else if (
+      await isScopedReviewer(this.scopedPrisma, actor, organizationId)
+    ) {
       const deptIds = await deptScopedEmployeeIds(
         this.scopedPrisma,
         actor,
@@ -336,9 +350,61 @@ export class CompOffService {
         targetEmployeeId,
       );
     }
+    const pending = await this.pendingForEmployees(
+      [targetEmployeeId],
+      organizationId,
+    );
     return {
       available: await this.available(targetEmployeeId, organizationId),
+      // Waiting for a decision: comp-off earned but not yet approved, and comp-off leave applied for but not yet
+      // approved (it is only taken off `available` once approved).
+      pendingRequests: pending.get(targetEmployeeId)?.requests ?? 0,
+      pendingLeave: pending.get(targetEmployeeId)?.leaveDays ?? 0,
     };
+  }
+
+  // Per employee: days of comp-off earned and awaiting approval, and days of comp-off leave applied for and awaiting
+  // approval. Neither is in `available` yet, so HR would otherwise not see that something is waiting.
+  async pendingForEmployees(
+    employeeIds: string[],
+    organizationId: string,
+  ): Promise<Map<string, { requests: number; leaveDays: number }>> {
+    const result = new Map<string, { requests: number; leaveDays: number }>();
+    if (employeeIds.length === 0) return result;
+    const [earned, leaves] = await Promise.all([
+      this.scopedPrisma.compOff.groupBy({
+        by: ['employeeId'],
+        where: {
+          organizationId,
+          employeeId: { in: employeeIds },
+          status: 'PENDING',
+        },
+        _sum: { daysEarned: true },
+      }),
+      this.scopedPrisma.leave.groupBy({
+        by: ['employeeId'],
+        where: {
+          organizationId,
+          employeeId: { in: employeeIds },
+          status: 'PENDING',
+          leaveType: { code: LEAVE_TYPE_CODES.COMPOFF },
+        },
+        _sum: { totalDays: true },
+      }),
+    ]);
+    const round = (n: number) => Math.round(n * 100) / 100;
+    for (const row of earned) {
+      result.set(row.employeeId, {
+        requests: round(row._sum.daysEarned ?? 0),
+        leaveDays: 0,
+      });
+    }
+    for (const row of leaves) {
+      const cur = result.get(row.employeeId) ?? { requests: 0, leaveDays: 0 };
+      cur.leaveDays = round(row._sum.totalDays ?? 0);
+      result.set(row.employeeId, cur);
+    }
+    return result;
   }
 
   // Unconsumed comp-off that is still valid on `asOf` (the date the leave would start): a credit that expires before
@@ -448,13 +514,30 @@ export class CompOffService {
   }
 
   // Returns the approved comp-off, or null when the request does not qualify (or anything goes wrong: it then stays pending).
-  private async tryAutoApprove(id: string, daysEarned: number, requester: Actor, organizationId: string) {
+  private async tryAutoApprove(
+    id: string,
+    daysEarned: number,
+    requester: Actor,
+    organizationId: string,
+  ) {
     try {
       const rules = await loadAutoApproval(this.scopedPrisma, organizationId);
       if (!compOffQualifies(rules.compOff, Number(daysEarned))) return null;
-      const approver = await findAutoApprover(this.scopedPrisma, organizationId, requester.id);
+      const approver = await findAutoApprover(
+        this.scopedPrisma,
+        organizationId,
+        requester.id,
+      );
       if (!approver) return null;
-      return await this.review(id, { decision: CompOffStatus.APPROVED, comments: AUTO_APPROVAL_NOTE } as never, approver as never, organizationId);
+      return await this.review(
+        id,
+        {
+          decision: CompOffStatus.APPROVED,
+          comments: AUTO_APPROVAL_NOTE,
+        },
+        approver,
+        organizationId,
+      );
     } catch {
       return null;
     }
