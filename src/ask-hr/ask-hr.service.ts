@@ -22,6 +22,7 @@ import { detectIntents, periodLabel, searchPolicies, suggestionsFor, tokenize, t
 
 type Actor = Omit<User, 'password'>;
 const KEEP_QUERIES_DAYS = 90;
+const GENERIC_NAME_WORDS = new Set(['leave', 'letter', 'certificate', 'holiday', 'day', 'policy']);
 
 type Line = { name: string; amount: number };
 
@@ -56,7 +57,9 @@ export class AskHrService {
     // Beyond the trigger words: anything the question names that matches one of this person's records is shown too - a leave type
     // ("casual"), a holiday name ("diwali") or a letter ("offer") - so a plain one-word search still finds it.
     const has = (i: AskIntent) => intents.includes(i);
-    const hit = (names: string[]) => names.some((n) => terms.some((t) => n.toLowerCase().includes(t)));
+    // Words that appear in almost every leave/letter/holiday name ("Casual Leave", "Offer Letter") say nothing about which one is meant.
+    const specific = terms.filter((t) => !GENERIC_NAME_WORDS.has(t));
+    const hit = (names: string[]) => names.some((n) => specific.some((t) => n.toLowerCase().includes(t)));
     if (!has('balance') && (await on('module.leave'))) {
       const types = await this.scopedPrisma.leaveType.findMany({ where: { organizationId, isActive: true }, select: { name: true, code: true } });
       if (hit(types.flatMap((t) => [t.name, t.code]))) intents.push('balance');

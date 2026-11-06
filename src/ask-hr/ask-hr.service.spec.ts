@@ -99,4 +99,13 @@ describe('AskHrService', () => {
     expect(r.topUnanswered).toHaveLength(1);
     expect(r.topUnanswered[0].count).toBe(2);
   });
+
+  it('does not show the leave balance just because the question says "leave"', async () => {
+    const { svc, db } = build();
+    db.leaveType.findMany.mockResolvedValue([{ name: 'Casual Leave', code: 'CL' }, { name: 'Sick Leave', code: 'SL' }]);
+    const r = await svc.ask('sabbatical leave', actor('EMPLOYEE'), 'o1');
+    expect(r.cards.some((c) => c.kind === 'balance')).toBe(false);
+    const r2 = await svc.ask('casual', actor('EMPLOYEE'), 'o1');
+    expect(r2.cards.some((c) => c.kind === 'balance')).toBe(true);
+  });
 });
