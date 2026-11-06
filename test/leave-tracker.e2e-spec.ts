@@ -920,6 +920,12 @@ describe('Leave Tracker (e2e)', () => {
         empAEntry!.compOffAvailable,
         2,
       );
+      // Each leave type carries the colour level used on screen.
+      for (const b of empAEntry!.leaveBalances as unknown as {
+        level: string;
+      }[]) {
+        expect(['NONE', 'LOW', 'OK', 'NA']).toContain(b.level);
+      }
       // No month asked for, so no per-month WFH allowance is reported.
       expect(ledger.wfhAllowedPerMonth).toBeNull();
     });

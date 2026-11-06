@@ -33,6 +33,10 @@ import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
+import {
+  balanceLevel,
+  type BalanceLevel,
+} from '../leave-balances/balance-level';
 import { wfhDaysPerMonthOf } from '../organizations/org-wfh-policy';
 import { todayInOrgTz } from '../common/org-date';
 import {
@@ -847,6 +851,8 @@ export class LeaveTrackerService {
         // Applied for but not yet decided.
         pending: number;
         closing: number;
+        // How healthy the balance is (nothing left / low / fine / never entitled) — see balance-level.ts.
+        level: BalanceLevel;
       }[];
       compOffAvailable: number;
       // Comp-off earned (approved) and used so far, for a "used / earned" reading.
@@ -941,6 +947,13 @@ export class LeaveTrackerService {
                 Math.round(
                   (row.closing - (lapsedByRow.get(row.id) ?? 0)) * 100,
                 ) / 100,
+              level: balanceLevel(
+                Math.round(
+                  (row.closing - (lapsedByRow.get(row.id) ?? 0)) * 100,
+                ) / 100,
+                row.opening + row.credited + row.adjusted,
+                row.pending,
+              ),
             },
           ];
         });
@@ -1103,6 +1116,8 @@ export class LeaveTrackerService {
         width: 14,
       },
       { header: 'WFH Days (Pending)', key: 'wfhDaysPending', width: 16 },
+      // The on-screen red/yellow colouring, as words (a spreadsheet loses the colour).
+      { header: 'Balance Alerts', key: 'balanceAlerts', width: 34 },
     ];
 
     const rows = balances.map((entry) => {
@@ -1115,6 +1130,23 @@ export class LeaveTrackerService {
         leaveWithoutPayDays: entry.leaveWithoutPayDays,
         wfhDaysUsed: entry.wfhDaysUsed,
         wfhDaysPending: entry.wfhDaysPending,
+        balanceAlerts: [
+          ...entry.leaveBalances.map((b) => ({
+            label: b.leaveTypeCode,
+            level: b.level,
+          })),
+          {
+            label: 'Comp-Off',
+            level: balanceLevel(
+              entry.compOffAvailable,
+              entry.compOffEarned,
+              entry.compOffPendingLeave,
+            ),
+          },
+        ]
+          .filter((a) => a.level === 'NONE' || a.level === 'LOW')
+          .map((a) => `${a.label}: ${a.level === 'NONE' ? 'none left' : 'low'}`)
+          .join(', '),
         leaveTakenInPeriod: (entry.leaveTakenInPeriod ?? [])
           .map((t) => `${t.leaveTypeCode} ${t.days}`)
           .join(', '),
