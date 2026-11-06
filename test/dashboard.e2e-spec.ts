@@ -301,6 +301,7 @@ describe('Dashboard (e2e)', () => {
       };
       todayExtra: {
         lateToday: number;
+        earlyOutToday: number;
         wfhToday: number;
         halfDayToday: number;
       };
@@ -330,6 +331,7 @@ describe('Dashboard (e2e)', () => {
       body.workforce.onProbation,
       body.workforce.onNotice,
       body.todayExtra.lateToday,
+      body.todayExtra.earlyOutToday,
       body.todayExtra.wfhToday,
       body.todayExtra.halfDayToday,
       body.pendingExtra.probationConfirmationsDue,
@@ -345,6 +347,36 @@ describe('Dashboard (e2e)', () => {
     expect(Array.isArray(body.upcoming.anniversaries)).toBe(true);
     expect(Array.isArray(body.upcoming.probationEnds)).toBe(true);
     expect(Array.isArray(body.alerts.compliance)).toBe(true);
+  });
+
+  it('counts late arrivals and early check-outs for today separately', async () => {
+    const before = (
+      (
+        await request(app.getHttpServer())
+          .get('/dashboard/hr')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as { todayExtra: { lateToday: number; earlyOutToday: number } }
+    ).todayExtra;
+    // The seeded employee already has a plain Present row for today (see beforeAll): mark it early-out only.
+    await prisma.attendance.updateMany({
+      where: { employeeId, date: todayStr() },
+      data: { isEarlyOut: true, isLate: false },
+    });
+    const after = (
+      (
+        await request(app.getHttpServer())
+          .get('/dashboard/hr')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200)
+      ).body as { todayExtra: { lateToday: number; earlyOutToday: number } }
+    ).todayExtra;
+    expect(after.earlyOutToday).toBe(before.earlyOutToday + 1);
+    expect(after.lateToday).toBe(before.lateToday);
+    await prisma.attendance.updateMany({
+      where: { employeeId, date: todayStr() },
+      data: { isEarlyOut: false },
+    });
   });
 
   it('counts probation, notice period, probation confirmations due and probation ends in the next week', async () => {

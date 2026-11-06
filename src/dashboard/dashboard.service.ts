@@ -1729,6 +1729,7 @@ export class DashboardService {
       onProbation,
       onNotice,
       lateToday,
+      earlyOutToday,
       wfhToday,
       halfDayToday,
       probationDue,
@@ -1758,6 +1759,16 @@ export class DashboardService {
           organizationId,
           date: today,
           isLate: true,
+          employee: onBooksToday,
+          status: { in: [AttendanceStatus.PRESENT, AttendanceStatus.HALF_DAY] },
+        },
+      }), 0),
+      // Left before the shift ended (beyond the early-out threshold), among those who worked today.
+      gate(off, 'module.attendance', async () => this.scopedPrisma.attendance.count({
+        where: {
+          organizationId,
+          date: today,
+          isEarlyOut: true,
           employee: onBooksToday,
           status: { in: [AttendanceStatus.PRESENT, AttendanceStatus.HALF_DAY] },
         },
@@ -1869,7 +1880,7 @@ export class DashboardService {
 
     return {
       workforce: { active: totalEmployees, onRecord, onProbation, onNotice },
-      todayExtra: { lateToday, wfhToday, halfDayToday },
+      todayExtra: { lateToday, earlyOutToday, wfhToday, halfDayToday },
       pendingExtra: {
         probationConfirmationsDue: probationDue,
         documentsToVerify,
