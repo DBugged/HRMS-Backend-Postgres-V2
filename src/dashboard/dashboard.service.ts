@@ -1181,6 +1181,8 @@ export class DashboardService {
         date: g.rows[0].date,
         endDate: g.rows.length > 1 ? g.rows[g.rows.length - 1].date : null,
         requestedAt: g.rows[0].updatedAt,
+        // The employee's reason; every day of a multi-day request carries the same one.
+        reason: g.rows[0].workArrangementReason ?? null,
       })),
       ...overtime.map((o) => ({
         type: 'OVERTIME' as const,

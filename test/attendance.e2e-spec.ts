@@ -1605,6 +1605,344 @@ describe('Attendance (e2e)', () => {
         .expect(400);
     });
 
+    describe("the employee's reason", () => {
+      const REASON = 'Home repair visit';
+      // Monday..Wednesday, far enough ahead to clear the days the other tests here use and inside the 60-day window.
+      const firstMondayOffset = (() => {
+        let off = 47;
+        while (new Date(`${offsetDate(off)}T00:00:00Z`).getUTCDay() !== 1) {
+          off += 1;
+        }
+        return off;
+      })();
+      const monday = offsetDate(firstMondayOffset);
+      const wednesday = offsetDate(firstMondayOffset + 2);
+
+      type ListedRow = {
+        id: string;
+        date: string;
+        workArrangementReason?: string | null;
+      };
+      type PendingWfhItem = {
+        id: string;
+        groupId: string | null;
+        date: string;
+        endDate: string | null;
+        reason?: string | null;
+      };
+
+      const requestWfh = (body: Record<string, unknown>) =>
+        request(app.getHttpServer())
+          .put('/attendance/work-arrangement')
+          .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+          .send({ workArrangement: 'WFH', ...body });
+      const pendingWfhItems = async () =>
+        (
+          await request(app.getHttpServer())
+            .get('/dashboard/pending-items')
+            .query({ type: 'WFH' })
+            .set('Authorization', `Bearer ${hrToken}`)
+            .expect(200)
+        ).body as PendingWfhItem[];
+      const listedRows = async (query: Record<string, string>) =>
+        (
+          (
+            await request(app.getHttpServer())
+              .get('/attendance')
+              .query(query)
+              .set('Authorization', `Bearer ${wfhEmployeeToken}`)
+              .expect(200)
+          ).body as { data: ListedRow[] }
+        ).data;
+
+      // Later tests look for this employee's pending row by employee id, so nothing is left behind.
+      afterEach(async () => {
+        await prisma.attendance.deleteMany({
+          where: {
+            employeeId: wfhEmployeeId,
+            date: { gte: monday, lte: wednesday },
+          },
+        });
+      });
+
+      it('a single day keeps the trimmed reason and returns it from both GETs', async () => {
+        const res = await requestWfh({
+          date: monday,
+          reason: `  ${REASON}  `,
+        }).expect(200);
+        expect(
+          (res.body as { workArrangementReason: string }).workArrangementReason,
+        ).toBe(REASON);
+
+        // A range of 31 days or fewer and an open-ended list are built differently; both carry the field.
+        const bounded = await listedRows({ from: monday, to: monday });
+        expect(bounded.map((r) => r.workArrangementReason)).toEqual([REASON]);
+        const unbounded = await listedRows({ limit: '100' });
+        expect(
+          unbounded.find((r) => r.date === monday)?.workArrangementReason,
+        ).toBe(REASON);
+
+        const item = (await pendingWfhItems()).find((i) => i.date === monday);
+        expect(item?.groupId).toBeNull();
+        expect(item?.reason).toBe(REASON);
+      });
+
+      it('every day of a multi-day request has the reason, and its one pending item shows it', async () => {
+        const res = await requestWfh({
+          date: monday,
+          endDate: wednesday,
+          reason: REASON,
+        }).expect(200);
+        const { requestId, days } = res.body as {
+          requestId: string;
+          days: string[];
+        };
+        expect(days.length).toBeGreaterThan(1);
+
+        const rows = await prisma.attendance.findMany({
+          where: { employeeId: wfhEmployeeId, wfhRequestId: requestId },
+        });
+        expect(rows).toHaveLength(days.length);
+        expect(rows.every((r) => r.workArrangementReason === REASON)).toBe(true);
+
+        const listed = await listedRows({ from: monday, to: wednesday });
+        for (const day of days) {
+          expect(
+            listed.find((r) => r.date === day)?.workArrangementReason,
+          ).toBe(REASON);
+        }
+
+        const items = (await pendingWfhItems()).filter(
+          (i) => i.groupId === requestId,
+        );
+        expect(items).toHaveLength(1);
+        expect(items[0].reason).toBe(REASON);
+        expect(items[0].date).toBe(days[0]);
+        expect(items[0].endDate).toBe(days[days.length - 1]);
+      });
+
+      it('a request with no reason works as before: null in both GETs, on one day and on several', async () => {
+        const single = await requestWfh({ date: monday }).expect(200);
+        expect(
+          (single.body as { workArrangementStatus: string })
+            .workArrangementStatus,
+        ).toBe('PENDING');
+        expect(
+          (await listedRows({ from: monday, to: monday }))[0]
+            .workArrangementReason,
+        ).toBeNull();
+        expect(
+          (await pendingWfhItems()).find((i) => i.date === monday)?.reason,
+        ).toBeNull();
+        await prisma.attendance.deleteMany({
+          where: { employeeId: wfhEmployeeId, date: monday },
+        });
+
+        const range = await requestWfh({
+          date: monday,
+          endDate: wednesday,
+        }).expect(200);
+        const { requestId } = range.body as { requestId: string };
+        const rows = await prisma.attendance.findMany({
+          where: { employeeId: wfhEmployeeId, wfhRequestId: requestId },
+        });
+        expect(rows.every((r) => r.workArrangementReason === null)).toBe(true);
+        expect(
+          (await pendingWfhItems()).find((i) => i.groupId === requestId)
+            ?.reason,
+        ).toBeNull();
+      });
+
+      it('a day with no record in a date range still returns the field, as null', async () => {
+        // Blank rows are only built for past days since the employee was added, so this employee is added earlier for
+        // the length of the check.
+        const { createdAt } = await prisma.user.findUniqueOrThrow({
+          where: { id: wfhEmployeeId },
+          select: { createdAt: true },
+        });
+        await prisma.user.update({
+          where: { id: wfhEmployeeId },
+          data: { createdAt: new Date(`${offsetDate(-30)}T00:00:00Z`) },
+        });
+        try {
+          const listed = await listedRows({
+            from: offsetDate(-20),
+            to: offsetDate(-10),
+          });
+          const blank = listed.filter((r) => r.id.startsWith('synthetic:'));
+          expect(blank.length).toBeGreaterThan(0);
+          for (const row of blank) {
+            expect(row).toHaveProperty('workArrangementReason', null);
+          }
+        } finally {
+          await prisma.user.update({
+            where: { id: wfhEmployeeId },
+            data: { createdAt },
+          });
+        }
+      });
+
+      it.each([
+        ['an empty string', ''],
+        ['only spaces', '    '],
+        ['null', null],
+      ])('%s counts as no reason', async (_label, reason) => {
+        const res = await requestWfh({ date: monday, reason }).expect(200);
+        expect(
+          (res.body as { workArrangementReason: string | null })
+            .workArrangementReason,
+        ).toBeNull();
+      });
+
+      it('500 characters are accepted, counted after trimming; 501 are refused with a clear message and nothing is saved', async () => {
+        const tooLong = await requestWfh({
+          date: monday,
+          reason: 'x'.repeat(501),
+        }).expect(400);
+        expect((tooLong.body as { message: string[] }).message).toEqual([
+          'Reason must be at most 500 characters.',
+        ]);
+        const tooLongRange = await requestWfh({
+          date: monday,
+          endDate: wednesday,
+          reason: 'x'.repeat(501),
+        }).expect(400);
+        expect((tooLongRange.body as { message: string[] }).message).toEqual([
+          'Reason must be at most 500 characters.',
+        ]);
+        expect(
+          await prisma.attendance.count({
+            where: {
+              employeeId: wfhEmployeeId,
+              date: { gte: monday, lte: wednesday },
+            },
+          }),
+        ).toBe(0);
+
+        const fits = 'x'.repeat(500);
+        const res = await requestWfh({
+          date: monday,
+          reason: `  ${fits}  `,
+        }).expect(200);
+        expect(
+          (res.body as { workArrangementReason: string }).workArrangementReason,
+        ).toBe(fits);
+      });
+
+      it('a reason that is not text is refused', async () => {
+        // The wording the running app shows is checked in set-work-arrangement.dto.spec.ts (this app's pipe is a plain one).
+        await requestWfh({ date: monday, reason: 42 }).expect(400);
+        expect(
+          await prisma.attendance.count({
+            where: { employeeId: wfhEmployeeId, date: monday },
+          }),
+        ).toBe(0);
+      });
+
+      it('withdrawing clears the reason, and a new request without one does not bring it back', async () => {
+        await requestWfh({ date: monday, reason: REASON }).expect(200);
+        const withdrawn = await requestWfh({
+          date: monday,
+          workArrangement: 'OFFICE',
+        }).expect(200);
+        const row = withdrawn.body as {
+          workArrangement: string;
+          workArrangementStatus: string;
+          workArrangementReason: string | null;
+        };
+        expect(row.workArrangement).toBe('OFFICE');
+        expect(row.workArrangementStatus).toBe('NONE');
+        expect(row.workArrangementReason).toBeNull();
+
+        const again = await requestWfh({ date: monday }).expect(200);
+        expect(
+          (again.body as { workArrangementReason: string | null })
+            .workArrangementReason,
+        ).toBeNull();
+      });
+
+      it('a reason sent with another arrangement is not stored', async () => {
+        const res = await requestWfh({
+          date: monday,
+          workArrangement: 'OFFICE',
+          reason: REASON,
+        }).expect(200);
+        expect(
+          (res.body as { workArrangementReason: string | null })
+            .workArrangementReason,
+        ).toBeNull();
+      });
+
+      it('withdrawing one day of a multi-day request clears only that day', async () => {
+        const res = await requestWfh({
+          date: monday,
+          endDate: wednesday,
+          reason: REASON,
+        }).expect(200);
+        const { requestId, days } = res.body as {
+          requestId: string;
+          days: string[];
+        };
+        await requestWfh({
+          date: days[0],
+          workArrangement: 'OFFICE',
+        }).expect(200);
+
+        const gone = await prisma.attendance.findFirst({
+          where: { employeeId: wfhEmployeeId, date: days[0] },
+        });
+        expect(gone?.workArrangementReason).toBeNull();
+        expect(gone?.wfhRequestId).toBeNull();
+        const rest = await prisma.attendance.findMany({
+          where: { employeeId: wfhEmployeeId, wfhRequestId: requestId },
+        });
+        expect(rest).toHaveLength(days.length - 1);
+        expect(rest.every((r) => r.workArrangementReason === REASON)).toBe(true);
+      });
+
+      it("review leaves the employee's reason alone and keeps the reviewer's comment separate, single and group", async () => {
+        const single = await requestWfh({
+          date: monday,
+          reason: REASON,
+        }).expect(200);
+        const reviewed = await request(app.getHttpServer())
+          .patch(
+            `/attendance/work-arrangement/${(single.body as { id: string }).id}/review`,
+          )
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ decision: 'REJECTED', comments: 'Team day' })
+          .expect(200);
+        const row = reviewed.body as {
+          workArrangementReason: string;
+          workArrangementReviewComments: string;
+        };
+        expect(row.workArrangementReason).toBe(REASON);
+        expect(row.workArrangementReviewComments).toBe('Team day');
+        await prisma.attendance.deleteMany({
+          where: { employeeId: wfhEmployeeId, date: monday },
+        });
+
+        const range = await requestWfh({
+          date: monday,
+          endDate: wednesday,
+          reason: REASON,
+        }).expect(200);
+        const { requestId } = range.body as { requestId: string };
+        await request(app.getHttpServer())
+          .patch(`/attendance/work-arrangement/group/${requestId}/review`)
+          .set('Authorization', `Bearer ${hrToken}`)
+          .send({ decision: 'APPROVED', comments: 'Fine' })
+          .expect(200);
+        const rows = await prisma.attendance.findMany({
+          where: { employeeId: wfhEmployeeId, wfhRequestId: requestId },
+        });
+        expect(rows.every((r) => r.workArrangementReason === REASON)).toBe(true);
+        expect(
+          rows.every((r) => r.workArrangementReviewComments === 'Fine'),
+        ).toBe(true);
+      });
+    });
+
     it('EMPLOYEE gets 403 listing or reviewing pending WFH requests', async () => {
       await request(app.getHttpServer())
         .get('/attendance/work-arrangement/pending')
