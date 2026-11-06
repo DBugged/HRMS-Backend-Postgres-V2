@@ -363,6 +363,39 @@ export class CompOffService {
     };
   }
 
+  // Per employee: comp-off earned (approved, whether or not it has been used since) and days of it used, so a balance
+  // can read "used / earned" like a leave type. Expired, rejected and still-pending comp-off is not counted.
+  async ledgerForEmployees(
+    employeeIds: string[],
+    organizationId: string,
+  ): Promise<Map<string, { earned: number; used: number }>> {
+    const result = new Map<string, { earned: number; used: number }>();
+    if (employeeIds.length === 0) return result;
+    const rows = await this.scopedPrisma.compOff.groupBy({
+      by: ['employeeId'],
+      where: {
+        organizationId,
+        employeeId: { in: employeeIds },
+        status: {
+          in: [
+            CompOffStatus.APPROVED,
+            CompOffStatus.PARTIALLY_AVAILED,
+            CompOffStatus.AVAILED,
+          ],
+        },
+      },
+      _sum: { daysEarned: true, daysAvailed: true },
+    });
+    const round = (n: number) => Math.round(n * 100) / 100;
+    for (const r of rows) {
+      result.set(r.employeeId, {
+        earned: round(r._sum.daysEarned ?? 0),
+        used: round(r._sum.daysAvailed ?? 0),
+      });
+    }
+    return result;
+  }
+
   // Per employee: days of comp-off earned and awaiting approval, and days of comp-off leave applied for and awaiting
   // approval. Neither is in `available` yet, so HR would otherwise not see that something is waiting.
   async pendingForEmployees(

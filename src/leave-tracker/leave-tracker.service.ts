@@ -33,6 +33,7 @@ import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { isEligible } from '../leave-balances/leave-eligibility';
 import { CompOffService } from '../comp-offs/comp-off.service';
 import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
+import { wfhDaysPerMonthOf } from '../organizations/org-wfh-policy';
 import { todayInOrgTz } from '../common/org-date';
 import {
   isWeeklyOff,
@@ -543,6 +544,8 @@ export class LeaveTrackerService {
       lwpLeaves,
       compOffPendingByEmployee,
       wfhPendingCounts,
+      compOffLedgerByEmployee,
+      wfhOrg,
     ] = await Promise.all([
       query.lite
         ? Promise.resolve(new Map<string, number>())
@@ -653,7 +656,25 @@ export class LeaveTrackerService {
             },
             _count: { _all: true },
           }),
+      // "used / earned" for comp-off, and the company's WFH allowance per month for "used / allowed".
+      query.lite
+        ? Promise.resolve(new Map<string, { earned: number; used: number }>())
+        : this.compOffService.ledgerForEmployees(
+            balanceEmployeeIds,
+            organizationId,
+          ),
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { policies: true },
+      }),
     ]);
+    // Only meaningful for a single month ("2 of 4 this month"); a whole-year query has no per-month figure.
+    const wfhAllowedPerMonth = periodStart
+      ? wfhDaysPerMonthOf(
+          (wfhOrg?.policies as { wfhDaysPerMonth?: unknown } | null)
+            ?.wfhDaysPerMonth,
+        )
+      : null;
 
     // Days are counted the way each leave was charged (holidays and weekly offs only when its type's sandwich rule takes them
     // in), not as every calendar day between its dates. Only a leave running across the edge of the month / year being shown
@@ -828,12 +849,17 @@ export class LeaveTrackerService {
         closing: number;
       }[];
       compOffAvailable: number;
+      // Comp-off earned (approved) and used so far, for a "used / earned" reading.
+      compOffEarned: number;
+      compOffUsed: number;
       // Comp-off earned, and comp-off leave applied for, that is still waiting for approval (days).
       compOffPendingRequests: number;
       compOffPendingLeave: number;
       wfhDaysUsed: number;
       // WFH days requested for the period that are still waiting for approval (not counted in wfhDaysUsed).
       wfhDaysPending: number;
+      // The company's WFH days allowed per month (null = no limit, or no month asked for).
+      wfhAllowedPerMonth: number | null;
       // Days of approved Leave Without Pay in the leave year (not in the lite response).
       leaveWithoutPayDays: number;
       // Only when a month was asked for: leave taken in that month, by type.
@@ -937,10 +963,13 @@ export class LeaveTrackerService {
         isActive: employee.isActive,
         leaveBalances,
         compOffAvailable,
+        compOffEarned: compOffLedgerByEmployee.get(employee.id)?.earned ?? 0,
+        compOffUsed: compOffLedgerByEmployee.get(employee.id)?.used ?? 0,
         compOffPendingRequests: compOffPending?.requests ?? 0,
         compOffPendingLeave: compOffPending?.leaveDays ?? 0,
         wfhDaysUsed,
         wfhDaysPending,
+        wfhAllowedPerMonth,
         leaveWithoutPayDays:
           Math.round((lwpDaysByEmployee.get(employee.id) ?? 0) * 100) / 100,
         ...(periodStart && {

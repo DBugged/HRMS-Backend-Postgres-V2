@@ -910,6 +910,18 @@ describe('Leave Tracker (e2e)', () => {
       expect(trackerTal!.availed).toBe(directTal!.availed);
       expect(trackerTal!.closing).toBe(directTal!.closing);
       expect(empAEntry!.compOffAvailable).toBe(direct.compOffAvailable);
+      // "used / earned" for comp-off adds up to what is available.
+      const ledger = empAEntry as unknown as {
+        compOffEarned: number;
+        compOffUsed: number;
+        wfhAllowedPerMonth: number | null;
+      };
+      expect(ledger.compOffEarned - ledger.compOffUsed).toBeCloseTo(
+        empAEntry!.compOffAvailable,
+        2,
+      );
+      // No month asked for, so no per-month WFH allowance is reported.
+      expect(ledger.wfhAllowedPerMonth).toBeNull();
     });
 
     it('counts WFH days from Attendance for the requested year', async () => {
