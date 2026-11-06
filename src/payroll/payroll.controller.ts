@@ -166,6 +166,39 @@ export class PayrollController {
     );
   }
 
+  // Every finalized payslip of a month as one PDF (ADMIN/HR). Registered before ':id' like the other fixed paths. The
+  // Excel version of this download is the existing Salary Register report.
+  @Get('payslips/bulk')
+  @Roles(Role.ADMIN, Role.HR)
+  @UseGuards(RolesGuard)
+  @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
+  async downloadAllPayslips(
+    @Query() query: AttendanceGapsQueryDto,
+    @CurrentUser() caller: Caller,
+    @Res() res: Response,
+  ) {
+    const { buffer, filename, count, skipped } =
+      await this.payslipPdfService.buildBulkPayslipsPdf(
+        query.month,
+        query.year,
+        caller.organizationId,
+      );
+    auditSensitive(this.privacyAudit, caller, {
+      action: 'PAYSLIPS_BULK_DOWNLOADED',
+      category: 'PAYSLIP',
+      entity: 'PayrollRun',
+      meta: { month: query.month, year: query.year, count, skipped },
+    });
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'X-Payslip-Count': String(count),
+      'X-Payslip-Skipped': String(skipped),
+      'Access-Control-Expose-Headers': 'Content-Disposition, X-Payslip-Count, X-Payslip-Skipped',
+    });
+    res.send(buffer);
+  }
+
   // The months whose payslip exists but is not final yet (calculated / verified / approved) - month and year only, no
   // amounts - so the app can say "being finalised" instead of leaving the employee guessing. Own months only; any
   // authenticated caller. Registered before ':id' so it is not read as a payslip id.

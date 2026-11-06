@@ -1,3 +1,4 @@
+import { PDFDocument as PdfLibDocument } from 'pdf-lib';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 
@@ -1054,6 +1055,38 @@ describe('Payroll (e2e)', () => {
         .get(`/payroll/${runId}/pdf`)
         .set('Authorization', `Bearer ${adminToken}`)
         .expect(200);
+    });
+
+    it('ADMIN downloads every finalized payslip of the month as one PDF; an employee cannot; an empty month is a clear 400', async () => {
+      const url = `/payroll/payslips/bulk?month=${PDF_MONTH}&year=${YEAR}`;
+      await request(app.getHttpServer())
+        .get(url)
+        .set('Authorization', `Bearer ${employeeToken}`)
+        .expect(403);
+      const res = await request(app.getHttpServer())
+        .get(url)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .buffer(true)
+        .parse((r, cb) => {
+          const chunks: Buffer[] = [];
+          r.on('data', (c: Buffer) => chunks.push(c));
+          r.on('end', () => cb(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      expect(res.headers['content-type']).toBe('application/pdf');
+      expect(res.headers['content-disposition']).toContain('Payslips-');
+      expect(Number(res.headers['x-payslip-count'])).toBeGreaterThanOrEqual(1);
+      const pdf = await PdfLibDocument.load(res.body as Buffer);
+      expect(pdf.getPageCount()).toBeGreaterThanOrEqual(
+        Number(res.headers['x-payslip-count']),
+      );
+      const empty = await request(app.getHttpServer())
+        .get('/payroll/payslips/bulk?month=1&year=2099')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(400);
+      expect((empty.body as { message: string }).message).toMatch(
+        /no finalized payslips/i,
+      );
     });
   });
 

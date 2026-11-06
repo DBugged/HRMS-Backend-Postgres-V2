@@ -1,4 +1,4 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import * as path from 'path';
 import PDFDocument from 'pdfkit';
 import * as QRCode from 'qrcode';
@@ -17,6 +17,8 @@ import {
   type TimeFormatPattern,
 } from './format-date';
 import { lastDayOfMonth } from './payroll-date-math';
+import { compareEmployeeId } from '../common/employee-order';
+import { BULK_PAYSLIP_CONCURRENCY, BULK_PAYSLIP_MAX, bulkPayslipFilename, mapInBatches, mergePdfBuffers } from './bulk-payslips';
 import { readStoredFile } from '../files/file-storage.config';
 import { attachWatermark } from '../common/pdf-watermark';
 import { decryptPersonalData } from '../common/personal-data-crypto';
@@ -300,6 +302,39 @@ export class PayslipPdfService {
       companyWebsite: b.website ?? template.companyWebsite,
       companyContactNumber: b.phone ?? template.companyContactNumber,
       companyLogoUrl: b.logoUrl ?? template.companyLogoUrl,
+    };
+  }
+
+  // Every finalized payslip of a month as ONE PDF, in employee-ID order, each starting on a new page. Each payslip is drawn by
+  // buildPayslipPdfBuffer (so it is identical to the single download) and the results are joined. Only regular monthly runs;
+  // a run that is not finalized yet is left out and counted in `skipped`.
+  async buildBulkPayslipsPdf(
+    month: number,
+    year: number,
+    organizationId: string,
+  ): Promise<{ buffer: Buffer; filename: string; count: number; skipped: number }> {
+    const runs = await this.scopedPrisma.payrollRun.findMany({
+      where: { organizationId, month, year, isFinalSettlement: false, runSequence: 0 },
+      select: { id: true, status: true, employee: { select: { employeeId: true, name: true } } },
+    });
+    const finalStatuses: PayrollRunStatus[] = [PayrollRunStatus.APPROVED, PayrollRunStatus.LOCKED, PayrollRunStatus.PAID];
+    const ready = runs
+      .filter((r) => finalStatuses.includes(r.status))
+      .sort((a, b) => compareEmployeeId(a.employee.employeeId, b.employee.employeeId) || a.employee.name.localeCompare(b.employee.name));
+    if (ready.length === 0) {
+      throw new BadRequestException('There are no finalized payslips for this month yet.');
+    }
+    if (ready.length > BULK_PAYSLIP_MAX) {
+      throw new BadRequestException(
+        `This month has ${ready.length} payslips, more than the ${BULK_PAYSLIP_MAX} that can be downloaded at once. Download them by department instead.`,
+      );
+    }
+    const pdfs = await mapInBatches(ready, BULK_PAYSLIP_CONCURRENCY, async (r) => (await this.buildPayslipPdfBuffer(r.id, organizationId)).buffer);
+    return {
+      buffer: await mergePdfBuffers(pdfs),
+      filename: bulkPayslipFilename(month, year),
+      count: ready.length,
+      skipped: runs.length - ready.length,
     };
   }
 
