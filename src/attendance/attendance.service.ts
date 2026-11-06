@@ -2394,6 +2394,8 @@ export class AttendanceService {
       workArrangementReviewedById: null,
       workArrangementReviewedAt: null,
       workArrangementReviewComments: null,
+      // Belongs to the request: any other arrangement (a withdrawal included) clears it.
+      workArrangementReason: isWfh ? (dto.reason ?? null) : null,
       // A single day stands alone; a group id left from an earlier multi-day request must not stick to it.
       wfhRequestId: null,
     };
@@ -2740,6 +2742,7 @@ export class AttendanceService {
       workArrangementReviewedById: null,
       workArrangementReviewedAt: null,
       workArrangementReviewComments: null,
+      workArrangementReason: dto.reason ?? null,
       wfhRequestId: requestId,
     };
     for (const day of days) {
@@ -3590,6 +3593,7 @@ export class AttendanceService {
           workArrangementReviewedById: null,
           workArrangementReviewedAt: null,
           workArrangementReviewComments: null,
+          workArrangementReason: null,
           // Same shape as the column's own schema default — never persisted,
           // just matching what a real never-touched row would carry.
           regularization: {
