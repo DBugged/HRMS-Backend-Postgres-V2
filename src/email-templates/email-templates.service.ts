@@ -126,7 +126,7 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
     organizationId: string,
   ): Promise<void> {
     for (const def of EMAIL_TEMPLATE_DEFAULTS) {
-      // Platform-level (D'CoreHR welcoming the org's founder), not an
+      // Platform-level (D'RectHR welcoming the org's founder), not an
       // org-to-employee occasion — never seeded as an editable per-org
       // template. See the comment on this entry in email-template-defaults.ts.
       if (def.occasionKey === 'FOUNDER_ACCOUNT_WELCOME') continue;
@@ -576,9 +576,9 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
     occasionKey: string | null,
     brandId?: string | null,
   ): Promise<string> {
-    // Platform-level occasion — D'CoreHR welcoming a brand new org's
+    // Platform-level occasion — D'RectHR welcoming a brand new org's
     // founder, before that org has any branding (logo, name) of its own
-    // set up. Always shells with D'CoreHR's own identity, never the org's.
+    // set up. Always shells with D'RectHR's own identity, never the org's.
     if (occasionKey === 'FOUNDER_ACCOUNT_WELCOME') {
       return wrapEmailShell(finalizeEmailHtml(html), {
         preheader: this.render(
@@ -586,8 +586,8 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
           variables,
         ),
         branding: {
-          companyName: "D'CoreHR",
-          logoImgTag: `<img src="${escapeHtml(`${frontendUrl()}/brand-mark.png`)}" alt="D'CoreHR" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`,
+          companyName: "D'RectHR",
+          logoImgTag: `<img src="${escapeHtml(`${frontendUrl()}/brand-mark.png`)}" alt="D'RectHR" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`,
         },
       });
     }

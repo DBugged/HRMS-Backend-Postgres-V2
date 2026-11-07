@@ -82,6 +82,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { RolesGuard } from './common/guards/roles.guard';
 import { PasswordRotationGuard } from './common/guards/password-rotation.guard';
 import { ModuleAccessModule } from './module-access/module-access.module';
+import { PlatformBrandModule } from './platform-brand/platform-brand.module';
 import { AccountManagementModule } from './account-management/account-management.module';
 import { MyRequestsModule } from './my-requests/my-requests.module';
 import { ModuleGuard } from './module-access/module.guard';
@@ -176,6 +177,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
     CustomFieldsModule,
     ControlCenterModule,
     ModuleAccessModule,
+    PlatformBrandModule,
     AccountManagementModule,
     MyRequestsModule,
     WorkSchedulesModule,

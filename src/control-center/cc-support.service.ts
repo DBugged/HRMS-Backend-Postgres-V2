@@ -227,7 +227,7 @@ export class CcSupportService {
   private setOut(s: Prisma.CcSettingGetPayload<Record<string, never>>) {
     return { key: s.key, value: s.value, type: s.type, restricted: s.restricted, description: s.description, updatedAt: s.updatedAt.toISOString() };
   }
-  async listSettings() { return (await this.prisma.ccSetting.findMany({ orderBy: { key: 'asc' } })).map((s) => this.setOut(s)); }
+  async listSettings() { return (await this.prisma.ccSetting.findMany({ where: { NOT: { key: { startsWith: 'platform.brand' } } }, orderBy: { key: 'asc' } })).map((s) => this.setOut(s)); }
   async getSetting(key: string) {
     const s = await this.prisma.ccSetting.findUnique({ where: { key } });
     if (!s) throw new NotFoundException('Setting not found.');

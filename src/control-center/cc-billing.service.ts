@@ -3,7 +3,7 @@
 //   invoice paid records a payment too, so Payments always matches Billing. Nothing here talks to a payment gateway yet:
 //   payments are recorded by hand (UPI/bank/cheque reference).
 import PDFDocument from 'pdfkit';
-import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { forgetOrganizationStatus } from '../common/org-status';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -11,6 +11,7 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcSupportService } from './cc-support.service';
 import { AccountNotifier } from '../account-management/account-notifier.service';
 import { ModuleAccessService } from '../module-access/module-access.service';
+import { PlatformBrandService } from '../platform-brand/platform-brand.service';
 import { EmailService } from '../notifications/email.service';
 import { validateCouponInput, validateInvoiceInput, validatePaymentInput, validateRefundInput } from './cc-validation';
 import { addMonths, monthlyCharge, nextInvoiceNumber, num, paging, type PageQuery } from './cc-util';
@@ -20,7 +21,7 @@ type Line = { description: string; quantity: number; unitAmount: number };
 
 @Injectable()
 export class CcBillingService {
-  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly settings: CcSupportService, private readonly modules: ModuleAccessService, private readonly email: EmailService, private readonly notifier: AccountNotifier) {}
+  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly settings: CcSupportService, private readonly modules: ModuleAccessService, private readonly email: EmailService, private readonly notifier: AccountNotifier, @Optional() private readonly brand?: PlatformBrandService) {}
 
   // ---------------- invoices ----------------
   private async invOut(i: Prisma.CcInvoiceGetPayload<{ include: { organization: true } }>) {
@@ -130,7 +131,8 @@ export class CcBillingService {
     const money = (n: number | null) => `${inv.currency} ${(n ?? 0).toFixed(2)}`;
     const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '-');
 
-    doc.fontSize(20).text("D'Core HR", { continued: true }).fontSize(10).text('   by D\'Bugged Programmers');
+    const brandName = this.brand ? (await this.brand.get()).name : "D'Rect HR";
+    doc.fontSize(20).text(brandName, { continued: true }).fontSize(10).text('   by D\'Bugged Programmers');
     doc.moveDown(0.5).fontSize(16).text(`Invoice ${inv.number}`, { align: 'right' });
     doc.fontSize(10).text(`Status: ${inv.status}`, { align: 'right' }).text(`Date: ${fmt(inv.createdAt)}`, { align: 'right' }).text(`Due: ${fmt(inv.dueDate)}`, { align: 'right' });
     doc.moveDown().fontSize(11).text('Bill to', { underline: true }).fontSize(10).text(inv.organizationName ?? '');
@@ -153,7 +155,7 @@ export class CcBillingService {
     if (inv.discount) row(`Discount${inv.couponCode ? ` (${inv.couponCode})` : ''}`, `-${money(inv.discount)}`);
     row('GST', money(inv.tax));
     row('Total', money(inv.total), true);
-    doc.font('Helvetica').fontSize(9).text('Thank you for choosing D\'Core HR.', 50, 760, { align: 'center', width: 495 });
+    doc.font('Helvetica').fontSize(9).text('Thank you for choosing D\'Rect HR.', 50, 760, { align: 'center', width: 495 });
     doc.end();
     return done;
   }
@@ -198,7 +200,7 @@ export class CcBillingService {
     const pdf = await this.invoicePdf(id);
     await this.email.send({
       to: address,
-      subject: `Invoice ${inv.number} from D'Core HR`,
+      subject: `Invoice ${inv.number} from D'Rect HR`,
       html: `<p>Hello,</p><p>Please find invoice <b>${inv.number}</b> attached: <b>${inv.currency} ${(inv.total ?? 0).toFixed(2)}</b>${inv.dueDate ? `, due ${new Date(inv.dueDate).toLocaleDateString('en-IN')}` : ''}.</p><p>Reply to this email if you have any questions.</p><p>D'Bugged Programmers</p>`,
       attachments: [{ filename: `${inv.number}.pdf`, content: pdf }],
     });

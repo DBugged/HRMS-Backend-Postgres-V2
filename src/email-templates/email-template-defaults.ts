@@ -574,9 +574,9 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
     category: 'Account & Access',
   },
   {
-    // Platform-level, not org-level: this is D'CoreHR welcoming a brand new
+    // Platform-level, not org-level: this is D'RectHR welcoming a brand new
     // org's founder right after registration, before that org has any
-    // branding of its own set up — see the "D'CoreHR branding" special case
+    // branding of its own set up — see the "D'RectHR branding" special case
     // in EmailTemplatesService.applyShell(). Deliberately not seeded into
     // any org's EmailTemplate rows (see seedDefaults()), so it never shows
     // up as an editable template on the org's Email Templates settings

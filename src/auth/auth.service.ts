@@ -323,10 +323,10 @@ export class AuthService {
       loginUrl,
       verifyUrl: emailVerificationRequired() ? verifyUrl : null,
     });
-    // Platform-level email (D'CoreHR welcoming the org's founder) — never
+    // Platform-level email (D'RectHR welcoming the org's founder) — never
     // seeded as an org-editable template (see EmailTemplatesService.
     // seedDefaults), so this always renders the fallback below, shelled
-    // with D'CoreHR's own branding (see applyShell's FOUNDER_ACCOUNT_WELCOME
+    // with D'RectHR's own branding (see applyShell's FOUNDER_ACCOUNT_WELCOME
     // special case), not the org's.
     const founderRendered = await this.emailTemplatesService.renderOccasion(
       organization.id,
@@ -838,7 +838,7 @@ export class AuthService {
       },
     });
     const verifyUrl = `${frontendUrl()}/verify-email?token=${rawToken}`;
-    // Same platform shell (D'CoreHR header and footer) as the welcome email, and the same components - this used to be
+    // Same platform shell (D'RectHR header and footer) as the welcome email, and the same components - this used to be
     // sent as bare paragraphs with no shell at all.
     const confirm = await this.emailTemplatesService.renderOccasion(
       user.organizationId,

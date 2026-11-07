@@ -5,7 +5,8 @@
 // dry-run log rather than propagating, so a bad SMTP/Resend config can never fail the caller's business
 // action. Only an explicit EMAIL_DRIVER=resend switches off the default SMTP path.
 import { isPlaceholderEmail } from '../common/no-email';
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { PlatformBrandService } from '../platform-brand/platform-brand.service';
 import * as nodemailer from 'nodemailer';
 import { Resend } from 'resend';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
@@ -73,6 +74,7 @@ export class EmailService {
 
   constructor(
     @Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient,
+    @Optional() private readonly platformBrand?: PlatformBrandService,
   ) {}
 
   // Resend-only — the SMTP driver has no per-org verified-domain concept
@@ -161,7 +163,10 @@ export class EmailService {
   }
 
   async send(input: SendEmailInput): Promise<{ dryRun: boolean }> {
-    const { subject, html, attachments, organizationId } = input;
+    const { attachments, organizationId } = input;
+    // The product name in the mail follows the name saved in the Control Center.
+    const subject = this.platformBrand ? await this.platformBrand.applyToEmail(input.subject, false) : input.subject;
+    const html = this.platformBrand ? await this.platformBrand.applyToEmail(input.html, true) : input.html;
     let { to, cc, bcc } = input;
     // A person with no email has a placeholder login address that can never receive mail: nothing is sent to it.
     if (isPlaceholderEmail(to)) {

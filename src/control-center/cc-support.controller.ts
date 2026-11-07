@@ -9,6 +9,7 @@ import { CcPermission, CcPermissionGuard } from './cc-permission.guard';
 import { CcSupportService } from './cc-support.service';
 import { CcAutomationService } from './cc-automation.service';
 import type { PageQuery } from './cc-util';
+import { PlatformBrandService } from '../platform-brand/platform-brand.service';
 
 type B = Record<string, unknown>;
 type Q = PageQuery & Record<string, string | undefined>;
@@ -18,7 +19,7 @@ type Q = PageQuery & Record<string, string | undefined>;
 @UseGuards(CcAuthGuard, CcPermissionGuard)
 @Controller('api/v1')
 export class CcSupportController {
-  constructor(private readonly svc: CcSupportService, private readonly auto: CcAutomationService) {}
+  constructor(private readonly svc: CcSupportService, private readonly auto: CcAutomationService, private readonly brand: PlatformBrandService) {}
 
   @Get('alerts') @CcPermission('organizations:read') alerts(@Query() q: Q) { return this.auto.listAlerts(q); }
   @Post('alerts/read-all') @HttpCode(204) @CcPermission('organizations:read') async readAll() { await this.auto.markRead(); }
@@ -57,6 +58,9 @@ export class CcSupportController {
     res.send(out.body);
   }
   @Get('audit-log/:id') @CcPermission('audit-log:read') auditEntry(@Param('id') id: string) { return this.svc.getAudit(id); }
+
+  @Get('platform-brand') @CcPermission('settings:read') platformBrand() { return this.brand.get(); }
+  @Put('platform-brand') @CcPermission('settings:write') setPlatformBrand(@Body() b: { name?: unknown; logo?: unknown }) { return this.brand.set(b ?? {}); }
 
   @Get('settings') @CcPermission('settings:read') settings() { return this.svc.listSettings(); }
   @Get('settings/:key') @CcPermission('settings:read') setting(@Param('key') key: string) { return this.svc.getSetting(key); }

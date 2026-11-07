@@ -114,7 +114,7 @@ export class AccountExportScheduleService {
           to: email,
           organizationId: caller.organizationId,
           subject: `Please confirm: monthly data export from ${caller.name}`,
-          html: `<p>Hello,</p><p><b>${esc(caller.name)}</b> has asked D'Core HR to email a monthly file of their company's data to this address: <b>${esc(labels.join(', '))}</b>.</p><p>Only click the link if you expect this. Until you confirm, nothing is sent to you.</p><p><a href="${backendPublicUrl()}/public/account-export/confirm?token=${tokens.get(email)}">Yes, send me the monthly file${labels.length > 1 ? 's' : ''}</a></p><p>The link works for ${CONFIRM_DAYS} days. If you did not expect this email, ignore it.</p><p>D'Bugged Programmers</p>`,
+          html: `<p>Hello,</p><p><b>${esc(caller.name)}</b> has asked D'Rect HR to email a monthly file of their company's data to this address: <b>${esc(labels.join(', '))}</b>.</p><p>Only click the link if you expect this. Until you confirm, nothing is sent to you.</p><p><a href="${backendPublicUrl()}/public/account-export/confirm?token=${tokens.get(email)}">Yes, send me the monthly file${labels.length > 1 ? 's' : ''}</a></p><p>The link works for ${CONFIRM_DAYS} days. If you did not expect this email, ignore it.</p><p>D'Bugged Programmers</p>`,
         })
         .catch(() => undefined);
     }
@@ -179,7 +179,7 @@ export class AccountExportScheduleService {
           to: address,
           organizationId: s.organizationId,
           subject: `Your scheduled data export: ${label}`,
-          html: `<p>Hello,</p><p>Your scheduled export <b>${label}</b> (${rec.rowCount ?? 0} rows) is ready.</p>${small ? '<p>The file is attached.</p>' : '<p>The file is too large to attach. Sign in to D\'Core HR, open Account Management > Data Export and download it within 24 hours.</p>'}<p>This file contains confidential company data. Please store and share it carefully.</p><p>D'Bugged Programmers</p>`,
+          html: `<p>Hello,</p><p>Your scheduled export <b>${label}</b> (${rec.rowCount ?? 0} rows) is ready.</p>${small ? '<p>The file is attached.</p>' : '<p>The file is too large to attach. Sign in to D\'Rect HR, open Account Management > Data Export and download it within 24 hours.</p>'}<p>This file contains confidential company data. Please store and share it carefully.</p><p>D'Bugged Programmers</p>`,
           ...(small ? { attachments: [{ filename: rec.fileName ?? 'export', content: file }] } : {}),
         });
       }

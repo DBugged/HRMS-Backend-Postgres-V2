@@ -48,7 +48,7 @@ export class AccountNotifier {
     for (const p of people) {
       await this.notifications.create({ organizationId, userId: p.id, title: n.title, message: n.message, category: 'GENERAL', link }).catch((e) => this.logger.warn(`Bell notice failed: ${(e as Error).message}`));
       await this.email
-        .send({ to: p.email, organizationId, subject: n.title, html: `<p>Hello ${esc(p.name)},</p><p><b>${esc(n.title)}</b></p><p>${esc(n.message).replace(/\n/g, '<br>')}</p><p>You can see the details under Account Management in D'Core HR.</p><p>D'Bugged Programmers</p>` })
+        .send({ to: p.email, organizationId, subject: n.title, html: `<p>Hello ${esc(p.name)},</p><p><b>${esc(n.title)}</b></p><p>${esc(n.message).replace(/\n/g, '<br>')}</p><p>You can see the details under Account Management in D'Rect HR.</p><p>D'Bugged Programmers</p>` })
         .catch((e) => this.logger.warn(`Notice email failed: ${(e as Error).message}`));
     }
     return true;

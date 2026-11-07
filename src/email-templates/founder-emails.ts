@@ -1,4 +1,4 @@
-// Purpose: The two emails a brand-new organization's founder gets from D'CoreHR itself - the welcome right after
+// Purpose: The two emails a brand-new organization's founder gets from D'RectHR itself - the welcome right after
 //   registration and a re-sent confirmation link. Built from the shared email components so they look like every
 //   other designed email (heading, steps, a real button) instead of plain paragraphs.
 // Important: pure string builders. Values are escaped here; the caller passes raw text and URLs.
@@ -31,8 +31,8 @@ export function founderWelcomeHtml(i: FounderWelcomeInput): string {
       paragraph(`Hi ${name},`),
       paragraph(
         verify
-          ? `Thank you for creating <strong>${company}</strong> on D'CoreHR. One quick step: confirm your email address to activate your account.`
-          : `Thank you for creating <strong>${company}</strong> on D'CoreHR. Your account is ready to use.`,
+          ? `Thank you for creating <strong>${company}</strong> on D'RectHR. One quick step: confirm your email address to activate your account.`
+          : `Thank you for creating <strong>${company}</strong> on D'RectHR. Your account is ready to use.`,
       ),
       verify
         ? button(escapeHtml(i.verifyUrl as string), 'Confirm my email address')
@@ -69,7 +69,7 @@ export function confirmEmailHtml(i: {
     blocks: [
       paragraph(`Hi ${escapeHtml(i.name)},`),
       paragraph(
-        'Please confirm your email address to activate your D\'CoreHR account.',
+        'Please confirm your email address to activate your D\'RectHR account.',
       ),
       button(escapeHtml(i.verifyUrl), 'Confirm my email address'),
       mutedText('This link is valid for 48 hours.'),

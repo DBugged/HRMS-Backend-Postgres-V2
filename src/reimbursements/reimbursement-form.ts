@@ -178,7 +178,7 @@ function addForm(wb: ExcelJS.Workbook, form: ReimbursementFormData, sheetName: s
 
 export async function buildReimbursementFormWorkbook(forms: ReimbursementFormData[]): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'D\'Core HR';
+  wb.creator = 'D\'Rect HR';
   const taken = new Set<string>();
   for (const f of forms) addForm(wb, f, sheetNameFor(`${f.employee.name} (${f.employee.code})`, taken));
   return Buffer.from(await wb.xlsx.writeBuffer());

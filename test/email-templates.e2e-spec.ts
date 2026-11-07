@@ -129,7 +129,7 @@ describe('EmailTemplates (e2e)', () => {
       'EXIT_HANDOVER_REMINDER',
       'HOLIDAY_CALENDAR_REMINDER',
       // FOUNDER_ACCOUNT_WELCOME deliberately not seeded — platform-level
-      // (D'CoreHR welcoming a brand new org's founder), not an org-editable
+      // (D'RectHR welcoming a brand new org's founder), not an org-editable
       // template. See EmailTemplatesService.seedDefaults().
       'LEAVE_DECISION',
       'LEAVE_ENCASHMENT_STATUS',
