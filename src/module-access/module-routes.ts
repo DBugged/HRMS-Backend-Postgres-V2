@@ -23,6 +23,7 @@ export const ACCOUNT_LABELS: Record<string, string> = {
   'module.account_usage': 'Usage & Limits',
   'module.account_export': 'Data Export',
   'module.account_support': 'Support & Tickets',
+  'module.account_activity': 'Account Activity',
 };
 
 const SEGMENTS: Record<string, string[]> = {
@@ -42,6 +43,7 @@ const SEGMENTS: Record<string, string[]> = {
   'module.account_usage': ['account-usage'],
   'module.account_export': ['account-export'],
   'module.account_support': ['account-support'],
+  'module.account_activity': ['account-activity'],
 };
 
 const BY_SEGMENT = new Map(Object.entries(SEGMENTS).flatMap(([mod, segs]) => segs.map((s) => [s, mod] as const)));

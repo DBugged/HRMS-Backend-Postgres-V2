@@ -10,6 +10,8 @@ import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcBillingService } from './cc-billing.service';
 import { CcSupportService } from './cc-support.service';
+import { AccountNotifier } from '../account-management/account-notifier.service';
+import { endDateOf, reminderTier } from '../account-management/account-logic';
 import { employeeLimit } from './cc-util';
 
 const DAY = 86400000;
@@ -29,6 +31,7 @@ export class CcAutomationService {
     private readonly billing: CcBillingService,
     private readonly support: CcSupportService,
     private readonly email: EmailService,
+    private readonly notifier: AccountNotifier,
   ) {}
 
   @Cron('30 6 * * *')
@@ -90,7 +93,7 @@ export class CcAutomationService {
             // A paid invoice for this period already extended the subscription, so a renewal never doubles up.
             const inv = await this.billing.generateInvoice(s.organizationId, 'AUTO');
             report.invoicesCreated++;
-            if (emailCustomers && inv) await this.billing.sendInvoice(inv.id).catch((e) => report.notes.push(`Could not email ${inv.number}: ${(e as Error).message}`));
+            // The invoice is emailed to the billing contact when it is raised (see CcBillingService.createInvoice).
           } catch (e) {
             report.notes.push(`No invoice for ${name}: ${(e as Error).message}`);
           }
@@ -134,6 +137,24 @@ export class CcAutomationService {
           }).then(() => { report.remindersSent++; }).catch(() => undefined);
           await this.prisma.ccInvoice.update({ where: { id: inv.id }, data: { lastReminderAt: now } });
         }
+      }
+
+      // 5a. Tell each company's admins (bell and email), once per milestone, that their subscription is ending, has ended, or
+      //     has an overdue invoice. They see the same warnings as banners on Account Management > Subscription & Billing.
+      for (const s of subs) {
+        if (s.cancelAtPeriodEnd) continue;
+        const end = endDateOf(s);
+        const tier = reminderTier(end, now);
+        if (tier == null || !end) continue;
+        const day = end.toISOString().slice(0, 10);
+        const trial = s.status === 'TRIALING';
+        if (trial && tier === 30) continue; // a trial is only worth a warning in its last week
+        const title = tier === 0 ? `Your ${trial ? 'trial' : 'subscription'} has ended` : `Your ${trial ? 'trial' : 'subscription'} ends in ${tier === 1 ? '1 day' : `${tier} days`}`;
+        const message = tier === 0 ? `It ended on ${day}. Request a renewal under Account Management > Subscription & Billing.` : `It ends on ${day}. Request a renewal under Account Management > Subscription & Billing if you want to continue.`;
+        if (await this.notifier.toAdmins(s.organizationId, { title, message, link: '/account-billing', onceKey: `end-${tier}:${s.id}:${day}` })) report.remindersSent++;
+      }
+      for (const inv of overdue) {
+        if (await this.notifier.toAdmins(inv.organizationId, { title: `Invoice ${inv.number} is overdue`, message: `${inv.currency} ${Number(inv.total).toFixed(2)} was due on ${inv.dueDate!.toLocaleDateString('en-IN')}. Please arrange payment.`, link: '/account-billing', onceKey: `overdue:${inv.id}` })) report.remindersSent++;
       }
 
       // 5b. In November and December: active customers whose next-year holiday calendar is still empty (they are also

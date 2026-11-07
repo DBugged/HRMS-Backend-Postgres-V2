@@ -36,7 +36,10 @@ export class AccountSupportService {
 
   async list(organizationId: string) {
     const rows = await this.prisma.ccTicket.findMany({ where: { organizationId }, orderBy: { updatedAt: 'desc' }, take: 200 });
-    return rows.map((t) => ({ id: t.id, subject: t.subject, category: t.category, priority: t.priority, status: normalizeTicketStatus(t.status), createdAt: t.createdAt.toISOString(), updatedAt: t.updatedAt.toISOString() }));
+    // Who on the support team is handling each ticket (name only).
+    const staff = await this.prisma.superAdmin.findMany({ where: { id: { in: [...new Set(rows.map((t) => t.assigneeId).filter((x): x is string => !!x))] } }, select: { id: true, name: true } });
+    const staffName = new Map(staff.map((s) => [s.id, s.name]));
+    return rows.map((t) => ({ id: t.id, subject: t.subject, category: t.category, priority: t.priority, assignee: t.assigneeId ? staffName.get(t.assigneeId) ?? null : null, status: normalizeTicketStatus(t.status), createdAt: t.createdAt.toISOString(), updatedAt: t.updatedAt.toISOString() }));
   }
 
   async get(organizationId: string, id: string) {
@@ -50,6 +53,7 @@ export class AccountSupportService {
       body: t.body,
       category: t.category,
       priority: t.priority,
+      assignee: t.assigneeId ? (await this.prisma.superAdmin.findUnique({ where: { id: t.assigneeId }, select: { name: true } }))?.name ?? null : null,
       status: normalizeTicketStatus(t.status),
       createdAt: t.createdAt.toISOString(),
       updatedAt: t.updatedAt.toISOString(),
@@ -63,10 +67,10 @@ export class AccountSupportService {
     const body = (dto.body ?? '').trim();
     if (!subject || subject.length > 200) throw new BadRequestException('Add a short subject (up to 200 characters).');
     if (!body || body.length > 5000) throw new BadRequestException('Describe the issue (up to 5000 characters).');
-    const category = dto.category ?? 'GENERAL';
-    const priority = dto.priority ?? 'NORMAL';
-    if (!TICKET_CATEGORIES.includes(category as never)) throw new BadRequestException('Choose a valid category.');
-    if (!TICKET_PRIORITIES.includes(priority as never)) throw new BadRequestException('Choose a valid priority.');
+    const category = dto.category ?? '';
+    const priority = dto.priority ?? '';
+    if (!TICKET_CATEGORIES.includes(category as never)) throw new BadRequestException('Choose a category.');
+    if (!TICKET_PRIORITIES.includes(priority as never)) throw new BadRequestException('Choose a priority.');
     const attachments = this.cleanAttachments(caller.organizationId, dto.attachments);
     const t = await this.prisma.ccTicket.create({
       data: { organizationId: caller.organizationId, subject, body, category, priority, createdById: caller.id, attachments },

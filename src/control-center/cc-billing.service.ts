@@ -9,6 +9,7 @@ import { forgetOrganizationStatus } from '../common/org-status';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcSupportService } from './cc-support.service';
+import { AccountNotifier } from '../account-management/account-notifier.service';
 import { ModuleAccessService } from '../module-access/module-access.service';
 import { EmailService } from '../notifications/email.service';
 import { validateCouponInput, validateInvoiceInput, validatePaymentInput, validateRefundInput } from './cc-validation';
@@ -19,7 +20,7 @@ type Line = { description: string; quantity: number; unitAmount: number };
 
 @Injectable()
 export class CcBillingService {
-  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly settings: CcSupportService, private readonly modules: ModuleAccessService, private readonly email: EmailService) {}
+  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly settings: CcSupportService, private readonly modules: ModuleAccessService, private readonly email: EmailService, private readonly notifier: AccountNotifier) {}
 
   // ---------------- invoices ----------------
   private async invOut(i: Prisma.CcInvoiceGetPayload<{ include: { organization: true } }>) {
@@ -80,10 +81,29 @@ export class CcBillingService {
             include: { organization: true },
           });
         });
-        return this.invOut(inv);
+        const out = await this.invOut(inv);
+        // Best effort and never blocks raising the invoice: the billing contact gets the PDF by email and the company's Admins a bell notice.
+        void this.announceRaised(out);
+        return out;
       } catch (e) {
         if (attempt === 2) throw e;
       }
+    }
+  }
+
+  /** Emails the invoice to the company's billing contact and tells its Admins in the app, once, when it is raised (switch off with the setting billing.email_invoice_on_raise). */
+  private async announceRaised(inv: { id: string; number: string; organizationId: string; total: number | null; currency: string; dueDate: string | null }) {
+    try {
+      if (!(await this.settings.boolSetting('billing.email_invoice_on_raise', true))) return;
+      await this.sendInvoice(inv.id).catch(() => undefined); // a company with no billing email simply gets no email
+      await this.notifier.toAdmins(inv.organizationId, {
+        title: `New invoice ${inv.number}`,
+        message: `${inv.currency} ${(inv.total ?? 0).toFixed(2)}${inv.dueDate ? `, due ${new Date(inv.dueDate).toLocaleDateString('en-IN')}` : ''}. You can download it under Account Management > Subscription & Billing.`,
+        link: '/account-billing',
+        onceKey: `invoice:${inv.id}`,
+      });
+    } catch {
+      /* never fails the invoice */
     }
   }
 

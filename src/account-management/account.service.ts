@@ -12,7 +12,7 @@ import { MODULE_LABELS } from '../module-access/module-routes';
 import { AuditLogService } from '../audit-log/audit-log.service';
 import { storageBytes } from '../control-center/cc-storage';
 import { buildInvoicePdf } from './account-invoice-pdf';
-import { REQUEST_TYPES, deriveSubscriptionStatus, limitLevel, type RequestType } from './account-logic';
+import { ACTIVITY_LABELS, REQUEST_TYPES, accountNotices, headcountTrend, deriveSubscriptionStatus, endDateOf, limitLevel, type RequestType } from './account-logic';
 
 type Caller = Omit<User, 'password'>;
 const num = (v: unknown) => Number(v ?? 0);
@@ -31,13 +31,18 @@ export class AccountService {
 
   // ---------- Subscription & Billing ----------
   async overview(organizationId: string) {
-    const [org, sub, latestInvoice] = await Promise.all([
+    const [org, sub, latestInvoice, openInvoices] = await Promise.all([
       this.prisma.organization.findFirst({ where: { id: organizationId }, select: { name: true, companyName: true, platformStatus: true } }),
       this.latestSubscription(organizationId),
       this.prisma.ccInvoice.findFirst({ where: { organizationId, status: { not: 'DRAFT' } }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.ccInvoice.findMany({ where: { organizationId, status: 'OPEN' }, select: { number: true, total: true, currency: true, dueDate: true } }),
     ]);
     if (!org) throw new NotFoundException('Organization not found.');
     const status = deriveSubscriptionStatus(sub, org.platformStatus);
+    const now = new Date();
+    const overdue = openInvoices.filter((i) => i.dueDate && i.dueDate < now).map((i) => ({ number: i.number, total: num(i.total), currency: i.currency }));
+    // Amount still to be paid: invoices that are open (sent, not yet paid).
+    const outstanding = { amount: openInvoices.reduce((a, i) => a + num(i.total), 0), currency: openInvoices[0]?.currency ?? latestInvoice?.currency ?? 'INR', count: openInvoices.length, overdueCount: overdue.length };
     const modules = await this.modules(organizationId);
     return {
       organizationName: org.companyName || org.name,
@@ -55,8 +60,12 @@ export class AccountService {
             amount: latestInvoice ? { total: num(latestInvoice.total), currency: latestInvoice.currency } : null,
             employeeLimit: sub.maxEmployees,
             storageLimitMb: sub.maxStorageMb,
+            // What the plan includes, in the Super Admin's own words (plain text lines only).
+            features: (Array.isArray(sub.plan.features) ? sub.plan.features : []).filter((f): f is string => typeof f === 'string'),
           }
         : null,
+      outstanding,
+      notices: accountNotices(status, endDateOf(sub), sub?.cancelAtPeriodEnd ?? false, overdue, now),
       paymentStatus: latestInvoice
         ? latestInvoice.status === 'OPEN' && latestInvoice.dueDate && latestInvoice.dueDate < new Date() ? 'OVERDUE' : latestInvoice.status
         : null,
@@ -71,6 +80,9 @@ export class AccountService {
       number: i.number,
       date: i.createdAt.toISOString(),
       dueDate: i.dueDate?.toISOString() ?? null,
+      subtotal: num(i.subtotal),
+      discount: num(i.discount),
+      tax: num(i.tax),
       amount: num(i.total),
       currency: i.currency,
       status: i.status,
@@ -116,6 +128,13 @@ export class AccountService {
       method: p.last4 ? `${p.provider} ending ${p.last4}` : p.provider,
       status: p.status,
     }));
+  }
+
+  /** The details printed on invoices. They are read straight from Organization Settings (Company profile) and nowhere else, so they are changed there. */
+  async billingDetails(organizationId: string) {
+    const org = await this.prisma.organization.findFirst({ where: { id: organizationId }, select: { name: true, companyName: true, gstin: true, pan: true, contactEmail: true, registeredAddress: true, corporateAddress: true } });
+    if (!org) throw new NotFoundException('Organization not found.');
+    return { companyName: org.companyName || org.name, gstin: org.gstin, pan: org.pan, billingEmail: org.contactEmail, address: org.registeredAddress || org.corporateAddress || null };
   }
 
   // ---------- My Plan & Modules ----------
@@ -198,6 +217,7 @@ export class AccountService {
     const type = dto.type as RequestType;
     if (!REQUEST_TYPES.includes(type) || !allowed.includes(type)) throw new BadRequestException('That request type is not available here.');
     const message = (dto.message ?? '').trim().slice(0, 2000);
+    if (!message) throw new BadRequestException('Please add a note explaining your request.');
     const payload = this.validatePayload(type, dto.payload ?? {});
     if (type === 'PLAN_UPGRADE') {
       const plan = await this.prisma.ccPlan.findFirst({ where: { code: String(payload.planCode), status: 'ACTIVE' }, select: { code: true } });
@@ -232,6 +252,45 @@ export class AccountService {
       details: { type },
     });
     return { id: created.id, type, status: created.status };
+  }
+
+  /** Takes back a request that has not been decided yet. Any Admin of the company may do it. */
+  async withdrawRequest(caller: Caller, id: string, allowed: readonly RequestType[]) {
+    const r = await this.prisma.ccRequest.findFirst({ where: { id, organizationId: caller.organizationId, type: { in: [...allowed] } } });
+    if (!r) throw new NotFoundException('Request not found.');
+    if (r.status !== 'PENDING') throw new ConflictException('Only a request that has not been decided yet can be withdrawn.');
+    // updateMany with the status in the filter, so a Super Admin decision made a moment ago is never overwritten.
+    const { count } = await this.prisma.ccRequest.updateMany({ where: { id, organizationId: caller.organizationId, status: 'PENDING' }, data: { status: 'WITHDRAWN', resolutionNote: `Withdrawn by ${caller.name}`, resolvedAt: new Date() } });
+    if (!count) throw new ConflictException('This request was just decided and can no longer be withdrawn.');
+    await this.prisma.ccAlert.deleteMany({ where: { dedupeKey: `request:${id}` } }).catch(() => undefined);
+    await this.auditLog.log({ actorId: caller.id, action: 'ACCOUNT_REQUEST_WITHDRAWN', module: AuditModule.ORGANIZATION, organizationId: caller.organizationId, targetId: id, details: { type: r.type } });
+    return { ok: true };
+  }
+
+  // ---------- Usage trend ----------
+  async usageTrend(organizationId: string) {
+    const people = await this.prisma.user.findMany({ where: { organizationId }, select: { joiningDate: true, isActive: true, exitDate: true, updatedAt: true }, take: 50_000 });
+    return { months: headcountTrend(people, 6), approximate: true };
+  }
+
+  // ---------- Account activity ----------
+  /** What has happened on the account: the admins' own actions (from the audit trail) and the Super Admin's decisions on their requests. */
+  async activity(organizationId: string) {
+    const [audit, decided] = await Promise.all([
+      this.prisma.auditLog.findMany({ where: { organizationId, module: AuditModule.ORGANIZATION, action: { in: Object.keys(ACTIVITY_LABELS) } }, orderBy: { createdAt: 'desc' }, take: 200, include: { actor: { select: { name: true } } } }),
+      this.prisma.ccRequest.findMany({ where: { organizationId, status: { in: ['APPROVED', 'REJECTED', 'PROCESSED'] }, resolvedAt: { not: null } }, orderBy: { resolvedAt: 'desc' }, take: 100 }),
+    ]);
+    const nice = (s: unknown) => String(s ?? '').replace(/_/g, ' ').toLowerCase();
+    const events = [
+      ...audit.map((a) => {
+        const d = (a.details ?? {}) as { type?: string; category?: string };
+        const cap = (x: string) => x.charAt(0).toUpperCase() + x.slice(1);
+        const what = d.type ? cap(nice(d.type)) : d.category ? cap(nice(d.category)) : '';
+        return { id: a.id, at: a.createdAt.toISOString(), by: a.actor?.name ?? 'Admin', source: 'YOU' as const, text: ACTIVITY_LABELS[a.action] ?? a.action, detail: what, failed: a.outcome === 'FAILURE' };
+      }),
+      ...decided.map((r) => ({ id: `req-${r.id}`, at: r.resolvedAt!.toISOString(), by: 'Super Admin', source: 'SUPER_ADMIN' as const, text: `${nice(r.type).replace(/^\w/, (c) => c.toUpperCase())} request ${r.status.toLowerCase()}`, detail: r.resolutionNote ?? '', failed: false })),
+    ];
+    return events.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 200);
   }
 
   private validatePayload(type: RequestType, payload: Record<string, unknown>): Record<string, unknown> {

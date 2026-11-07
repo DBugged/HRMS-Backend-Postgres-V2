@@ -66,6 +66,7 @@ model Organization {
   ccTickets       CcTicket[]
   ccRequests      CcRequest[]
   ccExports       CcExport[]
+  ccExportSchedules CcExportSchedule[]
   ccOrgProfile    CcOrgProfile?
   ccAlerts        CcAlert[]
 
@@ -4871,4 +4872,27 @@ model CcExport {
 
   @@index([organizationId, createdAt])
   @@map("cc_exports")
+}
+
+// A monthly export a company admin set up: the file is built on `dayOfMonth` and emailed to `recipients` (active Admin/HR users of the company).
+model CcExportSchedule {
+  id             String       @id @default(uuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  category       String // ALL or one export category
+  format         String       @default("XLSX")
+  dayOfMonth     Int          @default(1)
+  recipients     Json         @default("[]") // email addresses of the company's own Admin/HR users
+  extraRecipients Json        @default("[]") // outside addresses [{email, confirmedAt, tokenHash, tokenExpiresAt}]; used only once confirmed
+  enabled        Boolean      @default(true)
+  lastRunAt      DateTime?
+  lastStatus     String? // SENT | FAILED
+  lastError      String?
+  createdById    String
+  createdByName  String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, category])
+  @@map("cc_export_schedules")
 }

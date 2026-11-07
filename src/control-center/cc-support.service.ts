@@ -5,6 +5,7 @@ import type { Prisma, SuperAdmin } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CcAuthService } from './cc-auth.service';
+import { AccountNotifier } from '../account-management/account-notifier.service';
 import { EmailService } from '../notifications/email.service';
 import { normalizeEmail } from './cc-auth-rules';
 import { csvSafe, paging, type PageQuery } from './cc-util';
@@ -15,7 +16,7 @@ const pick = (b: Record<string, unknown>, keys: string[]) => Object.fromEntries(
 
 @Injectable()
 export class CcSupportService {
-  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly auth: CcAuthService, private readonly email: EmailService) {}
+  constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient, private readonly auth: CcAuthService, private readonly email: EmailService, private readonly notifier: AccountNotifier) {}
 
   // ---------------- tickets ----------------
   private async ticketOut(t: Prisma.CcTicketGetPayload<{ include: { organization: true; comments: true } }>, withComments: boolean) {
@@ -51,11 +52,15 @@ export class CcSupportService {
     return this.ticketOut(t, true);
   }
   async updateTicket(id: string, b: { status?: string; priority?: string; assigneeId?: string | null }) {
+    const before = await this.prisma.ccTicket.findUnique({ where: { id } });
     await this.getTicket(id);
     if (b.status !== undefined && !TICKET_STATUSES.includes(b.status as never)) throw new BadRequestException('Unknown ticket status.');
     if (b.priority !== undefined && !TICKET_PRIORITIES.includes(b.priority as never)) throw new BadRequestException('Unknown ticket priority.');
     if (b.assigneeId && !(await this.prisma.superAdmin.findUnique({ where: { id: b.assigneeId } }))) throw new NotFoundException('Assignee not found.');
     const t = await this.prisma.ccTicket.update({ where: { id }, data: pick(b, ['status', 'priority', 'assigneeId']), include: this.tInc });
+    if (b.status && before && normalizeTicketStatus(before.status) !== b.status && t.organizationId && t.createdById) {
+      await this.notifier.toUser(t.organizationId, t.createdById, { title: `Your support ticket is now ${b.status.replace(/_/g, ' ').toLowerCase()}`, message: `"${t.subject}"`, link: '/account-support' }).catch(() => undefined);
+    }
     return this.ticketOut(t, true);
   }
   async addComment(id: string, b: { body: string; internal?: boolean }, by: SuperAdmin) {
@@ -63,6 +68,9 @@ export class CcSupportService {
     if (!t) throw new NotFoundException('Ticket not found.');
     if (!b.body?.trim()) throw new BadRequestException('Write a comment first.');
     const c = await this.prisma.ccTicketComment.create({ data: { ticketId: id, organizationId: t.organizationId, authorId: by.id, authorName: by.name, body: b.body, internal: !!b.internal } });
+    if (!c.internal && t.organizationId && t.createdById) {
+      await this.notifier.toUser(t.organizationId, t.createdById, { title: 'Support replied to your ticket', message: `"${t.subject}": ${c.body.slice(0, 200)}`, link: '/account-support' }).catch(() => undefined);
+    }
     return { id: c.id, ticketId: id, authorId: c.authorId, authorName: c.authorName, body: c.body, internal: c.internal, createdAt: c.createdAt.toISOString() };
   }
 
@@ -90,6 +98,13 @@ export class CcSupportService {
     const note = (b.note ?? '').trim().slice(0, 1000);
     if (next === 'REJECTED' && !note) throw new BadRequestException('Say why the request is rejected.');
     const u = await this.prisma.ccRequest.update({ where: { id }, data: { status: next, resolutionNote: note || r.resolutionNote, resolvedById: by.id, resolvedAt: new Date() }, include: { organization: true } });
+    const verb = next === 'APPROVED' ? 'approved' : next === 'REJECTED' ? 'rejected' : 'completed';
+    const label = u.type.replace(/_/g, ' ').toLowerCase();
+    if (u.requestedById) {
+      await this.notifier
+        .toUser(u.organizationId, u.requestedById, { title: `Your ${label} request was ${verb}`, message: note ? `Note from the Super Admin: ${note}` : `The Super Admin has ${verb === 'completed' ? 'processed' : verb} your request.`, link: '/account-plan' })
+        .catch(() => undefined);
+    }
     return this.requestOut(u);
   }
 
@@ -230,6 +245,12 @@ export class CcSupportService {
   async numberSetting(key: string, fallback: number) {
     const s = await this.prisma.ccSetting.findUnique({ where: { key } });
     return typeof s?.value === 'number' ? s.value : fallback;
+  }
+
+  /** A yes/no setting with a fallback, for billing code. */
+  async boolSetting(key: string, fallback: boolean) {
+    const s = await this.prisma.ccSetting.findUnique({ where: { key } });
+    return typeof s?.value === 'boolean' ? s.value : fallback;
   }
 
   // ---------------- super admins ----------------

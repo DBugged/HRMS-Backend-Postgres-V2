@@ -7,10 +7,12 @@ import { AuditModule, type User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuditLogService } from '../audit-log/audit-log.service';
-import { buildWorkbook } from '../reports/report-export';
+import { NotificationsService } from '../notifications/notifications.service';
+import ExcelJS from 'exceljs';
+import { buildWorkbook, sanitizeSpreadsheetValue } from '../reports/report-export';
 import type { ReportColumn } from '../reports/report-export';
 import { readStoredFile, writeStoredFile } from '../files/file-storage.config';
-import { EXPORT_CATEGORIES, EXPORT_LINK_HOURS, EXPORT_ROW_CAP } from './account-logic';
+import { EXPORT_ALL, EXPORT_CATEGORIES, EXPORT_CATEGORIES_WITH_ALL, EXPORT_LINK_HOURS, EXPORT_ROW_CAP } from './account-logic';
 
 type Caller = Omit<User, 'password'>;
 type Table = { columns: ReportColumn[]; rows: Record<string, unknown>[] };
@@ -23,13 +25,16 @@ export class AccountExportService {
   constructor(
     @Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient,
     private readonly auditLog: AuditLogService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   categories() {
-    return EXPORT_CATEGORIES.map((c) => ({ key: c.key, label: c.label, dateRange: c.dateRange }));
+    return EXPORT_CATEGORIES_WITH_ALL.map((c) => ({ key: c.key, label: c.label, dateRange: c.dateRange }));
   }
 
   async history(organizationId: string) {
+    // A job lost to a server restart would stay "processing" for ever: after 15 minutes it is marked failed.
+    await this.prisma.ccExport.updateMany({ where: { organizationId, status: 'PROCESSING', createdAt: { lt: new Date(Date.now() - 15 * 60_000) } }, data: { status: 'FAILED', error: 'The export was interrupted. Please create it again.' } });
     const rows = await this.prisma.ccExport.findMany({ where: { organizationId }, orderBy: { createdAt: 'desc' }, take: 50 });
     const now = new Date();
     return rows.map((r) => ({
@@ -46,39 +51,69 @@ export class AccountExportService {
     }));
   }
 
-  async create(caller: Caller, dto: { category: string; format?: string; from?: string; to?: string }) {
-    const cat = EXPORT_CATEGORIES.find((c) => c.key === dto.category);
+  /** Starts an export and returns at once; the file is built in the background and the requester is notified when it is ready. */
+  async create(caller: Caller, dto: { category: string; format?: string; from?: string; to?: string }, opts: { wait?: boolean; silent?: boolean } = {}) {
+    const cat = EXPORT_CATEGORIES_WITH_ALL.find((c) => c.key === dto.category);
     if (!cat) throw new BadRequestException('Choose a data category to export.');
-    const format = dto.format === 'CSV' ? 'CSV' : 'XLSX';
+    const isAll = cat.key === EXPORT_ALL;
+    // One workbook with a sheet per category cannot be a CSV.
+    const format = !isAll && dto.format === 'CSV' ? 'CSV' : 'XLSX';
     if (cat.dateRange) {
       for (const v of [dto.from, dto.to]) if (v && !MONTH_RE.test(v)) throw new BadRequestException('Dates must be YYYY-MM-DD.');
       if (dto.from && dto.to && dto.from > dto.to) throw new BadRequestException('The start date is after the end date.');
     }
-    const organizationId = caller.organizationId;
     const filters = cat.dateRange ? { from: dto.from ?? null, to: dto.to ?? null } : {};
     const record = await this.prisma.ccExport.create({
-      data: { organizationId, category: cat.key, format, filters, status: 'PROCESSING', requestedById: caller.id, requestedByName: caller.name },
+      data: { organizationId: caller.organizationId, category: cat.key, format, filters, status: 'PROCESSING', requestedById: caller.id, requestedByName: caller.name },
     });
+    const job = this.run(caller, record.id, cat, format, isAll, dto.from, dto.to, opts.silent);
+    if (opts.wait) await job;
+    return { id: record.id, status: 'PROCESSING' };
+  }
+
+  private async run(caller: Caller, id: string, cat: { key: string; label: string }, format: string, isAll: boolean, from?: string, to?: string, silent = false) {
+    const organizationId = caller.organizationId;
+    const done = (title: string, message: string) =>
+      silent ? Promise.resolve() : this.notifications.create({ organizationId, userId: caller.id, title, message, category: 'GENERAL', link: '/account-export' }).catch(() => undefined);
     try {
-      const table = await this.generate(organizationId, cat.key, dto.from, dto.to);
-      if (table.rows.length > EXPORT_ROW_CAP) throw new BadRequestException(`This export has more than ${EXPORT_ROW_CAP} rows. Narrow the date range.`);
-      const wb = buildWorkbook(cat.label, table.columns, table.rows, undefined, null, { styled: format === 'XLSX' });
+      let wb: ExcelJS.Workbook;
+      let rowCount: number;
+      if (isAll) {
+        wb = new ExcelJS.Workbook();
+        rowCount = 0;
+        for (const c of EXPORT_CATEGORIES) {
+          const t = await this.generate(organizationId, c.key, from, to);
+          if (t.rows.length > EXPORT_ROW_CAP) throw new BadRequestException(`${c.label} has more than ${EXPORT_ROW_CAP} rows. Narrow the date range or export it on its own.`);
+          rowCount += t.rows.length;
+          const sheet = wb.addWorksheet(c.label.slice(0, 31));
+          sheet.columns = t.columns.map((col) => ({ key: col.key, width: col.width }));
+          const head = sheet.addRow(t.columns.map((col) => col.header));
+          head.font = { bold: true };
+          sheet.views = [{ state: 'frozen', ySplit: 1 }];
+          for (const r of t.rows) sheet.addRow(Object.fromEntries(Object.entries(r).map(([k, v]) => [k, sanitizeSpreadsheetValue(v)])));
+        }
+      } else {
+        const table = await this.generate(organizationId, cat.key, from, to);
+        if (table.rows.length > EXPORT_ROW_CAP) throw new BadRequestException(`This export has more than ${EXPORT_ROW_CAP} rows. Narrow the date range.`);
+        wb = buildWorkbook(cat.label, table.columns, table.rows, undefined, null, { styled: format === 'XLSX' });
+        rowCount = table.rows.length;
+      }
       const buffer = Buffer.from(format === 'CSV' ? await wb.csv.writeBuffer() : await wb.xlsx.writeBuffer());
-      const fileName = `${cat.key.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.${format === 'CSV' ? 'csv' : 'xlsx'}`;
-      const fileKey = `${organizationId}/account-exports/${record.id}-${fileName}`;
+      const fileName = `${isAll ? 'all-data' : cat.key.toLowerCase()}-${new Date().toISOString().slice(0, 10)}.${format === 'CSV' ? 'csv' : 'xlsx'}`;
+      const fileKey = `${organizationId}/account-exports/${id}-${fileName}`;
       await writeStoredFile(fileKey, buffer, format === 'CSV' ? 'text/csv' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
       await this.prisma.ccExport.update({
-        where: { id: record.id },
-        data: { status: 'COMPLETED', fileKey, fileName, rowCount: table.rows.length, completedAt: new Date(), expiresAt: new Date(Date.now() + EXPORT_LINK_HOURS * 3600_000) },
+        where: { id },
+        data: { status: 'COMPLETED', fileKey, fileName, rowCount, completedAt: new Date(), expiresAt: new Date(Date.now() + EXPORT_LINK_HOURS * 3600_000) },
       });
+      await this.audit(caller, id, cat.key, 'SUCCESS');
+      await done('Your data export is ready', `${cat.label} (${rowCount} rows) is ready to download for the next ${EXPORT_LINK_HOURS} hours.`);
     } catch (e) {
       const msg = e instanceof BadRequestException ? e.message : 'The export could not be generated.';
-      await this.prisma.ccExport.update({ where: { id: record.id }, data: { status: 'FAILED', error: msg } });
-      await this.audit(caller, record.id, cat.key, 'FAILURE');
-      throw e instanceof BadRequestException ? e : new BadRequestException(msg);
+      await this.prisma.ccExport.update({ where: { id }, data: { status: 'FAILED', error: msg } }).catch(() => undefined);
+      await this.audit(caller, id, cat.key, 'FAILURE');
+      await done('Your data export failed', `${cat.label}: ${msg}`);
     }
-    await this.audit(caller, record.id, cat.key, 'SUCCESS');
-    return { id: record.id };
   }
 
   private audit(caller: Caller, id: string, category: string, outcome: 'SUCCESS' | 'FAILURE') {
@@ -163,6 +198,78 @@ export class AccountExportService {
         return {
           columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('docType', 'Document type'), col('fileName', 'File name', 28), col('category', 'Category'), col('status', 'Status'), col('uploadedAt', 'Uploaded')],
           rows: rows.map((x) => ({ employeeId: x.employee.employeeId, name: x.employee.name, docType: x.docType, fileName: x.fileName, category: x.category, status: x.status, uploadedAt: d(x.uploadedAt) })),
+        };
+      }
+      case 'LEAVE_BALANCES': {
+        const rows = await this.prisma.leaveBalance.findMany({ where: { organizationId }, include: { employee: { select: { employeeId: true, name: true } }, leaveType: { select: { name: true } } }, orderBy: [{ year: 'desc' }], take });
+        return {
+          columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('type', 'Leave type'), col('year', 'Year', 8), col('opening', 'Opening', 10), col('credited', 'Credited', 10), col('availed', 'Availed', 10), col('pending', 'Pending', 10), col('encashed', 'Encashed', 10), col('adjusted', 'Adjusted', 10), col('closing', 'Balance', 10)],
+          rows: rows.map((b) => ({ employeeId: b.employee.employeeId, name: b.employee.name, type: b.leaveType.name, year: b.year, opening: b.opening, credited: b.credited, availed: b.availed, pending: b.pending, encashed: b.encashed, adjusted: b.adjusted, closing: b.closing })),
+        };
+      }
+      case 'DEPARTMENTS': {
+        const rows = await this.prisma.department.findMany({ where: { organizationId }, include: { workLocation: { select: { name: true } } }, orderBy: { name: 'asc' }, take });
+        const heads = await this.prisma.user.findMany({ where: { organizationId, id: { in: rows.map((r) => r.departmentHeadId).filter((x): x is string => !!x) } }, select: { id: true, name: true } });
+        const headName = new Map(heads.map((h) => [h.id, h.name]));
+        return {
+          columns: [col('name', 'Department'), col('code', 'Code', 12), col('head', 'Head'), col('location', 'Location'), col('shift', 'Shift'), col('active', 'Active', 10), col('description', 'Description', 30)],
+          rows: rows.map((x) => ({ name: x.name, code: x.code, head: x.departmentHeadId ? headName.get(x.departmentHeadId) ?? '' : '', location: x.workLocation?.name ?? '', shift: `${x.shiftStartTime} - ${x.shiftEndTime}`, active: x.isActive ? 'Yes' : 'No', description: x.description })),
+        };
+      }
+      case 'LOCATIONS': {
+        const rows = await this.prisma.workLocation.findMany({ where: { organizationId }, orderBy: { name: 'asc' }, take });
+        return {
+          columns: [col('name', 'Name'), col('address', 'Address', 32), col('city', 'City'), col('state', 'State'), col('radius', 'Geo-fence radius (m)', 20), col('active', 'Active', 10)],
+          rows: rows.map((x) => ({ name: x.name, address: x.address, city: x.city, state: x.state, radius: x.radiusMeters, active: x.isActive ? 'Yes' : 'No' })),
+        };
+      }
+      case 'HOLIDAYS': {
+        const rows = await this.prisma.holiday.findMany({ where: { organizationId, isReference: false, ...(dateWhere ? { date: dateWhere } : {}) }, include: { department: { select: { name: true } } }, orderBy: { date: 'asc' }, take });
+        return {
+          columns: [col('date', 'Date'), col('name', 'Holiday', 28), col('type', 'Type'), col('optional', 'Optional', 10), col('department', 'Department'), col('state', 'State'), col('active', 'Active', 10)],
+          rows: rows.map((h) => ({ date: h.date, name: h.name, type: h.type, optional: h.isOptional ? 'Yes' : 'No', department: h.department?.name ?? 'All', state: h.state ?? '', active: h.isActive ? 'Yes' : 'No' })),
+        };
+      }
+      case 'ASSETS': {
+        const rows = await this.prisma.asset.findMany({ where: { organizationId }, orderBy: { assetCode: 'asc' }, take });
+        return {
+          columns: [col('code', 'Asset code'), col('name', 'Asset name', 26), col('brand', 'Brand'), col('model', 'Model'), col('serial', 'Serial number'), col('purchaseDate', 'Purchase date'), col('cost', 'Purchase cost'), col('location', 'Location'), col('condition', 'Condition'), col('status', 'Status')],
+          rows: rows.map((a) => ({ code: a.assetCode, name: a.assetName, brand: a.brand ?? '', model: a.model ?? '', serial: a.serialNumber ?? '', purchaseDate: d(a.purchaseDate), cost: a.purchaseCost ?? '', location: a.location ?? '', condition: a.condition, status: a.status })),
+        };
+      }
+      case 'ASSET_ALLOCATIONS': {
+        const rows = await this.prisma.employeeAsset.findMany({ where: { organizationId }, include: { employee: { select: { employeeId: true, name: true } } }, orderBy: { allocatedDate: 'desc' }, take });
+        return {
+          columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('asset', 'Asset', 26), col('type', 'Type'), col('tag', 'Asset tag'), col('allocated', 'Allocated on'), col('returned', 'Returned on'), col('status', 'Status')],
+          rows: rows.map((a) => ({ employeeId: a.employee.employeeId, name: a.employee.name, asset: a.assetName, type: a.assetType, tag: a.assetTag ?? '', allocated: a.allocatedDate, returned: a.returnedDate ?? '', status: a.status })),
+        };
+      }
+      case 'RESIGNATIONS': {
+        const rows = await this.prisma.resignation.findMany({ where: { organizationId, ...(dateWhere ? { submittedOn: dateWhere } : {}) }, include: { employee: { select: { employeeId: true, name: true } } }, orderBy: { submittedOn: 'desc' }, take });
+        return {
+          columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('submitted', 'Submitted on'), col('requestedLwd', 'Requested last day'), col('approvedLwd', 'Approved last day'), col('notice', 'Notice (days)'), col('reason', 'Reason', 30), col('status', 'Status')],
+          rows: rows.map((r) => ({ employeeId: r.employee.employeeId, name: r.employee.name, submitted: r.submittedOn, requestedLwd: r.requestedLwd, approvedLwd: r.approvedLwd ?? '', notice: r.noticePeriodDays ?? '', reason: r.reason ?? '', status: r.status })),
+        };
+      }
+      case 'SETTLEMENTS': {
+        const rows = await this.prisma.settlement.findMany({ where: { organizationId, ...(dateWhere ? { lastWorkingDay: dateWhere } : {}) }, include: { employee: { select: { employeeId: true, name: true } } }, orderBy: { lastWorkingDay: 'desc' }, take });
+        return {
+          columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('lwd', 'Last working day'), col('salary', 'Pending salary'), col('leave', 'Leave encashment'), col('gratuity', 'Gratuity'), col('recoveries', 'Recoveries'), col('net', 'Net settlement'), col('status', 'Status')],
+          rows: rows.map((s) => ({ employeeId: s.employee.employeeId, name: s.employee.name, lwd: s.lastWorkingDay, salary: s.pendingSalaryAmount, leave: s.leaveEncashmentAmount, gratuity: s.gratuityAmount, recoveries: s.recoveriesAmount, net: s.netSettlementAmount, status: s.status })),
+        };
+      }
+      case 'OVERTIME': {
+        const rows = await this.prisma.overtimeRecord.findMany({ where: { organizationId, ...(dateWhere ? { date: dateWhere } : {}) }, include: { employee: { select: { employeeId: true, name: true } } }, orderBy: { date: 'desc' }, take });
+        return {
+          columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('date', 'Date'), col('hours', 'Hours', 10), col('type', 'Type'), col('multiplier', 'Rate multiplier', 16), col('status', 'Status')],
+          rows: rows.map((o) => ({ employeeId: o.employee.employeeId, name: o.employee.name, date: o.date, hours: o.hours, type: o.type, multiplier: o.rateMultiplier, status: o.status })),
+        };
+      }
+      case 'COMP_OFFS': {
+        const rows = await this.prisma.compOff.findMany({ where: { organizationId, ...(dateWhere ? { earnedForDate: dateWhere } : {}) }, include: { employee: { select: { employeeId: true, name: true } } }, orderBy: { earnedForDate: 'desc' }, take });
+        return {
+          columns: [col('employeeId', 'Employee ID'), col('name', 'Name'), col('earned', 'Earned for'), col('days', 'Days earned', 12), col('availed', 'Days availed', 12), col('expiry', 'Expires'), col('status', 'Status'), col('reason', 'Reason', 28)],
+          rows: rows.map((c) => ({ employeeId: c.employee.employeeId, name: c.employee.name, earned: c.earnedForDate, days: c.daysEarned, availed: c.daysAvailed, expiry: c.expiryDate ?? '', status: c.status, reason: c.reason })),
         };
       }
       default:
