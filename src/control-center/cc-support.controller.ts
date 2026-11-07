@@ -36,6 +36,9 @@ export class CcSupportController {
   @Patch('tickets/:id') @CcPermission('tickets:write') updateTicket(@Param('id') id: string, @Body() b: { status?: string; priority?: string; assigneeId?: string | null }) { return this.svc.updateTicket(id, b); }
   @Post('tickets/:id/comments') @CcPermission('tickets:write') comment(@Param('id') id: string, @Body() b: { body: string; internal?: boolean }, @CurrentSuperAdmin() a: SuperAdmin) { return this.svc.addComment(id, b, a); }
 
+  @Get('account-requests') @CcPermission('tickets:read') accountRequests(@Query() q: Q) { return this.svc.listRequests(q); }
+  @Post('account-requests/:id/resolve') @HttpCode(200) @CcPermission('tickets:write') resolveRequest(@Param('id') id: string, @Body() b: { action?: string; note?: string }, @CurrentSuperAdmin() a: SuperAdmin) { return this.svc.resolveRequest(id, b, a); }
+
   @Get('announcements') @CcPermission('announcements:read') announcements(@Query() q: Q) { return this.svc.listAnnouncements(q); }
   @Get('announcements/:id') @CcPermission('announcements:read') announcement(@Param('id') id: string) { return this.svc.getAnnouncement(id); }
   @Post('announcements') @CcPermission('announcements:write') createAnn(@Body() b: B) { return this.svc.createAnnouncement(b); }

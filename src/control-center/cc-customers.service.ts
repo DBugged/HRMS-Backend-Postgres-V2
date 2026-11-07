@@ -66,7 +66,7 @@ export class CcCustomersService {
       accessEnabled: o.isActive,
       employeeLimit: sub ? employeeLimit(sub.plan, active, sub.maxEmployees) : null,
       estimatedMonthlyBill: sub ? monthlyCharge(sub.plan, sub.term, active, sub.customPerEmployeeRate) : null,
-      currentSubscription: sub ? { id: sub.id, organizationId: o.id, planId: sub.planId, plan: planOut(sub.plan), term: sub.term, termMonths: sub.termMonths, includedEmployeesSnap: sub.includedEmployeesSnap, customPerEmployeeRate: sub.customPerEmployeeRate == null ? null : Number(sub.customPerEmployeeRate), maxEmployees: sub.maxEmployees, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: sub.cancelAtPeriodEnd, createdAt: sub.createdAt.toISOString() } : null,
+      currentSubscription: sub ? { id: sub.id, organizationId: o.id, planId: sub.planId, plan: planOut(sub.plan), term: sub.term, termMonths: sub.termMonths, includedEmployeesSnap: sub.includedEmployeesSnap, customPerEmployeeRate: sub.customPerEmployeeRate == null ? null : Number(sub.customPerEmployeeRate), maxEmployees: sub.maxEmployees, maxStorageMb: sub.maxStorageMb, status: sub.status, trialEndsAt: sub.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: sub.currentPeriodEnd?.toISOString() ?? null, cancelAtPeriodEnd: sub.cancelAtPeriodEnd, createdAt: sub.createdAt.toISOString() } : null,
       createdAt: o.createdAt.toISOString(),
       updatedAt: o.updatedAt.toISOString(),
     };

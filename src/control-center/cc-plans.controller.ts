@@ -28,7 +28,7 @@ export class CcPlansController {
   @Post('subscriptions/:id/change-plan') @HttpCode(200) @CcPermission('subscriptions:write')
   change(@Param('id') id: string, @Body() b: { planId: string; prorate?: boolean; term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) { return this.svc.changePlan(id, b); }
   @Patch('subscriptions/:id') @CcPermission('subscriptions:write')
-  updateSub(@Param('id') id: string, @Body() b: { term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) { return this.svc.updateSubscription(id, b); }
+  updateSub(@Param('id') id: string, @Body() b: { term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null; maxStorageMb?: number | null }) { return this.svc.updateSubscription(id, b); }
   @Post('subscriptions/:id/cancel') @HttpCode(200) @CcPermission('subscriptions:write')
   cancel(@Param('id') id: string, @Body() b: { atPeriodEnd?: boolean }) { return this.svc.cancel(id, !!b?.atPeriodEnd); }
   @Post('subscriptions/:id/resume') @HttpCode(200) @CcPermission('subscriptions:write') resume(@Param('id') id: string) { return this.svc.resume(id); }

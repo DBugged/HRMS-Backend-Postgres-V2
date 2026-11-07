@@ -75,7 +75,7 @@ export class CcPlansService {
       id: s.id, organizationId: s.organizationId,
       organization: { id: org.id, name: org.companyName || org.name, slug: orgSlug(org.companyName || org.name, org.id) },
       planId: s.planId, plan: planOut(s.plan), term: s.term, termMonths: s.termMonths,
-      includedEmployeesSnap: s.includedEmployeesSnap, customPerEmployeeRate: num(s.customPerEmployeeRate), maxEmployees: s.maxEmployees, status: s.status,
+      includedEmployeesSnap: s.includedEmployeesSnap, customPerEmployeeRate: num(s.customPerEmployeeRate), maxEmployees: s.maxEmployees, maxStorageMb: s.maxStorageMb, status: s.status,
       trialEndsAt: s.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: s.currentPeriodEnd?.toISOString() ?? null,
       cancelAtPeriodEnd: s.cancelAtPeriodEnd, createdAt: s.createdAt.toISOString(),
     };
@@ -153,13 +153,14 @@ export class CcPlansService {
   }
 
   /** Change only the billing term or the agreed rate on the current plan. */
-  async updateSubscription(id: string, b: { term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) {
+  async updateSubscription(id: string, b: { term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null; maxStorageMb?: number | null }) {
     const s = await this.prisma.ccSubscription.findUnique({ where: { id }, include: { plan: true } });
     if (!s) throw new NotFoundException('Subscription not found.');
     const data: Prisma.CcSubscriptionUpdateInput = {};
     if (b.term) { const t = this.pickTerm(s.plan, b.term); data.term = t.term; data.termMonths = t.termMonths; }
     if ('customPerEmployeeRate' in b) data.customPerEmployeeRate = this.pickRate(s.plan, b.customPerEmployeeRate);
     if ('maxEmployees' in b) data.maxEmployees = this.pickMax(b.maxEmployees);
+    if ('maxStorageMb' in b) data.maxStorageMb = this.pickMax(b.maxStorageMb);
     return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data, include: this.incl }));
   }
 

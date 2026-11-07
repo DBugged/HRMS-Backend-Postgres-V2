@@ -15,6 +15,16 @@ export const MODULE_LABELS: Record<string, string> = {
   'module.policy_assistant': 'Ask HR',
 };
 
+// Company Admin > Account Management tabs: switched on/off per company in the Control Center. Kept apart from MODULE_LABELS
+// so they never show in the "My Plan & Modules" list of HRMS modules.
+export const ACCOUNT_LABELS: Record<string, string> = {
+  'module.account_billing': 'Subscription & Billing',
+  'module.account_plan': 'My Plan & Modules',
+  'module.account_usage': 'Usage & Limits',
+  'module.account_export': 'Data Export',
+  'module.account_support': 'Support & Tickets',
+};
+
 const SEGMENTS: Record<string, string[]> = {
   'module.attendance': ['attendance', 'work-schedules', 'overtime', 'field-tracking', 'field-visits'],
   'module.leave': ['leaves', 'leave-balances', 'leave-encashments', 'leave-grants', 'leave-tracker', 'leave-types', 'leave-year', 'comp-offs'],
@@ -27,6 +37,11 @@ const SEGMENTS: Record<string, string[]> = {
   'module.offboarding': ['offboarding', 'resignations', 'settlements'],
   'module.reports': ['reports'],
   'module.policy_assistant': ['ask-hr'],
+  'module.account_billing': ['account-billing'],
+  'module.account_plan': ['account-plan'],
+  'module.account_usage': ['account-usage'],
+  'module.account_export': ['account-export'],
+  'module.account_support': ['account-support'],
 };
 
 const BY_SEGMENT = new Map(Object.entries(SEGMENTS).flatMap(([mod, segs]) => segs.map((s) => [s, mod] as const)));

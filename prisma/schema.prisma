@@ -64,6 +64,8 @@ model Organization {
   ccPayments      CcPayment[]
   ccFlagOverrides CcFlagOverride[]
   ccTickets       CcTicket[]
+  ccRequests      CcRequest[]
+  ccExports       CcExport[]
   ccOrgProfile    CcOrgProfile?
   ccAlerts        CcAlert[]
 
@@ -4566,6 +4568,8 @@ model CcSubscription {
   // Hard limit: HRMS refuses to add or reactivate an employee once this many are active. Null = no limit (billing still
   // charges for extra employees at the plan's extra rate, and the panel raises an over-limit alert).
   maxEmployees          Int?
+  // Storage allowance in MB; null = not configured (the company sees its usage with no limit).
+  maxStorageMb          Int?
   status                String       @default("TRIALING") // TRIALING | ACTIVE | PAST_DUE | CANCELED | EXPIRED
   trialEndsAt           DateTime?
   currentPeriodEnd      DateTime?
@@ -4676,10 +4680,13 @@ model CcTicket {
   organization   Organization?     @relation(fields: [organizationId], references: [id])
   subject        String
   body           String
-  status         String            @default("OPEN") // OPEN | PENDING | RESOLVED | CLOSED
+  status         String            @default("OPEN") // OPEN | IN_PROGRESS | WAITING_CUSTOMER | RESOLVED | CLOSED (PENDING = legacy, read as In Progress)
   priority       String            @default("NORMAL") // LOW | NORMAL | HIGH | URGENT
   assigneeId     String? // a super_admins.id
   createdById    String?
+  // Account Management: what the ticket is about, and uploaded file keys (relativeKey + name) the company attached.
+  category       String            @default("GENERAL")
+  attachments    Json              @default("[]")
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   comments       CcTicketComment[]
@@ -4698,6 +4705,7 @@ model CcTicketComment {
   authorName     String
   body           String
   internal       Boolean  @default(false)
+  attachments    Json     @default("[]")
   createdAt      DateTime @default(now())
 
   @@index([ticketId])
@@ -4816,4 +4824,51 @@ model AuthSession {
   @@index([userId, clientType, endedAt])
   @@index([organizationId])
   @@map("auth_sessions")
+}
+
+// A company admin's request to the Super Admin (plan upgrade, more licences, add-on, module, renewal, cancellation). Processing one
+// does not change the subscription by itself: the Super Admin acts on it in the Control Center and marks the outcome here.
+model CcRequest {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  type            String // PLAN_UPGRADE | EXTRA_LICENCES | ADD_ON | MODULE_UPGRADE | RENEWAL | CANCELLATION
+  status          String       @default("PENDING") // PENDING | APPROVED | REJECTED | PROCESSED
+  message         String       @default("")
+  payload         Json         @default("{}")
+  requestedById   String
+  requestedByName String
+  resolutionNote  String?
+  resolvedById    String? // a super_admins.id
+  resolvedAt      DateTime?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@index([organizationId])
+  @@index([status])
+  @@map("cc_requests")
+}
+
+// One data export a company admin asked for: what, in which format, and the stored file with a short life.
+model CcExport {
+  id              String       @id @default(uuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  category        String
+  format          String // XLSX | CSV
+  filters         Json         @default("{}")
+  status          String       @default("PENDING") // PENDING | PROCESSING | COMPLETED | FAILED | EXPIRED
+  requestedById   String
+  requestedByName String
+  fileKey         String?
+  fileName        String?
+  rowCount        Int?
+  error           String?
+  downloadCount   Int          @default(0)
+  completedAt     DateTime?
+  expiresAt       DateTime?
+  createdAt       DateTime     @default(now())
+
+  @@index([organizationId, createdAt])
+  @@map("cc_exports")
 }

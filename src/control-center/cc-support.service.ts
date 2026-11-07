@@ -8,6 +8,7 @@ import { CcAuthService } from './cc-auth.service';
 import { EmailService } from '../notifications/email.service';
 import { normalizeEmail } from './cc-auth-rules';
 import { csvSafe, paging, type PageQuery } from './cc-util';
+import { TICKET_PRIORITIES, TICKET_STATUSES, normalizeTicketStatus } from '../account-management/account-logic';
 
 const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
 const pick = (b: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.filter((k) => k in b).map((k) => [k, b[k]]));
@@ -21,7 +22,7 @@ export class CcSupportService {
     const assignee = t.assigneeId ? await this.prisma.superAdmin.findUnique({ where: { id: t.assigneeId }, select: { name: true } }) : null;
     return {
       id: t.id, organizationId: t.organizationId, organizationName: t.organization ? t.organization.companyName || t.organization.name : null,
-      subject: t.subject, body: t.body, status: t.status, priority: t.priority, assigneeId: t.assigneeId, assigneeName: assignee?.name ?? null,
+      subject: t.subject, body: t.body, status: normalizeTicketStatus(t.status), priority: t.priority, category: t.category, attachmentNames: (Array.isArray(t.attachments) ? (t.attachments as { name: string }[]) : []).map((a) => a.name), assigneeId: t.assigneeId, assigneeName: assignee?.name ?? null,
       createdAt: t.createdAt.toISOString(), updatedAt: t.updatedAt.toISOString(),
       ...(withComments ? { comments: t.comments.map((c) => ({ id: c.id, ticketId: c.ticketId, authorId: c.authorId, authorName: c.authorName, body: c.body, internal: c.internal, createdAt: c.createdAt.toISOString() })) } : {}),
     };
@@ -51,6 +52,8 @@ export class CcSupportService {
   }
   async updateTicket(id: string, b: { status?: string; priority?: string; assigneeId?: string | null }) {
     await this.getTicket(id);
+    if (b.status !== undefined && !TICKET_STATUSES.includes(b.status as never)) throw new BadRequestException('Unknown ticket status.');
+    if (b.priority !== undefined && !TICKET_PRIORITIES.includes(b.priority as never)) throw new BadRequestException('Unknown ticket priority.');
     if (b.assigneeId && !(await this.prisma.superAdmin.findUnique({ where: { id: b.assigneeId } }))) throw new NotFoundException('Assignee not found.');
     const t = await this.prisma.ccTicket.update({ where: { id }, data: pick(b, ['status', 'priority', 'assigneeId']), include: this.tInc });
     return this.ticketOut(t, true);
@@ -61,6 +64,33 @@ export class CcSupportService {
     if (!b.body?.trim()) throw new BadRequestException('Write a comment first.');
     const c = await this.prisma.ccTicketComment.create({ data: { ticketId: id, organizationId: t.organizationId, authorId: by.id, authorName: by.name, body: b.body, internal: !!b.internal } });
     return { id: c.id, ticketId: id, authorId: c.authorId, authorName: c.authorName, body: c.body, internal: c.internal, createdAt: c.createdAt.toISOString() };
+  }
+
+  // ---------------- account requests (from a company's Account Management) ----------------
+  private requestOut(r: Prisma.CcRequestGetPayload<{ include: { organization: true } }>) {
+    return {
+      id: r.id, organizationId: r.organizationId, organizationName: r.organization.companyName || r.organization.name, type: r.type, status: r.status,
+      message: r.message, payload: r.payload, requestedByName: r.requestedByName, createdAt: r.createdAt.toISOString(), resolutionNote: r.resolutionNote, resolvedAt: iso(r.resolvedAt),
+    };
+  }
+  async listRequests(q: PageQuery & { status?: string; type?: string; organizationId?: string }) {
+    const { page, pageSize, skip, take } = paging(q);
+    const where: Prisma.CcRequestWhereInput = { ...(q.status ? { status: q.status } : {}), ...(q.type ? { type: q.type } : {}), ...(q.organizationId ? { organizationId: q.organizationId } : {}) };
+    const [rows, total] = await Promise.all([this.prisma.ccRequest.findMany({ where, include: { organization: true }, orderBy: { createdAt: 'desc' }, skip, take }), this.prisma.ccRequest.count({ where })]);
+    return { data: rows.map((r) => this.requestOut(r)), page, pageSize, total };
+  }
+  /** APPROVE / REJECT a pending request, or mark an approved one PROCESSED. Approving does not itself change the plan: the Super Admin makes the change in Plans & subscriptions. */
+  async resolveRequest(id: string, b: { action?: string; note?: string }, by: SuperAdmin) {
+    const r = await this.prisma.ccRequest.findUnique({ where: { id } });
+    if (!r) throw new NotFoundException('Request not found.');
+    const next = b.action === 'APPROVE' ? 'APPROVED' : b.action === 'REJECT' ? 'REJECTED' : b.action === 'PROCESS' ? 'PROCESSED' : null;
+    if (!next) throw new BadRequestException('Choose approve, reject or processed.');
+    const allowed = next === 'PROCESSED' ? r.status === 'APPROVED' : r.status === 'PENDING';
+    if (!allowed) throw new ConflictException(`A ${r.status.toLowerCase()} request cannot be ${next.toLowerCase()}.`);
+    const note = (b.note ?? '').trim().slice(0, 1000);
+    if (next === 'REJECTED' && !note) throw new BadRequestException('Say why the request is rejected.');
+    const u = await this.prisma.ccRequest.update({ where: { id }, data: { status: next, resolutionNote: note || r.resolutionNote, resolvedById: by.id, resolvedAt: new Date() }, include: { organization: true } });
+    return this.requestOut(u);
   }
 
   // ---------------- announcements ----------------
