@@ -198,6 +198,9 @@ model Organization {
   emailLogoUrl    String?
   primaryColor    String  @default("#5546e0")
   secondaryColor  String  @default("#14161d")
+  // The two fonts of the app (see organizations/brand-fonts.ts): headings and body text.
+  headingFont     String  @default("Plus Jakarta Sans")
+  bodyFont        String  @default("Inter")
   // Large, faded, centered copy of the org's logo behind every page of a
   // generated document — Letters & Certificates (companyLogoUrl),
   // Payslips (each PayrollTemplate's own companyLogoUrl — see

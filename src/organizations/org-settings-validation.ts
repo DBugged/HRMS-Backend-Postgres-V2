@@ -11,6 +11,7 @@ import { isIanaTimeZone } from '../common/is-iana-timezone.validator';
 import { SUPPORTED_STATES, isSupportedState } from '../common/indian-states';
 import { NEGATIVE_BALANCE_MODES } from './org-leave-switches';
 import { sanitizeRuleSetPolicy } from '../overtime/overtime-rule-sets';
+import { BODY_FONTS, HEADING_FONTS, isBodyFont, isHeadingFont } from './brand-fonts';
 
 // Number of Setup Wizard steps (frontend/src/components/organization/
 // steps.js ORG_STEPS) — setupStep is 1-based and the wizard clamps it to
@@ -57,6 +58,8 @@ export const FIELD_KINDS: Record<string, FieldKind> = {
   website: 'string',
   primaryColor: 'requiredString',
   secondaryColor: 'requiredString',
+  headingFont: 'string',
+  bodyFont: 'string',
   faviconUrl: 'fileUrl',
   reportLogoUrl: 'fileUrl',
   letterHeaderUrl: 'fileUrl',
@@ -761,6 +764,12 @@ export function validateSectionData(data: Record<string, unknown>) {
     },
   );
 
+  if (data.headingFont !== undefined && data.headingFont !== '' && !isHeadingFont(data.headingFont)) {
+    bad('headingFont must be one of: ' + HEADING_FONTS.join(', ') + '.');
+  }
+  if (data.bodyFont !== undefined && data.bodyFont !== '' && !isBodyFont(data.bodyFont)) {
+    bad('bodyFont must be one of: ' + BODY_FONTS.join(', ') + '.');
+  }
   for (const field of ['primaryColor', 'secondaryColor']) {
     const v = data[field];
     if (typeof v === 'string' && !HEX_COLOR.test(v)) {

@@ -161,3 +161,23 @@ describe('Policies: Work From Home days per month and negative balance mode', ()
     );
   });
 });
+
+describe('brand fonts', () => {
+  it('accepts the listed heading and body fonts', () => {
+    expect(() =>
+      validateSectionData({ headingFont: 'Merriweather', bodyFont: 'Roboto' }),
+    ).not.toThrow();
+    expect(() =>
+      validateSectionData({ headingFont: 'Plus Jakarta Sans', bodyFont: 'Inter' }),
+    ).not.toThrow();
+  });
+
+  it('rejects fonts outside the list (for example one with no rupee sign)', () => {
+    expect(() => validateSectionData({ bodyFont: 'Open Sans' })).toThrow(/bodyFont must be one of/);
+    expect(() => validateSectionData({ headingFont: 'Comic Sans' })).toThrow(/headingFont must be one of/);
+  });
+
+  it('keeps the serif for headings only', () => {
+    expect(() => validateSectionData({ bodyFont: 'Merriweather' })).toThrow(/bodyFont must be one of/);
+  });
+});

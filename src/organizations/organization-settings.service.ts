@@ -145,6 +145,8 @@ const SECTION_FIELDS: Record<string, string[]> = {
   branding: [
     'primaryColor',
     'secondaryColor',
+    'headingFont',
+    'bodyFont',
     'companyLogoUrl',
     'faviconUrl',
     'reportLogoUrl',
@@ -462,6 +464,8 @@ export class OrganizationSettingsService {
       faviconUrl: signed.faviconUrl,
       primaryColor: org.primaryColor,
       secondaryColor: org.secondaryColor,
+      headingFont: org.headingFont,
+      bodyFont: org.bodyFont,
       enableWFH: org.enableWFH,
       // Work From Home days allowed per month (null = no limit): the denominator of the profile's WFH balance.
       wfhDaysPerMonth: wfhDaysPerMonthOf(policies.wfhDaysPerMonth),
