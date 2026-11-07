@@ -6,6 +6,7 @@
 // whole scoped list.
 // Important: No new data models — everything here is a read/derivation over Attendance, Leave+LeaveType,
 // Holiday, LeaveBalance, and CompOff, exactly as those already exist.
+import { showsAsWfh } from './wfh-cell';
 import { markPendingLeave } from './pending-leave-cells';
 import { holidayInEffect } from '../holidays/holiday-in-effect';
 import { getLeaveYearConfig } from '../leave-balances/leave-year-config';
@@ -321,7 +322,7 @@ export class LeaveTrackerService {
         // A punch-in with no punch-out yet (stored as PRESENT): shown as Checked in until the punch-out, as in the
         // attendance calendar and the mobile app.
         code = 'IN_PROGRESS';
-      } else if (row.workArrangement === WorkArrangement.WFH) {
+      } else if (showsAsWfh(row)) {
         code = 'WFH';
       } else {
         code = row.status;
