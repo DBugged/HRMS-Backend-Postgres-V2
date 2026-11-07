@@ -39,6 +39,8 @@ export interface MyRequestItem {
   waitingDays: number | null;
   timeline: TimelineEvent[];
   canCancel: boolean;
+  /** An approved leave that has not been taken yet: it cannot be withdrawn here, but the employee can ask for it to be cancelled on My Leave. */
+  canRequestCancel?: boolean;
   link: string;
 }
 
@@ -114,7 +116,7 @@ export class MyRequestsService {
       await add({
         id: `leave-${l.id}`, kind: 'leave', sourceId: l.id, title: `${l.leaveType?.name ?? 'Leave'}${l.isHalfDay ? ' (Half day)' : ''}`,
         detail: range(l.startDate, l.endDate), amount: days(Number(l.totalDays)), note: [l.remarks, l.reviewComments].filter(Boolean).join(' · '),
-        status: l.status, decidedBy: l.reviewedBy?.name ?? null, canCancel: l.status === 'PENDING' || l.status === 'RETURNED', link: '/my/leaves',
+        status: l.status, decidedBy: l.reviewedBy?.name ?? null, canCancel: l.status === 'PENDING' || l.status === 'RETURNED', canRequestCancel: l.status === 'APPROVED' && !l.cancelRequestedAt && l.endDate >= now.toISOString().slice(0, 10), link: '/my/leaves',
         managerFirst: true, submitted: l.createdAt, decided: l.reviewedAt, firstApproval: l.level1ApprovedBy ? { by: l.level1ApprovedBy.name, at: l.level1ApprovedAt } : null,
       });
     }

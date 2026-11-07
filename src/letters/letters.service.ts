@@ -371,7 +371,7 @@ export class LettersService {
     const inFlowOrder = [...activeTemplates].sort(
       (a, b) => letterFlowOrder(a.key) - letterFlowOrder(b.key),
     );
-    return inFlowOrder.map((t) => {
+    const all = inFlowOrder.map((t) => {
       const gate = UNLOCK_BY_PROFILE[t.dataProfile];
       const restricted = RESTRICTED_LETTER_KEYS.has(t.key);
       // No EmployeeLetterAccess row yet: a restricted (disciplinary) key
@@ -416,6 +416,11 @@ export class LettersService {
         ...(actor.role !== Role.EMPLOYEE ? { restricted, accessEnabled } : {}),
       };
     });
+    // Only Admin and HR see a locked letter (greyed out, with the reason). Everyone else - employees looking at their
+    // own letters, and managers - sees just the letters they can actually get.
+    return actor.role === Role.ADMIN || actor.role === Role.HR
+      ? all
+      : all.filter((l) => l.unlocked);
   }
 
   // Shared by generate() and previewContent() — fetches the real employee/

@@ -248,8 +248,8 @@ export class HolidaysService {
   ) {
     const existing = await this.findByIdOrThrow(id, organizationId);
 
-    // A past holiday may be edited too: the attendance of its old and new date is recalculated below (a locked or paid
-    // payroll month is left as it is, with a warning).
+    await this.assertNotPast(existing.date, organizationId);
+    if (dto.date) await this.assertNotPast(dto.date, organizationId);
     await this.assertDepartmentInOrg(dto.department, organizationId);
     const nextName = (dto.name ?? existing.name).trim();
     const nextDate = dto.date ?? existing.date;
@@ -301,8 +301,7 @@ export class HolidaysService {
 
   async remove(id: string, organizationId: string, actorId?: string) {
     const existing = await this.findByIdOrThrow(id, organizationId);
-    // A past holiday may be deleted too: the attendance of that date is recalculated below (a locked or paid payroll
-    // month is left as it is, with a warning).
+    await this.assertNotPast(existing.date, organizationId);
     await this.scopedPrisma.holiday.deleteMany({
       where: { id, organizationId },
     });
@@ -470,6 +469,14 @@ export class HolidaysService {
   }
 
   // A department-specific holiday must name a department of this organisation.
+  // A holiday whose date has passed is locked: it cannot be edited, activated or deleted.
+  private async assertNotPast(date: string, organizationId: string) {
+    const today = todayInOrgTz(await this.getOrgTimezone(organizationId));
+    if (date < today) {
+      throw new BadRequestException('A past holiday cannot be changed or deleted.');
+    }
+  }
+
   private async assertDepartmentInOrg(departmentId: string | null | undefined, organizationId: string) {
     if (!departmentId) return;
     const dept = await this.scopedPrisma.department.findFirst({
