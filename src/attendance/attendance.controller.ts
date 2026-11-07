@@ -325,8 +325,9 @@ export class AttendanceController {
     );
   }
 
+  // Importing attendance from a spreadsheet is for Admin and HR only; a manager cannot upload or list import batches.
   @Post('import')
-  @Roles(Role.MANAGER, Role.HR, Role.ADMIN)
+  @Roles(Role.HR, Role.ADMIN)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   @Throttle({ default: { limit: EXPENSIVE_OP_THROTTLE_LIMIT, ttl: 60_000 } })
@@ -342,7 +343,7 @@ export class AttendanceController {
   }
 
   @Get('import')
-  @Roles(Role.HR, Role.MANAGER, Role.ADMIN)
+  @Roles(Role.HR, Role.ADMIN)
   @UseGuards(RolesGuard)
   @ApiBearerAuth('access-token')
   listImportBatches(@CurrentUser() caller: Caller) {

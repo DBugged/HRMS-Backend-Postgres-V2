@@ -3559,10 +3559,22 @@ describe('Attendance (e2e)', () => {
         .expect(403);
     });
 
-    it('MANAGER uploads a batch with one valid and one invalid row', async () => {
-      const res = await request(app.getHttpServer())
+    it('MANAGER cannot upload or list import batches (Admin and HR only)', async () => {
+      await request(app.getHttpServer())
         .post('/attendance/import')
         .set('Authorization', `Bearer ${managerToken}`)
+        .send({ rows: [{ employeeId: importEmployeeHumanId, date: offsetDate(-30) }] })
+        .expect(403);
+      await request(app.getHttpServer())
+        .get('/attendance/import')
+        .set('Authorization', `Bearer ${managerToken}`)
+        .expect(403);
+    });
+
+    it('HR uploads a batch with one valid and one invalid row', async () => {
+      const res = await request(app.getHttpServer())
+        .post('/attendance/import')
+        .set('Authorization', `Bearer ${hrToken}`)
         .send({
           rows: [
             {
@@ -3581,24 +3593,14 @@ describe('Attendance (e2e)', () => {
       );
     });
 
-    it('GET /import: MANAGER sees only their own uploads, HR sees all', async () => {
-      const managerList = await request(app.getHttpServer())
-        .get('/attendance/import')
-        .set('Authorization', `Bearer ${managerToken}`)
-        .expect(200);
-      expect(
-        (managerList.body as { id: string }[]).every(
-          (b) => b.id === managerBatchId,
-        ),
-      ).toBe(true);
-
-      const hrList = await request(app.getHttpServer())
-        .get('/attendance/import')
-        .set('Authorization', `Bearer ${hrToken}`)
-        .expect(200);
-      expect(
-        (hrList.body as { id: string }[]).some((b) => b.id === managerBatchId),
-      ).toBe(true);
+    it('GET /import: HR and Admin see the uploaded batch', async () => {
+      for (const token of [hrToken, adminToken]) {
+        const list = await request(app.getHttpServer())
+          .get('/attendance/import')
+          .set('Authorization', `Bearer ${token}`)
+          .expect(200);
+        expect((list.body as { id: string }[]).some((b) => b.id === managerBatchId)).toBe(true);
+      }
     });
 
     it('validate reports the unknown-employee row error and stays PENDING_VALIDATION', async () => {

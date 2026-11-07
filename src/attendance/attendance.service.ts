@@ -4595,7 +4595,7 @@ export class AttendanceService {
     return batch;
   }
 
-  // MANAGER sees only batches they uploaded; HR/ADMIN sees every batch.
+  // Only Admin and HR reach this (the route is Admin/HR-only); they see every batch.
   async listImportBatches(actor: Actor, organizationId: string) {
     return this.scopedPrisma.attendanceImportBatch.findMany({
       where: {
