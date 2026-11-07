@@ -1081,7 +1081,11 @@ export class EmployeesService {
       ...(departmentId && { departmentId }),
       ...(employeeDirectoryScope(actor) && { AND: [employeeDirectoryScope(actor)] as object[] }),
       ...(query.role && { role: query.role }),
-      ...(query.isActive !== undefined && { isActive: query.isActive }),
+      // A manager's My Team lists only people who still work for them: inactive (exited or deactivated) employees under them are
+      // not shown. HR and Admin keep the full list and can still filter on it.
+      ...(query.myTeam && actor.role === Role.MANAGER
+        ? { isActive: true }
+        : query.isActive !== undefined && { isActive: query.isActive }),
       ...(query.search && {
         OR: [
           { name: { contains: query.search, mode: 'insensitive' as const } },
