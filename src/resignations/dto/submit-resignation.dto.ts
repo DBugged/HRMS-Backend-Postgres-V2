@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsInt,
+  IsNotEmpty,
   IsOptional,
   IsString,
   Max,
@@ -17,11 +18,11 @@ export class SubmitResignationDto {
   @IsValidCalendarDateString()
   requestedLwd!: string;
 
-  @ApiPropertyOptional({ maxLength: 2000 })
-  @IsOptional()
+  @ApiProperty({ maxLength: 2000, description: 'Reason for leaving (required).' })
   @IsString()
+  @IsNotEmpty({ message: 'Reason for leaving is required' })
   @MaxLength(2000)
-  reason?: string;
+  reason!: string;
 
   @ApiPropertyOptional({
     example: 30,

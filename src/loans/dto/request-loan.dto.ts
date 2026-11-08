@@ -1,9 +1,9 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import {
   IsEnum,
+  IsNotEmpty,
   IsInt,
   IsNumber,
-  IsOptional,
   IsPositive,
   IsString,
   Max,
@@ -15,10 +15,9 @@ import { MAX_LOAN_PRINCIPAL, MAX_LOAN_TENURE_MONTHS } from '../loan-limits';
 // employeeId/interestRate/startMonth/startYear here (unlike
 // CreateLoanDto): those are HR/Admin's call, set at approve() time.
 export class RequestLoanDto {
-  @ApiPropertyOptional({ enum: LoanType })
-  @IsOptional()
+  @ApiProperty({ enum: LoanType })
   @IsEnum(LoanType)
-  loanType?: LoanType;
+  loanType!: LoanType;
 
   @ApiProperty()
   @IsNumber({ maxDecimalPlaces: 2 })
@@ -32,8 +31,8 @@ export class RequestLoanDto {
   @Max(MAX_LOAN_TENURE_MONTHS)
   tenureMonths!: number;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty()
   @IsString()
-  reason?: string;
+  @IsNotEmpty({ message: 'Reason is required' })
+  reason!: string;
 }

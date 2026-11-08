@@ -35,3 +35,15 @@ export function IsIndianMobile(options?: ValidationOptions) {
     });
   };
 }
+
+/**
+ * The way a valid number is stored: with the country code, "+91 98765 43210". A value that is not a valid mobile number
+ * is returned unchanged (its own validation reports it), and blank stays blank.
+ */
+export function formatIndianMobile<T>(value: T): T | string {
+  if (typeof value !== 'string' || value.trim() === '') return value;
+  const compact = value.replace(/[\s()-]/g, '');
+  if (!MOBILE.test(compact)) return value;
+  const digits = compact.slice(-10);
+  return `+91 ${digits.slice(0, 5)} ${digits.slice(5)}`;
+}

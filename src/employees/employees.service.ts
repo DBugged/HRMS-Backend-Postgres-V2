@@ -87,6 +87,7 @@ import { normalizeEmail } from '../common/normalize-input';
 import { LeaveBalanceService } from '../leave-balances/leave-balance.service';
 import { dmyText } from '../payroll/format-date';
 import { signFileToken, SESSION_ASSET_TTL_SECONDS } from '../files/file-token';
+import { formatIndianMobile } from '../common/indian-mobile';
 
 const SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS ?? 10);
 // The original release's ROLES_HR_CAN_ASSIGN — hr_admin may create employee/
@@ -257,7 +258,7 @@ export class EmployeesService {
             designation: dto.designation ?? '',
             gradeLevel: dto.gradeLevel ?? '',
             employeeCategory: dto.employeeCategory ?? '',
-            contactNumber: dto.contactNumber ?? '',
+            contactNumber: formatIndianMobile(dto.contactNumber ?? ''),
             gender: dto.gender,
             joiningDate: dto.joiningDate
               ? new Date(dto.joiningDate)
@@ -885,7 +886,7 @@ export class EmployeesService {
         brandId: company?.id,
         designation,
         employeeCategory: employeeCategory.name,
-        contactNumber,
+        contactNumber: formatIndianMobile(contactNumber),
         gender,
         joiningDate: joiningDate || undefined,
         selfieRequirement,
@@ -1267,6 +1268,9 @@ export class EmployeesService {
       organizationId,
       before.reportingManagerId,
     );
+    if (typeof clean.contactNumber === 'string') {
+      clean.contactNumber = formatIndianMobile(clean.contactNumber) as string;
+    }
     await this.assertContactNumberUnique(
       clean.contactNumber,
       organizationId,

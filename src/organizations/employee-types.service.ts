@@ -55,11 +55,11 @@ export class EmployeeTypesService {
     const [custom, inactiveBuiltins, usage] = await Promise.all([
       this.getCustomTypes(organizationId),
       this.getInactiveBuiltins(organizationId),
-      // Same population delete() checks, so the count shown in the list is
-      // exactly what blocks a delete.
+      // The count shown in the list is current (active) employees only. delete() still
+      // blocks on anyone holding the type, including inactive employees.
       this.prisma.user.groupBy({
         by: ['employeeType'],
-        where: { organizationId },
+        where: { organizationId, isActive: true },
         _count: { _all: true },
       }),
     ]);

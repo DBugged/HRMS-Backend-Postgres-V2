@@ -1,4 +1,4 @@
-import { isValidIndianMobile } from './indian-mobile';
+import { formatIndianMobile, isValidIndianMobile } from './indian-mobile';
 
 describe('isValidIndianMobile', () => {
   it.each([
@@ -23,4 +23,17 @@ describe('isValidIndianMobile', () => {
 
   it('rejects non-strings', () =>
     expect(isValidIndianMobile(9876543210)).toBe(false));
+});
+
+describe('formatIndianMobile', () => {
+  it('stores a valid number with the country code', () => {
+    expect(formatIndianMobile('9876543210')).toBe('+91 98765 43210');
+    expect(formatIndianMobile('+91-9876543210')).toBe('+91 98765 43210');
+    expect(formatIndianMobile('+91 98765 43210')).toBe('+91 98765 43210');
+  });
+  it('leaves blank and invalid values unchanged', () => {
+    expect(formatIndianMobile('')).toBe('');
+    expect(formatIndianMobile('12345')).toBe('12345');
+    expect(formatIndianMobile(undefined)).toBeUndefined();
+  });
 });
