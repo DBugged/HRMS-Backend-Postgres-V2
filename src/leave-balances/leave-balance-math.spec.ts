@@ -305,3 +305,16 @@ describe('usesYearEndCarryForward', () => {
     ).toBe(false);
   });
 });
+
+describe('recalcClosing with a stray negative counter', () => {
+  const row = { opening: 0, credited: 4.5, availed: 0, encashed: 0, adjusted: 0 };
+
+  it('normal counters are subtracted as before', () => {
+    expect(recalcClosing({ ...row, availed: 2 })).toBe(2.5);
+  });
+
+  it('a negative availed or encashed never adds days to the balance', () => {
+    expect(recalcClosing({ ...row, availed: -2 })).toBe(4.5);
+    expect(recalcClosing({ ...row, encashed: -1 })).toBe(4.5);
+  });
+});

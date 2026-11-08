@@ -23,6 +23,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
   Inject,
   Injectable,
   NotFoundException,
@@ -40,6 +41,7 @@ import { LEAVE_TYPE_CODES } from '../common/reserved-codes';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { CreateCompOffDto } from './dto/create-comp-off.dto';
+import { CreateCompOffsDto, PreviewCompOffDto } from './dto/comp-off-dates.dto';
 import { ReviewCompOffDto } from './dto/review-comp-off.dto';
 import { CancelCompOffDto } from './dto/cancel-comp-off.dto';
 import {
@@ -133,72 +135,9 @@ export class CompOffService {
         'Comp-off cannot be earned for a deactivated employee.',
       );
     }
-    // ...nor for a day after their last working day.
-    if (!isEmployedOn(targetEmployee.exitDate, dto.earnedForDate)) {
-      throw new BadRequestException(
-        `Comp-off cannot be earned for a date after the last working day (${dmyText(targetEmployee.exitDate!)}).`,
-      );
-    }
-    // Nobody earns comp-off before they have joined (the same rule as punches, regularization, WFH and leave).
-    const joinedOn = targetEmployee.joiningDate.toISOString().slice(0, 10);
-    if (dto.earnedForDate < joinedOn) {
-      throw new BadRequestException(
-        `Comp-off cannot be earned for a date before the joining date (${dmyText(joinedOn)}).`,
-      );
-    }
-
-    // Duplicate-claim guard: block a new earn request when this employee
-    // already has a non-REJECTED CompOff for the same earnedForDate
-    // (PENDING/APPROVED/AVAILED/PARTIALLY_AVAILED/EXPIRED all count —
-    // any of those means a claim for that date was already accepted into
-    // the workflow at some point). REJECTED is deliberately excluded so a
-    // manager rejecting a bad/duplicate submission doesn't permanently
-    // block the employee from correctly resubmitting for that same date —
-    // that's a real, legitimate flow (e.g. reason text was wrong, or the
-    // first submission was itself the mistaken duplicate and got rejected
-    // to clear the way for the correct one).
-    //
-    // A DB-level `@@unique([organizationId, employeeId, earnedForDate])`
-    // (mirroring Attendance's own per-day uniqueness constraint) was
-    // considered and is simpler/race-safe, but it would treat a REJECTED
-    // row as a permanent lock on that date, which is the wrong business
-    // rule here — Attendance has no "rejected, please resubmit" workflow,
-    // so its constraint doesn't need to make this distinction. Hence an
-    // application-level check instead. This has a small race window under
-    // truly concurrent double-submits for the same date/employee, which is
-    // an acceptable trade-off for the correct one being blocked by default.
-    const duplicate = await this.scopedPrisma.compOff.findFirst({
-      where: {
-        organizationId,
-        employeeId: targetEmployeeId,
-        earnedForDate: dto.earnedForDate,
-        status: { not: CompOffStatus.REJECTED },
-      },
-    });
-    if (duplicate) {
-      throw new ConflictException(
-        'A comp-off request for this date already exists. If your previous request for this date was rejected, you may resubmit it.',
-      );
-    }
-
-    // One day, one benefit: work already logged as overtime (waiting, or approved - possibly compensated with its own
-    // comp-off) is not also claimed as comp-off. A rejected overtime record does not block it.
-    const overtimeForDay = await this.scopedPrisma.overtimeRecord.findFirst({
-      where: {
-        organizationId,
-        employeeId: targetEmployeeId,
-        date: dto.earnedForDate,
-        status: { not: 'REJECTED' },
-      },
-    });
-    if (overtimeForDay) {
-      throw new ConflictException(
-        'This day is already logged as overtime. Overtime and comp-off cannot both be claimed for the same day; the approver chooses how to compensate it.',
-      );
-    }
-
-    await this.assertDayOffWorked(
+    await this.assertCanEarnOn(
       targetEmployee,
+      targetEmployeeId,
       dto.earnedForDate,
       organizationId,
     );
@@ -545,6 +484,208 @@ export class CompOffService {
         `${dmyText(date)} is a regular working day, so it does not earn a comp-off. Comp-off is only for work on a weekly off or a holiday - if this day was a public holiday, add it to the Holiday calendar first.`,
       );
     }
+  }
+
+  // The days one worked weekly off / holiday earns, from the hours on that day's attendance: the department's "present"
+  // hours earn a full day, its "half day" hours earn half. A day with no punches (a forgotten punch) is claimed as a
+  // full day and left for the approver to check; a day worked for fewer than the half-day hours earns nothing.
+  private async daysEarnedFor(
+    employee: NonNullable<Awaited<ReturnType<CompOffService['loadEarner']>>>,
+    date: string,
+    organizationId: string,
+  ): Promise<{ days: number; hoursWorked: number | null; note?: string }> {
+    const [org, attendance] = await Promise.all([
+      this.scopedPrisma.organization.findFirst({
+        where: { id: organizationId },
+        select: { timezone: true, attendancePayrollPrefs: true },
+      }),
+      this.scopedPrisma.attendance.findFirst({
+        where: { organizationId, employeeId: employee.id, date },
+        select: { workDurationMinutes: true },
+      }),
+    ]);
+    const shift = resolveShiftConfig(
+      employee.department,
+      org?.attendancePayrollPrefs as OrganizationAttendancePrefs | null,
+      org?.timezone ?? 'Asia/Kolkata',
+    );
+    const minutes = attendance?.workDurationMinutes ?? 0;
+    if (minutes <= 0) {
+      return {
+        days: 1,
+        hoursWorked: null,
+        note: 'No attendance recorded for this day: claimed as a full day, your approver will check it.',
+      };
+    }
+    const hoursWorked = Math.round((minutes / 60) * 100) / 100;
+    if (minutes >= shift.minHoursForPresent * 60) return { days: 1, hoursWorked };
+    if (minutes >= shift.minHoursForHalfDay * 60) return { days: 0.5, hoursWorked };
+    throw new BadRequestException(
+      `Only ${hoursWorked} hours were worked on ${dmyText(date)}; at least ${shift.minHoursForHalfDay} hours are needed for a comp-off.`,
+    );
+  }
+
+  private async resolveEarner(
+    employeeId: string | undefined,
+    actor: Actor,
+    organizationId: string,
+  ) {
+    const targetEmployeeId =
+      employeeId && APPROVE_ROLES.includes(actor.role) ? employeeId : actor.id;
+    if (employeeId && actor.role === Role.MANAGER) {
+      await assertManagerDeptScope(
+        this.scopedPrisma,
+        actor,
+        organizationId,
+        targetEmployeeId,
+      );
+    }
+    const employee = await this.loadEarner(targetEmployeeId, organizationId);
+    if (!employee) throw new NotFoundException('Employee not found.');
+    return employee;
+  }
+
+  /** For each date: the days it would earn, or why it cannot earn one (shown before the person submits). */
+  async previewDays(dto: PreviewCompOffDto, actor: Actor, organizationId: string) {
+    const employee = await this.resolveEarner(dto.employeeId, actor, organizationId);
+    const org = await this.scopedPrisma.organization.findFirst({
+      where: { id: organizationId },
+      select: { timezone: true },
+    });
+    const today = todayInOrgTz(org?.timezone ?? 'Asia/Kolkata');
+    const results: {
+      date: string;
+      ok: boolean;
+      days: number;
+      hoursWorked: number | null;
+      note: string | null;
+      error: string | null;
+    }[] = [];
+    for (const date of [...new Set(dto.dates)].sort()) {
+      try {
+        if (date > today) throw new BadRequestException('This date is in the future.');
+        if (!employee.isActive) throw new BadRequestException('Comp-off cannot be earned for a deactivated employee.');
+        await this.assertCanEarnOn(employee, employee.id, date, organizationId);
+        const { days, hoursWorked, note } = await this.daysEarnedFor(employee, date, organizationId);
+        results.push({ date, ok: true, days, hoursWorked, note: note ?? null, error: null });
+      } catch (err) {
+        if (!(err instanceof HttpException)) throw err;
+        results.push({ date, ok: false, days: 0, hoursWorked: null, note: null, error: err.message });
+      }
+    }
+    return { dates: results, totalDays: results.reduce((n, r) => n + r.days, 0) };
+  }
+
+  /** One comp-off request per date (days worked out from attendance); a date that cannot earn is reported, the rest go through. */
+  async earnMany(dto: CreateCompOffsDto, actor: Actor, organizationId: string) {
+    const employee = await this.resolveEarner(dto.employeeId, actor, organizationId);
+    const created: Awaited<ReturnType<CompOffService['earn']>>[] = [];
+    const failed: { date: string; message: string }[] = [];
+    for (const date of [...new Set(dto.dates)].sort()) {
+      try {
+        const { days } = await this.daysEarnedFor(employee, date, organizationId);
+        created.push(
+          await this.earn(
+            { earnedForDate: date, reason: dto.reason, daysEarned: days, employeeId: dto.employeeId },
+            actor,
+            organizationId,
+          ),
+        );
+      } catch (err) {
+        if (!(err instanceof HttpException)) throw err;
+        failed.push({ date, message: err.message });
+      }
+    }
+    if (created.length === 0 && failed.length > 0) {
+      throw new BadRequestException(failed.map((f) => `${dmyText(f.date)}: ${f.message}`).join(' '));
+    }
+    return { created, failed };
+  }
+
+  private loadEarner(employeeId: string, organizationId: string) {
+    return this.scopedPrisma.user.findFirst({
+      where: { id: employeeId, organizationId },
+      include: { department: true },
+    });
+  }
+
+  // Everything that decides whether `date` can earn this person a comp-off (the caller has checked it is not in the future):
+  // employed that day, a weekly off or holiday, no earlier claim, no overtime for the day. Throws a 400 / 409 with the reason.
+  private async assertCanEarnOn(
+    targetEmployee: NonNullable<Awaited<ReturnType<CompOffService['loadEarner']>>>,
+    targetEmployeeId: string,
+    date: string,
+    organizationId: string,
+  ) {
+    // ...nor for a day after their last working day.
+    if (!isEmployedOn(targetEmployee.exitDate, date)) {
+      throw new BadRequestException(
+        `Comp-off cannot be earned for a date after the last working day (${dmyText(targetEmployee.exitDate!)}).`,
+      );
+    }
+    // Nobody earns comp-off before they have joined (the same rule as punches, regularization, WFH and leave).
+    const joinedOn = targetEmployee.joiningDate.toISOString().slice(0, 10);
+    if (date < joinedOn) {
+      throw new BadRequestException(
+        `Comp-off cannot be earned for a date before the joining date (${dmyText(joinedOn)}).`,
+      );
+    }
+
+    // Duplicate-claim guard: block a new earn request when this employee
+    // already has a non-REJECTED CompOff for the same earnedForDate
+    // (PENDING/APPROVED/AVAILED/PARTIALLY_AVAILED/EXPIRED all count —
+    // any of those means a claim for that date was already accepted into
+    // the workflow at some point). REJECTED is deliberately excluded so a
+    // manager rejecting a bad/duplicate submission doesn't permanently
+    // block the employee from correctly resubmitting for that same date —
+    // that's a real, legitimate flow (e.g. reason text was wrong, or the
+    // first submission was itself the mistaken duplicate and got rejected
+    // to clear the way for the correct one).
+    //
+    // A DB-level `@@unique([organizationId, employeeId, earnedForDate])`
+    // (mirroring Attendance's own per-day uniqueness constraint) was
+    // considered and is simpler/race-safe, but it would treat a REJECTED
+    // row as a permanent lock on that date, which is the wrong business
+    // rule here — Attendance has no "rejected, please resubmit" workflow,
+    // so its constraint doesn't need to make this distinction. Hence an
+    // application-level check instead. This has a small race window under
+    // truly concurrent double-submits for the same date/employee, which is
+    // an acceptable trade-off for the correct one being blocked by default.
+    const duplicate = await this.scopedPrisma.compOff.findFirst({
+      where: {
+        organizationId,
+        employeeId: targetEmployeeId,
+        earnedForDate: date,
+        status: { not: CompOffStatus.REJECTED },
+      },
+    });
+    if (duplicate) {
+      throw new ConflictException(
+        'A comp-off request for this date already exists. If your previous request for this date was rejected, you may resubmit it.',
+      );
+    }
+
+    // One day, one benefit: work already logged as overtime (waiting, or approved - possibly compensated with its own
+    // comp-off) is not also claimed as comp-off. A rejected overtime record does not block it.
+    const overtimeForDay = await this.scopedPrisma.overtimeRecord.findFirst({
+      where: {
+        organizationId,
+        employeeId: targetEmployeeId,
+        date: date,
+        status: { not: 'REJECTED' },
+      },
+    });
+    if (overtimeForDay) {
+      throw new ConflictException(
+        'This day is already logged as overtime. Overtime and comp-off cannot both be claimed for the same day; the approver chooses how to compensate it.',
+      );
+    }
+
+    await this.assertDayOffWorked(
+      targetEmployee,
+      date,
+      organizationId,
+    );
   }
 
   // Returns the approved comp-off, or null when the request does not qualify (or anything goes wrong: it then stays pending).

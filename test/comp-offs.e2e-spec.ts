@@ -355,7 +355,7 @@ describe('Comp-Offs (e2e)', () => {
       await request(app.getHttpServer())
         .patch(`/comp-offs/${firstDupCompOffId}/review`)
         .set('Authorization', `Bearer ${managerToken}`)
-        .send({ decision: 'REJECTED' })
+        .send({ decision: 'REJECTED', comments: 'Wrong date, please resubmit' })
         .expect(200);
 
       const resubmit = await request(app.getHttpServer())
@@ -545,6 +545,48 @@ describe('Comp-Offs (e2e)', () => {
       .patch(`/comp-offs/${id}/cancel`)
       .set('Authorization', `Bearer ${adminToken}`)
       .send({ reason: 'Again' })
+      .expect(400);
+  });
+
+  it('previews the days of several dates, then earns one request per date in one call', async () => {
+    const sunday1 = pastDate(20);
+    const sunday2 = pastDate(21);
+    const monday = new Date(`${sunday1}T00:00:00.000Z`);
+    monday.setUTCDate(monday.getUTCDate() + 1);
+    const workingDay = monday.toISOString().slice(0, 10);
+
+    const preview = await request(app.getHttpServer())
+      .get('/comp-offs/preview')
+      .query({ dates: [sunday1, sunday2, workingDay].join(',') })
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .expect(200);
+    const rows = (preview.body as { dates: { date: string; ok: boolean; days: number; error: string | null }[] }).dates;
+    expect(rows.find((r) => r.date === sunday1)).toMatchObject({ ok: true, days: 1 });
+    expect(rows.find((r) => r.date === sunday2)).toMatchObject({ ok: true, days: 1 });
+    expect(rows.find((r) => r.date === workingDay)?.ok).toBe(false);
+
+    // The reason is required.
+    await request(app.getHttpServer())
+      .post('/comp-offs/bulk')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ dates: [sunday1] })
+      .expect(400);
+
+    const res = await request(app.getHttpServer())
+      .post('/comp-offs/bulk')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ dates: [sunday1, sunday2, workingDay], reason: 'Weekend support' })
+      .expect(201);
+    const body = res.body as { created: CompOffBody[]; failed: { date: string }[] };
+    expect(body.created).toHaveLength(2);
+    expect(body.created.every((c) => c.status === 'PENDING' && Number(c.daysEarned) === 1)).toBe(true);
+    expect(body.failed.map((f) => f.date)).toEqual([workingDay]);
+
+    // Nothing earns: a clean 400 with the reason.
+    await request(app.getHttpServer())
+      .post('/comp-offs/bulk')
+      .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ dates: [workingDay], reason: 'Not a day off' })
       .expect(400);
   });
 });

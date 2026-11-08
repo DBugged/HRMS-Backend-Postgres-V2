@@ -15,6 +15,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { CompOffService } from './comp-off.service';
 import { CreateCompOffDto } from './dto/create-comp-off.dto';
+import { CreateCompOffsDto, PreviewCompOffDto } from './dto/comp-off-dates.dto';
 import { CancelCompOffDto } from './dto/cancel-comp-off.dto';
 import { ReviewCompOffDto } from './dto/review-comp-off.dto';
 import { ListCompOffsQueryDto } from './dto/list-comp-offs-query.dto';
@@ -45,6 +46,18 @@ export class CompOffController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // Days each date would earn (from attendance) or why it cannot, so the form shows them before submitting.
+  @Get('preview')
+  preview(@Query() dto: PreviewCompOffDto, @CurrentUser() caller: Caller) {
+    return this.compOffService.previewDays(dto, caller, caller.organizationId);
+  }
+
+  // Several worked dates at once, one comp-off request per date; the days of each come from attendance.
+  @Post('bulk')
+  earnMany(@Body() dto: CreateCompOffsDto, @CurrentUser() caller: Caller) {
+    return this.compOffService.earnMany(dto, caller, caller.organizationId);
   }
 
   @Post()

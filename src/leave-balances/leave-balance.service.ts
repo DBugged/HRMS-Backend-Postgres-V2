@@ -458,9 +458,14 @@ export class LeaveBalanceService {
     const row = await tx.leaveBalance.findFirstOrThrow({
       where: { id: balanceId, organizationId },
     });
+    // Heal a counter that went negative (days released twice): it is a count of days, never below zero.
+    const healed = {
+      ...(row.availed < 0 && { availed: 0 }),
+      ...(row.pending < 0 && { pending: 0 }),
+    };
     await tx.leaveBalance.updateMany({
       where: { id: balanceId, organizationId },
-      data: { closing: recalcClosing(row) },
+      data: { closing: recalcClosing(row), ...healed },
     });
     return tx.leaveBalance.findFirstOrThrow({
       where: { id: balanceId, organizationId },

@@ -7,6 +7,7 @@
 // Important: review() implements a two-level workflow where a MANAGER's approval on a 2-level leave type
 // only records level-1 sign-off (status stays PENDING); only ADMIN/HR can give final approval. releaseHold()
 // is the single place that reverses whatever a leave's current status implied, shared by update() and cancel().
+import { recalcClosing } from '../leave-balances/leave-balance-math';
 import { managerIdsOf } from '../common/managers';
 import { keepModuleEnabled } from '../module-access/module-gate';
 import { EMPLOYEE_RELATION_ORDER_BY } from '../common/employee-order';
@@ -682,15 +683,25 @@ export class LeavesService {
     // (closing itself ignores pending), never below zero.
     const shown = balances.map((b) => {
       const lapsed = lapsedByRow.get(b.id) ?? 0;
-      const closing = Math.round((b.closing - lapsed) * 100) / 100;
+      // Counters are counts of days, so a stray negative one (days released twice) is shown as zero and the closing
+      // balance is worked out from the sane figures, not the stored one it distorted.
+      const availed = Math.max(0, b.availed);
+      const pending = Math.max(0, b.pending);
+      const closing =
+        Math.round(
+          (recalcClosing({ ...b, availed }) - lapsed) * 100,
+        ) / 100;
       const available = Math.max(
         0,
-        Math.round((closing - b.pending) * 100) / 100,
+        Math.round((closing - pending) * 100) / 100,
       );
       const accrual = accrualInfo(b.leaveType.id);
       return {
         ...b,
-        ...(lapsed > 0 && { closing, forfeitedCarryIn: lapsed }),
+        availed,
+        pending,
+        closing,
+        ...(lapsed > 0 && { forfeitedCarryIn: lapsed }),
         available,
         // Present only for a periodic type: yearly entitlement, how it accrues and the next credit.
         ...(accrual && { accrual }),

@@ -129,8 +129,16 @@ export interface BalanceRowLike {
 
 // Single source-of-truth closing formula — `pending` is deliberately
 // excluded (see schema.prisma's comment on LeaveBalance.pending).
+// availed / encashed are counters of days used, so they are never below zero: a stray negative (a double release) would
+// otherwise ADD days to the balance ('8.5 available of 4.5 credited').
 export function recalcClosing(row: BalanceRowLike): number {
-  return row.opening + row.credited - row.availed - row.encashed + row.adjusted;
+  return (
+    row.opening +
+    row.credited -
+    Math.max(0, row.availed) -
+    Math.max(0, row.encashed) +
+    row.adjusted
+  );
 }
 
 // Clamps how much of a closing balance rolls into next year's opening —
