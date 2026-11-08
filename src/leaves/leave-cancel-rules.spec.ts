@@ -5,6 +5,7 @@ import {
   leaveCancelWindowDaysOf,
   ownerCancelOptions,
   ownerCanCancel,
+  cancelReasonRequired,
 } from './leave-cancel-rules';
 
 // A leave running from 10-11 to 25-11.
@@ -82,5 +83,17 @@ describe('adminCanCancelOthers', () => {
     expect(ownerCanCancel({ ...approved, approvedOn: null }, '2026-11-09', 0, 0)).toBe(true); // approval day unknown
     // Past the approval window but before it starts: no direct cancel, so a cancellation request is offered instead.
     expect(ownerCancelOptions(l, '2026-11-05', 0, false, 2)).toEqual({ canCancel: false, canRequestCancel: true });
+  });
+});
+
+describe('cancelReasonRequired', () => {
+  it('lets the owner cancel their own unapproved request without a reason', () => {
+    expect(cancelReasonRequired(true, LeaveStatus.PENDING)).toBe(false);
+    expect(cancelReasonRequired(true, LeaveStatus.RETURNED)).toBe(false);
+  });
+  it('needs a reason for an approved leave, or when someone else cancels', () => {
+    expect(cancelReasonRequired(true, LeaveStatus.APPROVED)).toBe(true);
+    expect(cancelReasonRequired(false, LeaveStatus.PENDING)).toBe(true);
+    expect(cancelReasonRequired(false, LeaveStatus.APPROVED)).toBe(true);
   });
 });

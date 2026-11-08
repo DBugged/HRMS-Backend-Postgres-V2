@@ -302,7 +302,7 @@ export class FieldVisitsService {
     return this.load(actor, id);
   }
 
-  async cancel(actor: Actor, id: string) {
+  async cancel(actor: Actor, id: string, reason: string) {
     await this.assertOn(actor.organizationId);
     const v = await this.load(actor, id);
     if (v.status !== FieldVisitStatus.PLANNED)
@@ -315,7 +315,7 @@ export class FieldVisitsService {
         organizationId: actor.organizationId,
         status: FieldVisitStatus.PLANNED,
       },
-      data: { status: FieldVisitStatus.CANCELLED },
+      data: { status: FieldVisitStatus.CANCELLED, outcome: `Cancelled: ${reason.trim()}` },
     });
     await this.audit.log({
       actorId: actor.id,

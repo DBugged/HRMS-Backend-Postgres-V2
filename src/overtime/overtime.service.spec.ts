@@ -445,7 +445,7 @@ describe('overtime: review', () => {
       await expect(
         c.service.review(
           'ot1',
-          { status: 'REJECTED', compensationKey: 'PAY_1' } as never,
+          { status: 'REJECTED', compensationKey: 'PAY_1', comments: 'Not eligible' } as never,
           hr,
           'org',
         ),
@@ -485,7 +485,7 @@ describe('overtime: review', () => {
       records: [pending()],
       runs: [{ id: 'r1', status: 'APPROVED' }],
     });
-    await service.review('ot1', { status: 'REJECTED' } as never, hr, 'org');
+    await service.review('ot1', { status: 'REJECTED', comments: 'Not eligible' } as never, hr, 'org');
     expect(runs[0].status).toBe('APPROVED');
   });
 
@@ -503,7 +503,7 @@ describe('overtime: review', () => {
   it('it can be reviewed only once', async () => {
     const { service } = build({ records: [pending({ status: 'APPROVED' })] });
     await expect(
-      service.review('ot1', { status: 'REJECTED' } as never, hr, 'org'),
+      service.review('ot1', { status: 'REJECTED', comments: 'Not eligible' } as never, hr, 'org'),
     ).rejects.toThrow(/already been reviewed/);
   });
 

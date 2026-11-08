@@ -58,6 +58,7 @@ import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.
 import { todayInOrgTz } from '../common/org-date';
 
 import { dmyText } from '../payroll/format-date';
+import { requireReason } from '../common/require-reason';
 type Actor = Omit<User, 'password'>;
 
 const EXTERNAL_URL_RE = /^https?:\/\//i;
@@ -534,6 +535,7 @@ export class ReimbursementsService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.status === 'REJECTED') requireReason(dto.reviewComments, 'rejecting a reimbursement claim');
     const claim = await this.scopedPrisma.reimbursement.findFirst({
       where: { id, organizationId },
     });

@@ -144,6 +144,7 @@ import {
 } from '../common/org-date';
 import { isSelfieRequired } from '../common/selfie-requirement';
 
+import { requireReason } from '../common/require-reason';
 type Actor = Omit<User, 'password'>;
 // Either the plain scoped client or a $transaction callback's tx client —
 // recalculateAttendanceForDay/the Leave-integration hooks run inside
@@ -2881,6 +2882,7 @@ export class AttendanceService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.decision === 'REJECTED') requireReason(dto.comments, 'rejecting a work-from-home request');
     const row = await this.scopedPrisma.attendance.findFirst({
       where: { id, organizationId },
       include: { employee: true },
@@ -2986,6 +2988,7 @@ export class AttendanceService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.decision === 'REJECTED') requireReason(dto.comments, 'rejecting a work-from-home request');
     const rows = await this.scopedPrisma.attendance.findMany({
       where: {
         organizationId,
@@ -4409,6 +4412,7 @@ export class AttendanceService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.decision === 'REJECTED') requireReason(dto.comments, 'rejecting a regularization request');
     const row = await this.scopedPrisma.attendance.findFirst({
       where: { id, organizationId },
     });

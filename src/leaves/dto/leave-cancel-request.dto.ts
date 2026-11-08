@@ -22,3 +22,13 @@ export class DecideLeaveCancelDto {
   @MaxLength(500)
   comments?: string;
 }
+
+// Cancelling a leave directly. The reason is required by the service when the leave was already approved or someone else
+// is cancelling it; the employee's own pending request can be cancelled without one.
+export class CancelLeaveDto {
+  @ApiPropertyOptional({ description: 'Why the leave is being cancelled' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
+}

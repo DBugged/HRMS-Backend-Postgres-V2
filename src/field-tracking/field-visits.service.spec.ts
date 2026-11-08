@@ -148,10 +148,10 @@ describe('field visits: planning', () => {
   });
   it('cancel and edit use company-scoped writes and only work on a planned visit', async () => {
     const { svc, visits } = build({ visits: [planned()] });
-    await expect(svc.cancel(admin, 'v1')).resolves.toMatchObject({
+    await expect(svc.cancel(admin, 'v1', 'Client postponed')).resolves.toMatchObject({
       status: 'CANCELLED',
     });
-    await expect(svc.cancel(admin, 'v1')).rejects.toThrow(/planned/);
+    await expect(svc.cancel(admin, 'v1', 'Client postponed')).rejects.toThrow(/planned/);
     visits[0].status = 'PLANNED';
     await expect(
       svc.update(admin, 'v1', { clientName: 'Beta Corp' }),
@@ -167,13 +167,13 @@ describe('field visits: who may change one', () => {
         planned({ id: 'v2', createdById: 'e1' }),
       ],
     });
-    await expect(svc.cancel(emp, 'v1')).rejects.toBeInstanceOf(
+    await expect(svc.cancel(emp, 'v1', 'Client postponed')).rejects.toBeInstanceOf(
       ForbiddenException,
     );
     await expect(
       svc.update(emp, 'v1', { clientName: 'Hijack' }),
     ).rejects.toBeInstanceOf(ForbiddenException);
-    await expect(svc.cancel(emp, 'v2')).resolves.toMatchObject({
+    await expect(svc.cancel(emp, 'v2', 'Client postponed')).resolves.toMatchObject({
       status: 'CANCELLED',
     });
   });

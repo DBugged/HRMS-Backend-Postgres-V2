@@ -82,6 +82,7 @@ import {
   resolveOrgDateTimeFormat,
 } from '../payroll/format-date';
 
+import { requireReason } from '../common/require-reason';
 type Actor = Omit<User, 'password'>;
 
 // Fallback multipliers, used only when the org has no PayrollSettings row yet
@@ -729,6 +730,7 @@ export class OvertimeService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.status === 'REJECTED') requireReason(dto.comments, 'rejecting an overtime request');
     const record = await this.scopedPrisma.overtimeRecord.findFirst({
       where: { id, organizationId },
     });

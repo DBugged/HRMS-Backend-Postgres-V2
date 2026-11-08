@@ -1,4 +1,4 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsInt,
   IsOptional,
@@ -6,6 +6,7 @@ import {
   Max,
   MaxLength,
   Min,
+  IsNotEmpty,
 } from 'class-validator';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
@@ -36,9 +37,9 @@ export class ApproveResignationDto {
 }
 
 export class RejectResignationDto {
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty({ description: 'Why the resignation is rejected; shown to the employee.' })
   @IsString()
+  @IsNotEmpty({ message: 'Add a reason for rejecting the resignation.' })
   @MaxLength(1000)
-  decisionNote?: string;
+  decisionNote!: string;
 }

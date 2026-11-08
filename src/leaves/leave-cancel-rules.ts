@@ -100,3 +100,11 @@ export function ownerCancelOptions(
       !leaveTaken(leave, today),
   };
 }
+
+/**
+ * Whether cancelling a leave directly needs a reason. Only the owner cancelling a request nobody has approved yet may leave
+ * it blank; undoing an approved leave, or cancelling someone else's, needs one (it is recorded and the people involved are told).
+ */
+export function cancelReasonRequired(isOwner: boolean, status: LeaveStatus): boolean {
+  return !isOwner || status === LeaveStatus.APPROVED;
+}

@@ -309,7 +309,7 @@ describe('reimbursement claims: review', () => {
   it('an approved claim cannot be rejected afterwards', async () => {
     const { service } = build([claim({ status: 'APPROVED' })]);
     await expect(
-      service.review('c1', { status: 'REJECTED' } as never, hr, 'org'),
+      service.review('c1', { status: 'REJECTED', reviewComments: 'Duplicate claim' } as never, hr, 'org'),
     ).rejects.toThrow(/approved reimbursement cannot be rejected/);
   });
 

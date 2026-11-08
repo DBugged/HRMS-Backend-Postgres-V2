@@ -1493,6 +1493,8 @@ model Leave {
   cancelledById  String?
   cancelledBy    User?       @relation("LeaveCancelledBy", fields: [cancelledById], references: [id])
   cancelledAt    DateTime?
+  // Why it was cancelled, in the canceller's words (required when it was approved or cancelled on someone's behalf).
+  cancelReason   String      @default("")
   reviewedAt     DateTime?
   reviewComments String      @default("")
 

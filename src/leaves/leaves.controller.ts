@@ -26,6 +26,7 @@ import { ReviewLeaveDto } from './dto/review-leave.dto';
 import { ListLeavesQueryDto } from './dto/list-leaves-query.dto';
 import { TeamCalendarQueryDto } from './dto/team-calendar-query.dto';
 import {
+  CancelLeaveDto,
   DecideLeaveCancelDto,
   RequestLeaveCancelDto,
 } from './dto/leave-cancel-request.dto';
@@ -208,8 +209,8 @@ export class LeavesController {
   }
 
   @Patch(':id/cancel')
-  cancel(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.leavesService.cancel(id, caller, caller.organizationId);
+  cancel(@Param('id') id: string, @Body() dto: CancelLeaveDto, @CurrentUser() caller: Caller) {
+    return this.leavesService.cancel(id, caller, caller.organizationId, dto?.reason);
   }
 
   // The owner asks for an approved, already-started leave to be cancelled.

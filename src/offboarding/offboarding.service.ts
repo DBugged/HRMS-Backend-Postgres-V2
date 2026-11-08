@@ -1180,8 +1180,9 @@ export class OffboardingService {
     }
   }
 
-  async cancel(id: string, organizationId: string, actorId?: string) {
+  async cancel(id: string, organizationId: string, actorId?: string, reason?: string) {
     const record = await this.findCase(id, organizationId);
+    const why = (reason ?? '').trim();
     if (record.status === OffboardingStatus.COMPLETED) {
       throw new BadRequestException(
         'A completed offboarding case cannot be cancelled.',
@@ -1209,7 +1210,11 @@ export class OffboardingService {
           organizationId,
           status: { in: [...OPEN_STATUSES, OffboardingStatus.CANCELLED] },
         },
-        data: { status: OffboardingStatus.CANCELLED },
+        data: {
+          status: OffboardingStatus.CANCELLED,
+          // The reason is kept with the case's notes.
+          ...(why ? { notes: `${record.notes ? `${record.notes}\n` : ''}Exit cancelled: ${why}` } : {}),
+        },
       });
       // Cancelled exit: they are staying, so the last working day no longer applies.
       if (count > 0) {

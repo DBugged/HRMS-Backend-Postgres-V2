@@ -27,6 +27,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
+import { CancelVisitDto } from './cancel-visit.dto';
 type Caller = Omit<User, 'password'>;
 
 class VisitDto {
@@ -105,8 +106,8 @@ export class FieldVisitsController {
   }
 
   @Delete(':id')
-  cancel(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.visits.cancel(caller, id);
+  cancel(@Param('id') id: string, @Body() dto: CancelVisitDto, @CurrentUser() caller: Caller) {
+    return this.visits.cancel(caller, id, dto.reason);
   }
 
   @Post(':id/check-in')

@@ -2,9 +2,11 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsBoolean,
   IsEnum,
+  IsNotEmpty,
   IsOptional,
   IsString,
   IsUUID,
+  Matches,
 } from 'class-validator';
 import { HalfDaySession } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
@@ -32,10 +34,11 @@ export class ApplyLeaveDto {
   @IsEnum(HalfDaySession)
   halfDaySession?: HalfDaySession;
 
-  @ApiPropertyOptional()
-  @IsOptional()
+  @ApiProperty({ description: 'Reason for the leave (required).' })
   @IsString()
-  remarks?: string;
+  @IsNotEmpty({ message: 'Remarks are required' })
+  @Matches(/\S/, { message: 'Remarks are required' })
+  remarks!: string;
 
   @ApiPropertyOptional()
   @IsOptional()

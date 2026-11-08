@@ -70,6 +70,7 @@ import {
   dmyText,
 } from '../payroll/format-date';
 
+import { requireReason } from '../common/require-reason';
 type Actor = Omit<User, 'password'>;
 
 // The original release's LEAVE_APPROVE_ROLES — may raise/view comp-off on someone
@@ -582,6 +583,7 @@ export class CompOffService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.decision === 'REJECTED') requireReason(dto.comments, 'rejecting a comp-off request');
     const compOff = await this.findByIdOrThrow(id, organizationId);
     // HR and managers never review their own request; an Admin may (it is written to the audit trail below).
     assertNotSelfApproval(actor, compOff.employeeId);

@@ -100,14 +100,7 @@ import {
   dmyText,
 } from '../payroll/format-date';
 import { dateStrInOrgTz, todayInOrgTz } from '../common/org-date';
-import {
-  leaveCancelAfterApprovalDaysOf,
-  leaveCancelWindowDaysOf,
-  ownerCancelOptions,
-  adminCanCancelOthers,
-  leaveTaken,
-  ownerCanCancel,
-} from './leave-cancel-rules';
+import { leaveCancelAfterApprovalDaysOf, leaveCancelWindowDaysOf, ownerCancelOptions, adminCanCancelOthers, leaveTaken, ownerCanCancel, cancelReasonRequired } from './leave-cancel-rules';
 import {
   DecideLeaveCancelDto,
   RequestLeaveCancelDto,
@@ -1400,10 +1393,16 @@ export class LeavesService {
     });
   }
 
-  async cancel(id: string, actor: Actor, organizationId: string) {
+  async cancel(id: string, actor: Actor, organizationId: string, reason?: string) {
     const leave = await this.findByIdOrThrow(id, organizationId);
     const isSelf = leave.employeeId === actor.id;
     const isOverride = CANCEL_OVERRIDE_ROLES.includes(actor.role);
+    // The reason is optional only for the employee cancelling their own request that nobody has approved yet; undoing an
+    // approved leave, or cancelling someone else's, needs one (it is recorded and the employee / approvers are told).
+    const cancelReason = (reason ?? '').trim();
+    if (!cancelReason && cancelReasonRequired(isSelf, leave.status)) {
+      throw new BadRequestException('Add a reason for cancelling this leave.');
+    }
     if (!isSelf && !isOverride && actor.role !== Role.MANAGER) {
       throw new ForbiddenException(
         "You cannot cancel another employee's leave request.",
@@ -1447,15 +1446,15 @@ export class LeavesService {
         );
       }
     }
-    const result = await this.performCancel(id, leave, actor, organizationId, !isSelf);
+    const result = await this.performCancel(id, leave, actor, organizationId, !isSelf, cancelReason);
     // Someone else cancelled it: the employee is told, with the dates, so a booked leave does not just vanish.
     if (!isSelf) {
-      await this.notifyLeaveCancelledForEmployee(leave, actor, organizationId).catch(() => undefined);
+      await this.notifyLeaveCancelledForEmployee(leave, actor, organizationId, cancelReason).catch(() => undefined);
     }
     // Cancelling an approved leave undoes something an approver signed off, so they are told (a pending leave was never
     // approved, and a request an approver decides themselves needs no extra alert).
     if (isSelf && leave.status === LeaveStatus.APPROVED) {
-      await this.notifyApprovedLeaveCancelled(leave, actor, organizationId).catch(
+      await this.notifyApprovedLeaveCancelled(leave, actor, organizationId, cancelReason).catch(
         () => undefined,
       );
     }
@@ -1463,13 +1462,13 @@ export class LeavesService {
   }
 
   // Tells the employee that an Admin / HR cancelled their leave.
-  private async notifyLeaveCancelledForEmployee(leave: Leave, actor: Actor, organizationId: string) {
+  private async notifyLeaveCancelledForEmployee(leave: Leave, actor: Actor, organizationId: string, reason = '') {
     const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(this.scopedPrisma, organizationId);
     await this.notificationsService.create({
       organizationId,
       userId: leave.employeeId,
       title: 'Leave Cancelled',
-      message: `${actor.name} cancelled your leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}. Your leave balance was restored.`,
+      message: `${actor.name} cancelled your leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.${reason ? ` Reason: ${reason}.` : ''} Your leave balance was restored.`,
       category: NotificationCategory.LEAVE,
     });
   }
@@ -1479,6 +1478,7 @@ export class LeavesService {
     leave: Leave,
     actor: Actor,
     organizationId: string,
+    reason = '',
   ) {
     const { dateFormat, timeZone } = await resolveOrgDateTimeFormat(
       this.scopedPrisma,
@@ -1490,7 +1490,7 @@ export class LeavesService {
       ...new Set([...managerIdsOf(actor), ...hrAdmins]),
     ].filter((id) => id !== actor.id);
     if (recipients.length === 0) return;
-    const message = `${actor.name} cancelled their approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.`;
+    const message = `${actor.name} cancelled their approved leave from ${formatDateDisplay(leave.startDate, '', dateFormat, timeZone)} to ${formatDateDisplay(leave.endDate, '', dateFormat, timeZone)}.${reason ? ` Reason: ${reason}` : ''}`;
     await this.notificationsService.createMany(
       recipients.map((userId) => ({
         organizationId,
@@ -1510,6 +1510,7 @@ export class LeavesService {
     actor: Actor,
     organizationId: string,
     onBehalf: boolean,
+    reason = '',
   ) {
     const cancellableStatuses: LeaveStatus[] = [
       LeaveStatus.PENDING,
@@ -1556,6 +1557,7 @@ export class LeavesService {
           status: LeaveStatus.CANCELLED,
           cancelledById: actor.id,
           cancelledAt: new Date(),
+          cancelReason: reason,
           // Any waiting cancellation request is settled by the cancellation itself.
           cancelRequestedAt: null,
         },
@@ -2658,6 +2660,7 @@ export class LeavesService {
         actor,
         organizationId,
         true,
+        leave.cancelRequestReason ?? '',
       );
       await this.notifyCancelDecision(leave, 'APPROVED', comments, organizationId);
       return cancelled;

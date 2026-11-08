@@ -728,6 +728,7 @@ export class ResignationsService {
           record.offboardingCaseId,
           organizationId,
           actor.id,
+          'Resignation withdrawn',
         );
       } else {
         await this.scopedPrisma.resignation.updateMany({

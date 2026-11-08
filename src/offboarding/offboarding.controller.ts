@@ -26,6 +26,7 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
+import { CancelOffboardingDto } from './dto/cancel-offboarding.dto';
 type Caller = Omit<User, 'password'>;
 
 // The original release's whole router is authorize('hr_admin', 'administrator') —
@@ -159,7 +160,7 @@ export class OffboardingController {
   }
 
   @Patch(':id/cancel')
-  cancel(@Param('id') id: string, @CurrentUser() caller: Caller) {
-    return this.offboardingService.cancel(id, caller.organizationId, caller.id);
+  cancel(@Param('id') id: string, @Body() dto: CancelOffboardingDto, @CurrentUser() caller: Caller) {
+    return this.offboardingService.cancel(id, caller.organizationId, caller.id, dto.reason);
   }
 }
