@@ -54,6 +54,7 @@ import { AuditLogService } from '../audit-log/audit-log.service';
 import { EmployeeTimelineService } from '../employee-timeline/employee-timeline.service';
 import { getOrgLeaveSwitches } from '../organizations/org-leave-switches';
 
+import { requireReason } from '../common/require-reason';
 type Actor = Omit<User, 'password'>;
 
 interface EncashmentRule {
@@ -203,7 +204,7 @@ export class LeaveEncashmentsService {
           organizationId,
         );
         // The yearly cap counts everything this employee has already requested for this leave type this year
-        // (pending, approved or processed — a request cannot be rejected), not just this one request. Checked here,
+        // (pending, approved or processed; a rejected one does not count), not just this one request. Checked here,
         // under the row lock above, so two simultaneous requests cannot both pass.
         if (rule.maxDaysPerYear) {
           const requested =
@@ -214,6 +215,8 @@ export class LeaveEncashmentsService {
                   organizationId,
                   employeeId: actor.id,
                   leaveTypeId: leaveType.id,
+                  // A rejected request used none of the yearly allowance.
+                  status: { not: LeaveEncashmentStatus.REJECTED },
                   createdAt: {
                     gte: new Date(`${yearBounds.start}T00:00:00.000Z`),
                     lt: new Date(
@@ -338,6 +341,9 @@ export class LeaveEncashmentsService {
     actor: Actor,
     organizationId: string,
   ) {
+    if (dto.status === LeaveEncashmentStatus.REJECTED) {
+      requireReason(dto.comments, 'rejecting a leave encashment request');
+    }
     const row = await this.scopedPrisma.leaveEncashment.findFirst({
       where: { id, organizationId },
     });
@@ -366,8 +372,10 @@ export class LeaveEncashmentsService {
       await this.assertOrgAllowsEncashment(organizationId);
     }
 
+    // PENDING -> APPROVED or REJECTED; APPROVED -> PROCESSED.
     const requiredCurrentStatus: LeaveEncashmentStatus =
-      dto.status === LeaveEncashmentStatus.APPROVED
+      dto.status === LeaveEncashmentStatus.APPROVED ||
+      dto.status === LeaveEncashmentStatus.REJECTED
         ? LeaveEncashmentStatus.PENDING
         : LeaveEncashmentStatus.APPROVED;
 
@@ -380,7 +388,13 @@ export class LeaveEncashmentsService {
       // 0 means another review already won the race.
       const { count } = await tx.leaveEncashment.updateMany({
         where: { id, organizationId, status: requiredCurrentStatus },
-        data: { status: dto.status, approvedById: actor.id },
+        data: {
+          status: dto.status,
+          approvedById: actor.id,
+          ...(dto.status === LeaveEncashmentStatus.REJECTED
+            ? { decisionNote: (dto.comments ?? '').trim() }
+            : {}),
+        },
       });
       if (count === 0) {
         throw new ConflictException(
@@ -426,6 +440,35 @@ export class LeaveEncashmentsService {
         );
       }
 
+      // Rejected: the days held at request time go back to the employee.
+      if (dto.status === LeaveEncashmentStatus.REJECTED && row.leaveTypeId) {
+        const decisionCfg = await getLeaveYearConfig(tx, organizationId);
+        const decisionTz =
+          (
+            await tx.organization.findFirst({
+              where: { id: organizationId },
+              select: { timezone: true },
+            })
+          )?.timezone ?? 'Asia/Kolkata';
+        const year = currentLeaveYear(localDateStr(decisionTz), decisionCfg);
+        const balanceRow = await this.leaveBalanceService.ensureBalanceRow(
+          tx,
+          row.employeeId,
+          row.leaveTypeId,
+          year,
+          organizationId,
+        );
+        await tx.leaveBalance.updateMany({
+          where: { id: balanceRow.id, organizationId },
+          data: { pending: { decrement: row.days } },
+        });
+        await this.leaveBalanceService.recalculate(
+          tx,
+          balanceRow.id,
+          organizationId,
+        );
+      }
+
       return tx.leaveEncashment.findFirstOrThrow({
         where: { id, organizationId },
       });
@@ -452,7 +495,7 @@ export class LeaveEncashmentsService {
     });
     if (employee) {
       const title = `Leave Encashment Request ${dto.status}`;
-      const message = `Your leave encashment request for ${row.days} day(s) (${row.amount}) has been ${dto.status.toLowerCase()}.`;
+      const message = `Your leave encashment request for ${row.days} day(s) (${row.amount}) has been ${dto.status.toLowerCase()}.${dto.status === LeaveEncashmentStatus.REJECTED ? ` Reason: ${(dto.comments ?? '').trim()}` : ''}`;
       await this.notificationsService.create({
         organizationId,
         userId: employee.id,

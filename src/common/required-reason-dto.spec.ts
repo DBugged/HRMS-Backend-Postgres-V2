@@ -8,6 +8,9 @@ import { RejectResignationDto } from '../resignations/dto/decide-resignation.dto
 import { CancelOffboardingDto } from '../offboarding/dto/cancel-offboarding.dto';
 import { CancelVisitDto } from '../field-tracking/cancel-visit.dto';
 import { requireReason } from './require-reason';
+import { RejectGrantRequestDto } from '../leave-grants/dto/leave-grant.dto';
+import { RequestRegularizationDto } from '../attendance/dto/request-regularization.dto';
+import { ReviewEmployeeDocumentDto } from '../employees/dto/review-employee-document.dto';
 
 // The employee-facing forms make the reason mandatory; the API enforces it too so an old app cannot skip it.
 describe('required reason', () => {
@@ -44,5 +47,12 @@ describe('required reason', () => {
     expect(() => requireReason(undefined, 'rejecting a claim')).toThrow(/Add a reason for rejecting a claim/);
     expect(() => requireReason('   ', 'rejecting a claim')).toThrow();
     expect(requireReason('  Duplicate  ', 'rejecting a claim')).toBe('Duplicate');
+  });
+  it('rejecting a leave grant request or a document, and a regularization request, need a reason', async () => {
+    expect((await validate(plainToInstance(RejectGrantRequestDto, {}))).length).toBeGreaterThan(0);
+    expect(await validate(plainToInstance(RejectGrantRequestDto, { note: 'No event proof' }))).toHaveLength(0);
+    expect((await validate(plainToInstance(ReviewEmployeeDocumentDto, { status: 'REJECTED' }))).length).toBeGreaterThan(0);
+    expect(await validate(plainToInstance(ReviewEmployeeDocumentDto, { status: 'APPROVED' }))).toHaveLength(0);
+    expect((await validate(plainToInstance(RequestRegularizationDto, { date: '2026-11-01', reason: '' }))).length).toBeGreaterThan(0);
   });
 });

@@ -286,6 +286,30 @@ describe('leave encashment: review', () => {
     expect(balance).toMatchObject({ pending: 0, encashed: 4, closing: 8 });
   });
 
+  it('rejecting needs a reason and gives the held days back', async () => {
+    const refused = build({ rows: [pending()], balance: { pending: 4 } });
+    await expect(
+      refused.service.review('en1', { status: 'REJECTED' } as never, hr, 'org'),
+    ).rejects.toThrow(/Add a reason/);
+    await expect(
+      refused.service.review('en1', { status: 'REJECTED', comments: '   ' } as never, hr, 'org'),
+    ).rejects.toThrow(/Add a reason/);
+    expect(refused.rows[0].status).toBe('PENDING');
+    expect(refused.balance.pending).toBe(4);
+
+    const { service, balance, rows } = build({ rows: [pending()], balance: { pending: 4 } });
+    await service.review('en1', { status: 'REJECTED', comments: 'Needed for payroll cut-off' } as never, hr, 'org');
+    expect(rows[0]).toMatchObject({ status: 'REJECTED', decisionNote: 'Needed for payroll cut-off' });
+    expect(balance).toMatchObject({ pending: 0, encashed: 0, closing: 12 });
+  });
+
+  it('only a pending request can be rejected', async () => {
+    const { service } = build({ rows: [pending({ status: 'APPROVED' })] });
+    await expect(
+      service.review('en1', { status: 'REJECTED', comments: 'Too late' } as never, hr, 'org'),
+    ).rejects.toThrow();
+  });
+
   it('marking it processed does not touch the balance again', async () => {
     const { service, balance } = build({
       rows: [pending({ status: 'APPROVED' })],

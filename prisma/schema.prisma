@@ -2509,6 +2509,8 @@ enum LeaveEncashmentStatus {
   PENDING
   APPROVED
   PROCESSED
+  // Turned down by HR/Admin before approval; the held days go back to the employee.
+  REJECTED
 }
 
 model LeaveEncashment {
@@ -2529,6 +2531,8 @@ model LeaveEncashment {
   financialYear String
 
   status       LeaveEncashmentStatus @default(PENDING)
+  // Why it was rejected (empty for approved ones).
+  decisionNote String                @default("")
   approvedById String?
   approvedBy   User?                 @relation("LeaveEncashmentApprovedBy", fields: [approvedById], references: [id])
 
