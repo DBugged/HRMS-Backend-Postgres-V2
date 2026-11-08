@@ -1,10 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateEmailSignatureDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   name?: string;
 
   // Deliberately not @IsNotEmpty — an empty string is a valid signature
@@ -12,6 +13,7 @@ export class UpdateEmailSignatureDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(50000)
   html?: string;
 
   @ApiPropertyOptional()

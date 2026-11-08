@@ -102,6 +102,7 @@ export class UpsertTaxDeclarationDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(100000000)
   section80CCD2?: number;
   @ApiPropertyOptional({ maximum: SECTION_80D_CAP })
   @IsOptional()

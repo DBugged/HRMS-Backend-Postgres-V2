@@ -9,11 +9,13 @@ export class CreatePolicyDocumentDto {
   })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   title?: string;
 
   @ApiPropertyOptional({ default: 'General' })
   @IsOptional()
   @IsString()
+  @MaxLength(100)
   category?: string;
 
   @ApiPropertyOptional({ enum: PolicyDocType, default: PolicyDocType.PDF })
@@ -25,10 +27,12 @@ export class CreatePolicyDocumentDto {
   // http(s):// URL when docType=URL.
   @ApiProperty()
   @IsString()
+  @MaxLength(1000)
   fileUrl!: string;
 
   @ApiProperty()
   @IsString()
+  @MaxLength(255)
   fileName!: string;
 
   @ApiPropertyOptional({ default: true })

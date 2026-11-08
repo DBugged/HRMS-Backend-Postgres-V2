@@ -5,6 +5,7 @@ import {
   IsOptional,
   IsString,
   MinLength,
+  MaxLength,
 } from 'class-validator';
 import { EMAIL_TEMPLATE_CATEGORIES } from '../email-template-categories';
 
@@ -12,16 +13,19 @@ export class CreateEmailTemplateDto {
   @ApiProperty()
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
   name!: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(1)
+  @MaxLength(200)
   subject!: string;
 
   @ApiProperty()
   @IsString()
   @MinLength(1)
+  @MaxLength(100000)
   bodyHtml!: string;
 
   // Defaults to false, unlike the seeded Birthday/Work Anniversary

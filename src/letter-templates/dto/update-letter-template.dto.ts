@@ -7,6 +7,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 import { LETTER_STAGES } from '../../letters/letter-stages';
 
@@ -15,18 +16,21 @@ export class UpdateLetterTemplateDto {
   @IsOptional()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(100)
   name?: string;
 
   @ApiPropertyOptional({ example: 'Offer of Employment' })
   @IsOptional()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(200)
   title?: string;
 
   @ApiPropertyOptional({ example: 'Dear {{employeeName}}, ...' })
   @IsOptional()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(50000)
   bodyText?: string;
 
   @ApiPropertyOptional({ default: true })

@@ -12,6 +12,7 @@ import {
   MaxLength,
   MinLength,
   ValidateNested,
+  Min,
 } from 'class-validator';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
 
@@ -59,6 +60,7 @@ export class PaymentImportRowDto extends RecordPaymentDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
   amount?: number;
 }
 

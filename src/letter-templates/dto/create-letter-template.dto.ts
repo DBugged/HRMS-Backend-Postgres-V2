@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsString,
   MinLength,
+  MaxLength,
 } from 'class-validator';
 import { LETTER_STAGES } from '../../letters/letter-stages';
 
@@ -14,16 +15,19 @@ export class CreateLetterTemplateDto {
   @ApiProperty({ example: 'Internship Completion Certificate' })
   @IsString()
   @MinLength(1)
+  @MaxLength(100)
   name!: string;
 
   @ApiProperty({ example: 'Certificate of Internship' })
   @IsString()
   @MinLength(1)
+  @MaxLength(200)
   title!: string;
 
   @ApiProperty({ example: 'This is to certify that {{employeeName}}...' })
   @IsString()
   @MinLength(1)
+  @MaxLength(50000)
   bodyText!: string;
 
   @ApiPropertyOptional({ default: true })

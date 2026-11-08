@@ -121,12 +121,14 @@ export class CreateChallanDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(1_000_000_000)
   interest?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(1_000_000_000)
   fee?: number;
 
   @ApiPropertyOptional()
@@ -165,12 +167,14 @@ export class UpdateChallanDto {
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(1_000_000_000)
   interest?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(1_000_000_000)
   fee?: number;
 
   @ApiPropertyOptional()

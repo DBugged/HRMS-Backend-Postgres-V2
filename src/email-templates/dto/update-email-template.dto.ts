@@ -6,6 +6,7 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  MaxLength,
 } from 'class-validator';
 import { EMAIL_TEMPLATE_CATEGORIES } from '../email-template-categories';
 
@@ -14,18 +15,21 @@ export class UpdateEmailTemplateDto {
   @IsOptional()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(100)
   name?: string;
 
   @ApiPropertyOptional({ example: 'Happy Birthday, {{employeeName}}!' })
   @IsOptional()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(200)
   subject?: string;
 
   @ApiPropertyOptional({ example: '<p>Happy Birthday, {{employeeName}}!</p>' })
   @IsOptional()
   @IsNotEmpty()
   @IsString()
+  @MaxLength(100000)
   bodyHtml?: string;
 
   @ApiPropertyOptional({ default: true })
