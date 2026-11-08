@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -33,11 +34,13 @@ export class CreateLeaveTypeDto {
   @ApiProperty({ example: 'Earned Leave' })
   @IsNotEmpty()
   @IsString()
+  @MaxLength(60)
   name!: string;
 
   @ApiProperty({ example: 'EL' })
   @IsNotEmpty()
   @IsString()
+  @MaxLength(10)
   code!: string;
 
   @ApiPropertyOptional()
@@ -71,6 +74,8 @@ export class CreateLeaveTypeDto {
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   annualQuota?: number;
 
   @ApiPropertyOptional({
@@ -175,6 +180,8 @@ export class CreateLeaveTypeDto {
   @ApiPropertyOptional({ default: 100 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(100)
   salaryImpactPercent?: number;
 
   @ApiPropertyOptional({ default: true })
@@ -233,6 +240,8 @@ export class CreateLeaveTypeDto {
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   documentRequiredAfterDays?: number | null;
 
   @ApiPropertyOptional({ type: CarryForwardDto })

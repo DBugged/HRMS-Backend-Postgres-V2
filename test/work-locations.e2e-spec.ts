@@ -203,6 +203,29 @@ describe('Work Locations (e2e)', () => {
       .expect(400);
   });
 
+  it('rejects a radius outside 20-5000 m, an over-long name and bad polygon or rectangle shapes', async () => {
+    const send = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/work-locations')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Shape Check', ...body });
+    await send({ latitude: 19.0, longitude: 72.8, radiusMeters: 19 }).expect(400);
+    await send({ latitude: 19.0, longitude: 72.8, radiusMeters: 5001 }).expect(400);
+    await send({ name: 'x'.repeat(101), latitude: 19.0, longitude: 72.8 }).expect(400);
+    await send({
+      fenceType: 'POLYGON',
+      boundary: { vertices: [[19, 72.8], [999, -5000], [19.2, 73]] },
+    }).expect(400);
+    await send({
+      fenceType: 'POLYGON',
+      boundary: { vertices: [[19, 72.8], [19.1, 72.9], [19.2, 73]] },
+    }).expect(400);
+    await send({
+      fenceType: 'RECTANGLE',
+      boundary: { bounds: [[19, 72.8], [19, 73]] },
+    }).expect(400);
+  });
+
   it('EMPLOYEE gets 403 creating a work location', async () => {
     await request(app.getHttpServer())
       .post('/work-locations')

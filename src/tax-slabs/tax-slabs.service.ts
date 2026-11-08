@@ -163,6 +163,18 @@ export class TaxSlabsService {
         regime: dto.regime,
       },
     });
+    // The rebate cannot be larger than the income limit it applies up to (the other fields may come from the saved config).
+    const rebateLimit = dto.rebate87ALimit ?? existing?.rebate87ALimit;
+    const rebateAmount = dto.rebate87AAmount ?? existing?.rebate87AAmount;
+    if (
+      rebateLimit != null &&
+      rebateAmount != null &&
+      rebateAmount > rebateLimit
+    ) {
+      throw new BadRequestException(
+        'The 87A rebate amount cannot be more than the income limit it applies to.',
+      );
+    }
     await this.assertFinancialYearNotFinalized(
       dto.financialYear,
       organizationId,

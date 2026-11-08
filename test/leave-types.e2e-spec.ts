@@ -157,6 +157,22 @@ describe('Leave Types (e2e)', () => {
       .expect(409);
   });
 
+  it('rejects out-of-range quota / salary impact / durations and over-long name or code', async () => {
+    const send = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/leave-types')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ name: 'Range Check', code: 'RNG', ...body });
+    await send({ annualQuota: -1 }).expect(400);
+    await send({ annualQuota: 366 }).expect(400);
+    await send({ salaryImpactPercent: 500 }).expect(400);
+    await send({ salaryImpactPercent: -5 }).expect(400);
+    await send({ name: 'x'.repeat(61) }).expect(400);
+    await send({ code: 'ABCDEFGHIJK' }).expect(400);
+    await send({ rules: { minDurationDays: 5, maxDurationDays: 2 } }).expect(400);
+    await send({ rules: { maxDurationDays: 400 } }).expect(400);
+  });
+
   it('EMPLOYEE gets 403 creating a leave type', async () => {
     await request(app.getHttpServer())
       .post('/leave-types')

@@ -36,16 +36,20 @@ export class GeoFenceBoundaryDto {
 export class CreateWorkLocationDto {
   @ApiProperty({ example: 'HQ - Mumbai' })
   @IsNotEmpty()
+  @IsString()
+  @MaxLength(100)
   name!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   address?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   description?: string;
 
   @ApiPropertyOptional({
@@ -97,7 +101,8 @@ export class CreateWorkLocationDto {
   @ApiPropertyOptional({ default: 200 })
   @IsOptional()
   @IsNumber()
-  @Min(1)
+  @Min(20)
+  @Max(5000)
   radiusMeters?: number;
 
   @ApiPropertyOptional({ enum: FenceType, default: FenceType.CIRCLE })

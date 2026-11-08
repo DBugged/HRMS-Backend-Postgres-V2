@@ -45,6 +45,17 @@ import { DEFAULT_RULES, LEAVE_TYPE_DEFAULTS } from './leave-type-defaults';
 // The only negative-balance setting a leave type can have now (see create/update below).
 const NO_NEGATIVE_BALANCE = { allowed: false, maxNegativeDays: 0 };
 
+// The shortest leave a request may be must not exceed the longest ("0.5 to 0.25 days" can never be satisfied).
+function assertDurationRange(rules?: { minDurationDays?: number | null; maxDurationDays?: number | null }): void {
+  const min = rules?.minDurationDays;
+  const max = rules?.maxDurationDays;
+  if (min != null && max != null && min > max) {
+    throw new BadRequestException(
+      'The minimum leave duration cannot be more than the maximum leave duration.',
+    );
+  }
+}
+
 @Injectable()
 export class LeaveTypesService {
   private readonly logger = new Logger(LeaveTypesService.name);
@@ -330,6 +341,7 @@ export class LeaveTypesService {
     createdById: string,
   ) {
     await this.assertNoDuplicate(organizationId, dto.name, dto.code);
+    assertDurationRange(dto.rules);
     const accrual = await this.resolveAccrual(null, dto, organizationId);
     const created = await this.scopedPrisma.leaveType.create({
       data: {
@@ -443,6 +455,7 @@ export class LeaveTypesService {
     organizationId: string,
     actorId?: string,
   ) {
+    assertDurationRange(dto.rules);
     const existing = await this.findByIdOrThrow(id, organizationId);
 
     // A built-in's name/code is what other modules key off of (see

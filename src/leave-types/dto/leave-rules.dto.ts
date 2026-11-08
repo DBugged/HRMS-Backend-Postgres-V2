@@ -18,11 +18,15 @@ export class LeaveRulesDto {
   @ApiPropertyOptional({ default: 0.5 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   minDurationDays?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   maxDurationDays?: number | null;
 
   @ApiPropertyOptional({ default: 0 })
@@ -101,6 +105,8 @@ export class CarryForwardDto {
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   maxDays?: number;
 
   @ApiPropertyOptional()
@@ -118,6 +124,8 @@ export class NegativeBalanceDto {
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   maxNegativeDays?: number;
 }
 
@@ -130,11 +138,15 @@ export class EncashmentRulesDto {
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   maxDaysPerYear?: number;
 
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
   @IsNumber()
+  @Min(0)
+  @Max(365)
   minBalanceToRetain?: number;
 }
 

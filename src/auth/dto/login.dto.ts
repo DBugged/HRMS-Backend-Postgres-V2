@@ -8,6 +8,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
+import { PASSWORD_MAX_LENGTH } from '../../common/password-policy';
 
 const EXPO_PUSH_TOKEN = /^(Exponent|Expo)PushToken\[[A-Za-z0-9_-]+\]$/;
 
@@ -24,8 +25,12 @@ export class LoginDto {
   @MaxLength(254)
   email!: string;
 
+  // Text only and no longer than a password can be set to (the same cap as register / change / reset), so a wrong type
+  // gets a clean 400 instead of reaching the hash check.
   @ApiProperty()
   @IsNotEmpty()
+  @IsString()
+  @MaxLength(PASSWORD_MAX_LENGTH)
   password!: string;
 
   // Mobile sends its Expo push token under this name at login so the app

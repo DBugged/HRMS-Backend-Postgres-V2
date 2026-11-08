@@ -161,6 +161,16 @@ describe('Auth + RBAC (e2e)', () => {
     firstRefreshToken = body.refreshToken;
   });
 
+  it('rejects a login password that is not text or is longer than 128 characters', async () => {
+    const send = (password: unknown) =>
+      request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: 'someone@example.test', password });
+    await send(12345).expect(400);
+    await send(['x']).expect(400);
+    await send('x'.repeat(129)).expect(400);
+  });
+
   it('rejects requests to a protected endpoint with no token', async () => {
     await request(app.getHttpServer()).get('/organizations/me').expect(401);
   });

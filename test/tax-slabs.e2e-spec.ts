@@ -136,6 +136,22 @@ describe('Tax Slabs (e2e)', () => {
     await send({ cessRate: 500 }).expect(400);
   });
 
+  it('rejects out-of-range deduction / cess / rebate, a rebate above its limit and a bad financial year', async () => {
+    const send = (body: Record<string, unknown>) =>
+      request(app.getHttpServer())
+        .post('/tax-slabs')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ financialYear: '2031-32', regime: 'NEW', ...body });
+    await send({ standardDeduction: 99999999 }).expect(400);
+    await send({ cessRate: 11 }).expect(400);
+    await send({ rebate87ALimit: 5000001 }).expect(400);
+    await send({ rebate87ALimit: 100000, rebate87AAmount: 500000 }).expect(400);
+    await send({ financialYear: 'abc' }).expect(400);
+    await send({
+      slabs: Array.from({ length: 21 }, (_, i) => ({ from: i * 10, to: i * 10 + 10, rate: 5 })),
+    }).expect(400);
+  });
+
   it('upserts a tax slab config by (financialYear, regime)', async () => {
     const created = await request(app.getHttpServer())
       .post('/tax-slabs')
