@@ -186,12 +186,23 @@ export class AuditLogService {
 
   // Deletes the org's entries inside a date range (inclusive, whole days), re-links the hash chain over the rows
   // that remain so verifyChain() stays intact, then records the purge itself (who, range, how many) as a new entry.
-  async deleteRange(actor: Actor, fromDate: string, toDate: string) {
+  private dayRange(fromDate: string, toDate: string) {
     const from = new Date(`${fromDate.slice(0, 10)}T00:00:00.000Z`);
     const to = new Date(`${toDate.slice(0, 10)}T23:59:59.999Z`);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime()) || from > to) {
       throw new BadRequestException('Choose a valid date range (from must not be after to)');
     }
+    return { from, to };
+  }
+
+  // How many entries a purge of this range would remove — shown to the Admin before they confirm.
+  async countRange(organizationId: string, fromDate: string, toDate: string) {
+    const { from, to } = this.dayRange(fromDate, toDate);
+    return { count: await this.scopedPrisma.auditLog.count({ where: { organizationId, createdAt: { gte: from, lte: to } } }) };
+  }
+
+  async deleteRange(actor: Actor, fromDate: string, toDate: string) {
+    const { from, to } = this.dayRange(fromDate, toDate);
     const organizationId = actor.organizationId;
     const deleted = await this.scopedPrisma.$transaction(
       async (tx) => {

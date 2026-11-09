@@ -330,11 +330,15 @@ describe('Audit Log (e2e)', () => {
   it('only ADMIN can delete a date range; the chain stays intact and the purge is recorded', async () => {
     const server = app.getHttpServer();
     const day = new Date().toISOString().slice(0, 10);
-    await request(server).delete('/audit-logs').query({ from: day, to: day }).set('Authorization', `Bearer ${hrToken}`).expect(403);
-    await request(server).delete('/audit-logs').query({ from: day }).set('Authorization', `Bearer ${adminToken}`).expect(400);
-    await request(server).delete('/audit-logs').query({ from: '2999-01-02', to: '2999-01-01' }).set('Authorization', `Bearer ${adminToken}`).expect(400);
+    await request(server).delete('/audit-logs').query({ from: day, to: day, confirm: true }).set('Authorization', `Bearer ${hrToken}`).expect(403);
+    await request(server).delete('/audit-logs').query({ from: day, confirm: true }).set('Authorization', `Bearer ${adminToken}`).expect(400);
+    await request(server).delete('/audit-logs').query({ from: '2999-01-02', to: '2999-01-01', confirm: true }).set('Authorization', `Bearer ${adminToken}`).expect(400);
 
-    const res = await request(server).delete('/audit-logs').query({ from: day, to: day }).set('Authorization', `Bearer ${adminToken}`).expect(200);
+    // Without confirm nothing is deleted; the preview says how many would go.
+    await request(server).delete('/audit-logs').query({ from: day, to: day }).set('Authorization', `Bearer ${adminToken}`).expect(400);
+    const preview = await request(server).get('/audit-logs/purge-preview').query({ from: day, to: day }).set('Authorization', `Bearer ${adminToken}`).expect(200);
+    expect((preview.body as { count: number }).count).toBeGreaterThan(0);
+    const res = await request(server).delete('/audit-logs').query({ from: day, to: day, confirm: true }).set('Authorization', `Bearer ${adminToken}`).expect(200);
     expect((res.body as { deleted: number }).deleted).toBeGreaterThan(0);
 
     const verify = await request(server).get('/audit-logs/verify').set('Authorization', `Bearer ${adminToken}`).expect(200);

@@ -2,7 +2,7 @@
 // Responsibilities: Validates the query DTO and delegates to AuditLogService.
 // Important: Restricted to ADMIN/HR at the controller level. Deleting entries (by date range) is ADMIN-only, needs an
 // explicit from/to, and is itself recorded in the trail.
-import { Controller, Delete, Get, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Delete, Get, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Role, User } from '@prisma/client';
 import { AuditLogService } from './audit-log.service';
@@ -34,10 +34,19 @@ export class AuditLogController {
     return this.auditLogService.findAll(query, caller, caller.organizationId);
   }
 
+  // Admin-only: how many entries a purge of the range would remove (for the confirmation step).
+  @Get('purge-preview')
+  @Roles(Role.ADMIN)
+  purgePreview(@Query() query: DeleteAuditLogDto, @CurrentUser() caller: Caller) {
+    return this.auditLogService.countRange(caller.organizationId, query.from, query.to);
+  }
+
   // Admin-only retention purge of a whole-day date range; the purge is recorded as an AUDIT_LOGS_DELETED entry.
   @Delete()
   @Roles(Role.ADMIN)
   deleteRange(@Query() query: DeleteAuditLogDto, @CurrentUser() caller: Caller) {
+    // The caller must have confirmed (the UI asks after showing how many entries go).
+    if (query.confirm !== true) throw new BadRequestException('Confirm the deletion first');
     return this.auditLogService.deleteRange(caller, query.from, query.to);
   }
 }
