@@ -70,15 +70,21 @@ export class StatutoryFilingsController {
 
   @Post('mark')
   async mark(@Body() dto: MarkFiledDto, @CurrentUser() caller: Caller) {
-    const where = { organizationId_key_dueDate: { organizationId: caller.organizationId, key: dto.key, dueDate: dto.dueDate } };
+    const where = { organizationId: caller.organizationId, key: dto.key, dueDate: dto.dueDate };
     if (dto.filed) {
-      await this.prisma.statutoryFiling.upsert({
-        where,
-        create: { organizationId: caller.organizationId, key: dto.key, dueDate: dto.dueDate, filedById: caller.id },
-        update: {},
-      });
+      // find-then-create, not upsert: an upsert on the (organizationId, key, dueDate) unique key is refused by the
+      // tenant guard, which only allows organizationId filters on findFirst / updateMany / deleteMany.
+      const existing = await this.prisma.statutoryFiling.findFirst({ where });
+      if (!existing) {
+        try {
+          await this.prisma.statutoryFiling.create({ data: { ...where, filedById: caller.id } });
+        } catch (err) {
+          // Two clicks at once: the other request already recorded it, which is the outcome wanted.
+          if ((err as { code?: string }).code !== 'P2002') throw err;
+        }
+      }
     } else {
-      await this.prisma.statutoryFiling.deleteMany({ where: { organizationId: caller.organizationId, key: dto.key, dueDate: dto.dueDate } });
+      await this.prisma.statutoryFiling.deleteMany({ where });
     }
     return { ok: true };
   }

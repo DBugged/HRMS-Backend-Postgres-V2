@@ -326,4 +326,21 @@ describe('Audit Log (e2e)', () => {
     const body = res.body as AuditLogListBody;
     expect(body.data.some((l) => l.targetId === employeeId)).toBe(true);
   });
+
+  it('only ADMIN can delete a date range; the chain stays intact and the purge is recorded', async () => {
+    const server = app.getHttpServer();
+    const day = new Date().toISOString().slice(0, 10);
+    await request(server).delete('/audit-logs').query({ from: day, to: day }).set('Authorization', `Bearer ${hrToken}`).expect(403);
+    await request(server).delete('/audit-logs').query({ from: day }).set('Authorization', `Bearer ${adminToken}`).expect(400);
+    await request(server).delete('/audit-logs').query({ from: '2999-01-02', to: '2999-01-01' }).set('Authorization', `Bearer ${adminToken}`).expect(400);
+
+    const res = await request(server).delete('/audit-logs').query({ from: day, to: day }).set('Authorization', `Bearer ${adminToken}`).expect(200);
+    expect((res.body as { deleted: number }).deleted).toBeGreaterThan(0);
+
+    const verify = await request(server).get('/audit-logs/verify').set('Authorization', `Bearer ${adminToken}`).expect(200);
+    expect((verify.body as { intact: boolean }).intact).toBe(true);
+
+    const list = await request(server).get('/audit-logs').query({ action: 'AUDIT_LOGS_DELETED' }).set('Authorization', `Bearer ${adminToken}`).expect(200);
+    expect((list.body as AuditLogListBody).total).toBe(1);
+  });
 });
