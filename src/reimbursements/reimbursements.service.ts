@@ -152,6 +152,8 @@ export class ReimbursementsService {
           where,
           include: {
             employee: { select: { id: true, name: true, employeeId: true } },
+            // Who decided it, so the approvals lists can show a Decided by column.
+            approvedBy: { select: { id: true, name: true } },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),

@@ -551,6 +551,8 @@ export class LeavesService {
                 approvalLevels: true,
               },
             },
+            // Who decided it, so the approvals lists can show a Decided by column.
+            reviewedBy: { select: { id: true, name: true } },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),

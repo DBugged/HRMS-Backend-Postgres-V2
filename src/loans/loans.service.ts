@@ -218,6 +218,8 @@ export class LoansService {
             // explicit include or the History modal's "Closed by" always
             // reads as blank even when closedById is actually set.
             closedBy: { select: { id: true, name: true } },
+            // Who decided it, so the approvals lists can show a Decided by column.
+            approvedBy: { select: { id: true, name: true } },
           },
           orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
           skip: skip(query.page, query.limit),
