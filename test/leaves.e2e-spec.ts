@@ -204,7 +204,7 @@ describe('Leaves (e2e)', () => {
     const res = await request(app.getHttpServer())
       .post('/leaves')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({
+      .send({ remarks: 'e2e',
         leaveType: elLeaveTypeId,
         startDate: offsetDate(MON),
         endDate: offsetDate(MON + 2),
@@ -278,7 +278,7 @@ describe('Leaves (e2e)', () => {
     await request(app.getHttpServer())
       .post('/leaves')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({
+      .send({ remarks: 'e2e',
         leaveType: elLeaveTypeId,
         startDate: offsetDate(MON + 1),
         endDate: offsetDate(MON + 5),
@@ -298,6 +298,7 @@ describe('Leaves (e2e)', () => {
     // own comment above.
     const day = offsetToWeekday(100, 1);
     const dto = {
+      remarks: 'e2e',
       leaveType: elLeaveTypeId,
       startDate: offsetDate(day),
       endDate: offsetDate(day),
@@ -404,6 +405,7 @@ describe('Leaves (e2e)', () => {
     await request(app.getHttpServer())
       .patch(`/leaves/${elLeaveId}/cancel`)
       .set('Authorization', `Bearer ${employeeToken}`)
+      .send({ reason: 'e2e: cancelling an approved leave needs a reason' })
       .expect(200);
 
     const year = new Date().getFullYear();
@@ -455,7 +457,7 @@ describe('Leaves (e2e)', () => {
     const leaveRes = await request(app.getHttpServer())
       .post('/leaves')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({
+      .send({ remarks: 'e2e',
         leaveType: compOffLeaveTypeId,
         // A half-day needs a working day (it is refused on a weekly off or holiday), so anchor it to a Tuesday.
         startDate: offsetDate(offsetToWeekday(40, 2)),
@@ -524,7 +526,7 @@ describe('Leaves (e2e)', () => {
         request(app.getHttpServer())
           .post('/leaves')
           .set('Authorization', `Bearer ${employeeToken}`)
-          .send({
+          .send({ remarks: 'e2e',
             leaveType: compOffLeaveTypeId,
             startDate: offsetDate(offset),
             endDate: offsetDate(offset),
@@ -587,7 +589,7 @@ describe('Leaves (e2e)', () => {
     await request(app.getHttpServer())
       .post('/leaves')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({
+      .send({ remarks: 'e2e',
         leaveType: compOffLeaveTypeId,
         startDate: offsetDate(21),
         endDate: offsetDate(25),
@@ -718,7 +720,7 @@ describe('Leaves (e2e)', () => {
     const applied = await request(app.getHttpServer())
       .post('/leaves')
       .set('Authorization', `Bearer ${employeeToken}`)
-      .send({
+      .send({ remarks: 'e2e',
         leaveType: elLeaveTypeId,
         // Deliberately inside the CURRENT calendar year: deriveLeaveYear()
         // attributes the hold to startDate's year, so a far-future range
@@ -769,7 +771,7 @@ describe('Leaves (e2e)', () => {
       const overdue = await request(app.getHttpServer())
         .post('/leaves')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({
+        .send({ remarks: 'e2e',
           leaveType: autoTypeId,
           startDate: offsetDate(wed),
           endDate: offsetDate(wed),
@@ -788,7 +790,7 @@ describe('Leaves (e2e)', () => {
       const withinWindow = await request(app.getHttpServer())
         .post('/leaves')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({
+        .send({ remarks: 'e2e',
           leaveType: autoTypeId,
           startDate: offsetDate(fri),
           endDate: offsetDate(fri),
@@ -892,7 +894,7 @@ describe('Leaves (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/leaves')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({
+        .send({ remarks: 'e2e',
           leaveType: typeId,
           startDate: offsetDate(fri),
           endDate: offsetDate(fri + 3),
@@ -916,7 +918,7 @@ describe('Leaves (e2e)', () => {
       const res = await request(app.getHttpServer())
         .post('/leaves')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({
+        .send({ remarks: 'e2e',
           leaveType: typeId,
           startDate: offsetDate(fri),
           endDate: offsetDate(fri + 3),
@@ -933,7 +935,7 @@ describe('Leaves (e2e)', () => {
       await request(app.getHttpServer())
         .post('/leaves')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({
+        .send({ remarks: 'e2e',
           leaveType: typeId.id,
           startDate: offsetDate(sat),
           endDate: offsetDate(sat + 1),
@@ -947,12 +949,12 @@ describe('Leaves (e2e)', () => {
       request(app.getHttpServer())
         .post('/leaves')
         .set('Authorization', `Bearer ${token}`)
-        .send(body);
+        .send({ remarks: 'e2e', ...body });
     const edit = (token: string, id: string, body: object) =>
       request(app.getHttpServer())
         .put(`/leaves/${id}`)
         .set('Authorization', `Bearer ${token}`)
-        .send(body);
+        .send({ remarks: 'e2e', ...body });
     const pendingOf = async (typeId: string, year: number) =>
       (
         await prisma.leaveBalance.findFirst({
@@ -1193,6 +1195,7 @@ describe('Leaves (e2e)', () => {
       await request(app.getHttpServer())
         .patch(`/leaves/${id}/cancel`)
         .set('Authorization', `Bearer ${employeeToken}`)
+        .send({ reason: 'e2e: cancelling an approved leave needs a reason' })
         .expect(200);
       expect([(await row(2030)).availed, (await row(2031)).availed]).toEqual([
         0, 0,

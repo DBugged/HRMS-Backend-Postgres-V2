@@ -687,7 +687,7 @@ describe('Loans (e2e)', () => {
       await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ principal: 1000, tenureMonths: 2 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 1000, tenureMonths: 2 })
         .expect(400);
       // Decide it, so the tests below can raise their own requests.
       await request(app.getHttpServer())
@@ -701,7 +701,7 @@ describe('Loans (e2e)', () => {
       await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
-        .send({ employeeId, principal: 10000, tenureMonths: 2 })
+        .send({ loanType: 'LOAN', reason: 'e2e', employeeId, principal: 10000, tenureMonths: 2 })
         .expect(400);
     });
 
@@ -709,7 +709,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ principal: 30000, tenureMonths: 6 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 30000, tenureMonths: 6 })
         .expect(201);
       const id = (req.body as LoanBody).id;
 
@@ -727,7 +727,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ principal: 15000, tenureMonths: 3 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 15000, tenureMonths: 3 })
         .expect(201);
       const id = (req.body as LoanBody).id;
 
@@ -743,7 +743,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ principal: 8000, tenureMonths: 2 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 8000, tenureMonths: 2 })
         .expect(201);
       const id = (req.body as LoanBody).id;
       await request(app.getHttpServer())
@@ -767,7 +767,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ principal: 9000, tenureMonths: 2 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 9000, tenureMonths: 2 })
         .expect(201);
       const id = (req.body as LoanBody).id;
       await request(app.getHttpServer())
@@ -781,7 +781,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${employeeToken}`)
-        .send({ loanType: 'ADVANCE', principal: 12000, tenureMonths: 1 })
+        .send({ loanType: 'ADVANCE', reason: 'e2e', principal: 12000, tenureMonths: 1 })
         .expect(201);
       const id = (req.body as LoanBody).id;
       await request(app.getHttpServer())
@@ -819,7 +819,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${hrToken}`)
-        .send({ principal: 6000, tenureMonths: 2 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 6000, tenureMonths: 2 })
         .expect(201);
       const id = (req.body as LoanBody).id;
       await request(app.getHttpServer())
@@ -839,7 +839,7 @@ describe('Loans (e2e)', () => {
       const req = await request(app.getHttpServer())
         .post('/loans/request')
         .set('Authorization', `Bearer ${otherEmployeeToken}`)
-        .send({ principal: 7000, tenureMonths: 2 })
+        .send({ loanType: 'LOAN', reason: 'e2e', principal: 7000, tenureMonths: 2 })
         .expect(201);
       const id = (req.body as LoanBody).id;
       await request(app.getHttpServer())
