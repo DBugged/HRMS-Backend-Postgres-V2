@@ -89,6 +89,7 @@ import {
   assertManagerScopeOrDelegate,
   deptScopedEmployeeIds,
   isScopedReviewer,
+  reviewerScope,
 } from '../common/dept-scope';
 import { ApprovalDelegationService } from '../approval-delegation/approval-delegation.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -783,7 +784,7 @@ export class LeavesService {
   // Who is away in a window - for Admin, HR and Managers (the controller rejects plain employees), so they can see who is
   // out before planning. Only what that needs: the person, the dates and whether it is a half-day. Never the leave type,
   // the remarks or any document (a sick or maternity leave is nobody else's business), and only approved leave. HR and
-  // Admin see the whole organisation; a manager sees their own department.
+  // Admin see the whole organisation; a manager sees themself and their reporting line.
   async getWhosOut(
     query: TeamCalendarQueryDto,
     actor: Actor,
@@ -795,11 +796,9 @@ export class LeavesService {
       startDate: { lte: query.to },
       endDate: { gte: query.from },
     };
-    if (actor.role !== Role.ADMIN && actor.role !== Role.HR) {
-      where.employee = actor.departmentId
-        ? { departmentId: actor.departmentId }
-        : { id: actor.id };
-    }
+    // HR and Admin see everyone; a manager sees themself and their reporting line (see reviewerScope).
+    const scope = await reviewerScope(this.scopedPrisma, actor, organizationId);
+    if (scope) where.employee = { id: { in: scope } };
     const leaves = await this.scopedPrisma.leave.findMany({
       where,
       select: {

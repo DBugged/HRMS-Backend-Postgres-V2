@@ -15,10 +15,10 @@ interface DeptScopeActor {
 // Who a reviewer looks after, or null for "everyone". The assignment is Department head (Organization > Departments):
 // - ADMIN sees everyone.
 // - HR sees the departments they head; an HR user who heads none sees everyone (until assigned).
-// - MANAGER sees the departments they head. One who heads none sees their own reporting line, plus their own
-//   department while that department has no head assigned (once a head is set, only the head sees it).
-// - Both always see themself and their reporting chain (direct reports and everyone below), so My Team and the
-//   approval lists agree.
+// - MANAGER sees themself and their reporting line only: the people who report to them as primary or additional
+//   manager, and everyone below those people. Heading a department does not widen this, so My Team, Team Attendance,
+//   the approval lists and the reports all show the same people.
+// - HR also always sees themself and their reporting chain.
 // - EMPLOYEE sees only themself.
 export async function reviewerScope(
   prisma: ExtendedPrismaClient,
@@ -28,26 +28,21 @@ export async function reviewerScope(
   if (actor.role === Role.ADMIN) return null;
   if (!actor.id) return [];
   if (actor.role === Role.EMPLOYEE) return [actor.id];
-  const headed = await prisma.department.findMany({
-    where: { organizationId, departmentHeadId: actor.id },
-    select: { id: true },
-  });
+  const headed =
+    actor.role === Role.HR
+      ? await prisma.department.findMany({
+          where: { organizationId, departmentHeadId: actor.id },
+          select: { id: true },
+        })
+      : [];
   if (actor.role === Role.HR && headed.length === 0) return null;
-  const [people, me] = await Promise.all([
-    prisma.user.findMany({
-      where: { organizationId },
-      select: { id: true, departmentId: true, reportingManagerId: true, additionalReportingManagerIds: true },
-    }),
-    prisma.user.findFirst({
-      where: { id: actor.id, organizationId },
-      select: { department: { select: { id: true, departmentHeadId: true } } },
-    }),
-  ]);
+  const people = await prisma.user.findMany({
+    where: { organizationId },
+    select: { id: true, departmentId: true, reportingManagerId: true, additionalReportingManagerIds: true },
+  });
   const headedIds = new Set(headed.map((d) => d.id));
-  if (actor.role === Role.MANAGER && headed.length === 0 && me?.department && !me.department.departmentHeadId) {
-    headedIds.add(me.department.id);
-  }
   const ids = new Set<string>([actor.id, ...collectReportingChain(actor.id, people)]);
+  // Only HR's headed departments widen the list; a manager's list is the reporting line alone.
   for (const p of people) if (p.departmentId && headedIds.has(p.departmentId)) ids.add(p.id);
   return [...ids];
 }
@@ -103,7 +98,7 @@ export async function assertManagerDeptScope(
   if (actor.role === Role.ADMIN || actor.role === Role.EMPLOYEE) return;
   if (!(await inReviewerScope(prisma, actor, organizationId, targetEmployeeId))) {
     throw new ForbiddenException(
-      'You can only act on employees in the departments you head or who report to you.',
+      'You can only act on employees who report to you (HR: or who are in the departments you head).',
     );
   }
 }
@@ -142,7 +137,7 @@ export async function assertManagerScopeOrDelegate(
   });
   if (!target) {
     throw new ForbiddenException(
-      'You can only act on employees in the departments you head or who report to you (or whose manager has delegated to you).',
+      'You can only act on employees who report to you (HR: or in the departments you head), or whose manager has delegated to you.',
     );
   }
   // The actual reporting relationship always grants access, independent of department.
@@ -163,7 +158,7 @@ export async function assertManagerScopeOrDelegate(
   }
 
   throw new ForbiddenException(
-    'You can only act on employees in the departments you head or who report to you (or whose manager has delegated to you).',
+    'You can only act on employees who report to you (HR: or in the departments you head), or whose manager has delegated to you.',
   );
 }
 

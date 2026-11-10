@@ -335,7 +335,7 @@ export class ReportsService {
       !(await inReviewerScope(this.scopedPrisma, actor, organizationId, query.employeeId))
     ) {
       throw new ForbiddenException(
-        'You can only view employees in the departments you head or who report to you.',
+        'You can only view employees who report to you.',
       );
     }
 

@@ -805,22 +805,22 @@ describe('loans: who can read the repayments', () => {
     );
   });
 
-  it('a manager reads repayments only within their own department', async () => {
-    // Neither department has a head, so each manager sees their own department.
+  it('a manager reads repayments only for people who report to them', async () => {
+    // e1 reports to m1. m2 sits in the same department but is not e1's manager, so m2 sees nothing of e1's loan.
     const { service } = build({
       loans: [loan('d1')],
       people: [
-        { id: 'e1', departmentId: 'd1' },
-        { id: 'm1', departmentId: 'd1', department: { id: 'd1', departmentHeadId: null } },
-        { id: 'm2', departmentId: 'd2', department: { id: 'd2', departmentHeadId: null } },
+        { id: 'e1', departmentId: 'd1', reportingManagerId: 'm1', additionalReportingManagerIds: [] },
+        { id: 'm1', departmentId: 'd1', reportingManagerId: null, additionalReportingManagerIds: [] },
+        { id: 'm2', departmentId: 'd1', reportingManagerId: null, additionalReportingManagerIds: [] },
       ],
     });
-    const same = { id: 'm1', role: Role.MANAGER, departmentId: 'd1' } as never;
-    const other = { id: 'm2', role: Role.MANAGER, departmentId: 'd2' } as never;
+    const manager = { id: 'm1', role: Role.MANAGER, departmentId: 'd1' } as never;
+    const sameDepartment = { id: 'm2', role: Role.MANAGER, departmentId: 'd1' } as never;
     await expect(
-      service.getRepayments('l1', same, 'org'),
+      service.getRepayments('l1', manager, 'org'),
     ).resolves.toBeDefined();
-    await expect(service.getRepayments('l1', other, 'org')).rejects.toThrow(
+    await expect(service.getRepayments('l1', sameDepartment, 'org')).rejects.toThrow(
       /Not authorized/,
     );
   });

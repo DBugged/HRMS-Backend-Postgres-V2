@@ -1,6 +1,6 @@
 // Purpose: Generic ad-hoc report builder — pick a data source, pick columns, get rows — driving the
 // frontend's custom report screen.
-// Responsibilities: Owns column/source validation and MANAGER-role scoping (forced to their own department,
+// Responsibilities: Owns column/source validation and MANAGER-role scoping (limited to their reporting line,
 // blocked from restricted sources); delegates actual data fetching per source to CUSTOM_REPORT_SOURCES'
 // fetch functions.
 // Important: MANAGER_BLOCKED_SOURCES exists so this generic builder can't become a side door around the
@@ -28,6 +28,7 @@ import { CustomReportQueryDto } from './dto/custom-report-query.dto';
 import { ReportColumn } from './report-export';
 import { assertValidDateRange } from './report-limits';
 import { featureEnabledFor } from '../module-access/module-gate';
+import { reviewerScope } from '../common/dept-scope';
 
 type Actor = Omit<User, 'password'>;
 
@@ -111,15 +112,12 @@ export class CustomReportService {
           `The "${query.source}" report source is restricted to Admin/HR.`,
         );
       }
-      // A MANAGER with no department assigned has no valid dept-scoped
-      // view — deny rather than let the department filter below silently
-      // fall through to "unfiltered" (org-wide).
-      if (!actor.departmentId) {
-        throw new ForbiddenException(
-          'You must be assigned to a department to run this report.',
-        );
-      }
     }
+    // A manager's reports cover themself and their reporting line only (never the whole company or a whole department).
+    const managerScope =
+      actor.role === Role.MANAGER
+        ? await reviewerScope(this.scopedPrisma, actor, organizationId)
+        : null;
     const requestedColumns = (
       query.columns ? query.columns.split(',') : Object.keys(src.columns)
     ).filter((c) => src.columns[c]);
@@ -129,13 +127,9 @@ export class CustomReportService {
 
     const records = await src.fetch(
       {
-        department:
-          // MANAGER never gets to choose a department filter — always
-          // forced to their own, so they can't run this report for a
-          // department they don't manage.
-          actor.role === Role.MANAGER
-            ? (actor.departmentId ?? undefined)
-            : query.department,
+        department: query.department,
+        // MANAGER is limited to their reporting line, whatever department filter they pick.
+        employeeIds: managerScope ?? undefined,
         from: query.from,
         to: query.to,
         status: query.status,

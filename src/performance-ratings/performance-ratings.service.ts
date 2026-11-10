@@ -212,7 +212,7 @@ export class PerformanceRatingsService {
       }
       if (!(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))) {
         throw new ForbiddenException(
-          'You may only rate employees in the departments you head or who report to you.',
+          'You may only rate employees who report to you.',
         );
       }
     } else if (employee.id === actor.id && actor.role !== Role.ADMIN) {
@@ -224,7 +224,7 @@ export class PerformanceRatingsService {
       !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
     ) {
       throw new ForbiddenException(
-        'You may only rate employees in the departments you head or who report to you.',
+        'You may only rate employees who report to you.',
       );
     } else if (employee.reportingManager?.role === Role.MANAGER) {
       // No override: once an employee has a genuine MANAGER-role reviewer

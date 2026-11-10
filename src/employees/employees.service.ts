@@ -1153,7 +1153,7 @@ export class EmployeesService {
       !(await inReviewerScope(this.scopedPrisma, actor, organizationId, employee.id))
     ) {
       throw new ForbiddenException(
-        'You can only view employees in the departments you head or who report to you.',
+        'You can only view employees who report to you.',
       );
     }
     // Personal data of another employee read by HR/ADMIN/MANAGER — record who looked at whom (never the values).

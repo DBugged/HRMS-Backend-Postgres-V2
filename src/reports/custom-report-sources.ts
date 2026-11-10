@@ -34,6 +34,8 @@ export interface ReportTimeContext {
 
 export interface CustomReportFilters {
   department?: string;
+  /** When set, only these employees (a manager's reporting line). */
+  employeeIds?: string[];
   from?: string;
   to?: string;
   status?: string;
@@ -94,6 +96,7 @@ const employeesSource: CustomReportSource<
   fetch: async (filters, organizationId, prisma) => {
     const where: Prisma.UserWhereInput = { organizationId };
     if (filters.department) where.departmentId = filters.department;
+    if (filters.employeeIds) where.id = { in: filters.employeeIds };
     if (filters.status) where.isActive = filters.status === 'active';
     return prisma.user.findMany({
       where,
@@ -162,8 +165,11 @@ const attendanceSource: CustomReportSource<
     else if (filters.status === 'LATE_OR_EARLY')
       where.OR = [{ isLate: true }, { isEarlyOut: true }];
     else if (filters.status) where.status = filters.status as AttendanceStatus;
-    if (filters.department)
-      where.employee = { departmentId: filters.department };
+    if (filters.department || filters.employeeIds)
+      where.employee = {
+        ...(filters.department && { departmentId: filters.department }),
+        ...(filters.employeeIds && { id: { in: filters.employeeIds } }),
+      };
     const rows = await prisma.attendance.findMany({
       where,
       include: {
@@ -259,6 +265,7 @@ const probationSource: CustomReportSource<ProbationRow> = {
       },
     };
     if (filters.department) where.departmentId = filters.department;
+    if (filters.employeeIds) where.id = { in: filters.employeeIds };
     const end: Prisma.StringNullableFilter = {};
     if (filters.from) end.gte = filters.from;
     if (filters.to) end.lte = filters.to;
@@ -312,8 +319,11 @@ const leavesSource: CustomReportSource<
       if (filters.to) where.startDate.lte = filters.to;
     }
     if (filters.status) where.status = filters.status as LeaveStatus;
-    if (filters.department)
-      where.employee = { departmentId: filters.department };
+    if (filters.department || filters.employeeIds)
+      where.employee = {
+        ...(filters.department && { departmentId: filters.department }),
+        ...(filters.employeeIds && { id: { in: filters.employeeIds } }),
+      };
     const rows = await prisma.leave.findMany({
       where,
       include: {
@@ -375,8 +385,11 @@ const payrollSource: CustomReportSource<
       }
       where.OR = months.length ? months : [{ month: 0, year: 0 }];
     }
-    if (filters.department)
-      where.employee = { departmentId: filters.department };
+    if (filters.department || filters.employeeIds)
+      where.employee = {
+        ...(filters.department && { departmentId: filters.department }),
+        ...(filters.employeeIds && { id: { in: filters.employeeIds } }),
+      };
     const rows = await prisma.payrollRun.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
@@ -439,8 +452,11 @@ const fieldVisitsSource: CustomReportSource<
       if (filters.to) where.scheduledFor.lte = filters.to;
     }
     if (filters.status) where.status = filters.status as FieldVisitStatus;
-    if (filters.department)
-      where.employee = { departmentId: filters.department };
+    if (filters.department || filters.employeeIds)
+      where.employee = {
+        ...(filters.department && { departmentId: filters.department }),
+        ...(filters.employeeIds && { id: { in: filters.employeeIds } }),
+      };
     const rows = await prisma.fieldVisit.findMany({
       where,
       include: { employee: { select: { name: true, employeeId: true } } },
