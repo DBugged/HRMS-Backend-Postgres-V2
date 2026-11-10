@@ -8,6 +8,8 @@ export const MAX_FAILED_ATTEMPTS = 5;
 export const LOCK_MINUTES = 15;
 export const ACCESS_TOKEN_SECONDS = 900;
 export const REFRESH_TOKEN_DAYS = 7;
+/** How long after a refresh token was swapped for a new one the old one is still accepted once more (two tabs refreshing together). */
+export const REFRESH_REUSE_GRACE_MS = 15_000;
 export const RESET_TOKEN_MINUTES = 30;
 export const MIN_PASSWORD_LENGTH = 12;
 

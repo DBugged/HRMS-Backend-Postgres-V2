@@ -24,6 +24,7 @@ import { EmailService } from '../notifications/email.service';
 import { permissionsFor, type SuperAdminRoleName } from './cc-permissions';
 import {
   ACCESS_TOKEN_SECONDS,
+  REFRESH_REUSE_GRACE_MS,
   REFRESH_TOKEN_DAYS,
   RESET_TOKEN_MINUTES,
   afterFailedAttempt,
@@ -138,6 +139,16 @@ export class CcAuthService {
     };
   }
 
+  // True when a new session for this admin was created within a few seconds of `revokedAt`: that is how a rotation looks, whereas a
+  // sign-out revokes without creating anything.
+  private async wasRotated(superAdminId: string, revokedAt: Date): Promise<boolean> {
+    const successor = await this.prisma.superAdminSession.findFirst({
+      where: { superAdminId, createdAt: { gte: new Date(revokedAt.getTime() - 5000), lte: new Date(revokedAt.getTime() + 5000) } },
+      select: { id: true },
+    });
+    return !!successor;
+  }
+
   // Swaps a refresh token for a new access token and a new refresh token. The old one stops working at once.
   async refresh(rawToken: string | undefined, meta: RequestMeta) {
     this.secret();
@@ -148,7 +159,16 @@ export class CcAuthService {
     });
     if (!session) throw new UnauthorizedException('Session expired. Sign in again.');
     if (session.revokedAt) {
-      // A token that was already used is being used again: treat it as stolen and end every session of that admin.
+      // Two tabs (or a page reload and a background refresh) can present the same token at almost the same moment: the second one
+      // arrives just after the first has swapped it. Inside a short window, when the swap really was a rotation (a successor
+      // session was created at that moment), that is not theft: give this caller its own fresh session instead of ending everyone's.
+      const sinceRevoked = Date.now() - session.revokedAt.getTime();
+      if (sinceRevoked <= REFRESH_REUSE_GRACE_MS && (await this.wasRotated(session.superAdminId, session.revokedAt))) {
+        if (session.superAdmin.status !== 'ACTIVE') throw new UnauthorizedException('Session expired. Sign in again.');
+        const refreshToken = await this.startSession(session.superAdminId, meta);
+        return { accessToken: await this.signAccess(session.superAdmin), expiresIn: ACCESS_TOKEN_SECONDS, refreshToken };
+      }
+      // A token that was already used is being used again later on: treat it as stolen and end every session of that admin.
       await this.prisma.superAdminSession.updateMany({
         where: { superAdminId: session.superAdminId, revokedAt: null },
         data: { revokedAt: new Date() },
