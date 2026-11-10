@@ -16,6 +16,7 @@ import { isPlaceholderEmail } from '../common/no-email';
 
 const MASKED_INTERNAL_FIELDS = [
   'lastLoginAt',
+  'passwordChangedAt',
   'failedLoginAttempts',
   'lockedUntil',
   'mustChangePassword',
@@ -30,8 +31,10 @@ const MASKED_INTERNAL_FIELDS = [
 ] as const;
 
 export function toSafe(user: User, mask = false) {
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
-  const { password, resetPasswordToken, resetPasswordExpires, ...safe } = user;
+  // The hash and every one-time token (password reset, email confirmation) never leave the server: a live confirmation token would
+  // let whoever reads it confirm that person's email. Discarded for every viewer, including HR and Admin.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + token fields deliberately
+  const { password, resetPasswordToken, resetPasswordExpires, emailVerificationToken, emailVerificationExpires, ...safe } = user;
   if (mask) {
     // Viewing someone else's row without HR/Admin rights: drop account-security and payroll-internal
     // fields too, not just personalData — directory/org-chart views only need identity and placement.

@@ -8,6 +8,9 @@ const user = {
   password: 'hash',
   resetPasswordToken: 't',
   resetPasswordExpires: null,
+  emailVerificationToken: 'confirm-me',
+  emailVerificationExpires: new Date(),
+  passwordChangedAt: new Date(),
   profileImage: null,
   personalData: {},
   lastLoginAt: new Date(),
@@ -42,5 +45,17 @@ describe('toSafe masking', () => {
     const out = toSafe(user) as Record<string, unknown>;
     expect(out.lwfExempt).toBe(true);
     expect(out).not.toHaveProperty('password');
+  });
+  it('never returns a one-time token or the hash, for any viewer', () => {
+    for (const masked of [false, true]) {
+      const out = toSafe(user, masked) as Record<string, unknown>;
+      for (const k of ['password', 'resetPasswordToken', 'emailVerificationToken', 'emailVerificationExpires']) {
+        expect(out).not.toHaveProperty(k);
+      }
+    }
+  });
+  it('hides when the password changed from someone viewing another person', () => {
+    expect(toSafe(user, true) as Record<string, unknown>).not.toHaveProperty('passwordChangedAt');
+    expect(toSafe(user) as Record<string, unknown>).toHaveProperty('passwordChangedAt');
   });
 });

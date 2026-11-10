@@ -716,8 +716,8 @@ export class AuthService {
       },
     });
     if (!user) throw new UnauthorizedException();
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + reset-token fields deliberately
-    const { password, resetPasswordToken, resetPasswordExpires, ...safe } =
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- discarding the hash + one-time token fields deliberately
+    const { password, resetPasswordToken, resetPasswordExpires, emailVerificationToken, emailVerificationExpires, ...safe } =
       user;
     // Sister companies switched off: the company name is not shown, whatever tag the person carries.
     if (safe.brand && !(await sisterCompaniesOn(organizationId))) safe.brand = null;
