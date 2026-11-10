@@ -95,6 +95,20 @@ export class CcCustomersController {
     return this.customers.admins(id);
   }
 
+  @Post('organizations/:id/approve')
+  @HttpCode(200)
+  @CcPermission('organizations:write')
+  approve(@Param('id') id: string, @CurrentSuperAdmin() a: SuperAdmin) {
+    return this.customers.approveRegistration(id, a.email);
+  }
+
+  @Post('organizations/:id/reject')
+  @HttpCode(200)
+  @CcPermission('organizations:write')
+  reject(@Param('id') id: string, @Body() b: { reason?: string }, @CurrentSuperAdmin() a: SuperAdmin) {
+    return this.customers.rejectRegistration(id, a.email, b?.reason);
+  }
+
   @Post('organizations/:id/suspend')
   @HttpCode(200)
   @CcPermission('organizations:write')

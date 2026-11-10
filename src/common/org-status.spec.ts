@@ -1,4 +1,4 @@
-import { forgetOrganizationStatus, isOrganizationActive } from './org-status';
+import { forgetOrganizationStatus, isOrganizationActive, ORG_PENDING_MESSAGE, ORG_SUSPENDED_MESSAGE, organizationBlockedMessage } from './org-status';
 
 function reader(rows: Record<string, boolean>) {
   const calls: string[] = [];
@@ -42,5 +42,14 @@ describe('organisation status', () => {
     rows.a = false;
     forgetOrganizationStatus('a');
     expect(await isOrganizationActive(prisma, 'a')).toBe(false);
+  });
+});
+
+describe('organizationBlockedMessage', () => {
+  it('says "awaiting approval" for a new registration and "suspended" for anything else that is switched off', () => {
+    expect(organizationBlockedMessage('PENDING')).toBe(ORG_PENDING_MESSAGE);
+    expect(organizationBlockedMessage('SUSPENDED')).toBe(ORG_SUSPENDED_MESSAGE);
+    expect(organizationBlockedMessage('ARCHIVED')).toBe(ORG_SUSPENDED_MESSAGE);
+    expect(organizationBlockedMessage(undefined)).toBe(ORG_SUSPENDED_MESSAGE);
   });
 });

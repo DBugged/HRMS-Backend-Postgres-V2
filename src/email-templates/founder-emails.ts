@@ -18,6 +18,8 @@ export interface FounderWelcomeInput {
   loginUrl: string;
   /** The confirmation link; null when email confirmation is not required (then the email goes straight to login). */
   verifyUrl: string | null;
+  /** True for a self-registered company: it must be approved before anyone can sign in. */
+  awaitingApproval?: boolean;
 }
 
 export function founderWelcomeHtml(i: FounderWelcomeInput): string {
@@ -34,6 +36,9 @@ export function founderWelcomeHtml(i: FounderWelcomeInput): string {
           ? `Thank you for creating <strong>${company}</strong> on D'RectHR. One quick step: confirm your email address to activate your account.`
           : `Thank you for creating <strong>${company}</strong> on D'RectHR. Your account is ready to use.`,
       ),
+      i.awaitingApproval
+        ? paragraph('Your registration is being reviewed by the D\'RectHR team. We will email you as soon as it is approved, and you can sign in after that.')
+        : '',
       verify
         ? button(escapeHtml(i.verifyUrl as string), 'Confirm my email address')
         : button(escapeHtml(i.loginUrl), 'Log in to your account'),
@@ -43,6 +48,7 @@ export function founderWelcomeHtml(i: FounderWelcomeInput): string {
         verify
           ? '<strong>Confirm your email</strong> using the button above.'
           : '<strong>Log in</strong> with the email and password you created.',
+        ...(i.awaitingApproval ? ['<strong>Wait for our approval email</strong> - it arrives as soon as your registration is approved.'] : []),
         '<strong>Complete your Organization Setup</strong> - company profile, registration details, contact information and branding.',
         '<strong>Add your people</strong> - then manage attendance, leave and payroll from one place.',
       ]),

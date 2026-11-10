@@ -6,6 +6,16 @@
 export const ORG_SUSPENDED_MESSAGE =
   "This organization's account is suspended. Please contact your administrator or support.";
 
+// A self-registered company is PENDING until a Super Admin approves it in the Control Center. Until then nobody in it can sign in
+// (isActive is false), but resetting a password still works.
+export const ORG_PENDING_MESSAGE =
+  'Your account is awaiting approval. We will email you as soon as it is approved, and you can sign in after that.';
+
+/** Which message to show when an inactive organisation is refused: awaiting approval, or suspended/archived. */
+export function organizationBlockedMessage(platformStatus: string | null | undefined): string {
+  return platformStatus === 'PENDING' ? ORG_PENDING_MESSAGE : ORG_SUSPENDED_MESSAGE;
+}
+
 const TTL_MS = 15_000;
 const cache = new Map<string, { active: boolean; expires: number }>();
 

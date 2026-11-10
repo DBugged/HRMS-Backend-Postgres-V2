@@ -21,7 +21,6 @@ import {
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
-import { ORG_SUSPENDED_MESSAGE } from '../common/org-status';
 import { ResendVerificationDto, VerifyEmailDto } from './dto/verify-email.dto';
 import { escapeHtml } from '../email-templates/email-layout';
 import {
@@ -151,7 +150,12 @@ export class AuthService {
     private readonly jwt: JwtService,
   ) {}
 
-  async register(dto: RegisterDto) {
+  /**
+   * Self-registration. The company is created PENDING (and inactive): nobody in it can sign in until a Super Admin approves it in
+   * the Control Center. `preApproved` is for the Control Center's own "create customer", where a Super Admin is the one creating it.
+   */
+  async register(dto: RegisterDto, options: { preApproved?: boolean } = {}) {
+    const preApproved = options.preApproved === true;
     // A founder cannot sign in until they confirm by email, so refuse up front - before an organisation exists -
     // when this server could not deliver that email, instead of creating an account nobody can open.
     if (emailVerificationRequired() && !this.emailService.isConfigured()) {
@@ -191,6 +195,9 @@ export class AuthService {
             companyName: dto.organizationName,
             legalName: dto.organizationName,
             contactEmail: dto.email,
+            // Awaiting a Super Admin's approval unless a Super Admin created it (see register()'s comment).
+            platformStatus: preApproved ? 'ACTIVE' : 'PENDING',
+            isActive: preApproved,
             signatories: [
               {
                 id: crypto.randomUUID(),
@@ -322,6 +329,7 @@ export class AuthService {
       companyName: organization.name,
       loginUrl,
       verifyUrl: emailVerificationRequired() ? verifyUrl : null,
+      awaitingApproval: !preApproved,
     });
     // Platform-level email (D'RectHR welcoming the org's founder) — never
     // seeded as an org-editable template (see EmailTemplatesService.
@@ -356,11 +364,18 @@ export class AuthService {
       organizationId: organization.id,
       userId: user.id,
       confirmationEmailSent,
-      message: !emailVerificationRequired()
-        ? 'Account created. You can now log in.'
-        : confirmationEmailSent
-          ? 'Account created. Check your email and confirm your address to activate it, then log in.'
-          : 'Account created, but the confirmation email could not be sent. Request a new link from the confirmation page.',
+      awaitingApproval: !preApproved,
+      message: preApproved
+        ? !emailVerificationRequired()
+          ? 'Account created. You can now log in.'
+          : confirmationEmailSent
+            ? 'Account created. Check your email and confirm your address to activate it, then log in.'
+            : 'Account created, but the confirmation email could not be sent. Request a new link from the confirmation page.'
+        : !emailVerificationRequired()
+          ? 'Account created. It is awaiting approval. We will email you as soon as it is approved, and you can log in after that.'
+          : confirmationEmailSent
+            ? 'Account created. Check your email and confirm your address. Your account is then reviewed, and we will email you as soon as it is approved so you can log in.'
+            : 'Account created, but the confirmation email could not be sent. Request a new link from the confirmation page. Your account is then reviewed, and we will email you as soon as it is approved.',
     };
   }
 
@@ -453,7 +468,7 @@ export class AuthService {
     }
     // Only someone who proved the password learns the organisation is switched off.
     if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
-      throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
+      throw new UnauthorizedException(await this.usersService.organizationBlockedMessage(user.organizationId));
     }
     // The company's sign-in method (Policies > Sign-in): only someone who proved the password is told which way to sign in.
     const orgRow = await this.scopedPrisma.organization.findFirst({ where: { id: user.organizationId }, select: { policies: true } });
@@ -587,7 +602,7 @@ export class AuthService {
     // minted their own new pair. Of N concurrent requests exactly one now
     // sees count === 1; the rest 401 without issuing anything.
     if (!(await this.usersService.isOrganizationActive(user.organizationId))) {
-      throw new UnauthorizedException(ORG_SUSPENDED_MESSAGE);
+      throw new UnauthorizedException(await this.usersService.organizationBlockedMessage(user.organizationId));
     }
 
     const rawRefreshToken = generateRefreshToken();

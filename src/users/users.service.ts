@@ -7,7 +7,7 @@ import { Inject, Injectable } from '@nestjs/common';
 import { Prisma, User } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { isOrganizationActive } from '../common/org-status';
+import { isOrganizationActive, organizationBlockedMessage } from '../common/org-status';
 import { organizationToday } from '../common/exit-access';
 
 // Deliberately thin — this phase only needs enough to support Auth.
@@ -74,6 +74,12 @@ export class UsersService {
   }
 
   // Whether the user's organisation is switched on (not suspended/archived by the platform) - see org-status.ts.
+  /** The reason an inactive organisation is refused: awaiting approval (new registration) or suspended/archived. */
+  async organizationBlockedMessage(organizationId: string): Promise<string> {
+    const org = await this.prisma.organization.findFirst({ where: { id: organizationId }, select: { platformStatus: true } });
+    return organizationBlockedMessage(org?.platformStatus);
+  }
+
   isOrganizationActive(organizationId: string): Promise<boolean> {
     return isOrganizationActive(this.prisma, organizationId);
   }

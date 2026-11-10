@@ -6,6 +6,9 @@ import { randomBytes } from 'node:crypto';
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Prisma } from '@prisma/client';
 import { forgetOrganizationStatus } from '../common/org-status';
+import { frontendUrl } from '../common/frontend-url';
+import { EmailService } from '../notifications/email.service';
+import { registrationApprovedHtml, registrationRejectedHtml } from '../email-templates/registration-emails';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuthService } from '../auth/auth.service';
@@ -38,6 +41,7 @@ export class CcCustomersService {
     @Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient,
     private readonly auth: AuthService,
     private readonly plans: CcPlansService,
+    private readonly email: EmailService,
   ) {}
 
   /** Shape the panel's Organization type expects. The slug gets an id suffix so two companies with one name stay distinct. */
@@ -183,7 +187,7 @@ export class CcCustomersService {
     const email = b.adminEmail.trim().toLowerCase();
     // The admin never sees this password: they set their own through the emailed link.
     const password = `${randomBytes(18).toString('base64url')}Aa1!`;
-    await this.auth.register({ organizationName: b.name.trim(), name: b.adminName.trim(), email, password } as RegisterDto);
+    await this.auth.register({ organizationName: b.name.trim(), name: b.adminName.trim(), email, password } as RegisterDto, { preApproved: true });
     const [founder] = await this.prisma.$queryRaw<{ id: string; org: string }[]>`SELECT id, "organizationId" AS org FROM users WHERE lower(email) = ${email} LIMIT 1`;
     if (!founder) throw new NotFoundException('The organization was created but its admin could not be found.');
     // Created by a Super Admin, so the address is trusted: no confirmation email step.
@@ -267,6 +271,58 @@ export class CcCustomersService {
     if (status === 'ARCHIVED' && reason) await this.prisma.ccOrgProfile.upsert({ where: { organizationId: id }, create: { organizationId: id, churnReason: reason }, update: { churnReason: reason } });
     this.logger.warn(`Organization ${id} (${org.name}) ${org.platformStatus} -> ${status} by ${actorEmail}${reason ? `: ${reason}` : ''}`);
     return this.get(id);
+  }
+
+  /** The company's founder: who a registration decision is emailed to. */
+  private async founderOf(organizationId: string) {
+    const [f] = await this.prisma.$queryRaw<{ email: string; name: string }[]>`
+      SELECT email, name FROM users WHERE "organizationId" = ${organizationId} AND "isFounder" ORDER BY "createdAt" LIMIT 1`;
+    return f ?? null;
+  }
+
+  /** Approve a self-registered company: it becomes ACTIVE, so its people can sign in, and the founder is emailed. Only PENDING companies. */
+  async approveRegistration(id: string, actorEmail: string) {
+    const org = await this.prisma.organization.findFirst({ where: { id } });
+    if (!org) throw new NotFoundException('Organization not found.');
+    if (org.platformStatus !== 'PENDING') throw new ConflictException('Only a registration that is awaiting approval can be approved.');
+    await this.prisma.organization.updateMany({ where: { id }, data: { platformStatus: 'ACTIVE', isActive: true } });
+    forgetOrganizationStatus(id);
+    this.logger.warn(`Organization ${id} (${org.name}) registration APPROVED by ${actorEmail}`);
+    const founder = await this.founderOf(id);
+    if (founder) {
+      await this.email.send({
+        organizationId: id,
+        to: founder.email,
+        subject: `Your ${org.companyName || org.name} account is approved`,
+        html: registrationApprovedHtml({ name: founder.name, companyName: org.companyName || org.name, loginUrl: `${frontendUrl()}/login` }),
+      });
+    }
+    return this.get(id);
+  }
+
+  /**
+   * Reject a self-registered company: the founder is emailed the reason, then the (empty, never-used) registration is removed so the
+   * same email address can register again. Only PENDING companies.
+   */
+  async rejectRegistration(id: string, actorEmail: string, reason?: string) {
+    const org = await this.prisma.organization.findFirst({ where: { id } });
+    if (!org) throw new NotFoundException('Organization not found.');
+    if (org.platformStatus !== 'PENDING') throw new ConflictException('Only a registration that is awaiting approval can be rejected.');
+    const founder = await this.founderOf(id);
+    if (founder) {
+      await this.email.send({
+        organizationId: id,
+        to: founder.email,
+        subject: 'Your D\'RectHR registration was not approved',
+        html: registrationRejectedHtml({ name: founder.name, companyName: org.companyName || org.name, reason, registerUrl: `${frontendUrl()}/register` }),
+      });
+    }
+    // Removal goes through the same two steps as any delete (archive, then purge), inside one action.
+    await this.prisma.organization.updateMany({ where: { id }, data: { platformStatus: 'ARCHIVED', isActive: false } });
+    forgetOrganizationStatus(id);
+    this.logger.warn(`Organization ${id} (${org.name}) registration REJECTED by ${actorEmail}${reason ? `: ${reason}` : ''}`);
+    await this.purge({ ...org, platformStatus: 'ARCHIVED' }, actorEmail);
+    return { rejected: true, id };
   }
 
   /**
