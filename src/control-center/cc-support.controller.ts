@@ -1,5 +1,5 @@
 // Purpose: /api/v1 tickets, announcements, audit-log, settings and super-admins for the Control Panel.
-import { Body, Controller, ForbiddenException, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Delete, Get, HttpCode, Param, Patch, Post, Put, Query, Res, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import type { SuperAdmin } from '@prisma/client';
@@ -9,6 +9,8 @@ import { CcPermission, CcPermissionGuard } from './cc-permission.guard';
 import { CcSupportService } from './cc-support.service';
 import { CcAutomationService } from './cc-automation.service';
 import type { PageQuery } from './cc-util';
+import { checkSenderDns, domainOf } from './email-dns';
+import { EmailService } from '../notifications/email.service';
 import { PlatformBrandService } from '../platform-brand/platform-brand.service';
 
 type B = Record<string, unknown>;
@@ -19,7 +21,7 @@ type Q = PageQuery & Record<string, string | undefined>;
 @UseGuards(CcAuthGuard, CcPermissionGuard)
 @Controller('api/v1')
 export class CcSupportController {
-  constructor(private readonly svc: CcSupportService, private readonly auto: CcAutomationService, private readonly brand: PlatformBrandService) {}
+  constructor(private readonly svc: CcSupportService, private readonly auto: CcAutomationService, private readonly brand: PlatformBrandService, private readonly mail: EmailService) {}
 
   @Get('alerts') @CcPermission('organizations:read') alerts(@Query() q: Q) { return this.auto.listAlerts(q); }
   @Post('alerts/read-all') @HttpCode(204) @CcPermission('organizations:read') async readAll() { await this.auto.markRead(); }
@@ -61,6 +63,37 @@ export class CcSupportController {
 
   @Get('platform-brand') @CcPermission('settings:read') platformBrand() { return this.brand.get(); }
   @Put('platform-brand') @CcPermission('settings:write') setPlatformBrand(@Body() b: { name?: unknown; logo?: unknown }) { return this.brand.set(b ?? {}); }
+
+  /** Sender of platform emails. Owner only to change: a wrong sender stops sign-up and password-reset mail from arriving. */
+  @Get('platform-email') @CcPermission('settings:read') async platformEmail() {
+    return { ...(await this.brand.getSender()), serverFrom: process.env.EMAIL_FROM || 'no-reply@dbuggedprogrammers.com', configured: this.mail.isConfigured() };
+  }
+  /** Looks up the SPF, DKIM and DMARC records of the sending domain (the saved From address, else the server default). */
+  @Get('platform-email/dns-check') @CcPermission('settings:read')
+  async dnsCheck(@Query('address') address?: string) {
+    const saved = await this.brand.getSender();
+    const from = (address || saved.fromAddress || process.env.EMAIL_FROM || '').trim();
+    if (!domainOf(from)) throw new BadRequestException('Set a From address first.');
+    return checkSenderDns(from, saved.replyTo || undefined);
+  }
+  @Post('platform-email/test') @HttpCode(200) @CcPermission('settings:write')
+  async testPlatformEmail(@CurrentSuperAdmin() a: SuperAdmin, @Body() b: { fromName?: unknown; fromAddress?: unknown; replyTo?: unknown }) {
+    if (a.role !== 'OWNER') throw new ForbiddenException('Only an Owner can change the email sender.');
+    const sender = this.brand.validateSender(b ?? {});
+    const configured = this.mail.isConfigured();
+    const res = await this.mail.send({
+      to: a.email,
+      subject: 'Test email from the Control Center',
+      html: '<p>This is a test of the sender you are about to save. If you can read this, the address works.</p>',
+      senderOverride: sender,
+    });
+    return { sent: configured && !res.dryRun, configured, to: a.email };
+  }
+  @Put('platform-email') @CcPermission('settings:write')
+  setPlatformEmail(@CurrentSuperAdmin() a: SuperAdmin, @Body() b: { fromName?: unknown; fromAddress?: unknown; replyTo?: unknown }) {
+    if (a.role !== 'OWNER') throw new ForbiddenException('Only an Owner can change the email sender.');
+    return this.brand.setSender(b ?? {});
+  }
 
   @Get('settings') @CcPermission('settings:read') settings() { return this.svc.listSettings(); }
   @Get('settings/:key') @CcPermission('settings:read') setting(@Param('key') key: string) { return this.svc.getSetting(key); }

@@ -10,11 +10,17 @@ import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 export const DEFAULT_BRAND_NAME = "D'Rect HR";
 const NAME_KEY = 'platform.brandName';
 const LOGO_KEY = 'platform.brandLogo';
+const FROM_NAME_KEY = 'platform.emailFromName';
+const FROM_ADDRESS_KEY = 'platform.emailFromAddress';
+const REPLY_TO_KEY = 'platform.emailReplyTo';
+const EMAIL_RE = /^[^\s@<>",;]+@[^\s@<>",;]+\.[^\s@<>",;]{2,}$/;
 const TTL_MS = 30_000;
 const MAX_LOGO_CHARS = 400_000;
 const LOGO_RE = /^data:image\/(png|jpeg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/;
 
 export interface PlatformBrand { name: string; logoUrl: string | null }
+/** The sender of platform emails (sign-up, password reset, invoices). Empty strings mean "not set": the environment default is used. */
+export interface PlatformSender { fromName: string; fromAddress: string; replyTo: string }
 
 const escapeHtml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 // Every way the default name is written in code and in stored email templates.
@@ -24,6 +30,7 @@ const DEFAULT_FORMS = ["D'Rect HR", 'D&rsquo;Rect HR', 'D&apos;Rect HR', 'D&#39;
 export class PlatformBrandService {
   private readonly logger = new Logger(PlatformBrandService.name);
   private cache: { at: number; brand: PlatformBrand } | null = null;
+  private senderCache: { at: number; sender: PlatformSender } | null = null;
 
   constructor(@Inject(PRISMA_CLIENT) private readonly prisma: ExtendedPrismaClient) {}
 
@@ -71,6 +78,43 @@ export class PlatformBrandService {
       create: { key, value: value as never, type: 'string', restricted: false, description },
       update: { value: value as never },
     });
+  }
+
+  async getSender(): Promise<PlatformSender> {
+    if (this.senderCache && Date.now() - this.senderCache.at < TTL_MS) return this.senderCache.sender;
+    let sender: PlatformSender = { fromName: '', fromAddress: '', replyTo: '' };
+    try {
+      const rows = await this.prisma.ccSetting.findMany({ where: { key: { in: [FROM_NAME_KEY, FROM_ADDRESS_KEY, REPLY_TO_KEY] } } });
+      const val = (k: string) => {
+        const v = rows.find((r) => r.key === k)?.value;
+        return typeof v === 'string' ? v.trim() : '';
+      };
+      sender = { fromName: val(FROM_NAME_KEY), fromAddress: val(FROM_ADDRESS_KEY), replyTo: val(REPLY_TO_KEY) };
+    } catch (e) {
+      this.logger.warn(`Email sender lookup failed, using the environment default: ${(e as Error).message}`);
+    }
+    this.senderCache = { at: Date.now(), sender };
+    return sender;
+  }
+
+  /** Checks a sender before it is tested or saved. Blank address and reply-to are allowed (they fall back to the environment). */
+  validateSender(input: { fromName?: unknown; fromAddress?: unknown; replyTo?: unknown }): PlatformSender {
+    const str = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
+    const sender = { fromName: str(input.fromName), fromAddress: str(input.fromAddress).toLowerCase(), replyTo: str(input.replyTo).toLowerCase() };
+    if (sender.fromName && (sender.fromName.length > 60 || /[<>"\r\n]/.test(sender.fromName))) throw new BadRequestException('Sender name must be up to 60 characters and cannot contain < > or quotes.');
+    if (sender.fromAddress && !EMAIL_RE.test(sender.fromAddress)) throw new BadRequestException('Enter a valid From email address.');
+    if (sender.replyTo && !EMAIL_RE.test(sender.replyTo)) throw new BadRequestException('Enter a valid reply-to email address.');
+    return sender;
+  }
+
+  async setSender(input: { fromName?: unknown; fromAddress?: unknown; replyTo?: unknown }): Promise<PlatformSender> {
+    const sender = this.validateSender(input);
+    const note = 'Sender of platform emails (sign-up, password reset, invoices). Blank means the server default.';
+    await this.upsert(FROM_NAME_KEY, sender.fromName, note);
+    await this.upsert(FROM_ADDRESS_KEY, sender.fromAddress, note);
+    await this.upsert(REPLY_TO_KEY, sender.replyTo, note);
+    this.senderCache = null;
+    return this.getSender();
   }
 
   /** Swaps the default product name for the saved one in an email subject (plain text) or body (html). */

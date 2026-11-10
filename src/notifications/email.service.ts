@@ -35,6 +35,8 @@ export interface SendEmailInput {
   // instead of the shared platform address. Omitted callers (or an org
   // that never verified a domain) keep today's behavior unchanged.
   organizationId?: string;
+  // Used by the Control Center's "Send test email": try a sender before it is saved.
+  senderOverride?: { fromName: string; fromAddress: string; replyTo: string };
 }
 
 // Addresses under the reserved test domains (RFC 2606: .test, .example, .invalid, .localhost, and example.com / .net /
@@ -82,9 +84,12 @@ export class EmailService {
   // falls through to the shared platform address there. Falls back to the
   // shared address for any org that never verified a domain, or whose
   // verification hasn't completed yet.
-  private async resolveFrom(organizationId?: string): Promise<string> {
-    const platformDefault =
-      process.env.EMAIL_FROM || 'no-reply@dbuggedprogrammers.com';
+  private async resolveFrom(organizationId?: string, override?: { fromName: string; fromAddress: string }): Promise<string> {
+    const envFrom = process.env.EMAIL_FROM || 'no-reply@dbuggedprogrammers.com';
+    // The platform sender saved in the Control Center wins over the environment value; a blank address keeps the environment one.
+    const saved = override ?? (this.platformBrand ? await this.platformBrand.getSender() : null);
+    const bare = (saved?.fromAddress || envFrom).trim();
+    const platformDefault = saved?.fromName && !bare.includes('<') ? `"${saved.fromName}" <${bare}>` : bare;
     if (!organizationId || emailDriver() !== 'resend') return platformDefault;
     const org = await this.prisma.organization
       .findUnique({
@@ -192,7 +197,10 @@ export class EmailService {
     const ccNote =
       (cc?.length ? ` | Cc: ${cc.join(', ')}` : '') +
       (bcc?.length ? ` | Bcc: ${bcc.length} recipient(s)` : '');
-    const from = await this.resolveFrom(organizationId);
+    const from = await this.resolveFrom(organizationId, input.senderOverride);
+    // Replies go to the saved reply-to address, when there is one (not used for a company's own verified domain).
+    const savedSender = input.senderOverride ?? (this.platformBrand ? await this.platformBrand.getSender() : null);
+    const replyTo = savedSender?.replyTo || undefined;
 
     // An address that cannot exist: never handed to a provider.
     if (isUndeliverableAddress(to)) {
@@ -212,6 +220,7 @@ export class EmailService {
       try {
         const { error } = await this.getResend().emails.send({
           from,
+          ...(replyTo && { replyTo }),
           to,
           subject,
           html,
@@ -250,6 +259,7 @@ export class EmailService {
     try {
       await this.getTransporter().sendMail({
         from,
+        ...(replyTo && { replyTo }),
         to,
         subject,
         html,
