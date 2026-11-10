@@ -364,8 +364,8 @@ export class CcBillingService {
   async listFlags(q: PageQuery) {
     const { page, pageSize, skip, take } = paging(q);
     const where: Prisma.CcFeatureFlagWhereInput = q.q ? { OR: [{ key: { contains: q.q, mode: 'insensitive' } }, { description: { contains: q.q, mode: 'insensitive' } }] } : {};
-    const [rows, total] = await Promise.all([this.prisma.ccFeatureFlag.findMany({ where, orderBy: { key: 'asc' }, skip, take }), this.prisma.ccFeatureFlag.count({ where })]);
-    return { data: rows.map((f) => this.flagOut(f)), page, pageSize, total };
+    const [rows, total] = await Promise.all([this.prisma.ccFeatureFlag.findMany({ where, orderBy: { key: 'asc' }, skip, take, include: { _count: { select: { overrides: true } } } }), this.prisma.ccFeatureFlag.count({ where })]);
+    return { data: rows.map((f) => ({ ...this.flagOut(f), overrideCount: f._count.overrides })), page, pageSize, total };
   }
   async createFlag(b: { key: string; description?: string; defaultValue?: unknown }) {
     if (!/^[a-z0-9][a-z0-9._-]{1,63}$/.test(b.key ?? '')) throw new BadRequestException('Key must be lowercase letters, numbers, dots, dashes or underscores.');
