@@ -554,6 +554,8 @@ export class OffboardingService {
           },
         });
       }
+      // A draft left from an earlier, cancelled exit must not stay beside this one with a different last working day.
+      await this.discardOrphanDrafts(tx, organizationId, dto.employeeId, dto.lastWorkingDay);
       return created;
     });
 
@@ -1267,8 +1269,47 @@ export class OffboardingService {
           },
         });
       }
+      // The exit is over, so a draft settlement made for it is too.
+      if (count > 0) await this.discardOrphanDrafts(tx, organizationId, record.employeeId);
     });
     return this.findOne(id, organizationId);
+  }
+
+  // A draft final settlement belongs to one exit. Once that exit is cancelled (or a new one starts) a draft that no open
+  // case is linked to is a leftover: its last working day matches nothing and it would show as "wages overdue". Drafts
+  // book nothing, so they are deleted; processed and paid settlements are never touched.
+  private async discardOrphanDrafts(
+    tx: Prisma.TransactionClient,
+    organizationId: string,
+    employeeId: string,
+    // When a new exit starts, a draft already made for its own last working day is kept (it gets linked); only drafts for another date go.
+    keepLastWorkingDay?: string,
+  ): Promise<number> {
+    const openCases = await tx.offboardingCase.findMany({
+      where: { organizationId, employeeId, status: { in: OPEN_STATUSES } },
+      select: { settlementId: true },
+    });
+    const keep = openCases.map((c) => c.settlementId).filter((id): id is string => !!id);
+    const orphans = await tx.settlement.findMany({
+      where: {
+        organizationId,
+        employeeId,
+        status: SettlementStatus.DRAFT,
+        ...(keep.length ? { id: { notIn: keep } } : {}),
+        ...(keepLastWorkingDay ? { lastWorkingDay: { not: keepLastWorkingDay.slice(0, 10) } } : {}),
+      },
+      select: { id: true },
+    });
+    if (orphans.length === 0) return 0;
+    const ids = orphans.map((o) => o.id);
+    await tx.offboardingCase.updateMany({
+      where: { organizationId, settlementId: { in: ids } },
+      data: { settlementId: null },
+    });
+    const { count } = await tx.settlement.deleteMany({
+      where: { organizationId, id: { in: ids }, status: SettlementStatus.DRAFT },
+    });
+    return count;
   }
 
   private async assertOpenCase(id: string, organizationId: string) {

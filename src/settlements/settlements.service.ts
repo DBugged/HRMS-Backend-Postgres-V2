@@ -204,12 +204,25 @@ export class SettlementsService {
             where,
             include: {
               employee: { select: { id: true, name: true, employeeId: true } },
+              offboardingCases: { select: { status: true } },
             },
             orderBy: [...EMPLOYEE_RELATION_ORDER_BY, { createdAt: 'desc' }],
             skip: skip(query.page, query.limit),
             take: query.limit,
           })
-        ).map((row) => ({ ...this.withGratuityPayout(row), cleanDraft: isCleanDraft(row) })),
+        ).map(({ offboardingCases, ...row }) => {
+          // A draft no open exit is linked to is a leftover: say so, and never call its wages "overdue".
+          const orphaned =
+            row.status === SettlementStatus.DRAFT &&
+            !offboardingCases.some((c) => c.status === 'INITIATED' || c.status === 'IN_PROGRESS');
+          const withPayout = this.withGratuityPayout(row);
+          return {
+            ...withPayout,
+            ...(orphaned ? { wagesPayout: { ...withPayout.wagesPayout, overdue: false } } : {}),
+            orphaned,
+            cleanDraft: isCleanDraft(row),
+          };
+        }),
       () => this.scopedPrisma.settlement.count({ where }),
       query.page,
       query.limit,
