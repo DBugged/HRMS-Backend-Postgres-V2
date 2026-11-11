@@ -1,3 +1,4 @@
+import { NoMarkup } from '../../common/decorators/no-markup.decorator';
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
@@ -22,6 +23,7 @@ export class RegisterDto {
   @Matches(/^[^\p{Cc}]*$/u, {
     message: 'organizationName must not contain control characters',
   })
+  @NoMarkup('Organization name')
   organizationName!: string;
 
   // Trimmed first so a whitespace-only name fails @IsNotEmpty instead of

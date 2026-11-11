@@ -37,7 +37,8 @@ export function friendlyMessage(property: string, raw: string): string {
     [/^must not be greater than (.+)$/, (m) => `must be at most ${m[1]}`],
     [/^must be an email$/, () => 'must be a valid email address'],
     [/^must be a string$/, () => 'must be text'],
-    [/^must be a number( conforming.*)?$/, () => 'must be a number'],
+    [/^must be a number conforming to the specified constraints$/, () => 'must be a number with an allowed number of decimal places'],
+    [/^must be a number$/, () => 'must be a number'],
     [
       /^must be shorter than or equal to (\d+) characters$/,
       (m) => `must be at most ${m[1]} characters`,
@@ -56,13 +57,22 @@ export function friendlyMessage(property: string, raw: string): string {
   return `${label} ${rest}${rest.endsWith('.') ? '' : '.'}`;
 }
 
+// Which broken rule to report when a value breaks several. class-validator lists them in reverse declaration order, so the plain
+// "first" was often a range rule ("must be at most 128 characters") for a field that was simply missing. Report the most basic
+// problem first: missing, then wrong type, then everything else.
+const PRIORITY = ['isDefined', 'isNotEmpty', 'isNotEmptyObject', 'isString', 'isNumber', 'isInt', 'isBoolean', 'isDateString', 'isArray', 'isEnum', 'isEmail', 'isUUID'];
+export function pickConstraint(constraints: Record<string, string>): string {
+  for (const key of PRIORITY) if (key in constraints) return constraints[key];
+  return Object.values(constraints)[0];
+}
+
 function collect(errors: ValidationError[], parent = ''): string[] {
   const out: string[] = [];
   for (const error of errors) {
     const path = parent ? `${parent}.${error.property}` : error.property;
     if (error.constraints) {
       // One sentence per field: the first rule it broke, not every rule.
-      const first = Object.values(error.constraints)[0];
+      const first = pickConstraint(error.constraints);
       out.push(friendlyMessage(error.property, first));
     }
     if (error.children?.length) out.push(...collect(error.children, path));

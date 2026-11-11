@@ -391,6 +391,10 @@ export function checkLeaveRules(
     );
   }
 
+  // A request whose dates do not make sense gets that one message. Everything below counts days from those dates, so carrying
+  // on would pile unrelated complaints ("minimum duration", "document required"...) on top of the real one.
+  if (errors.length > 0) return { ok: false, errors, totalDays: 0 };
+
   // A half-day is leave from a working day. On a weekly off or holiday there is nothing to take leave from (a full-day
   // request made up only of such days is refused below for the same reason); event leave counted in calendar days
   // charges every date, so it is exempt.

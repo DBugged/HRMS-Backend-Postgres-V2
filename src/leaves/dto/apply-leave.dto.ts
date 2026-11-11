@@ -7,6 +7,7 @@ import {
   IsString,
   IsUUID,
   Matches,
+  MaxLength,
 } from 'class-validator';
 import { HalfDaySession } from '@prisma/client';
 import { IsValidCalendarDateString } from '../../common/is-valid-calendar-date.validator';
@@ -38,6 +39,7 @@ export class ApplyLeaveDto {
   @IsString()
   @IsNotEmpty({ message: 'Remarks are required' })
   @Matches(/\S/, { message: 'Remarks are required' })
+  @MaxLength(500, { message: 'Remarks can be at most 500 characters.' })
   remarks!: string;
 
   @ApiPropertyOptional()

@@ -1,3 +1,4 @@
+import { NoMarkup } from '../../common/decorators/no-markup.decorator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
 import {
@@ -22,6 +23,7 @@ export class UpdateOrganizationDto {
   @Matches(/^[^\p{Cc}]*$/u, {
     message: 'name must not contain control characters',
   })
+  @NoMarkup('Name')
   name?: string;
 
   @ApiPropertyOptional({ example: 'Asia/Kolkata' })

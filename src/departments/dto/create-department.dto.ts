@@ -1,3 +1,4 @@
+import { IsTimeOfDay, NoMarkup } from '../../common/decorators/no-markup.decorator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
@@ -16,6 +17,7 @@ export class CreateDepartmentDto {
   @IsNotEmpty()
   @IsString()
   @MaxLength(255)
+  @NoMarkup('Name')
   name!: string;
 
   // Uppercased in DepartmentsService.create() — Prisma has no model-level
@@ -24,22 +26,26 @@ export class CreateDepartmentDto {
   @IsNotEmpty()
   @IsString()
   @MaxLength(50)
+  @NoMarkup('Code')
   code!: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   @MaxLength(1000)
+  @NoMarkup('Description')
   description?: string;
 
   @ApiPropertyOptional({ example: '09:30' })
   @IsOptional()
   @IsString()
+  @IsTimeOfDay('Shift start time')
   shiftStartTime?: string;
 
   @ApiPropertyOptional({ example: '18:30' })
   @IsOptional()
   @IsString()
+  @IsTimeOfDay('Shift end time')
   shiftEndTime?: string;
 
   @ApiPropertyOptional({

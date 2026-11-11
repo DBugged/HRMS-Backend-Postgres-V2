@@ -78,6 +78,12 @@ async function bootstrap() {
     }),
   );
   app.use(cookieParser());
+  // Signed-in API answers hold private data, so browsers and proxies must not keep a copy (a shared computer, the back button after
+  // sign-out). Routes that choose their own caching, such as downloads, keep it.
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    if (req.headers.authorization && !res.getHeader('Cache-Control')) res.setHeader('Cache-Control', 'no-store');
+    next();
+  });
   app.use(reportColumnsParam);
 
   // whitelist/forbidNonWhitelisted: DTOs are the single source of truth for

@@ -1,3 +1,4 @@
+import { IsTimeOfDay, NoMarkup } from '../../common/decorators/no-markup.decorator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsArray,
@@ -17,22 +18,26 @@ export class UpdateDepartmentDto {
   @IsOptional()
   @IsString()
   @MaxLength(255)
+  @NoMarkup('Name')
   name?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
   @MaxLength(1000)
+  @NoMarkup('Description')
   description?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsTimeOfDay('Shift start time')
   shiftStartTime?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsString()
+  @IsTimeOfDay('Shift end time')
   shiftEndTime?: string;
 
   @ApiPropertyOptional()
