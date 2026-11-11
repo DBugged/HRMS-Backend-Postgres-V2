@@ -3692,6 +3692,19 @@ export class AttendanceService {
               // Remember the day as it was, so cancelling the leave can put it back.
               leaveOverriddenStatus: r.leaveOverriddenStatus ?? r.status,
               leaveOverriddenSource: r.leaveOverriddenSource ?? r.source,
+              // A full day of leave is not worked from home: a Work From Home request already on the day (waiting or
+              // approved) is dropped, so the day is not both. A half day keeps it (the other half can be worked).
+              ...(!leave.isHalfDay && r.workArrangement === WorkArrangement.WFH
+                ? {
+                    workArrangement: WorkArrangement.OFFICE,
+                    workArrangementStatus: WfhApprovalStatus.NONE,
+                    workArrangementReviewedById: null,
+                    workArrangementReviewedAt: null,
+                    workArrangementReviewComments: null,
+                    workArrangementReason: null,
+                    wfhRequestId: null,
+                  }
+                : {}),
             },
       });
     }
