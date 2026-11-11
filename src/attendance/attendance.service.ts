@@ -2302,6 +2302,8 @@ export class AttendanceService {
       organizationId,
       employeeId,
       workArrangement: WorkArrangement.WFH,
+      // A full day of leave is not a day worked from home, so it is not counted against the Work From Home balance.
+      status: { not: AttendanceStatus.ON_LEAVE },
     };
     const count = (
       status: WfhApprovalStatus,
@@ -2455,6 +2457,16 @@ export class AttendanceService {
     const existing = await this.scopedPrisma.attendance.findFirst({
       where: { organizationId, employeeId: actor.id, date: dateStr },
     });
+    // A day on full-day leave (waiting or approved) is not a working day, so there is nothing to work from home on - the
+    // same rule a multi-day request applies by leaving such days out.
+    if (isWfh) {
+      const { skipped } = await this.wfhDaysFor(actor, organizationId, dateStr, dateStr);
+      if (skipped.some((x) => x.date === dateStr && x.reason === 'LEAVE')) {
+        throw new BadRequestException(
+          `You are on leave on ${dmyText(dateStr)}, so Work From Home cannot be requested for that day.`,
+        );
+      }
+    }
     // One Work From Home request per day: a day already requested - waiting, approved or turned down - is not asked
     // for again (same rule as a multi-day request, which leaves such days out).
     const takenWfh =

@@ -1515,6 +1515,9 @@ export class DashboardService {
     const wfhThisMonth = { approved: 0, upcoming: 0, pending: 0 };
     for (const row of attendanceThisMonth) {
       if (row.workArrangement !== WorkArrangement.WFH) continue;
+      // A day that is a full day of leave is not worked from home (it is counted as On Leave above), so it is not a
+      // Work From Home day here either - an approval older than the leave must not show up as one.
+      if (row.status === AttendanceStatus.ON_LEAVE) continue;
       if (row.workArrangementStatus === WfhApprovalStatus.PENDING) {
         wfhThisMonth.pending += 1;
       } else if (row.workArrangementStatus === WfhApprovalStatus.APPROVED) {
