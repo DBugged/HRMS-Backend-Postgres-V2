@@ -33,11 +33,11 @@ export function founderWelcomeHtml(i: FounderWelcomeInput): string {
       paragraph(`Hi ${name},`),
       paragraph(
         verify
-          ? `Thank you for creating <strong>${company}</strong> on D'RectHR. One quick step: confirm your email address to activate your account.`
-          : `Thank you for creating <strong>${company}</strong> on D'RectHR. Your account is ready to use.`,
+          ? `Thank you for creating <strong>${company}</strong> on D'Rect HR. One quick step: confirm your email address to activate your account.`
+          : `Thank you for creating <strong>${company}</strong> on D'Rect HR. Your account is ready to use.`,
       ),
       i.awaitingApproval
-        ? paragraph('Your registration is being reviewed by the D\'RectHR team. We will email you as soon as it is approved, and you can sign in after that.')
+        ? paragraph('Your registration is being reviewed by the D\'Rect HR team. We will email you as soon as it is approved, and you can sign in after that.')
         : '',
       verify
         ? button(escapeHtml(i.verifyUrl as string), 'Confirm my email address')
@@ -75,7 +75,7 @@ export function confirmEmailHtml(i: {
     blocks: [
       paragraph(`Hi ${escapeHtml(i.name)},`),
       paragraph(
-        'Please confirm your email address to activate your D\'RectHR account.',
+        'Please confirm your email address to activate your D\'Rect HR account.',
       ),
       button(escapeHtml(i.verifyUrl), 'Confirm my email address'),
       mutedText('This link is valid for 48 hours.'),

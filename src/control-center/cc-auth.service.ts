@@ -235,6 +235,16 @@ export class CcAuthService {
     await this.logoutAll(admin.id);
   }
 
+  /** Change your own password. Needs the current one; every session (this one too) is signed out afterwards. */
+  async changePassword(admin: SuperAdmin, currentPassword: string, newPassword: string): Promise<void> {
+    if (!(await bcrypt.compare(currentPassword ?? '', admin.passwordHash ?? ''))) throw new BadRequestException('Your current password is not correct.');
+    const problem = passwordProblem(newPassword);
+    if (problem) throw new BadRequestException(problem);
+    if (await bcrypt.compare(newPassword, admin.passwordHash ?? '')) throw new BadRequestException('Choose a password you have not used just now.');
+    await this.prisma.superAdmin.update({ where: { id: admin.id }, data: { passwordHash: await bcrypt.hash(newPassword, 12) } });
+    await this.logoutAll(admin.id);
+  }
+
   // Access token -> an active Super Admin (or 401). Used by CcAuthGuard on every protected Control Center route.
   async verifyAccess(token: string): Promise<SuperAdmin> {
     let payload: { sub?: string; typ?: string };

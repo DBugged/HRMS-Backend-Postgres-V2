@@ -38,3 +38,15 @@ export class CcResetPasswordDto {
   @MaxLength(200)
   password!: string;
 }
+
+export class CcChangePasswordDto {
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  currentPassword!: string;
+
+  @ApiProperty()
+  @IsString()
+  @MaxLength(200)
+  newPassword!: string;
+}

@@ -47,14 +47,14 @@ describe('approveRegistration', () => {
 describe('rejectRegistration', () => {
   it('emails the reason, then removes the registration so the address can register again', async () => {
     const { service, email, purge } = setup(PENDING);
-    await expect(service.rejectRegistration('o1', 'admin@cc.test', 'Not a real company')).resolves.toEqual({ rejected: true, id: 'o1' });
+    await expect(service.rejectRegistration('o1', 'admin@cc.test', 'Not a real company')).resolves.toEqual({ rejected: true, id: 'o1', companyName: 'Acme Corp' });
     expect(email.send).toHaveBeenCalledWith(expect.objectContaining({ to: 'founder@acme.test', html: expect.stringContaining('Not a real company') }));
     expect(purge).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a company that is not awaiting approval, and removes nothing', async () => {
     const { service, purge, email } = setup({ ...PENDING, platformStatus: 'ACTIVE' });
-    await expect(service.rejectRegistration('o1', 'a')).rejects.toBeInstanceOf(ConflictException);
+    await expect(service.rejectRegistration('o1', 'a', 'Not eligible')).rejects.toBeInstanceOf(ConflictException);
     expect(purge).not.toHaveBeenCalled();
     expect(email.send).not.toHaveBeenCalled();
   });

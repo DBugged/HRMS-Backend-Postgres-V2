@@ -586,8 +586,8 @@ export class EmailTemplatesService implements OnApplicationBootstrap {
           variables,
         ),
         branding: {
-          companyName: "D'RectHR",
-          logoImgTag: `<img src="${escapeHtml(`${frontendUrl()}/brand-mark.png`)}" alt="D'RectHR" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`,
+          companyName: "D'Rect HR",
+          logoImgTag: `<img src="${escapeHtml(`${frontendUrl()}/brand-mark.png`)}" alt="D'Rect HR" style="display:block;border:0;outline:none;text-decoration:none;height:auto;max-height:48px;max-width:220px;" />`,
         },
       });
     }

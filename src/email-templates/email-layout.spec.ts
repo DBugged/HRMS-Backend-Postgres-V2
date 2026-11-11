@@ -13,7 +13,7 @@ import {
 import { renderTemplate } from './render-template';
 
 const branding = {
-  companyName: "D'RectHR",
+  companyName: "D'Rect HR",
   phone: '+91-9999999999',
   contactEmail: 'hr@example.com',
   logoImgTag: '',
@@ -183,7 +183,7 @@ describe('email layout', () => {
       );
       expect(html.startsWith(EMAIL_SHELL_MARKER)).toBe(true);
       expect(html).not.toMatch(/\{\{|<script|data-opt|data-status/);
-      expect(html).toContain("D'RectHR");
+      expect(html).toContain("D'Rect HR");
     }
   });
 

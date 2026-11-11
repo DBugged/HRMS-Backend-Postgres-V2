@@ -9,13 +9,14 @@ import { forgetOrganizationStatus } from '../common/org-status';
 import { frontendUrl } from '../common/frontend-url';
 import { EmailService } from '../notifications/email.service';
 import { registrationApprovedHtml, registrationRejectedHtml } from '../email-templates/registration-emails';
+import { requireReason, validateOrgCreate, validateOrgUpdate } from './cc-validation';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
 import { AuthService } from '../auth/auth.service';
 import type { RegisterDto } from '../auth/dto/register.dto';
 import { CcPlansService } from './cc-plans.service';
 import { removeAllFiles } from './cc-storage';
-import { employeeLimit, monthlyCharge } from './cc-util';
+import { employeeLimit, monthlyCharge, likeEscape, intParam } from './cc-util';
 import { planOut } from './cc-plans.service';
 
 export interface UsageSnapshot {
@@ -77,8 +78,8 @@ export class CcCustomersService {
   }
 
   async list(q: { page?: number; pageSize?: number; q?: string; sort?: string; status?: string }) {
-    const page = Math.max(1, q.page ?? 1);
-    const pageSize = Math.min(100, Math.max(1, q.pageSize ?? 20));
+    const page = intParam(q.page, 1, 1, 100000);
+    const pageSize = intParam(q.pageSize, 20, 1, 100);
     const [field, dir] = (q.sort ?? 'createdAt:desc').split(':');
     const orderBy = { [SORTABLE[field] ?? 'createdAt']: dir === 'asc' ? 'asc' : 'desc' } as Prisma.OrganizationOrderByWithRelationInput;
     const where: Prisma.OrganizationWhereInput = {
@@ -86,9 +87,9 @@ export class CcCustomersService {
       ...(q.q
         ? {
             OR: [
-              { name: { contains: q.q, mode: 'insensitive' } },
-              { companyName: { contains: q.q, mode: 'insensitive' } },
-              { contactEmail: { contains: q.q, mode: 'insensitive' } },
+              { name: { contains: likeEscape(q.q), mode: 'insensitive' } },
+              { companyName: { contains: likeEscape(q.q), mode: 'insensitive' } },
+              { contactEmail: { contains: likeEscape(q.q), mode: 'insensitive' } },
             ],
           }
         : {}),
@@ -183,7 +184,7 @@ export class CcCustomersService {
 
   /** Onboard a customer: creates the organization with its first admin exactly like self-registration does, then emails the admin a link to set a password. */
   async create(b: { name: string; adminName: string; adminEmail: string; planId?: string }) {
-    if (!b.name?.trim() || !b.adminName?.trim() || !b.adminEmail?.trim()) throw new BadRequestException('Company name, admin name and admin email are required.');
+    validateOrgCreate(b);
     const email = b.adminEmail.trim().toLowerCase();
     // The admin never sees this password: they set their own through the emailed link.
     const password = `${randomBytes(18).toString('base64url')}Aa1!`;
@@ -218,6 +219,7 @@ export class CcCustomersService {
 
   /** Company profile fields a Super Admin may correct. */
   async update(id: string, b: { name?: string; billingEmail?: string; phone?: string; city?: string; state?: string; country?: string; gstin?: string }) {
+    validateOrgUpdate(b);
     const org = await this.prisma.organization.findFirst({ where: { id } });
     if (!org) throw new NotFoundException('Organization not found.');
     const data: Prisma.OrganizationUpdateInput = {
@@ -261,6 +263,8 @@ export class CcCustomersService {
    * use a session while it is false); platformStatus is what the panel shows. Nothing is deleted.
    */
   async setStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' | 'ARCHIVED', actorEmail: string, reason?: string) {
+    if (status === 'SUSPENDED') reason = requireReason(reason, 'suspending this company');
+    if (status === 'ARCHIVED') reason = requireReason(reason, 'archiving this company');
     const org = await this.prisma.organization.findFirst({ where: { id } });
     if (!org) throw new NotFoundException('Organization not found.');
     await this.prisma.organization.updateMany({ where: { id }, data: { platformStatus: status, isActive: status === 'ACTIVE' } });
@@ -275,8 +279,8 @@ export class CcCustomersService {
 
   /** The company's founder: who a registration decision is emailed to. */
   private async founderOf(organizationId: string) {
-    const [f] = await this.prisma.$queryRaw<{ email: string; name: string }[]>`
-      SELECT email, name FROM users WHERE "organizationId" = ${organizationId} AND "isFounder" ORDER BY "createdAt" LIMIT 1`;
+    const [f] = await this.prisma.$queryRaw<{ email: string; name: string; emailVerified: boolean }[]>`
+      SELECT email, name, "emailVerified" FROM users WHERE "organizationId" = ${organizationId} AND "isFounder" ORDER BY "createdAt" LIMIT 1`;
     return f ?? null;
   }
 
@@ -297,14 +301,16 @@ export class CcCustomersService {
         html: registrationApprovedHtml({ name: founder.name, companyName: org.companyName || org.name, loginUrl: `${frontendUrl()}/login` }),
       });
     }
-    return this.get(id);
+    // Tells the panel whether the founder still has to confirm their email before they can sign in.
+    return { ...(await this.get(id)), founderEmailConfirmed: founder ? founder.emailVerified : true };
   }
 
   /**
    * Reject a self-registered company: the founder is emailed the reason, then the (empty, never-used) registration is removed so the
    * same email address can register again. Only PENDING companies.
    */
-  async rejectRegistration(id: string, actorEmail: string, reason?: string) {
+  async rejectRegistration(id: string, actorEmail: string, reasonRaw?: string) {
+    const reason = requireReason(reasonRaw, 'rejecting this registration');
     const org = await this.prisma.organization.findFirst({ where: { id } });
     if (!org) throw new NotFoundException('Organization not found.');
     if (org.platformStatus !== 'PENDING') throw new ConflictException('Only a registration that is awaiting approval can be rejected.');
@@ -313,7 +319,7 @@ export class CcCustomersService {
       await this.email.send({
         organizationId: id,
         to: founder.email,
-        subject: 'Your D\'RectHR registration was not approved',
+        subject: 'Your D’Rect HR registration was not approved',
         html: registrationRejectedHtml({ name: founder.name, companyName: org.companyName || org.name, reason, registerUrl: `${frontendUrl()}/register` }),
       });
     }
@@ -322,7 +328,7 @@ export class CcCustomersService {
     forgetOrganizationStatus(id);
     this.logger.warn(`Organization ${id} (${org.name}) registration REJECTED by ${actorEmail}${reason ? `: ${reason}` : ''}`);
     await this.purge({ ...org, platformStatus: 'ARCHIVED' }, actorEmail);
-    return { rejected: true, id };
+    return { rejected: true, id, companyName: org.companyName || org.name };
   }
 
   /**

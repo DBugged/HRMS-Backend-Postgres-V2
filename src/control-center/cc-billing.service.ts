@@ -13,8 +13,8 @@ import { AccountNotifier } from '../account-management/account-notifier.service'
 import { ModuleAccessService } from '../module-access/module-access.service';
 import { PlatformBrandService } from '../platform-brand/platform-brand.service';
 import { EmailService } from '../notifications/email.service';
-import { validateCouponInput, validateInvoiceInput, validatePaymentInput, validateRefundInput } from './cc-validation';
-import { addMonths, monthlyCharge, nextInvoiceNumber, num, paging, type PageQuery } from './cc-util';
+import { validateCouponInput, validateInvoiceInput, validatePaymentInput, validateRefundInput, validateFlagOverrideValue, isEmail } from './cc-validation';
+import { addMonths, monthlyCharge, nextInvoiceNumber, num, paging, type PageQuery, likeEscape } from './cc-util';
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
 type Line = { description: string; quantity: number; unitAmount: number };
@@ -34,7 +34,7 @@ export class CcBillingService {
 
   async listInvoices(q: PageQuery & { status?: string; organizationId?: string }) {
     const { page, pageSize, skip, take } = paging(q);
-    const where: Prisma.CcInvoiceWhereInput = { ...(q.status ? { status: q.status } : {}), ...(q.organizationId ? { organizationId: q.organizationId } : {}), ...(q.q ? { number: { contains: q.q, mode: 'insensitive' } } : {}) };
+    const where: Prisma.CcInvoiceWhereInput = { ...(q.status ? { status: q.status } : {}), ...(q.organizationId ? { organizationId: q.organizationId } : {}), ...(q.q ? { number: { contains: likeEscape(q.q), mode: 'insensitive' } } : {}) };
     const [rows, total] = await Promise.all([
       this.prisma.ccInvoice.findMany({ where, include: { organization: true }, orderBy: { createdAt: 'desc' }, skip, take }),
       this.prisma.ccInvoice.count({ where }),
@@ -195,7 +195,9 @@ export class CcBillingService {
   async sendInvoice(id: string, to?: string) {
     const inv = await this.getInvoice(id);
     const org = await this.prisma.organization.findFirst({ where: { id: inv.organizationId } });
+    if (inv.status === 'VOID') throw new ConflictException('A voided invoice cannot be sent.');
     const address = (to ?? org?.contactEmail ?? '').trim();
+    if (address && !isEmail(address)) throw new BadRequestException('Enter a valid email address to send the invoice to.');
     if (!address) throw new BadRequestException('This company has no billing email. Add one on its profile first.');
     const pdf = await this.invoicePdf(id);
     await this.email.send({
@@ -211,6 +213,9 @@ export class CcBillingService {
   async voidInvoice(id: string) {
     const inv = await this.getInvoice(id);
     if (!['DRAFT', 'OPEN'].includes(inv.status)) throw new ConflictException('Only an unpaid invoice can be voided.');
+    // Money already received (and not refunded in full) must be refunded first, or the books would show cash against a void invoice.
+    const received = await this.prisma.ccPayment.count({ where: { invoiceId: id, status: { in: ['SUCCEEDED', 'PARTIALLY_REFUNDED'] } } });
+    if (received > 0) throw new ConflictException('This invoice has payments. Refund them first, then void it.');
     // Only the request that actually voids it gives the coupon redemption back.
     await this.prisma.$transaction(async (tx) => {
       const { count } = await tx.ccInvoice.updateMany({ where: { id, status: { in: ['DRAFT', 'OPEN'] } }, data: { status: 'VOID' } });
@@ -220,6 +225,8 @@ export class CcBillingService {
   }
 
   async markPaid(id: string, paymentRef: string) {
+    if (typeof paymentRef !== 'string' || !paymentRef.trim()) throw new BadRequestException('Enter the payment reference (for example the bank or UPI transaction id).');
+    paymentRef = paymentRef.trim().slice(0, 100);
     const inv = await this.getInvoice(id);
     if (inv.status === 'PAID') return inv;
     if (!['OPEN', 'DRAFT'].includes(inv.status)) throw new ConflictException('This invoice cannot be marked paid.');
@@ -307,7 +314,7 @@ export class CcBillingService {
 
   async listCoupons(q: PageQuery & { status?: string }) {
     const { page, pageSize, skip, take } = paging(q);
-    const where: Prisma.CcCouponWhereInput = { ...(q.status && q.status !== 'EXPIRED' ? { status: q.status } : {}), ...(q.q ? { code: { contains: q.q, mode: 'insensitive' } } : {}) };
+    const where: Prisma.CcCouponWhereInput = { ...(q.status && q.status !== 'EXPIRED' ? { status: q.status } : {}), ...(q.q ? { code: { contains: likeEscape(q.q), mode: 'insensitive' } } : {}) };
     const [rows, total] = await Promise.all([this.prisma.ccCoupon.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }), this.prisma.ccCoupon.count({ where })]);
     return { data: rows.map((c) => this.couponOut(c)), page, pageSize, total };
   }
@@ -320,6 +327,7 @@ export class CcBillingService {
     const d = this.couponData(b);
     if (!d.code || !d.type || d.value == null) throw new BadRequestException('Code, type and value are required.');
     validateCouponInput(d as unknown as Record<string, unknown>);
+    await this.assertPlansExist(d.appliesToPlanIds);
     try { return this.couponOut(await this.prisma.ccCoupon.create({ data: d })); } catch { throw new ConflictException('A coupon with this code already exists.'); }
   }
   async updateCoupon(id: string, b: Record<string, unknown>) {
@@ -327,7 +335,17 @@ export class CcBillingService {
     const data = this.couponData(b);
     // A changed value is judged against the coupon's type (the new one, else the current one).
     validateCouponInput({ ...(data as unknown as Record<string, unknown>), ...('value' in data ? { type: (data as { type?: string }).type ?? existing.type } : {}) });
+    if ((data as { type?: string }).type === 'FIXED' || ('currency' in data && existing.type === 'FIXED')) {
+      const cur = 'currency' in data ? (data as { currency?: string | null }).currency : existing.currency;
+      if (!cur) throw new BadRequestException('A fixed-amount coupon needs a currency such as INR.');
+    }
+    await this.assertPlansExist(data.appliesToPlanIds);
     return this.couponOut(await this.prisma.ccCoupon.update({ where: { id }, data }));
+  }
+  private async assertPlansExist(ids: unknown) {
+    if (!Array.isArray(ids) || !ids.length) return;
+    const found = await this.prisma.ccPlan.count({ where: { id: { in: ids as string[] } } });
+    if (found !== new Set(ids).size) throw new BadRequestException('One or more of the selected plans no longer exist.');
   }
   async removeCoupon(id: string) {
     await this.getCoupon(id);
@@ -352,6 +370,9 @@ export class CcBillingService {
   }
 
   async validateCoupon(b: { code: string; organizationId: string; planId: string }) {
+    if (!b || typeof b.code !== 'string' || !b.code.trim()) throw new BadRequestException('Enter a coupon code.');
+    if (typeof b.organizationId !== 'string' || !b.organizationId) throw new BadRequestException('Choose the company the coupon is for.');
+    if (typeof b.planId !== 'string' || !b.planId) throw new BadRequestException('Choose the plan the coupon is for.');
     const plan = await this.prisma.ccPlan.findUnique({ where: { id: b.planId } });
     const base = plan ? num(plan.basePrice) ?? (num(plan.perEmployeeRate) ?? 0) * (plan.includedEmployees ?? 0) : 0;
     return this.checkCoupon(b.code, b.organizationId, base, b.planId);
@@ -363,7 +384,7 @@ export class CcBillingService {
   }
   async listFlags(q: PageQuery) {
     const { page, pageSize, skip, take } = paging(q);
-    const where: Prisma.CcFeatureFlagWhereInput = q.q ? { OR: [{ key: { contains: q.q, mode: 'insensitive' } }, { description: { contains: q.q, mode: 'insensitive' } }] } : {};
+    const where: Prisma.CcFeatureFlagWhereInput = q.q ? { OR: [{ key: { contains: likeEscape(q.q), mode: 'insensitive' } }, { description: { contains: likeEscape(q.q), mode: 'insensitive' } }] } : {};
     const [rows, total] = await Promise.all([this.prisma.ccFeatureFlag.findMany({ where, orderBy: { key: 'asc' }, skip, take, include: { _count: { select: { overrides: true } } } }), this.prisma.ccFeatureFlag.count({ where })]);
     return { data: rows.map((f) => ({ ...this.flagOut(f), overrideCount: f._count.overrides })), page, pageSize, total };
   }
@@ -382,6 +403,7 @@ export class CcBillingService {
     return rows.map((o) => ({ organizationId: o.organizationId, organizationName: o.organization.companyName || o.organization.name, value: o.value, updatedAt: o.updatedAt.toISOString() }));
   }
   async setOverride(key: string, organizationId: string, value: unknown) {
+    validateFlagOverrideValue(value);
     if (!(await this.prisma.ccFeatureFlag.findUnique({ where: { key } }))) throw new NotFoundException('Flag not found.');
     const org = await this.prisma.organization.findFirst({ where: { id: organizationId }, select: { id: true, companyLogoUrl: true } });
     if (!org) throw new NotFoundException('Organization not found.');

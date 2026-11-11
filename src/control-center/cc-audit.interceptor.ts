@@ -15,11 +15,17 @@ const redact = (v: unknown): unknown =>
 export class CcAuditInterceptor implements NestInterceptor {
   constructor(private readonly support: CcSupportService) {}
 
+  /** Keeps the company name when the action removes the record (rejecting a registration), so the log still says who it was. */
+  private withResult(body: unknown, result: unknown) {
+    const name = result && typeof result === 'object' ? (result as { companyName?: unknown }).companyName : undefined;
+    return typeof name === 'string' ? { ...(body as object), companyName: name } : body;
+  }
+
   intercept(context: ExecutionContext, next: CallHandler) {
     if (context.getType() !== 'http') return next.handle();
     const req = context.switchToHttp().getRequest<CcRequest & Request>();
     return next.handle().pipe(
-      tap(() => {
+      tap((result) => {
         const actor = req.superAdmin;
         if (!actor || req.method === 'GET') return;
         const path = String(req.route?.path ?? req.path).replace(/^\/?api\/v1\/?/, '');
@@ -27,7 +33,7 @@ export class CcAuditInterceptor implements NestInterceptor {
         void this.support
           .record({
             actor, ip: req.ip, userAgent: req.headers['user-agent'], action: `${req.method} /${path}`,
-            entityType: path.split('/')[0], entityId: params.id ?? params.key ?? '', after: redact(req.body), requestId: String(req.headers['x-request-id'] ?? ''),
+            entityType: path.split('/')[0], entityId: params.id ?? params.key ?? '', after: this.withResult(redact(req.body), result), requestId: String(req.headers['x-request-id'] ?? ''),
           })
           .catch(() => undefined); // an audit hiccup must never fail the admin's action
       }),

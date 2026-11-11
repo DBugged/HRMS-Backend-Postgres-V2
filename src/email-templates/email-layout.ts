@@ -379,7 +379,7 @@ function footerHtml(b: EmailBranding): string {
     // footer (below the recipient org's own name/copyright), same "don't
     // compete with the tenant's own branding" reasoning as Layout.tsx's
     // sidebar credit line.
-    `<p style="margin:0;font-family:${FONT_BODY};font-size:11px;line-height:16px;color:${T.faint};">D&rsquo;RectHR by D&rsquo;Bugged Programmers</p>`
+    `<p style="margin:0;font-family:${FONT_BODY};font-size:11px;line-height:16px;color:${T.faint};">D&rsquo;Rect HR by D&rsquo;Bugged Programmers</p>`
   );
 }
 

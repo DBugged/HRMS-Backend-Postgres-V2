@@ -10,7 +10,7 @@ import { cookieSecure } from '../common/production-config';
 import { CcAuthService } from './cc-auth.service';
 import { CcAuthGuard, CurrentSuperAdmin } from './cc-auth.guard';
 import { REFRESH_TOKEN_DAYS } from './cc-auth-rules';
-import { CcForgotPasswordDto, CcLoginDto, CcResetPasswordDto } from './dto/cc-auth.dto';
+import { CcChangePasswordDto, CcForgotPasswordDto, CcLoginDto, CcResetPasswordDto } from './dto/cc-auth.dto';
 import type { SuperAdmin } from '@prisma/client';
 
 const COOKIE = 'cc_rt';
@@ -86,6 +86,15 @@ export class CcAuthController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async reset(@Body() dto: CcResetPasswordDto) {
     await this.auth.resetPassword(dto.token, dto.password);
+  }
+
+  @Post('change-password')
+  @HttpCode(204)
+  @UseGuards(CcAuthGuard)
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async changePassword(@CurrentSuperAdmin() admin: SuperAdmin, @Body() dto: CcChangePasswordDto, @Res({ passthrough: true }) res: Response) {
+    await this.auth.changePassword(admin, dto.currentPassword, dto.newPassword);
+    clearCookie(res);
   }
 
   @Get('me')

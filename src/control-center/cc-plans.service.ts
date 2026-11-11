@@ -4,8 +4,8 @@ import { BadRequestException, ConflictException, Inject, Injectable, NotFoundExc
 import type { CcPlan, Prisma } from '@prisma/client';
 import { PRISMA_CLIENT } from '../prisma/prisma.module';
 import type { ExtendedPrismaClient } from '../prisma/prisma.module';
-import { validatePlanInput } from './cc-validation';
-import { addMonths, num, orgSlug, paging, TERM_MONTHS, type PageQuery } from './cc-util';
+import { requireReason, validatePlanInput } from './cc-validation';
+import { addMonths, num, orgSlug, paging, TERM_MONTHS, type PageQuery, likeEscape } from './cc-util';
 
 const PLAN_FIELDS = ['name', 'code', 'billingModel', 'currency', 'trialDays', 'perEmployeeRate', 'termMonths', 'basePrice', 'includedEmployees', 'perExtraEmployeeRate', 'seatLimit', 'gstApplicable', 'whiteLabelEligible', 'features', 'limits', 'isPublic', 'status'] as const;
 
@@ -23,7 +23,7 @@ export class CcPlansService {
 
   async listPlans(q: PageQuery) {
     const { page, pageSize, skip, take } = paging(q);
-    const where: Prisma.CcPlanWhereInput = q.q ? { OR: [{ name: { contains: q.q, mode: 'insensitive' } }, { code: { contains: q.q, mode: 'insensitive' } }] } : {};
+    const where: Prisma.CcPlanWhereInput = q.q ? { OR: [{ name: { contains: likeEscape(q.q), mode: 'insensitive' } }, { code: { contains: likeEscape(q.q), mode: 'insensitive' } }] } : {};
     const [rows, total] = await Promise.all([
       this.prisma.ccPlan.findMany({ where, orderBy: [{ perEmployeeRate: { sort: 'desc', nulls: 'last' } }, { name: 'asc' }], skip, take }),
       this.prisma.ccPlan.count({ where }),
@@ -77,7 +77,7 @@ export class CcPlansService {
       planId: s.planId, plan: planOut(s.plan), term: s.term, termMonths: s.termMonths,
       includedEmployeesSnap: s.includedEmployeesSnap, customPerEmployeeRate: num(s.customPerEmployeeRate), maxEmployees: s.maxEmployees, maxStorageMb: s.maxStorageMb, status: s.status,
       trialEndsAt: s.trialEndsAt?.toISOString() ?? null, currentPeriodEnd: s.currentPeriodEnd?.toISOString() ?? null,
-      cancelAtPeriodEnd: s.cancelAtPeriodEnd, createdAt: s.createdAt.toISOString(),
+      cancelAtPeriodEnd: s.cancelAtPeriodEnd, cancelReason: s.cancelReason, canceledAt: s.canceledAt?.toISOString() ?? null, createdAt: s.createdAt.toISOString(),
     };
   }
   private readonly incl = { plan: true, organization: true } as const;
@@ -119,9 +119,12 @@ export class CcPlansService {
   }
 
   async createSubscription(b: { organizationId: string; planId: string; trialDaysOverride?: number; term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) {
+    if (typeof b?.planId !== 'string' || !b.planId) throw new BadRequestException('Choose a plan.');
+    if (typeof b?.organizationId !== 'string' || !b.organizationId) throw new BadRequestException('Choose a company.');
     const [org, plan] = await Promise.all([this.prisma.organization.findFirst({ where: { id: b.organizationId } }), this.prisma.ccPlan.findUnique({ where: { id: b.planId } })]);
     if (!org) throw new NotFoundException('Organization not found.');
     if (!plan) throw new NotFoundException('Plan not found.');
+    if (org.platformStatus === 'PENDING') throw new ConflictException('This company is still awaiting approval. Approve it before giving it a subscription.');
     const { term, termMonths } = this.pickTerm(plan, b.term);
     const customRate = this.pickRate(plan, b.customPerEmployeeRate);
     const maxEmployees = this.pickMax(b.maxEmployees);
@@ -146,9 +149,10 @@ export class CcPlansService {
   async changePlan(id: string, b: { planId: string; prorate?: boolean; term?: string; customPerEmployeeRate?: number | null; maxEmployees?: number | null }) {
     const plan = await this.prisma.ccPlan.findUnique({ where: { id: b.planId } });
     if (!plan) throw new NotFoundException('Plan not found.');
-    await this.getSubscription(id);
+    const current = await this.getSubscription(id);
     const { term, termMonths } = this.pickTerm(plan, b.term);
     const customRate = this.pickRate(plan, b.customPerEmployeeRate);
+    if (current.planId === plan.id && current.term === term && (current.customPerEmployeeRate ?? null) === (customRate ?? null)) throw new ConflictException('The company is already on this plan. Pick a different plan or change the term.');
     return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: { planId: plan.id, term, termMonths, customPerEmployeeRate: customRate, ...('maxEmployees' in b ? { maxEmployees: this.pickMax(b.maxEmployees) } : {}), includedEmployeesSnap: plan.includedEmployees }, include: this.incl }));
   }
 
@@ -164,14 +168,17 @@ export class CcPlansService {
     return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data, include: this.incl }));
   }
 
-  async cancel(id: string, atPeriodEnd: boolean) {
+  /** The reason is required; it is kept in the audit log with the request. */
+  async cancel(id: string, atPeriodEnd: boolean, reason?: string) {
+    const why = requireReason(reason, 'cancelling this subscription');
     await this.getSubscription(id);
-    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: atPeriodEnd ? { cancelAtPeriodEnd: true } : { status: 'CANCELED', cancelAtPeriodEnd: false }, include: this.incl }));
+    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: atPeriodEnd ? { cancelAtPeriodEnd: true, cancelReason: why, canceledAt: new Date() } : { status: 'CANCELED', cancelAtPeriodEnd: false, cancelReason: why, canceledAt: new Date() }, include: this.incl }));
   }
 
   async resume(id: string) {
     const s = await this.getSubscription(id);
+    if (!(s.status === 'CANCELED' || s.status === 'EXPIRED' || s.cancelAtPeriodEnd)) throw new ConflictException('This subscription is not cancelled, so there is nothing to resume.');
     const status = s.status === 'CANCELED' || s.status === 'EXPIRED' ? 'ACTIVE' : s.status;
-    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: { cancelAtPeriodEnd: false, status }, include: this.incl }));
+    return this.subOut(await this.prisma.ccSubscription.update({ where: { id }, data: { cancelAtPeriodEnd: false, status, cancelReason: null, canceledAt: null }, include: this.incl }));
   }
 }

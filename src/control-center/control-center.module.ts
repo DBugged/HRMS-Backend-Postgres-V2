@@ -1,3 +1,4 @@
+import { DiscoveryModule } from '@nestjs/core';
 import { AccountManagementModule } from '../account-management/account-management.module';
 import { CcSmokeController } from './cc-smoke.controller';
 import { CcSmokeService } from './cc-smoke.service';
@@ -28,7 +29,7 @@ import { CcPermissionGuard } from './cc-permission.guard';
 // The Control Panel's API inside the HRMS backend: Super Admin sign-in and read-only customers/dashboard now; plans and billing follow.
 // JwtModule is registered without a secret on purpose - the Control Center signs with CC_JWT_SECRET, passed per call.
 @Module({
-  imports: [JwtModule.register({}), NotificationsModule, AuthModule, AccountManagementModule],
+  imports: [DiscoveryModule, JwtModule.register({}), NotificationsModule, AuthModule, AccountManagementModule],
   controllers: [CcSmokeController, CcAuthController, CcCustomersController, CcPlansController, CcBillingController, CcSupportController, CcAnnouncementsFeedController, CcReportsController],
   providers: [CcSmokeService, CcAuthService, CcAuthGuard, CcCustomersService, CcPlansService, CcBillingService, CcSupportService, CcAutomationService, CcInsightsService, CcReportsService, CcPermissionGuard, { provide: APP_INTERCEPTOR, useClass: CcAuditInterceptor }],
   exports: [CcAuthService, CcAuthGuard],

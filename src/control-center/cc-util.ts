@@ -4,10 +4,17 @@ export const slugify = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '-'
 export const orgSlug = (name: string, id: string) => `${slugify(name)}-${id.slice(0, 6)}`;
 /** Prisma Decimal (or null) -> number for JSON. */
 export const num = (d: { toString(): string } | null | undefined): number | null => (d == null ? null : Number(d.toString()));
+/** Escapes % _ and \\ so a search for them finds those characters instead of matching everything. */
+export const likeEscape = (q: string) => q.replace(/[\\%_]/g, (c) => `\\${c}`);
+/** A positive whole number from a query string, or the fallback (so ?page=abc never reaches the database as NaN). */
+export const intParam = (v: unknown, fallback: number, min = 1, max = Number.MAX_SAFE_INTEGER) => {
+  const n = Math.trunc(Number(v));
+  return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
+};
 export interface PageQuery { page?: string | number; pageSize?: string | number; q?: string; sort?: string }
 export function paging(q: PageQuery) {
-  const page = Math.max(1, Number(q.page) || 1);
-  const pageSize = Math.min(100, Math.max(1, Number(q.pageSize) || 20));
+  const page = intParam(q.page, 1, 1, 100000);
+  const pageSize = intParam(q.pageSize, 20, 1, 100);
   const [field, dir] = (q.sort ?? '').split(':');
   return { page, pageSize, skip: (page - 1) * pageSize, take: pageSize, field, dir: dir === 'asc' ? ('asc' as const) : ('desc' as const) };
 }

@@ -9,7 +9,7 @@ import { confirmEmailHtml, founderWelcomeHtml } from './founder-emails';
 const shell = (body: string) =>
   wrapEmailShell(finalizeEmailHtml(body), {
     preheader: 'x',
-    branding: { companyName: "D'RectHR" },
+    branding: { companyName: "D'Rect HR" },
   });
 
 describe('founder emails', () => {

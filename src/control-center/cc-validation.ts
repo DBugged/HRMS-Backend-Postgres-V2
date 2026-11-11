@@ -39,7 +39,11 @@ export function validateInvoiceInput(b: { lineItems?: unknown; dueDate?: unknown
   });
   const subtotal = lines.reduce((s, l) => s + Number(l.quantity) * Number(l.unitAmount), 0);
   if (!(subtotal > 0)) bad('The invoice total must be more than zero.');
-  if (b.dueDate !== undefined && b.dueDate !== null && b.dueDate !== '') validDate(b.dueDate, 'The due date');
+  if (b.dueDate !== undefined && b.dueDate !== null && b.dueDate !== '') {
+    const due = validDate(b.dueDate, 'The due date');
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (due < today) bad('The due date cannot be in the past.');
+  }
   if (b.couponCode !== undefined && b.couponCode !== null && typeof b.couponCode !== 'string') bad('The coupon code must be text.');
 }
 
@@ -64,6 +68,7 @@ export function validatePlanInput(d: Record<string, unknown>): void {
   for (const k of ['perEmployeeRate', 'perExtraEmployeeRate', 'basePrice'] as const) if (k in d && d[k] != null) money(d[k], k);
   if ('trialDays' in d && d.trialDays != null) wholeNumber(d.trialDays, 'Trial days', 0, 365);
   for (const k of ['includedEmployees', 'seatLimit', 'termMonths'] as const) if (k in d && d[k] != null) wholeNumber(d[k], k, 1, 100000);
+  if ('features' in d && d.features != null && (!Array.isArray(d.features) || d.features.some((f) => typeof f !== 'string'))) bad('Plan features must be a list of text lines.');
   if ('status' in d && !PLAN_STATUSES.includes(String(d.status))) bad(`The plan status must be one of: ${PLAN_STATUSES.join(', ')}.`);
   if ('billingModel' in d && !BILLING_MODELS.includes(String(d.billingModel))) bad(`The billing model must be one of: ${BILLING_MODELS.join(', ')}.`);
   if ('currency' in d && !/^[A-Z]{3}$/.test(String(d.currency))) bad('The currency must be a 3-letter code such as INR.');
@@ -72,6 +77,9 @@ export function validatePlanInput(d: Record<string, unknown>): void {
 const COUPON_TYPES = ['PERCENT', 'FIXED'];
 const COUPON_STATUSES = ['ACTIVE', 'INACTIVE', 'EXPIRED'];
 export function validateCouponInput(d: Record<string, unknown>): void {
+  if ('code' in d && !/^[A-Z0-9_-]{3,40}$/.test(String(d.code ?? ''))) bad('The coupon code must be 3-40 letters, numbers, dashes or underscores.');
+  if (d.type === 'FIXED' && !d.currency) bad('A fixed-amount coupon needs a currency such as INR.');
+  if ('appliesToPlanIds' in d && d.appliesToPlanIds != null && (!Array.isArray(d.appliesToPlanIds) || d.appliesToPlanIds.some((x) => typeof x !== 'string'))) bad('Plans must be a list of plan ids.');
   if ('type' in d && !COUPON_TYPES.includes(String(d.type))) bad(`The coupon type must be one of: ${COUPON_TYPES.join(', ')}.`);
   if ('value' in d) {
     money(Number(d.value), 'The coupon value', { allowZero: false });
@@ -84,4 +92,85 @@ export function validateCouponInput(d: Record<string, unknown>): void {
   const until = d.validUntil instanceof Date ? d.validUntil : null;
   if ((from && Number.isNaN(from.getTime())) || (until && Number.isNaN(until.getTime()))) bad('A coupon date is not valid.');
   if (from && until && until < from) bad('The coupon cannot end before it starts.');
+}
+
+// ---- Shared checks for the Control Panel's other writes (added after a QA pass: each rejected value used to be saved) ----
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+export const isEmail = (v: unknown): boolean => typeof v === 'string' && v.trim().length <= 254 && EMAIL.test(v.trim());
+
+/** A reason given for a decision (reject, suspend, archive): required, so the audit log always says why. */
+export function requireReason(reason: unknown, action: string): string {
+  const r = typeof reason === 'string' ? reason.trim() : '';
+  if (r.length < 3) bad(`Say why you are ${action} (at least 3 characters).`);
+  if (r.length > 500) bad('The reason can be at most 500 characters.');
+  return r;
+}
+
+const GSTIN = /^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
+const PHONE = /^[+()\-\s\d]{7,20}$/;
+
+/** Creating a company from the Control Panel: company name, first admin and (optionally) their email. */
+export function validateOrgCreate(b: { name?: unknown; adminName?: unknown; adminEmail?: unknown }): void {
+  text(b.name, 'The company name', 200);
+  if (String(b.name).trim().length < 2) bad('The company name must be at least 2 characters.');
+  text(b.adminName, 'The admin name', 100);
+  if (!isEmail(b.adminEmail)) bad('Enter a valid admin email address.');
+}
+
+/** Editing a company: only the fields that are sent are checked. */
+export function validateOrgUpdate(b: Record<string, unknown>): void {
+  if ('name' in b && b.name != null && String(b.name).trim() !== '') text(b.name, 'The company name', 200);
+  if ('billingEmail' in b && String(b.billingEmail ?? '').trim() !== '' && !isEmail(b.billingEmail)) bad('Enter a valid billing email address.');
+  if ('phone' in b && String(b.phone ?? '').trim() !== '' && !PHONE.test(String(b.phone).trim())) bad('Enter a valid phone number (digits, +, spaces and dashes).');
+  if ('gstin' in b && String(b.gstin ?? '').trim() !== '' && !GSTIN.test(String(b.gstin).trim().toUpperCase())) bad('Enter a valid 15-character GSTIN, for example 27ABCDE1234F1Z5.');
+  for (const k of ['city', 'state', 'country'] as const) if (k in b && b[k] != null && String(b[k]).length > 100) bad(`The ${k} can be at most 100 characters.`);
+}
+
+const ADMIN_ROLES = ['OWNER', 'ADMIN', 'SUPPORT', 'BILLING', 'READ_ONLY'];
+export function validateAdminInput(b: { email?: unknown; name?: unknown; role?: unknown }, partial = false): void {
+  if (!partial || 'email' in b) if (!isEmail(b.email)) bad('Enter a valid email address.');
+  if (!partial || 'name' in b) text(b.name, 'The name', 100);
+  if (!partial || 'role' in b) if (!ADMIN_ROLES.includes(String(b.role))) bad(`The role must be one of: ${ADMIN_ROLES.join(', ')}.`);
+}
+
+const TICKET_PRIORITY = ['LOW', 'NORMAL', 'HIGH', 'URGENT'];
+export function validateTicketInput(b: { subject?: unknown; body?: unknown; priority?: unknown }): void {
+  text(b.subject, 'The subject', 200);
+  text(b.body, 'The details', 5000);
+  if (b.priority !== undefined && b.priority !== null && !TICKET_PRIORITY.includes(String(b.priority))) bad(`The priority must be one of: ${TICKET_PRIORITY.join(', ')}.`);
+}
+
+const AUDIENCES = ['ALL', 'PLAN', 'ORG'];
+const SEVERITIES = ['INFO', 'WARNING', 'CRITICAL'];
+export function validateAnnouncementInput(b: Record<string, unknown>, creating: boolean): void {
+  if (creating || 'title' in b) text(b.title, 'The title', 200);
+  if (creating || 'body' in b) text(b.body, 'The message', 5000);
+  if ('audience' in b && !AUDIENCES.includes(String(b.audience))) bad(`The audience must be one of: ${AUDIENCES.join(', ')}.`);
+  if ('severity' in b && !SEVERITIES.includes(String(b.severity))) bad(`The severity must be one of: ${SEVERITIES.join(', ')}.`);
+  const aud = String(b.audience ?? 'ALL');
+  if ((aud === 'PLAN' || aud === 'ORG') && ('audience' in b || 'audienceRef' in b) && !String(b.audienceRef ?? '').trim()) bad(aud === 'PLAN' ? 'Choose the plan this announcement is for.' : 'Choose the company this announcement is for.');
+  const from = b.startsAt ? new Date(String(b.startsAt)) : null;
+  const to = b.endsAt ? new Date(String(b.endsAt)) : null;
+  if ((from && Number.isNaN(from.getTime())) || (to && Number.isNaN(to.getTime()))) bad('An announcement date is not valid.');
+  if (from && to && to < from) bad('The announcement cannot end before it starts.');
+}
+
+/** Ranges for the numeric platform settings, and the email rule for address settings. */
+const SETTING_RANGES: Record<string, [number, number]> = {
+  'billing.auto_suspend_days': [0, 365],
+  'billing.gst_rate': [0, 100],
+  'billing.invoice_due_days': [0, 365],
+  'billing.reminder_days': [0, 365],
+  'platform.default_trial_days': [0, 365],
+};
+export function validateSettingValue(key: string, type: string, value: unknown): void {
+  if (type === 'number') {
+    const range = SETTING_RANGES[key] ?? [0, 1_000_000];
+    if (typeof value === 'number' && (value < range[0] || value > range[1])) bad(`This setting must be between ${range[0]} and ${range[1]}.`);
+  }
+  if (type === 'string' && /(^|\.)email$/.test(key) && typeof value === 'string' && value.trim() !== '' && !isEmail(value)) bad('Enter a valid email address.');
+}
+
+export function validateFlagOverrideValue(value: unknown): void {
+  if (!['boolean', 'number', 'string'].includes(typeof value)) bad('Send the override as a value: true, false, a number or text.');
 }

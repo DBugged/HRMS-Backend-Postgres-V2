@@ -8,7 +8,8 @@ import { CcAuthService } from './cc-auth.service';
 import { AccountNotifier } from '../account-management/account-notifier.service';
 import { EmailService } from '../notifications/email.service';
 import { normalizeEmail } from './cc-auth-rules';
-import { csvSafe, paging, type PageQuery } from './cc-util';
+import { csvSafe, likeEscape, paging, type PageQuery } from './cc-util';
+import { validateAdminInput, validateAnnouncementInput, validateSettingValue, validateTicketInput } from './cc-validation';
 import { TICKET_PRIORITIES, TICKET_STATUSES, normalizeTicketStatus } from '../account-management/account-logic';
 
 const iso = (d: Date | null | undefined) => d?.toISOString() ?? null;
@@ -35,7 +36,7 @@ export class CcSupportService {
     const where: Prisma.CcTicketWhereInput = {
       ...(q.status ? { status: q.status } : {}), ...(q.priority ? { priority: q.priority } : {}),
       ...(q.organizationId ? { organizationId: q.organizationId } : {}), ...(q.assigneeId ? { assigneeId: q.assigneeId } : {}),
-      ...(q.q ? { OR: [{ subject: { contains: q.q, mode: 'insensitive' } }, { body: { contains: q.q, mode: 'insensitive' } }] } : {}),
+      ...(q.q ? { OR: [{ subject: { contains: likeEscape(q.q), mode: 'insensitive' } }, { body: { contains: likeEscape(q.q), mode: 'insensitive' } }] } : {}),
     };
     const [rows, total] = await Promise.all([this.prisma.ccTicket.findMany({ where, include: this.tInc, orderBy: { createdAt: 'desc' }, skip, take }), this.prisma.ccTicket.count({ where })]);
     return { data: await Promise.all(rows.map((t) => this.ticketOut(t, false))), page, pageSize, total };
@@ -46,7 +47,7 @@ export class CcSupportService {
     return this.ticketOut(t, true);
   }
   async createTicket(b: { organizationId?: string; subject: string; body: string; priority?: string }, by: SuperAdmin) {
-    if (!b.subject?.trim() || !b.body?.trim()) throw new BadRequestException('Subject and details are required.');
+    validateTicketInput(b);
     if (b.organizationId && !(await this.prisma.organization.findFirst({ where: { id: b.organizationId }, select: { id: true } }))) throw new NotFoundException('Organization not found.');
     const t = await this.prisma.ccTicket.create({ data: { organizationId: b.organizationId || null, subject: b.subject.trim(), body: b.body, priority: b.priority ?? 'NORMAL', createdById: by.id }, include: this.tInc });
     return this.ticketOut(t, true);
@@ -94,7 +95,7 @@ export class CcSupportService {
     const next = b.action === 'APPROVE' ? 'APPROVED' : b.action === 'REJECT' ? 'REJECTED' : b.action === 'PROCESS' ? 'PROCESSED' : null;
     if (!next) throw new BadRequestException('Choose approve, reject or processed.');
     const allowed = next === 'PROCESSED' ? r.status === 'APPROVED' : r.status === 'PENDING';
-    if (!allowed) throw new ConflictException(`A ${r.status.toLowerCase()} request cannot be ${next.toLowerCase()}.`);
+    if (!allowed) throw new ConflictException(`${/^[aeiou]/i.test(r.status) ? 'An' : 'A'} ${r.status.toLowerCase()} request cannot be ${next.toLowerCase()}.`);
     const note = (b.note ?? '').trim().slice(0, 1000);
     if (next === 'REJECTED' && !note) throw new BadRequestException('Say why the request is rejected.');
     const u = await this.prisma.ccRequest.update({ where: { id }, data: { status: next, resolutionNote: note || r.resolutionNote, resolvedById: by.id, resolvedAt: new Date() }, include: { organization: true } });
@@ -123,7 +124,7 @@ export class CcSupportService {
   }
   async listAnnouncements(q: PageQuery & { status?: string }) {
     const { page, pageSize, skip, take } = paging(q);
-    const rows = (await this.prisma.ccAnnouncement.findMany({ where: q.q ? { title: { contains: q.q, mode: 'insensitive' } } : {}, orderBy: { createdAt: 'desc' } })).map((a) => this.annOut(a)).filter((a) => !q.status || a.status === q.status);
+    const rows = (await this.prisma.ccAnnouncement.findMany({ where: q.q ? { title: { contains: likeEscape(q.q), mode: 'insensitive' } } : {}, orderBy: { createdAt: 'desc' } })).map((a) => this.annOut(a)).filter((a) => !q.status || a.status === q.status);
     return { data: rows.slice(skip, skip + take), page, pageSize, total: rows.length };
   }
   async getAnnouncement(id: string) {
@@ -132,12 +133,14 @@ export class CcSupportService {
     return this.annOut(a);
   }
   async createAnnouncement(b: Record<string, unknown>) {
+    validateAnnouncementInput(b, true);
     const d = this.annData(b);
-    if (!d.title || !d.body) throw new BadRequestException('Title and message are required.');
     return this.annOut(await this.prisma.ccAnnouncement.create({ data: d }));
   }
   async updateAnnouncement(id: string, b: Record<string, unknown>) {
-    await this.getAnnouncement(id);
+    const current = await this.getAnnouncement(id);
+    // The audience rules are judged on the result of the edit (what is sent, else what is already saved).
+    validateAnnouncementInput({ audience: current.audience, audienceRef: current.audienceRef, startsAt: current.startsAt, endsAt: current.endsAt, ...b }, false);
     return this.annOut(await this.prisma.ccAnnouncement.update({ where: { id }, data: this.annData(b) }));
   }
   async removeAnnouncement(id: string) {
@@ -239,6 +242,7 @@ export class CcSupportService {
     if (s.restricted) throw new ForbiddenException('This setting is restricted and cannot be changed here.');
     const ok = s.type === 'number' ? typeof value === 'number' && Number.isFinite(value) : s.type === 'bool' ? typeof value === 'boolean' : s.type === 'string' ? typeof value === 'string' : true;
     if (!ok) throw new BadRequestException(`This setting needs a ${s.type} value.`);
+    validateSettingValue(key, s.type, value);
     return this.setOut(await this.prisma.ccSetting.update({ where: { key }, data: { value: value as never } }));
   }
   /** A numeric setting with a fallback, for billing code. */
@@ -261,7 +265,7 @@ export class CcSupportService {
     const { page, pageSize, skip, take } = paging(q);
     const where: Prisma.SuperAdminWhereInput = {
       ...(q.status ? { status: q.status as never } : {}), ...(q.role ? { role: q.role as never } : {}),
-      ...(q.q ? { OR: [{ name: { contains: q.q, mode: 'insensitive' } }, { email: { contains: q.q, mode: 'insensitive' } }] } : {}),
+      ...(q.q ? { OR: [{ name: { contains: likeEscape(q.q), mode: 'insensitive' } }, { email: { contains: likeEscape(q.q), mode: 'insensitive' } }] } : {}),
     };
     const [rows, total] = await Promise.all([this.prisma.superAdmin.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take }), this.prisma.superAdmin.count({ where })]);
     return { data: rows.map((a) => this.adminOut(a)), page, pageSize, total };
@@ -277,8 +281,8 @@ export class CcSupportService {
     if ((await this.prisma.superAdmin.count({ where: { role: 'OWNER', status: 'ACTIVE' } })) <= 1) throw new ConflictException('At least one active Owner must remain.');
   }
   async createAdmin(b: { email: string; name: string; role: string }, by: SuperAdmin) {
+    validateAdminInput(b);
     const email = normalizeEmail(b.email ?? '');
-    if (!email || !b.name?.trim()) throw new BadRequestException('Name and email are required.');
     if (b.role === 'OWNER' && by.role !== 'OWNER') throw new ForbiddenException('Only an Owner can create another Owner.');
     if (await this.prisma.superAdmin.findUnique({ where: { email } })) throw new ConflictException('A super admin with this email already exists.');
     const a = await this.prisma.superAdmin.create({ data: { email, name: b.name.trim(), role: b.role as never, status: 'INVITED' } });
@@ -287,6 +291,7 @@ export class CcSupportService {
   }
   async updateAdmin(id: string, b: { name?: string; role?: string }, by: SuperAdmin) {
     const a = await this.admin(id);
+    validateAdminInput(b, true);
     if (b.role && b.role !== a.role) {
       if (id === by.id) throw new ForbiddenException('You cannot change your own role.');
       if ((b.role === 'OWNER' || a.role === 'OWNER') && by.role !== 'OWNER') throw new ForbiddenException('Only an Owner can change Owner roles.');

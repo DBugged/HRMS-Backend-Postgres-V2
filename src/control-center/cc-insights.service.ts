@@ -69,4 +69,44 @@ export class CcInsightsService {
       storageBytes: storage,
     };
   }
+
+  /** The same activity numbers for every company at once (grouped queries, not one round of queries per company), plus platform totals. */
+  async activityAll() {
+    const d = (n: number) => new Date(Date.now() - n * 86400000);
+    const orgs = await this.prisma.organization.findMany({ where: { platformStatus: { not: 'ARCHIVED' } }, select: { id: true, name: true, companyName: true, platformStatus: true, createdAt: true }, orderBy: { createdAt: 'desc' }, take: 500 });
+    const users = await this.prisma.$queryRaw<{ org: string; active: number; created: number; l7: number; l30: number; last: Date | null }[]>`
+      SELECT "organizationId" AS org, COUNT(*) FILTER (WHERE "isActive")::int AS active, COUNT(*)::int AS created,
+             COUNT(*) FILTER (WHERE "lastLoginAt" >= ${d(7)})::int AS l7, COUNT(*) FILTER (WHERE "lastLoginAt" >= ${d(30)})::int AS l30, MAX("lastLoginAt") AS last
+      FROM users GROUP BY "organizationId"`;
+    const grouped = async (table: string, since?: Date) => {
+      try {
+        const rows = since
+          ? await this.prisma.$queryRawUnsafe<{ org: string; n: number }[]>(`SELECT "organizationId" AS org, COUNT(*)::int AS n FROM "${table}" WHERE "createdAt" >= $1 GROUP BY "organizationId"`, since)
+          : await this.prisma.$queryRawUnsafe<{ org: string; n: number }[]>(`SELECT "organizationId" AS org, COUNT(*)::int AS n FROM "${table}" GROUP BY "organizationId"`);
+        return new Map(rows.map((r) => [r.org, r.n]));
+      } catch {
+        return new Map<string, number>();
+      }
+    };
+    const [att, leaves, payroll] = await Promise.all([grouped('attendances', d(30)), grouped('leaves', d(90)), grouped('payroll_runs', d(90))]);
+    const byOrg = new Map(users.map((u) => [u.org, u]));
+    const companies = orgs.map((o) => {
+      const u = byOrg.get(o.id);
+      return {
+        id: o.id, name: o.companyName || o.name, status: o.platformStatus,
+        employees: { active: u?.active ?? 0, created: u?.created ?? 0 },
+        logins: { last7Days: u?.l7 ?? 0, last30Days: u?.l30 ?? 0, lastAt: u?.last?.toISOString() ?? null },
+        attendanceRecords30Days: att.get(o.id) ?? 0, leaveRequests90Days: leaves.get(o.id) ?? 0, payrollRuns90Days: payroll.get(o.id) ?? 0,
+      };
+    });
+    const sum = (f: (c: (typeof companies)[number]) => number) => companies.reduce((t, c) => t + f(c), 0);
+    return {
+      companies,
+      totals: {
+        companies: companies.length, activeEmployees: sum((c) => c.employees.active), signedIn30Days: sum((c) => c.logins.last30Days), signedIn7Days: sum((c) => c.logins.last7Days),
+        attendanceRecords30Days: sum((c) => c.attendanceRecords30Days), leaveRequests90Days: sum((c) => c.leaveRequests90Days), payrollRuns90Days: sum((c) => c.payrollRuns90Days),
+        inactiveCompanies: companies.filter((c) => c.status === 'ACTIVE' && c.logins.last30Days === 0).length,
+      },
+    };
+  }
 }

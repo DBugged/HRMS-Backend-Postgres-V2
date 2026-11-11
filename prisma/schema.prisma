@@ -4584,6 +4584,9 @@ model CcSubscription {
   trialEndsAt           DateTime?
   currentPeriodEnd      DateTime?
   cancelAtPeriodEnd     Boolean      @default(false)
+  // Why a Super Admin cancelled it (required when cancelling), and when. Cleared if the subscription is resumed.
+  cancelReason          String?
+  canceledAt            DateTime?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
 

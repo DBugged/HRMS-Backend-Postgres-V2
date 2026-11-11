@@ -22,6 +22,12 @@ export class CcCustomersController {
     return this.customers.overview();
   }
 
+  @Get('usage/companies')
+  @CcPermission('usage:read')
+  allActivity() {
+    return this.insights.activityAll();
+  }
+
   @Get('usage/organizations/:id')
   @CcPermission('usage:read')
   orgUsageAlias(@Param('id') id: string) {
