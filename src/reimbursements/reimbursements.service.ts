@@ -531,6 +531,29 @@ export class ReimbursementsService {
     }
   }
 
+  // An employee takes back their own claim while it is still waiting. Once reviewed it can no longer be withdrawn.
+  async withdraw(id: string, actor: Actor, organizationId: string) {
+    const claim = await this.scopedPrisma.reimbursement.findFirst({
+      where: { id, organizationId, employeeId: actor.id },
+    });
+    if (!claim) throw new NotFoundException('Reimbursement claim not found.');
+    const res = await this.scopedPrisma.reimbursement.deleteMany({
+      where: { id, organizationId, employeeId: actor.id, status: ReimbursementStatus.PENDING },
+    });
+    if (res.count === 0) {
+      throw new ConflictException('This claim has already been reviewed, so it can no longer be withdrawn.');
+    }
+    await this.auditLogService.log({
+      actorId: actor.id,
+      action: 'REIMBURSEMENT_WITHDRAWN',
+      module: 'PAYROLL',
+      organizationId,
+      targetId: id,
+      details: { employeeId: actor.id, amount: claim.amount },
+    });
+    return { id, withdrawn: true };
+  }
+
   async review(
     id: string,
     dto: ReviewReimbursementDto,

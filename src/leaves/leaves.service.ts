@@ -285,6 +285,17 @@ export class LeavesService {
   ) {}
 
   async apply(dto: ApplyLeaveDto, actor: Actor, organizationId: string) {
+    // A leave cannot be dated more than a year ahead (a typo such as 2035 would otherwise become a pending request).
+    if (dto.startDate && dto.endDate) {
+      const limit = new Date();
+      limit.setUTCFullYear(limit.getUTCFullYear() + 1);
+      const limitYmd = limit.toISOString().slice(0, 10);
+      if (dto.startDate > limitYmd || dto.endDate > limitYmd) {
+        throw new BadRequestException(
+          'Leave can be applied up to one year ahead. Check the dates.',
+        );
+      }
+    }
     // A leave for a month whose payroll is already locked/paid could never take effect in that payslip.
     if (dto.startDate && dto.endDate) {
       await assertPayrollMonthsUnlocked(

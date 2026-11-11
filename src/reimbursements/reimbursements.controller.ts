@@ -4,6 +4,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Param,
   Patch,
@@ -87,6 +88,12 @@ export class ReimbursementsController {
       caller,
       caller.organizationId,
     );
+  }
+
+  // No @Roles() — the claimant withdraws their own pending claim.
+  @Delete(':id')
+  withdraw(@Param('id') id: string, @CurrentUser() caller: Caller) {
+    return this.reimbursementsService.withdraw(id, caller, caller.organizationId);
   }
 
   // The original release's PAYROLL_CONFIG_ROLES (hr_admin, payroll_manager,
