@@ -1088,6 +1088,11 @@ export class DashboardService {
         employee: l.employee.name,
         employeeId: l.employee.employeeId,
         summary: `${l.loanType === 'ADVANCE' ? 'Advance' : 'Loan'} (${l.principal})`,
+        // What the approver needs to set the repayment terms (the mobile sheet decides without opening the loan).
+        loanType: l.loanType,
+        principal: l.principal,
+        tenureMonths: l.tenureMonths,
+        reason: l.reason,
         date: l.createdAt.toISOString().slice(0, 10),
         endDate: null as string | null,
         requestedAt: l.createdAt,
