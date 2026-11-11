@@ -4,6 +4,8 @@
 //          npx ts-node scripts/create-super-admin.ts
 //   CC_ADMIN_ROLE is OWNER by default (OWNER | ADMIN | SUPPORT | BILLING | READ_ONLY). Running it again for the same email
 //   sets that account's password and role and unlocks it.
+// CHANGE HERE: the three values you pass in the command above (CC_ADMIN_EMAIL, CC_ADMIN_NAME, CC_ADMIN_PASSWORD) are yours to
+//   choose. Use the real Owner's email and a strong password in production; never the local demo account.
 // Important: the password comes from the environment, not from the command line text, so it is not saved in the shell
 //   history by the script itself. Nothing is printed except the email and role. The password has to pass the same strength
 //   rule as the sign-in (12+ characters, upper and lower case, a number).

@@ -205,6 +205,8 @@ export class CcAuthService {
       where: { id: admin.id },
       data: { passwordResetTokenHash: hash, passwordResetExpires: new Date(Date.now() + RESET_TOKEN_MINUTES * 60000) },
     });
+    // CHANGE HERE (production): set CC_FRONTEND_URL in the backend environment to the live Control Panel address. The localhost
+    // fallback is for development only; without the setting, reset links in emails point at localhost.
     const base = (process.env.CC_FRONTEND_URL || 'http://localhost:3101').replace(/\/$/, '');
     const link = `${base}/reset-password?token=${encodeURIComponent(token)}`;
     await this.email.send({
