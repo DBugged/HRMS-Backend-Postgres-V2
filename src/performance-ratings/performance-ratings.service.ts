@@ -226,22 +226,10 @@ export class PerformanceRatingsService {
       throw new ForbiddenException(
         'You may only rate employees who report to you.',
       );
-    } else if (employee.reportingManager?.role === Role.MANAGER) {
-      // No override: once an employee has a genuine MANAGER-role reviewer
-      // assigned, ADMIN/HR can no longer originate a rating for them
-      // directly — only that manager may submit one (via this same
-      // endpoint), and ADMIN/HR's role narrows to approve()/reject() on
-      // what the manager submits. Deliberately keyed off the reporting
-      // manager's actual role, not merely reportingManagerId being set —
-      // an employee whose "manager" is an HR/Admin user (a common org-
-      // chart shape for a small team with no dedicated MANAGER role in
-      // use at all) has no one else to submit a rating, so ADMIN/HR's
-      // direct-create-and-auto-approve path stays open for them, same as
-      // an employee with no reportingManagerId at all.
-      throw new ForbiddenException(
-        'This employee has a reporting manager assigned — only their manager can submit a rating. HR/Admin can only approve or reject it.',
-      );
     }
+    // ADMIN and HR may rate, and may change a rating, for any employee in their scope, including one whose reporting manager is a MANAGER: the
+    // manager submits a rating for review, and Admin/HR can approve it, reject it, or change it (see the "reviewer change" below). (An earlier rule
+    // stopped Admin/HR from rating anyone who has a manager; with no screen for the manager to submit it, nobody could rate those employees at all.)
 
     const existing = await this.scopedPrisma.performanceRating.findFirst({
       where: {
@@ -251,27 +239,9 @@ export class PerformanceRatingsService {
       },
     });
 
-    // Second half of "no override": the check above only looks at the
-    // reporting manager's *current* role, which can change after a
-    // manager has already submitted a rating (e.g. the manager is
-    // demoted to EMPLOYEE, or moved to a role with no direct reports).
-    // Without this, ADMIN/HR could demote the manager and then call this
-    // same upsert() to silently overwrite the manager's still-pending
-    // SUBMITTED rating in place — destroying it with no history and no
-    // approvedById/approvedAt, bypassing approve()/reject() entirely. A
-    // SUBMITTED rating must always be resolved through approve()/reject(),
-    // never clobbered by a later upsert() call, regardless of what the
-    // employee's reporting manager looks like *now*. A MANAGER can still
-    // freely correct their own not-yet-approved submission (e.g. a typo)
-    // via this same endpoint — only a non-MANAGER actor is blocked here.
-    if (
-      existing?.status === PerformanceRatingStatus.SUBMITTED &&
-      actor.role !== Role.MANAGER
-    ) {
-      throw new ForbiddenException(
-        'A rating for this employee/year is already submitted and pending review — use approve or reject instead of overwriting it.',
-      );
-    }
+    // A reviewer (Admin/HR) changing a rating that already exists - still waiting on review, or already decided - is a deliberate change that is
+    // published and audited with the old and new values (below); it is not a silent overwrite. A MANAGER can only correct their own submission.
+    const reviewerChange = actor.role !== Role.MANAGER && !!existing;
 
     // A MANAGER's write only ever reaches SUBMITTED — it stays invisible to
     // the employee until ADMIN/HR approve()s it. ADMIN/HR writing directly
@@ -284,11 +254,15 @@ export class PerformanceRatingsService {
         : PerformanceRatingStatus.APPROVED;
 
     const data = {
+      ...(reviewerChange
+        ? { approvedById: actor.id, approvedAt: new Date() }
+        : {}),
       rating: dto.rating,
       // Follows the rating (rating-payout.ts); a payout sent with it is not used.
       payoutPercentage: payoutForRating(dto.rating),
       notes: dto.notes ?? '',
-      ratedById: actor.id,
+      // On a reviewer's change the original rater (for example the manager) stays on the record; the reviewer is recorded as approver.
+      ratedById: reviewerChange ? (existing?.ratedById ?? actor.id) : actor.id,
       status,
     };
 
@@ -319,6 +293,22 @@ export class PerformanceRatingsService {
         actor.id,
         existing ? 'PERFORMANCE_RATING_UPDATED' : 'PERFORMANCE_RATING_CREATED',
       );
+      if (reviewerChange && existing) {
+        await this.auditLogService.log({
+          actorId: actor.id,
+          action: 'PERFORMANCE_RATING_CHANGED_BY_REVIEWER',
+          module: 'EMPLOYEE',
+          organizationId,
+          targetId: rating.id,
+          details: {
+            employeeId: dto.employeeId,
+            financialYear: dto.financialYear,
+            previousRating: existing.rating,
+            previousStatus: existing.status,
+            newRating: rating.rating,
+          },
+        });
+      }
     } else {
       // SUBMITTED by a manager — not yet visible to the employee, so only
       // an audit trail entry is recorded, no notification/email/timeline.
