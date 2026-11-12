@@ -113,7 +113,7 @@ export class CcPlansService {
     return Number(v);
   }
   private pickRate(plan: CcPlan, rate?: number | null) {
-    if (rate != null && !(Number(rate) > 0)) throw new BadRequestException('The rate must be more than zero.');
+    if (rate != null && !(Number(rate) >= 0)) throw new BadRequestException('The rate must be zero or more (zero makes it free).');
     if (rate == null && plan.perEmployeeRate == null) throw new BadRequestException(`${plan.name} has custom pricing: enter the agreed per-employee rate.`);
     return rate ?? null;
   }

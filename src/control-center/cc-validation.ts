@@ -67,7 +67,8 @@ export function validatePlanInput(d: Record<string, unknown>): void {
   if ('name' in d) text(d.name, 'The plan name', 100);
   for (const k of ['perEmployeeRate', 'perExtraEmployeeRate', 'basePrice'] as const) if (k in d && d[k] != null) money(d[k], k);
   if ('trialDays' in d && d.trialDays != null) wholeNumber(d.trialDays, 'Trial days', 0, 365);
-  for (const k of ['includedEmployees', 'seatLimit', 'termMonths'] as const) if (k in d && d[k] != null) wholeNumber(d[k], k, 1, 100000);
+  if ('includedEmployees' in d && d.includedEmployees != null) wholeNumber(d.includedEmployees, 'includedEmployees', 0, 100000);
+  for (const k of ['seatLimit', 'termMonths'] as const) if (k in d && d[k] != null) wholeNumber(d[k], k, 1, 100000);
   if ('features' in d && d.features != null && (!Array.isArray(d.features) || d.features.some((f) => typeof f !== 'string'))) bad('Plan features must be a list of text lines.');
   if ('status' in d && !PLAN_STATUSES.includes(String(d.status))) bad(`The plan status must be one of: ${PLAN_STATUSES.join(', ')}.`);
   if ('billingModel' in d && !BILLING_MODELS.includes(String(d.billingModel))) bad(`The billing model must be one of: ${BILLING_MODELS.join(', ')}.`);
@@ -159,6 +160,7 @@ export function validateAnnouncementInput(b: Record<string, unknown>, creating: 
 const SETTING_RANGES: Record<string, [number, number]> = {
   'billing.auto_suspend_days': [0, 365],
   'billing.gst_rate': [0, 100],
+  'billing.default_tax_rate': [0, 100],
   'billing.invoice_due_days': [0, 365],
   'billing.reminder_days': [0, 365],
   'platform.default_trial_days': [0, 365],

@@ -41,9 +41,10 @@ describe('validatePaymentInput / validateRefundInput', () => {
 describe('validatePlanInput', () => {
   it('accepts sensible values and ignores fields not sent', () => {
     expect(() => validatePlanInput({ name: 'Starter', code: 'STARTER', perEmployeeRate: 50, trialDays: 14, includedEmployees: 25, status: 'ACTIVE' })).not.toThrow();
+    expect(() => validatePlanInput({ basePrice: 0, perEmployeeRate: 0, includedEmployees: 0 })).not.toThrow();
     expect(() => validatePlanInput({ perEmployeeRate: null })).not.toThrow();
   });
-  it.each([{ perEmployeeRate: -1 }, { trialDays: 4000 }, { includedEmployees: 0 }, { status: 'WHATEVER' }, { code: 'a b' }, { basePrice: 'x' }])('rejects %j', (d) => {
+  it.each([{ perEmployeeRate: -1 }, { trialDays: 4000 }, { status: 'WHATEVER' }, { code: 'a b' }, { basePrice: 'x' }])('rejects %j', (d) => {
     expect(() => validatePlanInput(d)).toThrow(BadRequestException);
   });
 });

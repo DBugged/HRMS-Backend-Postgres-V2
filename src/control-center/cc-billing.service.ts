@@ -116,6 +116,7 @@ export class CcBillingService {
     const employees = Number(row?.n ?? 0);
     const monthly = monthlyCharge(sub.plan, sub.term, employees, sub.customPerEmployeeRate);
     if (monthly == null) throw new BadRequestException('This plan has custom pricing and no agreed rate yet. Set the per-employee rate on the subscription.');
+    if (!(monthly > 0)) throw new BadRequestException('The charge for this subscription is zero (a free plan or rate), so there is nothing to invoice.');
     const months = sub.termMonths || 1;
     return this.createInvoice({ organizationId, lineItems: [{ description: `${sub.plan.name} - ${employees} active employees, ${months} month${months > 1 ? 's' : ''}`, quantity: months, unitAmount: monthly }] }, { subscriptionId: sub.id, periodMonths: months, source });
   }
