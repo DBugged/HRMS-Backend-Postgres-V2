@@ -45,7 +45,7 @@ const DRAFT_DEFAULTS: PayrollTemplate = {
   companyContactNumber: null,
   primaryColor: '#0646b8',
   secondaryColor: '#14161d',
-  accentColor: '#10b981',
+  accentColor: '#0646b8',
   footerText: null,
   signatoryName: null,
   signatoryDesignation: null,
