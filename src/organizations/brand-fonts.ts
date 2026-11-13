@@ -2,8 +2,8 @@
 // Important: every font here was checked to contain the rupee sign, the other currency signs and the punctuation we print,
 //   and (except the serif) fixed-width digits for IDs and amounts. Keep this list in sync with the web
 //   (frontend/src/utils/brandFonts.ts) and the mobile app (mobile/src/utils/brandFonts.ts).
-export const DEFAULT_HEADING_FONT = 'Plus Jakarta Sans';
-export const DEFAULT_BODY_FONT = 'Inter';
+export const DEFAULT_HEADING_FONT = 'Merriweather';
+export const DEFAULT_BODY_FONT = 'Roboto';
 
 /** Fonts allowed for body text. */
 export const BODY_FONTS = ['Inter', 'Roboto', 'Public Sans', 'Work Sans', 'Figtree', 'Plus Jakarta Sans'] as const;

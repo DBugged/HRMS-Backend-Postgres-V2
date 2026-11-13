@@ -3,7 +3,7 @@
 //   (eyebrow, title, info card, status badge, CTA button, notice) the default templates are composed from.
 // Responsibilities: Pure string builders only — no DB access, no business logic. Design tokens mirror the
 //   frontend (frontend/src/index.css + tailwind.config.js): Plus Jakarta Sans headings / Inter body, primary
-//   #5546e0, ink neutrals, 8px buttons, 16px cards, emerald/rose/amber/sky status hues.
+//   #0646b8, ink neutrals, 8px buttons, 16px cards, emerald/rose/amber/sky status hues.
 // Important: Templates are stored in the DB as {{placeholder}} strings and rendered by renderTemplate(), so the
 //   components here can't branch on a variable's value at build time. Two marker conventions are resolved AFTER
 //   rendering by finalizeEmailHtml(): <span data-status> (colours the pill from the rendered word) and
@@ -23,14 +23,18 @@ const T = {
   body: '#232733',
   mutedFg: '#586074',
   faint: '#98a1b3',
-  primary: '#5546e0',
-  primarySoft: '#eef1ff',
-  primaryDeep: '#392e9c',
+  primary: '#0646b8',
+  primarySoft: '#ebf2ff',
+  primaryDeep: '#0e2754',
 } as const;
+
+// The old default (indigo). Templates saved before the colour change still carry these literals; they are converted to the company's palette.
+const LEGACY = { primary: '#5546e0', primarySoft: '#eef1ff', primaryDeep: '#392e9c' } as const;
 
 // ---------------------------------------------------------------- brand colour
 
-export const DEFAULT_PRIMARY = '#5546e0';
+export const DEFAULT_PRIMARY = '#0646b8';
+export const LEGACY_DEFAULT_PRIMARY = '#5546e0';
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 
 export interface BrandPalette {
@@ -86,7 +90,8 @@ export function deriveBrandPalette(
 ): BrandPalette {
   if (!isValidHexColor(input)) return DEFAULT_PALETTE;
   const primary = input.toLowerCase();
-  if (primary === DEFAULT_PRIMARY) return DEFAULT_PALETTE;
+  // The old default colour (a company that never picked its own) follows the new default.
+  if (primary === DEFAULT_PRIMARY || primary === LEGACY_DEFAULT_PRIMARY) return DEFAULT_PALETTE;
   const rgb = rgbOf(primary);
   const soft = toHex(rgb.map((c) => c + (255 - c) * 0.92));
   const deep = toHex(rgb.map((c) => c * 0.7));
@@ -97,18 +102,17 @@ export function deriveBrandPalette(
   return { primary, primarySoft: soft, primaryDeep: deep, onPrimary };
 }
 
-// Re-colours already-built email HTML (component output and org-stored templates alike carry the fixed
-// default palette as inline literals) with the org's palette. No-op for the default palette.
+// Re-colours already-built email HTML (component output and org-stored templates alike carry the default palette as inline
+// literals, and templates saved before the colour change carry the old indigo) with the org's palette.
 function applyBrandPalette(html: string, p: BrandPalette): string {
-  if (p === DEFAULT_PALETTE) return html;
   return html
     .replace(
-      /(background:#5546e0;">\s*<a [^>]*?color:)#ffffff/gi,
+      new RegExp(`(background:#(?:${LEGACY.primary.slice(1)}|${T.primary.slice(1)});">\\s*<a [^>]*?color:)#ffffff`, 'gi'),
       `$1${p.onPrimary}`,
     )
-    .replace(/#5546e0/gi, p.primary)
-    .replace(/#eef1ff/gi, p.primarySoft)
-    .replace(/#392e9c/gi, p.primaryDeep);
+    .replace(new RegExp(`${LEGACY.primary}|${T.primary}`, 'gi'), p.primary)
+    .replace(new RegExp(`${LEGACY.primarySoft}|${T.primarySoft}`, 'gi'), p.primarySoft)
+    .replace(new RegExp(`${LEGACY.primaryDeep}|${T.primaryDeep}`, 'gi'), p.primaryDeep);
 }
 
 const FONT_BODY =

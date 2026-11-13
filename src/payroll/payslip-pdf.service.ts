@@ -527,7 +527,7 @@ export class PayslipPdfService {
     const money = (n: number | null | undefined) =>
       `${currencySymbol}${currencySymbol === 'Rs.' ? ' ' : ''}${Number(n || 0).toLocaleString('en-IN')}`;
 
-    const primary = safeHex(template.primaryColor, '#5546e0');
+    const primary = safeHex(template.primaryColor, '#0646b8');
     const secondary = safeHex(template.secondaryColor, '#14161d');
     const headerColor = safeHex(template.headerColor, primary);
     const fonts = FONT_MAP[template.fontFamily] ?? FONT_MAP.HELVETICA;

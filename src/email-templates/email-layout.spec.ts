@@ -225,20 +225,32 @@ describe('brand colour', () => {
     });
 
   it('default colour, missing and invalid values give identical output', () => {
-    const base = wrap('#5546e0');
+    const base = wrap('#0646b8');
     expect(wrap(undefined)).toBe(base);
     expect(wrap(null)).toBe(base);
     expect(wrap('red')).toBe(base);
     expect(wrap('#abc')).toBe(base);
-    expect(wrap('#5546E0')).toBe(base);
+    expect(wrap('#0646B8')).toBe(base);
+  });
+
+  it('the old indigo default (a company that never picked a colour) follows the new default', () => {
+    expect(wrap('#5546e0')).toBe(wrap('#0646b8'));
+    expect(wrap('#5546E0')).toBe(wrap('#0646b8'));
+    expect(wrap('#5546e0')).not.toContain('#5546e0');
+  });
+
+  it('a template saved before the change (old indigo literals) is shown in the default blue, or in the company colour', () => {
+    const saved = '<a href="x" style="color:#5546e0;">Log in</a>';
+    expect(wrapEmailShell(saved, { branding: { ...branding, primaryColor: undefined } })).toContain('color:#0646b8');
+    expect(wrapEmailShell(saved, { branding: { ...branding, primaryColor: '#0f766e' } })).toContain('color:#0f766e');
   });
 
   it('rejects malicious strings', () => {
     const evil = '#fff;}</style><script>';
-    expect(deriveBrandPalette(evil).primary).toBe('#5546e0');
+    expect(deriveBrandPalette(evil).primary).toBe('#0646b8');
     const html = wrap(evil);
     expect(html).not.toContain('<script>');
-    expect(html).toBe(wrap('#5546e0'));
+    expect(html).toBe(wrap('#0646b8'));
   });
 
   it('applies a custom colour to header tile, button and links', () => {

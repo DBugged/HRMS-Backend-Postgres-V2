@@ -196,11 +196,11 @@ model Organization {
   faviconUrl      String?
   reportLogoUrl   String?
   emailLogoUrl    String?
-  primaryColor    String  @default("#5546e0")
+  primaryColor    String  @default("#0646b8")
   secondaryColor  String  @default("#14161d")
   // The two fonts of the app (see organizations/brand-fonts.ts): headings and body text.
-  headingFont     String  @default("Plus Jakarta Sans")
-  bodyFont        String  @default("Inter")
+  headingFont     String  @default("Merriweather")
+  bodyFont        String  @default("Roboto")
   // Large, faded, centered copy of the org's logo behind every page of a
   // generated document — Letters & Certificates (companyLogoUrl),
   // Payslips (each PayrollTemplate's own companyLogoUrl — see
@@ -1868,7 +1868,7 @@ model PayrollTemplate {
   companyWebsite       String?
   companyContactNumber String?
 
-  primaryColor   String @default("#5546e0")
+  primaryColor   String @default("#0646b8")
   secondaryColor String @default("#14161d")
   accentColor    String @default("#10b981")
 

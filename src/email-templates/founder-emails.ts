@@ -54,7 +54,7 @@ export function founderWelcomeHtml(i: FounderWelcomeInput): string {
       ]),
       verify
         ? mutedText(
-            `Already confirmed? <a href="${escapeHtml(i.loginUrl)}" style="color:#5546e0;text-decoration:underline;">Log in</a>.`,
+            `Already confirmed? <a href="${escapeHtml(i.loginUrl)}" style="color:#0646b8;text-decoration:underline;">Log in</a>.`,
           )
         : '',
       notice(

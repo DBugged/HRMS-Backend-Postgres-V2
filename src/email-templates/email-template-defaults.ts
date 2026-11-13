@@ -175,7 +175,7 @@ const CREDENTIALS_BODY = emailBody({
       row('Login email', '{{email}}'),
       row(
         'Login URL',
-        '<a href="{{loginUrl}}" style="color:#5546e0;text-decoration:underline;">{{loginUrl}}</a>',
+        '<a href="{{loginUrl}}" style="color:#0646b8;text-decoration:underline;">{{loginUrl}}</a>',
       ),
       row('Employee ID (reference only)', '{{employeeId}}'),
     ]),
@@ -624,7 +624,7 @@ export const EMAIL_TEMPLATE_DEFAULTS: EmailTemplateDefault[] = [
         ),
         button('{{resetUrl}}', 'Reset password'),
         `<p style="margin:0 0 6px;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#586074;">If the button doesn't work, copy and paste this link into your browser:</p>` +
-          `<p style="margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;word-break:break-all;"><a href="{{resetUrl}}" style="color:#5546e0;text-decoration:underline;">{{resetUrl}}</a></p>`,
+          `<p style="margin:0;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;word-break:break-all;"><a href="{{resetUrl}}" style="color:#0646b8;text-decoration:underline;">{{resetUrl}}</a></p>`,
       ],
     }),
     ccAllActive: false,

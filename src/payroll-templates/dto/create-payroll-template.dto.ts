@@ -26,7 +26,7 @@ export const TEMPLATE_NAME =
 export const TEMPLATE_NAME_MESSAGE =
   "name must contain a letter or a number, and only letters, numbers, spaces and the marks _ - . , & ( ) ' # + :";
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-const HEX_MESSAGE = '$property must be a hex color such as #5546e0';
+const HEX_MESSAGE = '$property must be a hex color such as #0646b8';
 // Never an address on someone else's server: a stored file key or one of our own signed /files/ paths.
 const OWN_FILE = /^(?![a-z][a-z0-9+.-]*:|\/\/)[^<>"'\s]{1,2000}$/i;
 import { HeaderStyle, PayslipFontFamily } from '@prisma/client';

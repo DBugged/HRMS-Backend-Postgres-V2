@@ -773,7 +773,7 @@ export function validateSectionData(data: Record<string, unknown>) {
   for (const field of ['primaryColor', 'secondaryColor']) {
     const v = data[field];
     if (typeof v === 'string' && !HEX_COLOR.test(v)) {
-      bad(`${field} must be a hex color (e.g. #5546e0).`);
+      bad(`${field} must be a hex color (e.g. #0646b8).`);
     }
   }
   if (Array.isArray(data.signatories)) {
